@@ -72,6 +72,46 @@ unavailable, not that status alone authorizes an action. A race with new work ca
 return HTTP 409 `sandbox_lifecycle_busy`; refresh before retrying. Existing
 command replay semantics are unchanged.
 
+## Managed runtime updates
+
+Owner detail includes optional `Sandbox.runtime_update` information for managed
+native runtimes. `latest_version` is the server's formally released immutable
+image reference; publishing an image alone does not change it. The server checks
+for updates daily at 02:00 Asia/Singapore, and an owner-initiated revival from
+Paused admits the current managed version. Custom-image Sandboxes are excluded.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey};
+use cma_sdk::instances::{SandboxRuntimeUpdateStatus, UpdateSandboxRuntimeRequest};
+# async fn update(client: &Client, id: &str, key: &IdempotencyKey) -> cma_sdk::Result<()> {
+let detail = client.sandboxes().read(id).await?;
+if let Some(update) = detail.summary.sandbox.runtime_update {
+    if update.can_update {
+        let target_version = if update.state == SandboxRuntimeUpdateStatus::Failed {
+            update.target_version.unwrap_or(update.latest_version)
+        } else {
+            update.latest_version
+        };
+        let request = UpdateSandboxRuntimeRequest { target_version };
+        let accepted = client.sandboxes().update_runtime(id, &request, key).await?;
+        println!("{:?}", accepted.runtime_update);
+    }
+}
+# Ok(())
+# }
+```
+
+HTTP 202 records the request; it does not mean replacement has completed. Keep
+the exact target and idempotency key across uncertain responses, and follow
+`runtime_update.state` until completion or a reported failure. Retry a failed
+request with its retained `target_version`, even if a later release changes
+`latest_version`.
+
+Manual and scheduled updates wait for admitted work, active turns and queued
+messages to settle before replacing the runtime. They retain the Sandbox,
+Workspaces, Agents, conversations and original persistent home. An initially
+paused Sandbox returns to Paused unless new owner work requests a revival.
+
 ## Shared hierarchy
 
 Use `sandboxes().read_accessible`, `workspaces().read_accessible` and

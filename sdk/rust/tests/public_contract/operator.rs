@@ -58,6 +58,11 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "POST /api/v1/admin/sandboxes/{id}/retire" => {
             c.check(admin.retire_sandbox(c.param("id")).await)
         }
+        "POST /api/v1/admin/sandboxes/{id}/runtime-update" => c.check(
+            admin
+                .update_sandbox_runtime(c.param("id"), &c.body()?)
+                .await,
+        ),
         "GET /api/v1/admin/profiles" => c.check(
             admin
                 .list_profiles(&ProfileListOptions {

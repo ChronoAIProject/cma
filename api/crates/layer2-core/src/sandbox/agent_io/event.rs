@@ -102,6 +102,18 @@ pub enum AgentEventKind {
         context_used: u64,
         context_window: Option<u64>,
     },
+    RuntimeMetadataChanged {
+        metadata: super::super::AgentRuntimeMetadata,
+    },
+    UsageUpdated {
+        input_tokens: u64,
+        output_tokens: u64,
+        context_used: u64,
+        context_window: Option<u64>,
+        turn_sequence: Option<u64>,
+        turn_input_tokens: u64,
+        turn_output_tokens: u64,
+    },
     ModeChanged {
         mode: String,
     },
@@ -241,6 +253,26 @@ impl From<AgentLogEntry> for AgentEvent {
                 output_tokens,
                 context_used,
                 context_window,
+            },
+            AgentLogKind::RuntimeMetadataChanged { metadata } => {
+                AgentEventKind::RuntimeMetadataChanged { metadata }
+            }
+            AgentLogKind::UsageUpdated {
+                input_tokens,
+                output_tokens,
+                context_used,
+                context_window,
+                turn_sequence,
+                turn_input_tokens,
+                turn_output_tokens,
+            } => AgentEventKind::UsageUpdated {
+                input_tokens,
+                output_tokens,
+                context_used,
+                context_window,
+                turn_sequence,
+                turn_input_tokens,
+                turn_output_tokens,
             },
             AgentLogKind::ModeChanged { mode } => AgentEventKind::ModeChanged { mode },
             AgentLogKind::PlanSet { entries } => AgentEventKind::PlanSet { entries },

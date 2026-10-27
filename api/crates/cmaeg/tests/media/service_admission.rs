@@ -165,6 +165,7 @@ fn relayed_turn(edit: impl FnOnce(&mut Activity)) -> (LaunchRequest, i64) {
         Some(message(vec![attachment(AttachmentKind::Image, None)])),
     );
     let mut payload = event(ReplyAddress::NyxidRelay {
+        thread_reply: false,
         message_id: "nyx-message-9".into(),
         route_id: "route-1".into(),
         platform: Platform::Telegram,
@@ -230,6 +231,16 @@ fn turn_targets_open_and_verify_the_sealed_event_ref() {
 
 fn config(media: MediaConfig) -> Config {
     Config {
+        native_bot_mentions_writes_enabled: false,
+        thread_contract_writes_enabled: false,
+        multi_consumer_writes_enabled: false,
+        dynamic_sources_writes_enabled: false,
+        relay_raw_verification_writes_enabled: false,
+        lark_resource_writes_enabled: false,
+        native_discord_writes_enabled: false,
+        native_discord_thread_history_enabled: false,
+        native_discord: Default::default(),
+        outbound_messages_writes_enabled: false,
         listen: "127.0.0.1:0".parse().unwrap(),
         metrics_listen: "127.0.0.1:0".parse().unwrap(),
         providers: Default::default(),
@@ -238,6 +249,8 @@ fn config(media: MediaConfig) -> Config {
         provider_max_inflight: 1,
         management: ManagementConfig {
             public_url: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
+            advertise_public_api_url: true,
             master_keys: Arc::new(ring()),
             cma_base_url: "https://cma.example".into(),
             cma_service_token: Secret::new("cma-service"),
@@ -259,6 +272,14 @@ fn config(media: MediaConfig) -> Config {
 
 fn compose_deps() -> ComposeDeps {
     ComposeDeps {
+        resolver: cmaeg::channels::resolver::ChannelResolver::new(
+            Arc::new(
+                cmaeg::records::RecordClient::new("https://cma.example", "fixture-service")
+                    .unwrap(),
+            ),
+            Arc::new(ring()),
+            ChannelCacheConfig::default(),
+        ),
         keys: Arc::new(ring()),
         tool_providers: Arc::new(MediaToolProviders::default()),
         telegram: Arc::new(

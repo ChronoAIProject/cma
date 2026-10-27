@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { IdentityChangedError } from './agent/transport/identity';
 import { CmaClientProvider } from './api/context';
 import { Console } from './Console';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from './test/agent';
@@ -17,7 +18,12 @@ function fixture() {
     baseUrl: 'https://fixture.invalid',
     fetch: async (input) => {
       const id = new URL(String(input)).pathname.match(/\/agents\/([^/]+)$/)?.[1] ?? 'agt_1';
-      return Response.json({ ...WIRE_AGENT, id });
+      return Response.json({
+        ...WIRE_AGENT,
+        id,
+        workspace: { ...WIRE_AGENT.workspace, id: AGENT_DETAIL.workspace.id },
+        sandbox: { ...WIRE_AGENT.sandbox, id: AGENT_DETAIL.sandbox.id },
+      });
     },
   });
   const readAccessible = vi.spyOn(sdk.agents, 'readAccessible');
@@ -54,7 +60,7 @@ function fixture() {
 }
 
 it.each(['unavailable', 'network', 'timeout'])(
-  'restores the exact unsent draft after a %s access refresh without submitting it',
+  'keeps rendered history and the exact draft read-only through a %s access refresh',
   async (failure) => {
     vi.useFakeTimers();
     const test = fixture();
@@ -74,17 +80,84 @@ it.each(['unavailable', 'network', 'timeout'])(
           : new ApiError(503, 'Temporarily unavailable', 'unavailable'),
       );
     await act(() => vi.advanceTimersByTimeAsync(failure === 'timeout' ? 45_000 : 30_000));
-    expect(screen.getByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
-    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
-    expect(screen.queryByText('The repository is ready.')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
+    expect(composer).toHaveValue(draft);
+    expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'More Agent actions' }));
+    expect(screen.getByRole('menuitem', { name: /^Show Agent details/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.getByText(/Checking Agent access/)).toBeInTheDocument();
+    fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+    expect(test.runAgent).not.toHaveBeenCalled();
     expect(test.streams.every((signal) => signal.aborted)).toBe(true);
     test.readAccessible.mockRestore();
     await act(() => vi.advanceTimersByTimeAsync(30_000));
-    expect(screen.getByRole('textbox', { name: 'Message' })).not.toBe(composer);
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(draft);
     expect([...document.querySelectorAll('article.message')].map((el) => el.textContent)).toEqual(
       messages,
     );
+    expect(test.runAgent).not.toHaveBeenCalled();
+    unmount();
+  },
+);
+
+it.each([401, 403, 404, 'identity'] as const)(
+  'removes retained history on explicit %s refusal and does not resurrect it during a retry',
+  async (refusal) => {
+    vi.useFakeTimers();
+    const test = fixture();
+    const { unmount } = render(test.show());
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+      target: { value: 'Private draft' },
+    });
+    test.readAccessible.mockRejectedValue(new ApiError(503, 'Temporary outage'));
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+    test.readAccessible.mockRejectedValue(
+      refusal === 'identity' ? new IdentityChangedError() : new ApiError(refusal, 'Access removed'),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(screen.getByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
+    expect(screen.queryByText('The repository is ready.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    test.readAccessible.mockImplementation(() => new Promise(() => {}));
+    act(() => window.dispatchEvent(new Event('focus')));
+    expect(screen.queryByText('The repository is ready.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    expect(test.runAgent).not.toHaveBeenCalled();
+    unmount();
+  },
+);
+
+it.each(['viewer', 'agent', 'client'])(
+  'discards the retained conversation immediately when its %s changes during uncertainty',
+  async (scope) => {
+    vi.useFakeTimers();
+    const test = fixture();
+    const { rerender, unmount } = render(test.show());
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+      target: { value: 'Private original draft' },
+    });
+    test.readAccessible.mockRejectedValue(new ApiError(503, 'Temporary outage'));
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+    test.readAccessible.mockImplementation(() => new Promise(() => {}));
+    rerender(
+      test.show(
+        scope === 'viewer' ? 'other-owner' : 'owner',
+        scope === 'agent' ? 'agt_2' : 'agt_1',
+        scope === 'client' ? { ...test.client } : test.client,
+      ),
+    );
+    expect(screen.queryByText('The repository is ready.')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Private original draft')).not.toBeInTheDocument();
     expect(test.runAgent).not.toHaveBeenCalled();
     unmount();
   },
@@ -111,7 +184,9 @@ it.each(['viewer', 'agent', 'client'])(
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
     rerender(test.show());
     await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(
+      scope === 'agent' ? 'Private original draft' : '',
+    );
     expect(test.runAgent).not.toHaveBeenCalled();
     unmount();
   },

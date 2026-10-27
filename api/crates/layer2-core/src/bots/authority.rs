@@ -84,7 +84,10 @@ impl BotOwnerAuthority {
         let context = &self.context;
         if context.credential.validate().is_err()
             || context.credential.subject != context.caller.subject
-            || matches!(context.credential_source, CredentialSource::Binding)
+            || matches!(
+                context.credential_source,
+                CredentialSource::Binding | CredentialSource::RequestBoundRead { .. }
+            )
             || matches!(context.credential_source, CredentialSource::Independent { expires_at: Some(expiry) } if expiry <= SystemTime::now())
         {
             return Err(BotError::Forbidden);

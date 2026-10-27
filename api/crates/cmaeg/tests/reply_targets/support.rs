@@ -37,6 +37,7 @@ pub struct App {
     pub key: String,
     pub base: String,
     pub client: reqwest::Client,
+    pub native: Option<cmaeg::telegram::TelegramClient>,
     engine: Option<DeliveryEngine>,
     server: JoinHandle<()>,
 }
@@ -97,6 +98,20 @@ impl App {
         let tracker = TurnTracker::new(http::readiness::Readiness::initialized());
         let (delivery, receiver) = mpsc::channel(16);
         let state = ToolsState {
+            discord_thread_history: None,
+            complete_replies_enabled: false,
+            whatsapp_templates_enabled: false,
+            discord_interactions_enabled: false,
+            whatsapp_interactions_enabled: false,
+            consumer_interactions_enabled: false,
+            telegram_effects_issuance_enabled: false,
+            telegram_effects: None,
+            native_media_enabled: false,
+            native_discord_edits_enabled: false,
+            discord_effects_issuance_enabled: false,
+            discord_effects: None,
+            relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             resolver: ChannelResolver::new(
                 Arc::new(records.clone()),
                 keys.clone(),
@@ -105,13 +120,18 @@ impl App {
             keys: keys.clone(),
             providers,
             delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
+            routed_replies: None,
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
+            advertise_public_api_url: true,
             media: None,
             downloads: Default::default(),
         };
-        let engine = engine(receiver, &state, &relay);
-        let (base, server) = serve(http::tools::router(state.clone())).await;
+        let engine = engine(receiver, &state, &relay, None);
+        let (base, server) =
+            serve(http::tools::router(state.clone()).merge(cmaeg::mcp::router(state.clone())))
+                .await;
         Self {
             backend,
             relay,
@@ -123,6 +143,7 @@ impl App {
             key,
             base,
             client: reqwest::Client::new(),
+            native: None,
             engine: Some(engine),
             server,
         }
@@ -137,8 +158,16 @@ impl App {
             self.state.keys.clone(),
             Default::default(),
         );
-        self.engine = Some(engine(receiver, &self.state, &self.relay));
-        (self.base, self.server) = serve(http::tools::router(self.state.clone())).await;
+        self.engine = Some(engine(
+            receiver,
+            &self.state,
+            &self.relay,
+            self.native.clone(),
+        ));
+        (self.base, self.server) = serve(
+            http::tools::router(self.state.clone()).merge(cmaeg::mcp::router(self.state.clone())),
+        )
+        .await;
     }
     pub async fn event(&self, actor: &str, name: &str) -> EventRef {
         let key = self.definition.secrets.provider_credential.clone().unwrap();
@@ -153,6 +182,22 @@ impl App {
         consumer: Option<ConsumerId>,
         credential: Secret,
     ) -> EventRef {
+        self.event_for_with_thread(actor, name, consumer, credential, false)
+            .await
+    }
+    pub async fn event_with_thread(&self, actor: &str, name: &str, threaded: bool) -> EventRef {
+        let key = self.definition.secrets.provider_credential.clone().unwrap();
+        self.event_for_with_thread(actor, name, None, key, threaded)
+            .await
+    }
+    async fn event_for_with_thread(
+        &self,
+        actor: &str,
+        name: &str,
+        consumer: Option<ConsumerId>,
+        credential: Secret,
+        threaded: bool,
+    ) -> EventRef {
         let mut activity: Activity = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/activity.json"
         ))
@@ -161,7 +206,11 @@ impl App {
         activity.conversation.id = format!("chat-{actor}");
         activity.event_id = name.parse().unwrap();
         activity.source = cmaeg_core::activity::SourceKind::NyxidRelay {
-            platform: cmaeg_core::channel::Platform::Telegram,
+            platform: if threaded {
+                cmaeg_core::channel::Platform::Lark
+            } else {
+                cmaeg_core::channel::Platform::Telegram
+            },
             route_id: format!("route-{actor}"),
         };
         let native = self
@@ -181,6 +230,14 @@ impl App {
         }
         let conversation_id = ConversationId::derive(&self.state.keys, &self.id, 1, actor);
         let event = EventRefPayload {
+            telegram_admission: (self.state.telegram_effects_issuance_enabled && native.is_some())
+                .then(|| cmaeg_core::seal::TelegramAdmissionProof {
+                    actor_id: actor.into(),
+                    actor_kind: activity.actor.kind,
+                    conversation_kind: activity.conversation.kind,
+                    mentioned: Some(true),
+                    replied_to_bot: Some(false),
+                }),
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: self.id.clone(),
@@ -198,9 +255,14 @@ impl App {
                 }
             } else {
                 ReplyAddress::NyxidRelay {
+                    thread_reply: threaded,
                     message_id: name.into(),
                     route_id: format!("route-{actor}"),
-                    platform: cmaeg_core::channel::Platform::Telegram,
+                    platform: if threaded {
+                        cmaeg_core::channel::Platform::Lark
+                    } else {
+                        cmaeg_core::channel::Platform::Telegram
+                    },
                     reply_token: cmaeg_core::channel::Secret::new("fixture-unused-reply-token"),
                     reply_token_expires_at: now() + 600,
                 }
@@ -283,11 +345,18 @@ fn engine(
     receiver: mpsc::Receiver<cmaeg::delivery::intents::DeliveryCommand>,
     state: &ToolsState,
     relay: &FakeReply,
+    native: Option<cmaeg::telegram::TelegramClient>,
 ) -> DeliveryEngine {
+    let mut transport = RelayClient::new(&relay.base, Duration::from_millis(200)).unwrap();
+    if let Some(native) = native {
+        transport = transport
+            .with_telegram(native)
+            .with_telegram_effects(state.telegram_effects_issuance_enabled);
+    }
     DeliveryEngine::start(
         receiver,
         state.keys.clone(),
-        RelayClient::new(&relay.base, Duration::from_millis(200)).unwrap(),
+        transport,
         DeliveryConfig::default(),
         state.tracker.clone(),
         CustomDelivery::new(state.public_origin.clone(), Arc::default()),

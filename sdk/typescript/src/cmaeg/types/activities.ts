@@ -1,3 +1,6 @@
+import { LarkResourceBindingSchema } from './channels.js';
+import { NativeMediaCapabilitiesSchema } from './messages.js';
+import { MessageEffectsCapabilitiesSchema } from './message-effects.js';
 import {
   AcceptedStatusSchema,
   ActorKindSchema,
@@ -57,11 +60,29 @@ export const ActivityConversationSchema = object({
 });
 export type ActivityConversation = Output<typeof ActivityConversationSchema>;
 
+export const LarkResourceKindSchema = enumeration('image', 'file');
+export type LarkResourceKind = Output<typeof LarkResourceKindSchema>;
+
 // A non-secret locator bound into the activity digest; fetching still requires
 // the event reference's authority.
 export const AttachmentSourceSchema = tagged(
   {
+    discord: object({
+      channel_id: text,
+      message_id: text,
+      attachment_id: text,
+      type: enumeration('discord'),
+    }),
     nyxid_relay: object({ index: integer, type: enumeration('nyxid_relay') }),
+    lark_resource: object({
+      type: enumeration('lark_resource'),
+      message_id: text,
+      resource_key: text,
+      resource_kind: LarkResourceKindSchema,
+      binding: LarkResourceBindingSchema,
+      bot_id: text,
+      source_revision: text,
+    }),
     telegram: object({
       file_id: text,
       file_unique_id: text,
@@ -139,6 +160,7 @@ export type ActivityKind = Output<typeof ActivityKindSchema>;
 
 export const SourceKindSchema = tagged(
   {
+    discord: object({ bot_id: text, type: enumeration('discord') }),
     telegram: object({
       platform: PlatformSchema,
       bot_id: text,
@@ -154,6 +176,29 @@ export const SourceKindSchema = tagged(
   'type',
 );
 export type SourceKind = Output<typeof SourceKindSchema>;
+
+export const ThreadKindSchema = enumeration('native');
+export type ThreadKind = Output<typeof ThreadKindSchema>;
+export const ThreadAddressSchema = enumeration(
+  'mention',
+  'reply_to_bot',
+  'not_addressed',
+  'unknown',
+);
+export type ThreadAddress = Output<typeof ThreadAddressSchema>;
+export const ThreadFactsSchema = object({
+  version: integer,
+  kind: ThreadKindSchema,
+  chat_id: text,
+  message_id: text,
+  root_id: optional(nullable(text)),
+  native_thread_id: optional(nullable(text)),
+  parent_message_id: optional(nullable(text)),
+  sender_kind: ActorKindSchema,
+  address: ThreadAddressSchema,
+  mentions_others: optional(boolean),
+});
+export type ThreadFacts = Output<typeof ThreadFactsSchema>;
 
 export const RouteResolutionSchema = enumeration(
   'default',
@@ -200,6 +245,7 @@ export const ActivityRoutingSchema = object({
 export type ActivityRouting = Output<typeof ActivityRoutingSchema>;
 
 export const ActivitySchema = object({
+  thread: optional(nullable(ThreadFactsSchema)),
   actor: ActorSchema,
   conversation: ActivityConversationSchema,
   event_id: EventIdSchema,
@@ -211,7 +257,28 @@ export const ActivitySchema = object({
 });
 export type Activity = Output<typeof ActivitySchema>;
 
+export const ThreadHistoryMessageSchema = object({
+  message_id: text,
+  author: ActorSchema,
+  text,
+  occurred_at: text,
+  edited_at: optional(nullable(text)),
+  attachment_count: integer,
+});
+export type ThreadHistoryMessage = Output<typeof ThreadHistoryMessageSchema>;
+export const ThreadHistorySchema = object({
+  thread_id: text,
+  before_message_id: text,
+  messages: array(ThreadHistoryMessageSchema),
+  text_truncated: boolean,
+});
+export type ThreadHistory = Output<typeof ThreadHistorySchema>;
+
 export const CapabilitiesSchema = object({
+  thread_history: optional(nullable(boolean)),
+  message_effects: optional(nullable(MessageEffectsCapabilitiesSchema)),
+  whatsapp_templates: optional(nullable(boolean)),
+  native_media: optional(nullable(NativeMediaCapabilitiesSchema)),
   attachments: text,
   buttons: text,
   cards: text,
@@ -232,6 +299,7 @@ export const PublicActivitySchema = object({
 export type PublicActivity = Output<typeof PublicActivitySchema>;
 
 export const ContextResponseSchema = object({
+  thread_history: optional(nullable(ThreadHistorySchema)),
   activity: PublicActivitySchema,
   activity_verified: boolean,
   capabilities: CapabilitiesSchema,

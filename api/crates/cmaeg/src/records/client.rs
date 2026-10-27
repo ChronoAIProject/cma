@@ -274,6 +274,32 @@ impl RecordClient {
         })
     }
 
+    /// Internal bounded watermark lookup; HTTP stores retain the full-read path.
+    pub(crate) async fn local_versions(
+        &self,
+        owner: &str,
+        ids: &[String],
+    ) -> Result<Option<Vec<u64>>, RecordError> {
+        if owner.is_empty() || owner.len() > 512 || ids.is_empty() || ids.len() > 7 {
+            return Err(RecordError::Rejected(
+                "invalid record watermark lookup".into(),
+            ));
+        }
+        for id in ids {
+            self.record_url(id)?;
+        }
+        let Some(database) = &self.database else {
+            return Ok(None);
+        };
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            database.for_kind(self.record_kind).versions(owner, ids),
+        )
+        .await
+        .map_err(|_| RecordError::Unavailable("record watermark read timed out".into()))?
+        .map(Some)
+    }
+
     pub async fn delete(
         &self,
         record_id: &RecordId,

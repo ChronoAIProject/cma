@@ -3,6 +3,9 @@ use crate::agent_sandbox::NativePoolClaim;
 use crate::provider::ProviderSandboxRequest;
 use serde_json::json;
 
+#[path = "backend_provision_home_tests.rs"]
+mod provision_home_tests;
+
 const POD: &str = "/api/v1/namespaces/cma-test/pods/warm-member";
 
 struct Bound {
@@ -15,15 +18,25 @@ struct Bound {
 }
 
 async fn bound(explicit_policy: bool) -> Bound {
+    bound_with_mode(explicit_policy, HomeVolumeMode::NativeVctEmptyV1).await
+}
+
+async fn bound_with_mode(explicit_policy: bool, mode: HomeVolumeMode) -> Bound {
     let mut fixture = Fixture::new().await;
     if explicit_policy {
         fixture.client.config.template_network_policy =
             Some(super::super::network_policy_tests::policy("10.41.0.0/16"));
     }
     let mut spec = super::super::tests::spec();
-    spec.home.mode = HomeVolumeMode::NativeVctEmptyV1;
-    spec.home.template_name.clear();
-    spec.home.template_generation.clear();
+    spec.home.mode = mode;
+    spec.image.labels.insert(
+        crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
+        "2".into(),
+    );
+    if spec.home.is_native_vct() {
+        spec.home.template_name.clear();
+        spec.home.template_generation.clear();
+    }
     let claim = super::super::home_tests::assigned_spec(&fixture, &spec).await;
     let home = adopted(&fixture, &claim).await;
     let request = request(&home, 1);
@@ -230,3 +243,67 @@ async fn failed_assignment_and_missing_container_incarnation_never_enter_cache()
 
 #[path = "backend_native_proof_tests.rs"]
 mod native_proof_tests;
+
+#[tokio::test]
+async fn contextual_native_resume_waits_for_new_pod_then_assigns_original_home_and_generation() {
+    let bound = bound(true).await;
+    let home = adopted(&bound.fixture, &bound.claim).await;
+    let next = request(&home, 2);
+    let mut pod = bound
+        .fixture
+        .state
+        .lock()
+        .unwrap()
+        .rows
+        .remove(POD)
+        .unwrap();
+    bound
+        .backend
+        .suspend(&bound.runtime, &bound.request)
+        .await
+        .unwrap();
+    // Model a completed update whose response was lost before backend binding.
+    client(&bound.fixture, false)
+        .resume_with_home(&bound.runtime, &bound.request, &next, &home)
+        .await
+        .unwrap();
+    {
+        let mut state = bound.fixture.state.lock().unwrap();
+        pod["metadata"]["uid"] = json!("resumed-pod");
+        pod["status"]["containerStatuses"][0]["containerID"] = json!("containerd://resumed");
+        state.rows.insert(POD.into(), pod);
+        let member = state.rows.get_mut(MEMBER).unwrap();
+        member["status"]["conditions"][0]["observedGeneration"] =
+            member["metadata"]["generation"].clone();
+    }
+    bound
+        .backend
+        .resume_with_home(&bound.runtime, &bound.request, &next, &home)
+        .await
+        .unwrap();
+    {
+        let mut state = bound.fixture.state.lock().unwrap();
+        assert_eq!(state.assignments.len(), 2);
+        assert_eq!(state.assignments[1].pod_uid, "resumed-pod");
+        assert_eq!(
+            state.assignments[1].environment["CHRONO_RUNTIME_GENERATION"],
+            "2"
+        );
+        assert_eq!(
+            state.assignments[1].environment["CHRONO_RUNTIME_HOME_IDENTITY"],
+            home.identity().unwrap()
+        );
+        state.rows.get_mut(VOLUME).unwrap()["metadata"]["uid"] = json!("replacement");
+    }
+    assert_eq!(bound.transport.binds.lock().unwrap().len(), 2);
+    assert!(bound
+        .backend
+        .resume_with_home(&bound.runtime, &bound.request, &next, &home)
+        .await
+        .is_err());
+    assert_eq!(bound.fixture.state.lock().unwrap().assignments.len(), 2);
+    assert_eq!(bound.transport.binds.lock().unwrap().len(), 2);
+}
+
+#[path = "backend_bootstrap_proof_tests.rs"]
+mod bootstrap_proof_tests;

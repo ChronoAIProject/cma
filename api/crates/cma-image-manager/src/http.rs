@@ -9,11 +9,14 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::get,
     Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
+use utoipa_axum::{router::OpenApiRouter, routes};
+pub(crate) mod shapes;
+use shapes::*;
 use std::sync::Arc;
 
 pub struct App {
@@ -21,24 +24,27 @@ pub struct App {
     pub auth: NyxIdAuth,
     pub executor: Executor,
 }
+/// The handler annotations register both HTTP methods and OpenAPI operations.
+pub(crate) fn api_router() -> OpenApiRouter<Arc<App>> {
+    OpenApiRouter::new()
+        .routes(routes!(permissions))
+        .routes(routes!(list, create))
+        .routes(routes!(read, edit, retire))
+        .routes(routes!(visibility))
+        .routes(routes!(share, unshare))
+        .routes(routes!(builds, build))
+        .routes(routes!(versions))
+        .routes(routes!(version))
+        .routes(routes!(resolve))
+        .routes(routes!(build_read))
+        .routes(routes!(logs))
+}
 pub fn router(state: Arc<App>) -> Router {
-    Router::new()
+    api_router()
+        .split_for_parts()
+        .0
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(ready))
-        .route("/v1/permissions", get(permissions))
-        .route("/v1/images", get(list).post(create))
-        .route("/v1/images/{id}", get(read).patch(edit).delete(retire))
-        .route("/v1/images/{id}/visibility", put(visibility))
-        .route(
-            "/v1/images/{id}/shares/{subject}",
-            put(share).delete(unshare),
-        )
-        .route("/v1/images/{id}/builds", get(builds).post(build))
-        .route("/v1/images/{id}/versions", get(versions))
-        .route("/v1/images/{id}/versions/{version}", get(version))
-        .route("/v1/images/{id}/resolve", post(resolve))
-        .route("/v1/builds/{id}", get(build_read))
-        .route("/v1/builds/{id}/logs", get(logs))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(32 * 1024))
         .with_state(state)
 }
@@ -59,7 +65,17 @@ impl IntoResponse for HttpError {
             Self::Domain(Error::Conflict) => StatusCode::CONFLICT,
             _ => StatusCode::SERVICE_UNAVAILABLE,
         };
-        (status,[("content-type","application/problem+json")],Json(json!({"type":"about:blank","title":status.canonical_reason(),"status":status.as_u16(),"detail":self.to_string()}))).into_response()
+        (
+            status,
+            [("content-type", "application/problem+json")],
+            Json(Problem {
+                kind: "about:blank",
+                title: status.canonical_reason(),
+                status: status.as_u16(),
+                detail: self.to_string(),
+            }),
+        )
+            .into_response()
     }
 }
 type ResponseResult<T> = std::result::Result<T, HttpError>;
@@ -89,27 +105,6 @@ fn revision(headers: &HeaderMap) -> ResponseResult<i64> {
         .filter(|v| *v > 0)
         .ok_or(Error::Invalid("invalid If-Match revision").into())
 }
-fn image_view(image: Image, actor: &str) -> Value {
-    let visibility = if image.visibility == ImageVisibility::Public {
-        "public"
-    } else if image.owner == actor {
-        "private"
-    } else {
-        "shared"
-    };
-    let shares = if image.owner == actor {
-        image.shares
-    } else {
-        vec![]
-    };
-    json!({"id":image.id,"owner":image.owner,"name":image.spec.name,"description":image.spec.description,"shares":shares,"visibility":visibility,"retired":image.retired,"revision":image.revision,"created_at_ms":image.created_at_ms})
-}
-fn build_view(build: Build) -> Value {
-    json!({"id":build.id,"image_id":build.image_id,"source":build.source,"phase":build.phase,"error":build.error,"revision":build.revision,"reference":build.reference(),"digest":build.digest,"created_at_ms":build.created_at_ms,"updated_at_ms":build.updated_at_ms})
-}
-fn version_view(build: Build) -> Value {
-    json!({"id":build.id,"image_id":build.image_id,"phase":build.phase,"reference":build.reference(),"digest":build.digest,"created_at_ms":build.created_at_ms})
-}
 #[derive(Default, Deserialize)]
 struct Page {
     #[serde(default)]
@@ -118,9 +113,9 @@ struct Page {
     scope: ImageScopeParam,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
-enum ImageScopeParam {
+pub(crate) enum ImageScopeParam {
     Private,
     Owned,
     Shared,
@@ -140,214 +135,278 @@ impl From<ImageScopeParam> for crate::store::ImageListScope {
         }
     }
 }
-fn paginated<T>(mut items: Vec<T>, id: impl Fn(&T) -> &str, view: impl Fn(T) -> Value) -> Value {
+fn paginated<T, V>(
+    mut items: Vec<T>,
+    id: impl Fn(&T) -> &str,
+    view: impl Fn(T) -> V,
+) -> PageView<V> {
     let more = items.len() > 100;
     items.truncate(100);
-    let next = if more {
+    let next_cursor = if more {
         items.last().map(|x| id(x).to_owned())
     } else {
         None
     };
-    json!({"items":items.into_iter().map(view).collect::<Vec<_>>(),"next_cursor":next})
+    PageView {
+        items: items.into_iter().map(view).collect(),
+        next_cursor,
+    }
 }
 async fn ready(State(a): State<Arc<App>>) -> ResponseResult<&'static str> {
     a.store.ping().await?;
     Ok("ok")
 }
-async fn permissions(State(a): State<Arc<App>>, h: HeaderMap) -> ResponseResult<Json<Value>> {
+#[utoipa::path(get, path = "/v1/permissions", operation_id = "image_manager_permissions", tag = "permissions",
+    responses((status = 200, body = PermissionsView)))]
+async fn permissions(
+    State(a): State<Arc<App>>,
+    h: HeaderMap,
+) -> ResponseResult<Json<PermissionsView>> {
     let actor = a.auth.authenticate(&h).await?;
-    Ok(Json(
-        json!({"subject":actor.subject,"permissions":actor.permissions,"roles":p::ROLES}),
-    ))
+    Ok(Json(PermissionsView {
+        subject: actor.subject,
+        permissions: actor.permissions,
+        roles: p::ROLES,
+    }))
 }
+#[utoipa::path(get, path = "/v1/images", operation_id = "image_manager_list", tag = "images",
+    params(("after" = Option<String>, Query), ("scope" = Option<ImageScopeParam>, Query)),
+    responses((status = 200, body = PageView<ImageView>)))]
 async fn list(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Query(q): Query<Page>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<PageView<ImageView>>> {
     let u = actor(&a, &h, p::READ).await?;
     let scope = q.scope.into();
     Ok(Json(paginated(
         a.store.list_images(&u.subject, &q.after, scope).await?,
         |i| &i.id,
-        |image| image_view(image, &u.subject),
+        |image| ImageView::new(image, &u.subject),
     )))
 }
+#[utoipa::path(post, path = "/v1/images", operation_id = "image_manager_create", tag = "images",
+    params(("Idempotency-Key" = String, Header)),
+    request_body = CreateImage,
+    responses((status = 201, body = ImageView)))]
 async fn create(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Json(input): Json<CreateImage>,
-) -> ResponseResult<(StatusCode, Json<Value>)> {
+) -> ResponseResult<(StatusCode, Json<ImageView>)> {
     let u = actor(&a, &h, p::CREATE).await?;
     Ok((
         StatusCode::CREATED,
-        Json(image_view(
+        Json(ImageView::new(
             a.store.create_image(&u.subject, key(&h)?, input).await?,
             &u.subject,
         )),
     ))
 }
+#[utoipa::path(get, path = "/v1/images/{id}", operation_id = "image_manager_read", tag = "images",
+    params(("id" = String, Path)),
+    responses((status = 200, body = ImageView)))]
 async fn read(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path(id): Path<String>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<ImageView>> {
     let u = actor(&a, &h, p::READ).await?;
-    Ok(Json(image_view(
+    Ok(Json(ImageView::new(
         a.store.image(&u.subject, &id, false).await?,
         &u.subject,
     )))
 }
+#[utoipa::path(patch, path = "/v1/images/{id}", operation_id = "image_manager_edit", tag = "images",
+    params(("id" = String, Path), ("If-Match" = String, Header)),
+    request_body = CreateImage,
+    responses((status = 200, body = ImageView)))]
 async fn edit(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<CreateImage>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<ImageView>> {
     let u = actor(&a, &h, p::CONTROL).await?;
-    Ok(Json(image_view(
+    Ok(Json(ImageView::new(
         a.store
             .update_image(&u.subject, &id, revision(&h)?, input)
             .await?,
         &u.subject,
     )))
 }
+#[utoipa::path(delete, path = "/v1/images/{id}", operation_id = "image_manager_retire", tag = "images",
+    params(("id" = String, Path), ("If-Match" = String, Header)),
+    responses((status = 200, body = ImageView)))]
 async fn retire(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path(id): Path<String>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<ImageView>> {
     let u = actor(&a, &h, p::DELETE).await?;
-    Ok(Json(image_view(
+    Ok(Json(ImageView::new(
         a.store.retire(&u.subject, &id, revision(&h)?).await?,
         &u.subject,
     )))
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 struct SetVisibility {
     visibility: ImageVisibility,
 }
+#[utoipa::path(put, path = "/v1/images/{id}/visibility", operation_id = "image_manager_visibility", tag = "images",
+    params(("id" = String, Path), ("If-Match" = String, Header)),
+    request_body = SetVisibility,
+    responses((status = 200, body = ImageView)))]
 async fn visibility(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<SetVisibility>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<ImageView>> {
     let u = actor(&a, &h, p::SHARE).await?;
-    Ok(Json(image_view(
+    Ok(Json(ImageView::new(
         a.store
             .set_visibility(&u.subject, &id, revision(&h)?, input.visibility)
             .await?,
         &u.subject,
     )))
 }
+#[utoipa::path(put, path = "/v1/images/{id}/shares/{subject}", operation_id = "image_manager_share", tag = "images",
+    params(("id" = String, Path), ("subject" = String, Path), ("If-Match" = String, Header)),
+    responses((status = 200, body = ImageView)))]
 async fn share(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path((id, subject)): Path<(String, String)>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<ImageView>> {
     let u = actor(&a, &h, p::SHARE).await?;
-    Ok(Json(image_view(
+    Ok(Json(ImageView::new(
         a.store
             .share(&u.subject, &id, revision(&h)?, &subject, true)
             .await?,
         &u.subject,
     )))
 }
+#[utoipa::path(delete, path = "/v1/images/{id}/shares/{subject}", operation_id = "image_manager_unshare", tag = "images",
+    params(("id" = String, Path), ("subject" = String, Path), ("If-Match" = String, Header)),
+    responses((status = 200, body = ImageView)))]
 async fn unshare(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path((id, subject)): Path<(String, String)>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<ImageView>> {
     let u = actor(&a, &h, p::SHARE).await?;
-    Ok(Json(image_view(
+    Ok(Json(ImageView::new(
         a.store
             .share(&u.subject, &id, revision(&h)?, &subject, false)
             .await?,
         &u.subject,
     )))
 }
+#[utoipa::path(post, path = "/v1/images/{id}/builds", operation_id = "image_manager_build", tag = "builds",
+    params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = BuildInput,
+    responses((status = 202, body = BuildView)))]
 async fn build(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<BuildInput>,
-) -> ResponseResult<(StatusCode, Json<Value>)> {
+) -> ResponseResult<(StatusCode, Json<BuildView>)> {
     let u = actor(&a, &h, p::BUILD).await?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(build_view(
+        Json(BuildView::from(
             a.store
                 .create_build(&u.subject, &id, key(&h)?, input)
                 .await?,
         )),
     ))
 }
+#[utoipa::path(get, path = "/v1/images/{id}/builds", operation_id = "image_manager_builds", tag = "builds",
+    params(("id" = String, Path), ("after" = Option<String>, Query)),
+    responses((status = 200, body = PageView<BuildView>)))]
 async fn builds(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path(id): Path<String>,
     Query(q): Query<Page>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<PageView<BuildView>>> {
     let u = actor(&a, &h, p::BUILD_READ).await?;
     Ok(Json(paginated(
         a.store
             .image_builds(&u.subject, &id, false, &q.after)
             .await?,
         |b| &b.id,
-        build_view,
+        BuildView::from,
     )))
 }
+#[utoipa::path(get, path = "/v1/images/{id}/versions", operation_id = "image_manager_versions", tag = "versions",
+    params(("id" = String, Path), ("after" = Option<String>, Query)),
+    responses((status = 200, body = PageView<VersionView>)))]
 async fn versions(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path(id): Path<String>,
     Query(q): Query<Page>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<PageView<VersionView>>> {
     let u = actor(&a, &h, p::READ).await?;
     Ok(Json(paginated(
         a.store
             .image_builds(&u.subject, &id, true, &q.after)
             .await?,
         |b| &b.id,
-        version_view,
+        VersionView::from,
     )))
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 struct Resolve {
     version: String,
 }
+#[utoipa::path(post, path = "/v1/images/{id}/resolve", operation_id = "image_manager_resolve", tag = "versions",
+    params(("id" = String, Path)),
+    request_body = Resolve,
+    responses((status = 200, body = VersionView)))]
 async fn resolve(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<Resolve>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<VersionView>> {
     let u = actor(&a, &h, p::USE).await?;
-    Ok(Json(version_view(
+    Ok(Json(VersionView::from(
         a.store.resolve(&u.subject, &id, &input.version).await?,
     )))
 }
+#[utoipa::path(get, path = "/v1/images/{id}/versions/{version}", operation_id = "image_manager_version", tag = "versions",
+    params(("id" = String, Path), ("version" = String, Path)),
+    responses((status = 200, body = VersionView)))]
 async fn version(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path((id, version)): Path<(String, String)>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<VersionView>> {
     let u = actor(&a, &h, p::READ).await?;
-    Ok(Json(version_view(
+    Ok(Json(VersionView::from(
         a.store.version(&u.subject, &id, &version).await?,
     )))
 }
+#[utoipa::path(get, path = "/v1/builds/{id}", operation_id = "image_manager_build_read", tag = "builds",
+    params(("id" = String, Path)),
+    responses((status = 200, body = BuildView)))]
 async fn build_read(
     State(a): State<Arc<App>>,
     h: HeaderMap,
     Path(id): Path<String>,
-) -> ResponseResult<Json<Value>> {
+) -> ResponseResult<Json<BuildView>> {
     let u = actor(&a, &h, p::BUILD_READ).await?;
-    Ok(Json(build_view(a.store.build(&u.subject, &id).await?)))
+    Ok(Json(BuildView::from(a.store.build(&u.subject, &id).await?)))
 }
+#[utoipa::path(get, path = "/v1/builds/{id}/logs", operation_id = "image_manager_logs", tag = "builds",
+    params(("id" = String, Path)),
+    responses((status = 200, body = Value)))]
 async fn logs(
     State(a): State<Arc<App>>,
     h: HeaderMap,

@@ -20,9 +20,18 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
     let request = serde_json::from_value(serde_json::json!({"name":"Test Agent"})).unwrap();
     let input = LifecycleInput {
         behavior: LifecycleBehavior::PromptRepository,
+        managed_agent_instructions: None,
+        setup_message: None,
         request,
         resolved_image: None,
-        capacity: Some(SandboxCapacity::default()),
+        capacity: Some(SandboxCapacity {
+            cpu_millis: 2000,
+            memory_mib: 4096,
+        }),
+        sandbox_availability: layer2_core::profiles::SandboxProfileAvailability {
+            always_keep_alive: true,
+            ..Default::default()
+        },
         capabilities: vec![],
         actor: None,
     };
@@ -35,6 +44,7 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
         input.captured_capacity(bounds()),
         input.captured_limits(),
         input.behavior,
+        input.sandbox_availability,
     )
     .await
     .unwrap();
@@ -48,20 +58,24 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
             materialized.content.cpu_millis,
             materialized.content.memory_mib
         ),
-        (1000, 1024)
+        (2000, 4096)
     );
     assert_eq!(materialized.content.max_workspaces, 16);
     assert_eq!(materialized.content.max_agents_per_workspace, 16);
+    let created = store.sandbox_profile(&first.id).await.unwrap().unwrap();
+    assert!(created.internal);
+    assert!(created.availability.always_keep_alive);
+    assert!(!created.availability.warmup_enabled);
     let resumed: LifecycleInput =
         serde_json::from_slice(&serde_json::to_vec(&input).unwrap()).unwrap();
     let changed_bounds = ProfileCapacityBounds {
-        min_cpu_millis: 2000,
-        min_memory_mib: 4096,
+        min_cpu_millis: 3000,
+        min_memory_mib: 8192,
         ..bounds()
     };
     assert_eq!(
         resumed.captured_capacity(changed_bounds),
-        SandboxCapacity::default()
+        input.capacity.unwrap()
     );
     let (_, _, replayed) = create_profiles(
         &profiles,
@@ -72,10 +86,91 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
         resumed.captured_capacity(changed_bounds),
         resumed.captured_limits(),
         resumed.behavior,
+        resumed.sandbox_availability,
     )
     .await
     .unwrap();
     assert_eq!(replayed, first);
+    assert_eq!(
+        store.sandbox_profile(&first.id).await.unwrap().unwrap(),
+        created
+    );
+}
+
+#[tokio::test]
+async fn retained_inline_profile_keeps_its_capacity_and_inactivity_policy_after_new_creation() {
+    let store = Arc::new(InMemoryProfileStore::default());
+    let profiles =
+        PrivateProfileCreationService::new(store.clone(), bounds(), Arc::new([] as [String; 0]));
+    let caller = Caller::new(SubjectId::new("owner"), Authorization::new([]));
+    let old: LifecycleInput = serde_json::from_value(json!({
+        "behavior":"prompt_repository",
+        "request":{"name":"Retained Agent"},
+        "resolved_image":null,
+        "capacity":{"cpu_millis":1000,"memory_mib":1024}
+    }))
+    .unwrap();
+    assert!(!old.sandbox_availability.always_keep_alive);
+    let materialize = |key: &'static str, capacity, availability| {
+        create_profiles(
+            &profiles,
+            &caller,
+            &old.request,
+            None,
+            key,
+            capacity,
+            old.captured_limits(),
+            old.behavior,
+            availability,
+        )
+    };
+    let (_, _, original) = materialize(
+        "old",
+        old.captured_capacity(bounds()),
+        old.sandbox_availability,
+    )
+    .await
+    .unwrap();
+    let retained = store.sandbox_profile(&original.id).await.unwrap().unwrap();
+    assert_eq!(
+        (retained.draft.cpu_millis, retained.draft.memory_mib),
+        (1000, 1024)
+    );
+    let (_, _, new) = materialize(
+        "new",
+        SandboxCapacity {
+            cpu_millis: 2000,
+            memory_mib: 4096,
+        },
+        layer2_core::profiles::SandboxProfileAvailability {
+            always_keep_alive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_ne!(original.id, new.id);
+    assert!(
+        store
+            .sandbox_profile(&new.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .availability
+            .always_keep_alive
+    );
+    let (_, _, replayed) = materialize(
+        "old",
+        old.captured_capacity(bounds()),
+        old.sandbox_availability,
+    )
+    .await
+    .unwrap();
+    assert_eq!(original, replayed);
+    assert_eq!(
+        store.sandbox_profile(&original.id).await.unwrap().unwrap(),
+        retained
+    );
 }
 
 #[tokio::test]
@@ -89,6 +184,7 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
     }))
     .unwrap();
     assert!(input.capacity.is_none());
+    assert!(!input.sandbox_availability.always_keep_alive);
     assert_eq!(input.behavior, LifecycleBehavior::Legacy);
     let (_, workspace, original) = create_profiles(
         &profiles,
@@ -102,6 +198,7 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
         },
         input.captured_limits(),
         input.behavior,
+        input.sandbox_availability,
     )
     .await
     .unwrap();
@@ -124,10 +221,20 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
         input.captured_capacity(bounds()),
         input.captured_limits(),
         input.behavior,
+        input.sandbox_availability,
     )
     .await
     .unwrap();
     assert_eq!(original, replayed);
+    assert!(
+        !store
+            .sandbox_profile(&original.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .availability
+            .always_keep_alive
+    );
     let retained = store
         .sandbox_profile_revision(&original.id, original.revision)
         .await
@@ -161,6 +268,7 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
             max_agents_per_workspace: 16,
         },
         LifecycleBehavior::PromptRepository,
+        Default::default(),
     )
     .await
     .unwrap();
@@ -197,13 +305,93 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
             .map(layer2_core::ServiceId::new)
             .collect::<Vec<_>>()
     );
-    let prompt = validation::first_message(&request);
+    let prompt = validation::setup_message(&request);
     assert!(prompt.contains("https://github.com/org/project"));
     assert!(prompt.contains("feature/setup"));
-    let repeated = validation::first_message(
+    assert!(prompt.contains("use gh api through CMA's api-github"));
+    assert!(prompt.contains("Honor the requested ref; when absent, read default_branch"));
+    assert!(prompt.contains("pin the returned commit SHA"));
+    assert!(prompt.contains("Download /repos/{owner}/{repo}/tarball/{sha} with gh api"));
+    assert!(prompt.contains("preserve existing files, local changes and .git metadata"));
+    assert!(prompt.contains("request api-github through agent_key_scope_revision"));
+    assert!(!prompt.contains("api-github-pat"));
+    assert!(prompt.contains("Use API source checkout instead of gh repo clone"));
+    assert!(prompt.contains("no Sandbox restart is needed"));
+    assert!(prompt.contains("Do not ask the user to paste a secret"));
+    let repeated = validation::setup_message(
         &serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap(),
     );
     assert_eq!(repeated, prompt);
+}
+
+#[test]
+fn empty_workspace_setup_waits_for_user_tasks_without_optional_access_requests() {
+    for context in [
+        json!({}),
+        json!({"workspace_id":"existing"}),
+        json!({"sandbox_id":"existing"}),
+    ] {
+        let mut request = json!({"name":"Empty workspace"});
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(context.as_object().unwrap().clone());
+        let request = serde_json::from_value(request).unwrap();
+        let prompt = validation::setup_message(&request);
+        assert!(prompt.contains("Preserve existing files and changes"));
+        assert!(prompt.contains("local workspace readiness only"));
+        assert!(prompt.contains("no repository or external-service task has been requested"));
+        assert!(prompt.contains("Do not probe GitHub or other optional services, or request access merely for readiness"));
+        assert!(prompt.contains("wait for the user's next task"));
+        assert!(!prompt.contains("agent_key_scope_revision"));
+        assert!(!prompt.contains("The user selected this GitHub repository"));
+        // Later user-requested GitHub work still has the fixed API/MCP guidance.
+        let profile = guidance::provisioning_request(&request, Some(guidance::managed_v2()));
+        let instructions = profile.profile.unwrap().system_prompt.unwrap();
+        assert!(instructions.contains("POST /user/repos or /orgs/{org}/repos"));
+        assert!(instructions.contains("agent_key_scope_revision"));
+        assert!(instructions.contains("tarball/{sha}"));
+    }
+}
+
+#[test]
+fn admitted_setup_replays_exact_captured_message_and_legacy_fallback() {
+    for repository in [
+        json!(null),
+        json!({"url":"https://github.com/org/project","ref":"feature/setup"}),
+    ] {
+        for instructions in [
+            None,
+            Some(guidance::GITHUB_API_V1),
+            Some(guidance::managed_v2()),
+        ] {
+            let mut old: LifecycleInput = serde_json::from_value(json!({
+                "behavior":"prompt_repository", "managed_agent_instructions":instructions,
+                "request":{"name":"Admitted", "repository":repository}, "resolved_image":null
+            }))
+            .unwrap();
+            assert!(old.setup_message.is_none());
+            let original = validation::first_message(&old.request);
+            assert_eq!(
+                validation::admitted_first_message(&old),
+                Some(original.clone())
+            );
+            // Exact admitted bytes win over a later deployment's prompt builder.
+            old.setup_message = Some("Original admitted setup\nRetain these bytes.\n".into());
+            let restored: LifecycleInput =
+                serde_json::from_slice(&serde_json::to_vec(&old).unwrap()).unwrap();
+            assert_eq!(
+                validation::admitted_first_message(&restored),
+                old.setup_message
+            );
+            assert_ne!(
+                validation::admitted_first_message(&restored),
+                Some(original)
+            );
+            old.behavior = LifecycleBehavior::Legacy;
+            assert_eq!(validation::admitted_first_message(&old), None);
+        }
+    }
 }
 
 #[test]

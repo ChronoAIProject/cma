@@ -17,6 +17,7 @@ fn claim_time() -> SystemTime {
 fn completed_turn(owner: &str, assistant: &str, sequence: u64) -> Vec<AgentLogKind> {
     vec![
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: sequence,
             origin_key: None,
         },

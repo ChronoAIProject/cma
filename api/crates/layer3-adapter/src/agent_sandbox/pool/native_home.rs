@@ -6,7 +6,7 @@ use super::{
 use crate::{HomeVolumeAttachment, HomeVolumeReceipt};
 use k8s_openapi::api::core::v1::PersistentVolumeClaim;
 use kube::{
-    api::{Patch, PatchParams},
+    api::{DynamicObject, Patch, PatchParams},
     ResourceExt,
 };
 use serde_json::json;
@@ -17,27 +17,77 @@ pub(super) enum NativeHomeAdoption {
     Pending(Box<NativePoolHomeOrigin>),
 }
 
+struct NativeHomeRead {
+    current: NativePoolClaim,
+    claim: DynamicObject,
+    member: DynamicObject,
+    origin: NativePoolHomeOrigin,
+}
+
 impl AgentSandboxPools {
     pub(super) async fn adopt_native_vct(
         &self,
         original: &NativePoolClaim,
     ) -> Result<NativeHomeAdoption> {
-        let current = self.observe_claim(original).await?;
+        // Only the read/validation portion may overlap policy. Both must finish
+        // before the original ordered, UID/resourceVersion-fenced publications.
+        let (policy, observed) = tokio::join!(
+            self.verify_explicit_template_policy(&original.request.pool),
+            self.read_native_adoption(original),
+        );
+        policy?;
+        let NativeHomeRead {
+            current,
+            claim,
+            member,
+            origin,
+        } = observed?;
+        let name = current
+            .sandbox_name
+            .as_deref()
+            .expect("validated assignment");
+        let encoded =
+            serde_json::to_string(&origin).map_err(|_| rejected("invalid native VCT authority"))?;
+        if claim.annotations().get(NATIVE_HOME_ANNOTATION) != Some(&encoded) {
+            let updated = self.claims.patch(&current.name, &PatchParams::default(), &Patch::Merge(json!({
+                "metadata":{"uid":claim.uid(),"resourceVersion":claim.resource_version(),"annotations":{NATIVE_HOME_ANNOTATION:&encoded}}
+            }))).await.map_err(api_error)?;
+            if updated.uid() != claim.uid()
+                || updated.annotations().get(NATIVE_HOME_ANNOTATION) != Some(&encoded)
+            {
+                return Err(rejected(
+                    "native claim did not retain original home authority",
+                ));
+            }
+        }
+        if member.annotations().get(NATIVE_HOME_ANNOTATION) != Some(&encoded) {
+            let updated = self.members.patch(name, &PatchParams::default(), &Patch::Merge(json!({
+                "metadata":{"uid":member.uid(),"resourceVersion":member.resource_version(),"annotations":{NATIVE_HOME_ANNOTATION:&encoded}}
+            }))).await.map_err(api_error)?;
+            self.member_owned(&updated, &current)?;
+            if updated.uid() != member.uid() || !self.member_spec(&updated, &origin, false)? {
+                return Err(rejected(
+                    "native Sandbox did not retain original home authority",
+                ));
+            }
+        }
+        self.observe_native_home(&origin).await
+    }
+
+    async fn read_native_adoption(&self, original: &NativePoolClaim) -> Result<NativeHomeRead> {
+        let (current, claim) = self.observe_claim_resource(original).await?;
         let name = current
             .sandbox_name
             .as_deref()
             .ok_or_else(|| unavailable("native claim has no assigned Sandbox"))?;
-        let claim = self.claims.get(&current.name).await.map_err(api_error)?;
-        if claim.uid().as_deref() != Some(&original.uid) {
-            return Err(rejected("native claim UID changed"));
-        }
-        let member = self.members.get(name).await.map_err(api_error)?;
+        let volume_name = format!("home-{name}");
+        // Only validated Claim assignment supplies these names. Retain this
+        // Claim's resourceVersion for publication and member-before-PVC errors.
+        let (member, volume) =
+            tokio::join!(self.members.get(name), self.volumes.get(&volume_name),);
+        let member = member.map_err(api_error)?;
         self.member_owned(&member, &current)?;
-        let volume = self
-            .volumes
-            .get(&format!("home-{name}"))
-            .await
-            .map_err(api_error)?;
+        let volume = volume.map_err(api_error)?;
         let origin = if let Some(encoded) = claim.annotations().get(NATIVE_HOME_ANNOTATION) {
             serde_json::from_str::<NativePoolHomeOrigin>(encoded)
                 .map_err(|_| rejected("invalid native VCT authority"))?
@@ -65,32 +115,12 @@ impl AgentSandboxPools {
         }
         self.member_spec(&member, &origin, false)?;
         self.validate_native_volume(&volume, &origin)?;
-        let encoded =
-            serde_json::to_string(&origin).map_err(|_| rejected("invalid native VCT authority"))?;
-        if claim.annotations().get(NATIVE_HOME_ANNOTATION) != Some(&encoded) {
-            let updated = self.claims.patch(&current.name, &PatchParams::default(), &Patch::Merge(json!({
-                "metadata":{"uid":claim.uid(),"resourceVersion":claim.resource_version(),"annotations":{NATIVE_HOME_ANNOTATION:&encoded}}
-            }))).await.map_err(api_error)?;
-            if updated.uid() != claim.uid()
-                || updated.annotations().get(NATIVE_HOME_ANNOTATION) != Some(&encoded)
-            {
-                return Err(rejected(
-                    "native claim did not retain original home authority",
-                ));
-            }
-        }
-        if member.annotations().get(NATIVE_HOME_ANNOTATION) != Some(&encoded) {
-            let updated = self.members.patch(name, &PatchParams::default(), &Patch::Merge(json!({
-                "metadata":{"uid":member.uid(),"resourceVersion":member.resource_version(),"annotations":{NATIVE_HOME_ANNOTATION:&encoded}}
-            }))).await.map_err(api_error)?;
-            self.member_owned(&updated, &current)?;
-            if updated.uid() != member.uid() || !self.member_spec(&updated, &origin, false)? {
-                return Err(rejected(
-                    "native Sandbox did not retain original home authority",
-                ));
-            }
-        }
-        self.observe_native_home(&origin).await
+        Ok(NativeHomeRead {
+            current,
+            claim,
+            member,
+            origin,
+        })
     }
 
     pub(super) async fn wait_native_home(
@@ -240,75 +270,6 @@ impl AgentSandboxPools {
             ));
         }
         Ok(())
-    }
-
-    pub(super) async fn recover_native_vct(
-        &self,
-        original: &NativePoolClaim,
-    ) -> Result<Option<HomeVolumeAttachment>> {
-        let desired = model::claim(&self.config, &original.request)?;
-        if original.name != desired.name_any() {
-            return Err(rejected("native claim receipt is invalid"));
-        }
-        let Some(claim) = self
-            .claims
-            .get_opt(&original.name)
-            .await
-            .map_err(api_error)?
-        else {
-            return Ok(None);
-        };
-        if claim.metadata.deletion_timestamp.is_some() {
-            return Ok(None);
-        }
-        super::claims::verify_claim(&claim, &desired)?;
-        if claim.uid().as_deref() != Some(&original.uid) {
-            return Err(rejected("native claim UID changed"));
-        }
-        let Some(encoded) = claim.annotations().get(NATIVE_HOME_ANNOTATION) else {
-            return Ok(None);
-        };
-        let origin: NativePoolHomeOrigin =
-            serde_json::from_str(encoded).map_err(|_| rejected("invalid native VCT authority"))?;
-        if origin.claim.request != original.request
-            || origin.claim.uid != original.uid
-            || original
-                .sandbox_name
-                .as_ref()
-                .is_some_and(|name| origin.claim.sandbox_name.as_ref() != Some(name))
-        {
-            return Err(rejected("native home belongs to another claim"));
-        }
-        let name = origin
-            .claim
-            .sandbox_name
-            .as_deref()
-            .ok_or_else(|| rejected("native Sandbox missing"))?;
-        // Both names come from the original Claim authority. Read concurrently,
-        // but retain member-first validation and error precedence below.
-        let (member, volume) = tokio::join!(self.members.get_opt(name), async {
-            self.volumes
-                .get_opt(&origin.storage_reference()?)
-                .await
-                .map_err(api_error)
-        });
-        let Some(member) = member.map_err(api_error)? else {
-            return Ok(None);
-        };
-        if member.metadata.deletion_timestamp.is_some() {
-            return Ok(None);
-        }
-        self.member_owned(&member, &origin.claim)?;
-        if !self.member_spec(&member, &origin, false)? {
-            return Ok(None);
-        }
-        let Some(volume) = volume? else {
-            return Ok(None);
-        };
-        if volume.metadata.deletion_timestamp.is_some() {
-            return Ok(None);
-        }
-        self.native_attachment(&origin, &volume).map(Some)
     }
 
     pub(crate) async fn volume_origin(

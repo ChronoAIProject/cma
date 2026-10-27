@@ -17,6 +17,8 @@ mod attachment_transformer;
 mod attachments;
 #[path = "tools/attachments_mcp.rs"]
 mod attachments_mcp;
+#[path = "tools/complete_budget.rs"]
+mod complete_budget;
 #[path = "tools/consumer_auth.rs"]
 mod consumer_auth;
 #[path = "tools/consumer_context.rs"]
@@ -35,6 +37,8 @@ mod media_downloads;
 mod media_links;
 #[path = "tools/media_support.rs"]
 pub mod media_support;
+#[path = "tools/native_discord_edits.rs"]
+mod native_discord_edits;
 #[path = "relay/support.rs"]
 pub mod relay_support;
 #[path = "tools/rest.rs"]
@@ -47,3 +51,10 @@ mod rpc;
 pub mod signer;
 #[path = "tools/support.rs"]
 mod support;
+#[path = "tools/whatsapp_template_budget.rs"]
+mod whatsapp_template_budget;
+#[path = "tools/whatsapp_templates.rs"]
+mod whatsapp_templates;
+
+#[path = "tools/reply_idempotency.rs"]
+mod reply_idempotency;

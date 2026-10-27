@@ -5,6 +5,12 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[path = "pod_read_tests.rs"]
+mod pod_read_tests;
+
+#[path = "observation_tests.rs"]
+mod observation_tests;
+
 struct Fixture {
     client: AgentSandboxClient,
     calls: Arc<Mutex<Vec<(String, Value)>>>,
@@ -270,7 +276,7 @@ async fn warm_member_pod_discovery_requires_tracking_label_and_exact_owner_witho
         if case == "incomplete" {
             candidates["metadata"]["continue"] = json!("next");
         }
-        let fixture = Fixture::start(vec![(200, object.clone()), (200, candidates)]).await;
+        let fixture = pod_read_tests::Reads::new((200, object.clone()), (200, candidates));
         let result = fixture.client.pod_binding(&handle).await;
         assert_eq!(result.is_ok(), case == "warm", "{case}");
         if let Ok(binding) = result {
@@ -281,7 +287,10 @@ async fn warm_member_pod_discovery_requires_tracking_label_and_exact_owner_witho
         assert_eq!(calls.len(), 2);
         let query = reqwest::Url::parse(&format!(
             "http://fixture{}",
-            calls[1].0.split_whitespace().nth(1).unwrap()
+            calls
+                .iter()
+                .find(|uri| uri.path().ends_with("/pods"))
+                .unwrap()
         ))
         .unwrap();
         assert_eq!(
@@ -355,9 +364,9 @@ async fn stale_ready_condition_cannot_bind_a_pod() {
         "agent-sandbox:{}:sandbox-uid",
         object["metadata"]["name"].as_str().unwrap()
     ));
-    let fixture = Fixture::start(vec![(200, object)]).await;
+    let fixture = pod_read_tests::Reads::new((200, object), (200, list("PodList")));
     assert!(fixture.client.pod_binding(&handle).await.is_err());
-    assert_eq!(fixture.calls.lock().unwrap().len(), 1);
+    assert_eq!(fixture.calls.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]

@@ -174,6 +174,9 @@ async fn ordinary_native_reply_edit_typing_and_restart_use_sealed_original_chat(
                 channel: request.channel.clone(),
                 event: event.clone(),
                 message: OutboundMessage {
+                    whatsapp_template: None,
+                    native_attachments: Vec::new(),
+                    thread_reply: false,
                     text: Some("ordinary response".into()),
                     blocks: vec![],
                     reply_to: None,
@@ -199,6 +202,9 @@ async fn ordinary_native_reply_edit_typing_and_restart_use_sealed_original_chat(
                 channel: request.channel.clone(),
                 message_ref: reference,
                 message: OutboundMessage {
+                    whatsapp_template: None,
+                    native_attachments: Vec::new(),
+                    thread_reply: false,
                     text: Some("edited response".into()),
                     blocks: vec![],
                     reply_to: None,

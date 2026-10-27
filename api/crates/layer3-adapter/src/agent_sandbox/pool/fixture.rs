@@ -17,6 +17,7 @@ pub(super) struct State {
     pub list_queries: Vec<String>,
     pub assignments: Vec<crate::runtime_bootstrap::RuntimeBootstrapRequest>,
     pub fail_exec: bool,
+    pub exec_mutations: Vec<(String, String, Value)>,
     pub native_annotation_generation: bool,
     version: u64,
 }
@@ -146,7 +147,12 @@ impl Fixture {
     }
 }
 
-fn respond(state: &Mutex<State>, method: &str, path: &str, body: Value) -> (u16, Value, bool) {
+pub(super) fn respond(
+    state: &Mutex<State>,
+    method: &str,
+    path: &str,
+    body: Value,
+) -> (u16, Value, bool) {
     let mut state = state.lock().unwrap();
     let url = reqwest::Url::parse(&format!("http://fixture{path}")).unwrap();
     let path = url.path();
@@ -345,6 +351,13 @@ fn respond(state: &Mutex<State>, method: &str, path: &str, body: Value) -> (u16,
             );
             if path.starts_with(prefix()) {
                 assert_eq!(body["propagationPolicy"], "Foreground");
+            }
+            if let Some(index) = state.conflict.iter().position(|pending| pending == &call) {
+                state.conflict.remove(index);
+                state.version += 1;
+                let version = state.version.to_string();
+                state.rows.get_mut(path).unwrap()["metadata"]["resourceVersion"] = json!(version);
+                return (409, conflict, false);
             }
             state.rows.remove(path);
             (200, success)

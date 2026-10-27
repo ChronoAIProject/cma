@@ -67,6 +67,7 @@ pub async fn expand_create(
     };
     if !request.sources.is_empty()
         || request.credentials.telegram_bot_token.is_some()
+        || request.credentials.discord_bot_token.is_some()
         || request.credentials.telegram_webhook_secret.is_some()
     {
         return Err(invalid(
@@ -125,7 +126,9 @@ pub async fn expand_update(
         return Err(invalid("connection_ref replaces platform sources"));
     }
     if request.credentials.as_ref().is_some_and(|patch| {
-        patch.telegram_bot_token.is_some() || patch.telegram_webhook_secret.is_some()
+        patch.telegram_bot_token.is_some()
+            || patch.discord_bot_token.is_some()
+            || patch.telegram_webhook_secret.is_some()
     }) {
         return Err(invalid("connection credentials are managed by the gateway"));
     }
@@ -176,13 +179,19 @@ pub async fn activate(
         if telegram.get_me(&token).await.map_err(|_| failed())?.id != material.bot_id {
             return Err(invalid("platform credential identity changed"));
         }
-        let expected = format!("{}/v1/telegram/{channel_id}", state.public_url);
+        let expected = format!("{}/v1/telegram/{channel_id}", state.advertised_api_url());
+        let canonical = format!("{}/v1/telegram/{channel_id}", state.public_api_url);
         let current = telegram.get_webhook_url(&token).await.map_err(|_| failed())?;
-        if !current.is_empty() && current != expected {
+        let legacy = format!("{}/v1/telegram/{channel_id}", state.public_url);
+        if !current.is_empty() && current != canonical && current != legacy {
             return Err(invalid("this bot already has a webhook; disconnect its previous integration before linking it"));
         }
         if !webhook::may_activate(state, id, channel_id.as_str(), &lease).await.map_err(error)? {
             return Err(error(Error::Conflict));
+        }
+        // Existing valid webhook secrets and URLs remain installed across domain migration.
+        if !current.is_empty() && current != expected {
+            return Ok(());
         }
         mutation_started = true;
         telegram.set_webhook(&token, &expected, &Secret::new(material.webhook_secret.clone()))

@@ -68,6 +68,7 @@ fn sandbox(id: &str, owner: &str) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 0,
             delivered: false,
@@ -181,6 +182,9 @@ fn agent(
         ]),
         status,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
             settings: None,
             conversation_id: None,
             runtime_generation: None,
@@ -680,6 +684,7 @@ async fn transcript_reconstructs_completed_and_active_turns() {
                 runtime_generation: 1,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("manual".into()),
             },
@@ -694,6 +699,7 @@ async fn transcript_reconstructs_completed_and_active_turns() {
             },
             AgentLogKind::TurnCompleted { turn_sequence: 3 },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 8,
                 origin_key: None,
             },
@@ -833,6 +839,7 @@ fn steering_history() -> Vec<AgentLogKind> {
             runtime_generation: 1,
         },
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 3,
             origin_key: None,
         },
@@ -1040,6 +1047,7 @@ async fn transcript_reconstructs_queue_input_across_a_pre_write_retry() {
                 state: AgentOperationDelivery::DispatchFenced,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 5,
                 origin_key: Some(queued_message_origin(3)),
             },
@@ -1069,6 +1077,7 @@ async fn transcript_reconstructs_queue_input_across_a_pre_write_retry() {
                 state: AgentOperationDelivery::DispatchFenced,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 11,
                 origin_key: Some(queued_message_origin(3)),
             },
@@ -1200,6 +1209,7 @@ async fn usage_takes_generation_peaks_preserves_context_and_saturates() {
     assert_eq!(
         reading.usage,
         AgentUsage {
+            current_turn: None,
             input_tokens: u64::MAX,
             output_tokens: u64::MAX,
             context_used: 300,
@@ -1298,6 +1308,7 @@ async fn semantic_log_corruption_is_refused_by_every_projection() {
                 runtime_generation: 1,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },
@@ -1314,6 +1325,7 @@ async fn semantic_log_corruption_is_refused_by_every_projection() {
                 runtime_generation: 1,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },
@@ -1328,6 +1340,7 @@ async fn semantic_log_corruption_is_refused_by_every_projection() {
                 runtime_generation: 1,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },
@@ -1335,6 +1348,7 @@ async fn semantic_log_corruption_is_refused_by_every_projection() {
                 content: "question".into(),
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 5,
                 origin_key: None,
             },

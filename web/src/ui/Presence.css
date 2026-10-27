@@ -1,32 +1,22 @@
-[data-presence='visible'] {
-  animation: presence-enter var(--ds-transition-duration) var(--ds-ease-in-out) both;
+[data-presence] {
+  opacity: 1;
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
 [data-presence='exiting'] {
+  opacity: 0;
   pointer-events: none;
-  animation: presence-exit var(--ds-transition-duration) var(--ds-ease-in-out) both;
 }
 
-@keyframes presence-enter {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes presence-exit {
-  from {
-    opacity: 1;
-  }
-  to {
+/* Only a new node starts transparent. Reversals retain the presented opacity. */
+@starting-style {
+  [data-presence='visible'] {
     opacity: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   [data-presence] {
-    animation: none;
+    transition: none;
   }
 }

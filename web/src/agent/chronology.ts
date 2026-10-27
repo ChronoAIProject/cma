@@ -1,7 +1,7 @@
 import type { ConversationState } from './model';
 import { isPendingTool } from './toolStatus';
 
-const groups = ['messages', 'toolCalls', 'reasoning', 'approvals', 'recovery'] as const;
+const groups = ['messages', 'toolCalls', 'reasoning', 'approvals', 'plans', 'recovery'] as const;
 
 interface Row {
   group: (typeof groups)[number];
@@ -123,6 +123,7 @@ export function mergeTranscriptSnapshot(
       messages.delete(existing.id);
       messages.set(message.id, {
         ...message,
+        commandId: message.commandId ?? existing.commandId,
         status:
           current.cursor >= snapshot.cursor && existing.status === 'error'
             ? 'error'

@@ -5,17 +5,211 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-The final AM cd37968d, Web ac837 and Gateway cabfe set was Ready at 11:31:31 SGT,
-with exact imageIDs and zero restarts; default runtime remains 37d. Seven public/
-authenticated checks passed at 11:31:59 SGT, including the original protected
-Sandbox and Agent, both paused. Final Web desktop/mobile visual acceptance passed.
-AM and Gateway passed full CI 15/15; Web passed its four required scoped jobs.
-Image Manager activation is deferred.
+The current deployment is recorded in the linked verification document and
+immutable manifests. On 15 October at 22:31 SGT, Web `dfc4d128` (generation 121)
+and Agent Manager `b28d39c0` (generation 45) are verified live. Web provides
+continuous route/message/menu/dialog transitions, retained views and immediate
+visible draft handoff. New Agents receive persistent GitHub API source guidance;
+empty setup captures a local-only readiness message without requesting optional
+GitHub access. The default runtime is `d97121b5`; existing owner runtimes keep
+their pinned images and full-home volumes. Prepared target one uses revision two
+with the exact immutable instructions materialized before adoption. The accepted
+repository workflow is authenticated `gh api` source download plus a local Git
+workspace, independently verified on a new production testing Agent.
+Image Manager remains deferred.
 
-Final cold Gateway acceptance passed with one actual UI request, one completed
-turn and visible exact acknowledgment in 42.624 seconds. Normal fixture cleanup
-completed at 11:45:14 SGT. Sanitized receipt:
-`/tmp/cma-gateway-cold-live-czmxw4jd/acceptance-receipt.json`.
+New admission now captures the unchanged GitHub V1 guidance plus memory V1
+guidance as managed instructions V2. New prepared homes use Agent profile
+revision 3; earlier empty and GitHub-only homes retain their original bytes for
+owned replay. Changing this default replenishes only unclaimed prepared capacity,
+without restarting existing Agents or changing their Sandbox reservations.
+
+Rollback readers must retain the native-title fields, captured V1/V2 guidance,
+prepared-home revision handling and optional `LifecycleInput.setup_message`,
+in addition to the earlier scope, callback and attachment schemas described
+below. New operations store their exact setup prompt; historical operations
+without it retain the unchanged historical builder. Reverting only the default
+runtime does not remove these durable API reader requirements.
+
+The following 18:51 checkpoint is historical. At **18:51 SGT on 15 October 2026**,
+production ran Agent Manager
+`edaeca82` (generation 38), Web `fa1e3f13` (generation 116), and Event Gateway
+`477bf801` (generation 7). All three exact image digests and Ready Pod ownership
+were verified. The default runtime is `ff9834c4`, digest
+`sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae`.
+The manifests now pin this observed deployment. Image Manager remains deferred;
+CMA remains in Tokyo and the native runtime remains in its separate cluster.
+
+This release adds live key replacement and optional service revocation with a
+confirmed callback to the original Agent. Runtime GitHub transport is prepared
+before the first grant. Web adds sender identities, compact/upward-expanding
+drafts and explicitly approximate live output tokens alongside actual usage.
+Attachment upload, quieter reconnection, fast message admission and the shared
+Event Gateway browser login remain active. Public Web assets match the running
+Pod bytes. The combined Web suite passed 205 files / 1,932 tests, type checking,
+lint, formatting and build.
+
+The final Agent Manager patch releases an obsolete scope request when an owner
+pause or runtime change invalidates a callback that was never written. A fenced
+transaction proves the absence or pre-write failure before ending that request;
+already admitted or uncertain callbacks retain their exact command and recovery.
+This prevents a failed notification from indefinitely blocking a later grant or
+revocation. Eleven focused tests and 34 authenticated MongoDB contracts passed,
+including later revocation and uncertain-delivery regressions. The exact published
+image passed vulnerability scanning and production readiness checks.
+
+Full-home runtime and native Linux attachment upload/replay/recreation proofs
+passed before activation. Existing Sandboxes retain their recorded runtime
+images and original volumes. New allocations use the new default policy; its
+CMA-created warm target had one observed Ready replica. Whole-`/home` mounting
+and `OnRootMismatch` remain in the policy. Actual production browser creation
+reached an enabled composer in 3.373 seconds; this excludes first model response
+completion. Pasted images and dragged files were consumed by the Agent, with a
+381 ms message receipt after attachment upload. Actual runtime pause/resume
+still took about 9 seconds / 21–26 seconds despite prompt admission, so the
+complete five-second lifecycle goal is **not accepted**. Fresh external OAuth
+consent remains unmeasured.
+
+Production hot key updates on final Agent Manager `edaeca82` passed quiet and
+busy-Agent callbacks in 2.152 and 1.804 seconds respectively, with key delivery
+and old-key revocation completed first. Actual optional GitHub grant/private
+repository read/removal on the preceding `8cad5bcd` also
+passed, with callbacks at 3.399 and 1.844 seconds and the original Pod, boot,
+conversation and PVC/PV retained. The owner's existing GitHub OAuth connection
+was used. Native Git clone/push is separate from this verified GitHub API path.
+After these hot writes, every rollback reader must support the new scope fields,
+events and persistent callback intent described below, as well as attachment
+capability and whole-home policy records. `26438942` alone is no longer a valid
+rollback floor. Retain the compatible `8cad5bcd` implementation; changing only
+the default runtime image cannot make an older reader compatible.
+
+The following checkpoints are historical and do not describe the current pins.
+
+At 12:26 SGT, API `6571e110` remains deployed. Web `53bbe2f7` replaced
+`47b56be7` at 12:25:35 SGT with verified public assets. Live Stop, exact interruption
+and one completed follow-up now pass; original-volume resume also passes identity
+checks, with 505 ms acceptance and 26.353 s actual readiness. The first API6571
+creation sample completed functionally but exceeded five seconds (5.224 s to
+source-flow Send eligibility). Fresh optimized-Web timing and actual browser
+acceptance remain pending. The following 12:16 snapshot is historical.
+
+PR #1027 is being tested through authorized local production builds. As of
+12:16 SGT on 2026-10-15, Agent Manager source `6571e110` and Web source
+`47b56be7` are deployed in the existing CMA cluster. The combined API image
+`sha256:99044a2876b0919c680118d55e57883571b208bcffacd69aad689d6a932ea98d`
+was published after Google authentication was restored. Generation 31 and its
+exact imageID were Ready at 12:16:26 SGT; authenticated owner access and retained
+fixture identities, settings and history passed continuity checks. Branch head
+`0c16330e` passed all 15 CI jobs; it is separate from the deployed image source.
+Runtime `cad2058`, Event Gateway and the shared Web image remain unchanged,
+and Image Manager remains undeployed. The Deployment keeps prepared target one
+and singleton/Recreate operation. Strict kubeconform validated all 48 resources
+without skips; kube-linter and HTTPRoute ownership checks passed.
+
+The API748 optional-GitHub existing-Sandbox diagnostic passed, and the 12:16
+read-only follow-up confirmed the original Claim, Sandbox, PVC and PV identities
+and full-home template mount. Two retired test fixtures also passed exact native
+resource absence checks. These diagnostic and cleanup results do not establish
+final API6571 acceptance. Browser/model, fresh warm creation and live Stop
+verification are still pending. The five-second creation goal is not yet
+consistently met; source-ordered
+measurements are not browser measurements. Current candidate evidence and
+remaining acceptance gaps are recorded in the
+[PR #1027 verification](CMA_Native_Production_Verification.md#local-production-candidates--pr-1027).
+The compatible rollback floor below applies to these production records.
+
+The preceding merged production deployment is PR #1022, candidate `d9a6d440`,
+merged as `4dc1325f`, with all 15 CI jobs passed. Agent Manager/Web were Ready
+at 23:13:31 SGT on 2026-10-14. Warm creation reached the exact Agent surface
+in 10.179 seconds and enabled Send in 11.696 seconds, so the strict five-second
+creation target remains unmet. Actual early input was durably accepted and
+executed once. Pause and resume showed accepted UI state in 0.184 and 1.531
+seconds respectively; actual Sandbox completion took 9.109 and 24.422 seconds.
+Whole-home contents, modes, ownership, links, dirty Git, the original PVC and
+original conversation survived the replacement Pod. Model selection, skill use
+and MCP access revision with one automatic notification passed. Fresh external
+OAuth remains unexercised; these results do not claim coverage of that path.
+
+The earlier production deployment PR #1019, candidate `3d6885c6`,
+merged as `68dbe4b6`, with all 15 CI jobs passed. Agent Manager/Web were Ready
+at approximately 20:26 SGT on 2026-10-14. Strict full-home preservation now
+passes, including modes, ownership, links, dirty Git, the original PVC and
+conversation. Warm creation still took 17.306 seconds and usable resume took
+21.649 seconds; the five-second performance bar remains unmet. Immediate
+delete feedback/disappearance passed. A transient authorization-check outage
+also exposed a UI continuity defect. Exact observations and the next fixes are
+recorded in the [PR #1019 verification](CMA_Native_Production_Verification.md#full-home-preservation-and-lifecycle-performance--pr-1019).
+
+The combined performance and full-home candidate `04ccbd6a` merged through
+PR #1016 as `fea97549`. CI run
+[38539408542](https://github.com/ChronoAIProject/cma/actions/runs/38539408542),
+attempt 1, passed all 15 jobs. Exact API/Web/runtime image publication is
+complete and the checked-in pins match its receipt. AM/Web and retained Gateway
+were Ready at **18:02:50 SGT**, and the new full-home pool reached two observed
+Ready replicas at **18:04:03 SGT**. One fresh UI creation succeeded in **21.122
+seconds** to the visible Agent surface/enabled composer; the five-second target
+was not met. Model, skill, scope revision and Stop acceptance subsequently
+passed. Pause/resume retained the exact PVC and conversation, but actual
+completion exceeded five seconds and kubelet changed filesystem modes on
+remount; strict whole-home persistence therefore failed. Exact digests, identities
+and measured boundaries are in the
+[combined release report](CMA_Native_Production_Verification.md#combined-performance-and-full-home-release--pr-1016).
+
+The follow-up source introduces a separately identified native pool policy with
+`fsGroupChangePolicy: OnRootMismatch`. Existing pool/template/home records keep
+their original policy; activate fresh capacity only when its `config_sha256`
+exactly equals the non-null administration `default_config_sha256`. Matching
+only image and resources can select an old policy and is insufficient. PR #1019
+proved fresh whole-home mode preservation; subsequent releases still require
+their own live continuity and timing verification.
+
+After a new-policy pool or binding is persisted, any API rollback must retain
+support for the optional `fs_group_change_policy` field and v3 pool identity.
+Older binaries reject that persisted field through strict deserialization; do
+not roll Agent Manager back to the pre-policy image after activation. Runtime
+`cad2058` and the current full-home layout remain compatible and unchanged.
+
+The next durable bootstrap admission persists `wait_for_workspace` in Agent
+work and immutable Agent event logs. After the first such admission, **do not
+restore the PR #1022 API image**: its strict enum reader rejects both waiting
+Agents and retained events, even after those Agents become Ready. Recovery
+requires a compatible forward repair that disables new early lifecycle
+reservation while retaining the new enum, event readers, workspace binding,
+waiting worker and cleanup support for previously admitted work. Keep all
+message receipts and logs intact; do not rewrite or delete records to make an
+older image parse them. Runtime and full-home storage are unchanged by this
+API/Web-only candidate. Capture retained workload and conversation evidence
+before and after any repair, as for an upgrade.
+
+The per-turn model correction in `c8ee3872` adds optional `model` evidence to
+durable `TurnStarted` events. The value is captured from the selected Agent
+settings in the same fenced transaction that admits the turn; later settings
+changes cannot rewrite a completed response's model. The new reader accepts
+older events without this field. Older API binaries use strict event
+deserialization and reject a new event containing `model`, so compatibility is
+one-way: **after the first model-bearing turn is committed, every Agent Manager
+reader and rollback image must include `c8ee3872` or an equivalent compatible
+reader, as well as all preceding durable-format support**. A pre-`c8ee3872` image
+is no longer a valid rollback even after that turn completes or its Agent stops.
+
+Before allowing the new writer to serve traffic, retain an immutable compatible
+API image digest and record its source revision and readiness checks in the
+rollout evidence. For the next combined performance/lifecycle candidate, the
+standalone `c8ee3872` API build is the compatibility floor; keep its digest as the
+rollback target instead of the previously deployed API digest. Complete the
+transition of old Agent Manager readers before accepting new model-bearing
+turns; do not leave an old replica serving retained histories during a mixed
+rollout. A rollback changes the application image only and must preserve the
+stored events, message receipts, original PVCs and conversations. Verify both a
+retained model-bearing turn and a new turn after recovery. Do not remove the
+field, rewrite history, or relax MongoDB validation to enable an older image.
+This field does not change the runtime protocol or whole-home storage layout.
+
+The preceding `03cbd332` Agent Manager/shared Web release was Ready at
+16:26:14 SGT on 2026-10-14, with two Ready default-pool replicas observed at
+16:26:50 SGT. Its fresh Agent acceptance was not completed. The earlier
+cd37968d/ac837/cabfe Gateway flow passed in 42.624 seconds; that result remains
+associated with its original tested versions. Image Manager activation is deferred.
 
 The three portals ship from one web image: Agent Manager (`/agent-manager`),
 Image Manager (`/image-manager`) and Event Gateway (`/event-gateway`). Their
@@ -24,8 +218,8 @@ defines application deployment against the infra-owned native runtime cluster.
 Infra continues to own its controllers, CRDs, RBAC, storage and network policy;
 CMA's completed application rollout did not change those resources.
 
-The current rollout scope is Agent Manager, Event Gateway and their shared web
-image, with the tested CMA runtime as the system default. Image Manager is
+The combined rollout scope is Agent Manager, the shared web image and the
+system default runtime, retaining the verified Event Gateway. Image Manager is
 deferred: its Deployment is absent; keep it absent or at zero replicas and do
 not require its Cloud Build identity, OAuth client, migrations or builder digest to activate Agent
 Manager. Default-image Agent, Trigger and consumer creation does not call Image
@@ -94,9 +288,10 @@ named old Deployment.
 
 ## Observed deployment prerequisites
 
-This table reflects the completed native deployment and remaining measured
-limits on 2026-10-14. Historical failures are retained with dates and outcomes,
-without treating superseded findings as current activation blockers.
+This table records native deployment prerequisites and measurements from the
+versions named on 2026-10-14. The combined release status above is tracked
+separately; earlier runtime and portal measurements do not verify its full-home
+layout or creation latency.
 
 | Prerequisite | Verified deployed state | Continuing obligation or coverage limit |
 |---|---|---|
@@ -108,13 +303,13 @@ without treating superseded findings as current activation blockers.
 | Runtime transport | Deployed `kubernetes-exec` carries runtime HTTP/WebSocket traffic through the authenticated remote API; real model turns and complete history exports passed | Earlier direct Pod-IP and CRI port-forward diagnostics did not establish a working microVM path. They do not require a network change for the selected exec transport |
 | Runtime ServiceAccount/storage/class | New runtime templates select unannotated remote `default`, disable Pod token automount and use `microvm` with 64 GiB RWOP `home-a` volumes | Preserve infra ownership. Historical `standard-rwo`/`pd-balanced` attachment failed on N4; use the verified `home-a` policy |
 | Runtime control key | Existing `chrono-bot/cma-agent-sandbox-control` supplies the mounted application signing key | Preserve the key across restarts; preserve it during application updates |
-| Canonical application workloads | `cma-agent-manager`, `cma-event-gateway` and `cma-web` are deployed; latest readback confirms 1/1 updated Ready, current generations, matching image IDs and zero restarts | Final AM cd37968d, Web ac837 and Gateway cabfe were Ready at 11:31:31 SGT; final Web visual acceptance passed. Keep one Recreate Agent Manager and preserve canonical/compatibility Service routing |
+| Canonical application workloads | Combined 04ccbd6a AM generation 16/Web generation 92 and retained cabfe Gateway generation 6 were Ready at 18:02:50 SGT with exact imageIDs and zero restarts | Keep one Recreate Agent Manager and preserve canonical/compatibility Service routing; record exact candidate/imageIDs for the combined rollout |
 | Shared MongoDB | Running Agent Manager/Gateway use `chrono-bot` with separate collection ownership; retained durable identities and complete history prefixes survived the AM rollout | Run only each service's migrations. Shared-schema mode is collection ownership, not credential-level isolation |
 | Retained Gateway state | Gateway uses `eg_*` collections and preserves exact `http://cma-api.chrono-bot.svc` authority. Earlier real owner edits, selected-Agent management tests and public custom ingress passed | Do not repeat the historical first-cutover export/import. Preserve original record identities and sealed pointers; final Gateway/browser-specific acceptance remains separately recorded |
 | Gateway cold inline-Agent acceptance | Final measured result and the earlier 5ce/AM 37d failures are recorded in the verification report | Preserve the 90-second startup and fresh 30-second acceptance/completion budgets; only explicit Busy may retry the same body/key |
 | Gateway feature coverage | Integrated source and complete CI include Console/Media/STT code and authenticated Mongo contracts | Selected live routing/channel/model checks do not establish full Console/media/STT, external reply sinks or Trigger acceptance; preserve existing configuration and Secrets |
-| Application image registry | The selected AM cd37968d, Web ac837 and Gateway cabfe digests are published in the established application registry; the verification report lists exact pins | Final AM cd37968d and Gateway cabfe passed full CI 15/15; final Web ac837 passed its four scoped jobs, exact publication and visual acceptance. All selected images are published and Ready; original release receipts remain independently attributable |
-| Native runtime registry | Final 37d runtime is published under `asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime`; native canary and real Agent runtime image-ID checks passed | Preserve this default and retained images during Web/Gateway-only changes |
+| Application image registry | Combined candidate 04ccbd6a passed all 15 CI jobs; API/Web registry digests are published and pinned from the completed receipt | Preserve Gateway cabfe; match immutable pins and provenance to publication and live readiness independently |
+| Native runtime registry | Combined cad2058f runtime is published and selected; two full-home v2 pool replicas were Ready at 18:04:03 SGT with exact runtime/mount/initializer proof | Live same-PVC whole-home persistence still needs separate acceptance; retained homes keep their original images |
 | Deferred Image Manager identity | The 2026-10-13 account lookup returned 404 and operator IAM lacked provisioning/build rights; Image Manager has no active Deployment | This is a separate later activation. Infra must provide the documented build identity/permissions before Image Manager migration, scale-up and live build acceptance |
 
 ## C-001 implementation map
@@ -144,6 +339,12 @@ lifecycle operations preserve accepted capacity for
 restart/retry, alongside the selected immutable image. Pool administration is
 limited to the trusted deployment runtime image; custom images remain available
 for ordinary Agent/Trigger/consumer creation.
+
+Reaching the owner's Sandbox quota ends a new Agent lifecycle operation with an
+explicit limit conflict; it must not remain queued as a retryable dependency
+failure. Paused Sandboxes still retain storage and count toward this quota.
+Retiring disposable acceptance Sandboxes releases their slot after cleanup;
+prepared capacity alone does not bypass owner admission limits.
 
 New inline Sandbox configurations allow up to 16 workspaces and 16 Agents per
 workspace, within the existing admission bounds. Previously accepted lifecycle
@@ -450,6 +651,29 @@ namespace is `chrono-pod`; the older last-applied annotation is not current
 configuration and must not determine the target. The private API endpoint was
 unreachable from CMA. No static token handoff is needed for metadata auth.
 The ConfigMap also names warm pool `python-a`; CMA does not adopt it automatically.
+
+New native spare capacity uses the current deployment runtime image and home/Pod
+policy. An operator cannot raise an obsolete target above zero; multiple resource
+sizes using the current runtime and policy remain supported. Release cleanup must
+first establish latest-release authority and its rollout grace, then check every
+durable allocation, prepared reservation and legacy warm record. It persists
+retirement under the target's revision and lease fence, marks the original Pool
+against new admissions, and repeats those complete checks. Before draining, the
+adapter verifies the retained attachment graphs and complete live Claim inventory,
+refuses pending or unexplained Claims, and refreshes the original definition UIDs
+and admission marker before setting replicas to zero. A zero target alone is not
+an admission barrier: native cold allocation can use zero-sized pools.
+
+Settled failed or unupgraded homes may block definition deletion while unused
+spares drain. Their exact original Claim/Sandbox/PVC attachment must be intact, or
+all three original objects and dependents must be absent; partial absence or a
+same-name replacement fails closed. This does not delete or rewrite Sandbox
+history. Definition deletion keeps the stricter upgraded-home and template-network
+checks, complete member/Pod finality, and immutable target tombstones. Preserve all
+claimed Sandboxes and their homes. Do not infer safe
+scale-down from startup or a single empty Claim list: reservations can be persisted
+before their Claim exists, and controller v1.0.2 does not fence cached excess-member
+deletion against concurrent adoption.
 Its ownership, immutable runtime contract and retained-home policy have not
 been verified as a CMA pool binding.
 
@@ -577,8 +801,12 @@ runtime control tokens continue to match. The control-plane Secret volume is
 optional only while the native backend is disabled.
 
 When a verified runtime is intentionally replaced, set its digest in
-`CHRONO_SANDBOX_IMAGE` and the matching rollout annotation. This release preserves the deployed 37d runtime default. `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS`, runtime ServiceAccount,
-pull secrets, home policy and deployment ID must match the reviewed production
+`CHRONO_SANDBOX_IMAGE` and the matching rollout annotation. For this combined
+release, update the runtime pin and
+`CHRONO_AGENT_SANDBOX_HOME_MODE=native_vct_full_home_v2` atomically before the
+Agent Manager restart. Retained Sandboxes keep their recorded image and home
+mode. `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS`, runtime ServiceAccount, pull secrets,
+home policy and deployment ID must match the reviewed production
 configuration. Existing pool bindings retain their original Pod policy when a
 later release changes those defaults.
 
@@ -735,6 +963,83 @@ one Recreate replica because process admission quotas lack shared coordination.
 Warm-pool acceptance starts with one member of the selected immutable runtime
 and must preserve claimed members when replenishment changes.
 
+### Prepared default Agent hierarchy
+
+The native pool can additionally prepare one or two complete default hierarchies
+using `CHRONO_NATIVE_PREPARED_TARGET=1` or `2`. The checked-in ConfigMap keeps a
+safe default of `0`; the production API Deployment explicitly overrides it to
+`1`, while environments without that Deployment override remain disabled.
+Enable this after a matching native pool is ready, with the same pinned runtime
+image, CPU/memory and `native_vct_full_home_v2` home policy. Preparation acquires a
+real native Claim and home, initializes the empty workspace and worktree, and
+opens the default idle Agent session. It does not issue owner credentials,
+resolve owner access tools, clone a user's repository or send a model prompt.
+
+The separate `native_prepared_sandboxes` collection contains the global target
+fence and reservation records. Count reservation documents by `state` to verify
+`preparing`, `installing`, `ready`, `claimed`, `retiring` and `retired` separately.
+Native pool `ready` counts describe unclaimed native members; a prepared
+hierarchy has already claimed its member and therefore is not part of that
+count. Only a recently verified `ready` reservation with identical canonical
+runtime/profile content may be consumed by explicit default Agent Manager
+creation. The authenticated owner's quota, name and idempotency checks remain
+in the admission transaction. Claimed rows retain the exact Sandbox, Workspace,
+Agent, worktree, home and session identity for reconciliation.
+
+For an exactly matched consumed preparation, owned Agent startup replays the
+worktree and Agent-home requests in one attempt after a fresh runtime inspection.
+It records both ordered cleanup debts before either request, executes each
+resource's writer fence, then atomically publishes both matching receipts and
+completion logs. Publication writes revision-conditioned auxiliary fences on
+the live Sandbox, Workspace, Worktree and claimed preparation. A changed parent,
+worker lease or preparation cannot publish success. An interrupted attempt keeps
+both debts; recovery can replay the pair or use the ordinary individual steps
+when preparation evidence is unavailable. No runtime request is omitted, and
+metadata conflict retries contain publication only.
+
+First-message admission backs off bounded transaction conflicts. When all attempts
+are known to have aborted, the worker rereads the exact first-message record and
+its current unexpired writer lease before releasing that lease for a one-second
+retry. An admitted or uncertain dispatch is never reset to queued; ambiguous
+commits keep their existing reconciliation path. This prevents an unadmitted
+first message from waiting for the full worker lease after database contention.
+
+Connection publication has a separate lease after the opened conversation becomes
+Ready. Its Mongo transactions also back off known-aborted conflicts. If bounded
+publication attempts are exhausted, recovery rereads that exact connection claim
+and releases only its unchanged, unexpired lease for a one-second retry. It may
+adopt concurrent title/log metadata and a newly queued initial message; settings,
+existing input, runtime generation, work state or successor lease changes refuse
+that recovery. The ordinary worker reconnects under a new fence before dispatch.
+Unknown commits keep reconciliation and cannot release the lease as an abort.
+This path does not reset or replay an admitted user command whose queue deadline
+has expired.
+
+Response Stop inspection and reservation share one five-second retry scheduling
+budget with bounded backoff and jitter. Credential authority retains its original
+deadline. The budget does not cancel an in-flight transaction, resolve an unknown
+commit as a failure, or guarantee that the complete HTTP request takes less than
+five seconds. An uncertain result retains its exact control key and target for
+reconciliation; a new key must not be used to hide the uncertain original request.
+
+For acceptance, record a ready reservation's IDs and native Claim/member/PVC
+identity; submit one explicit create; verify that the resulting owned hierarchy
+retains those identities and starts its first message only after credential and
+access-tool handoff. Measure request-to-Ready latency on that actual create;
+local ACP session reuse alone does not establish end-to-end latency. Requests
+with unmatched settings or no ready reservation continue through normal
+creation. Reservations refresh their session health every five seconds, expire
+after thirty minutes, and retain cleanup authority on failures. Retiring rows
+count against the two-reservation cap until cleanup completes.
+
+To disable preparation in production, set the explicit Deployment
+`CHRONO_NATIVE_PREPARED_TARGET=0` override (or remove it to inherit the ConfigMap
+default) and restart Agent Manager. The ConfigMap default remains `0`. This
+retires only unclaimed reservations; claimed owned Sandboxes keep their existing
+lifecycle. Run the compatible cleanup worker until unclaimed retirement debt is
+cleared before rolling back to a binary that does not know the separate
+collection.
+
 ## Deployment acceptance and coverage
 
 The [verification report](CMA_Native_Production_Verification.md) is the measured
@@ -748,17 +1053,21 @@ OAuth, NyxID frontend navigation/binding-key delivery, external reply sinks,
 broad failover, full Console/media/STT, Trigger and cross-user sharing. Native
 exec connectivity does not establish direct Pod-network isolation.
 
-The repository image pins and source/CI annotations are now synchronized with
-the actual deployed receipts. The four synchronized manifests are
-`infra/api/configmap.yaml`, `infra/api/deployment.yaml`,
-`infra/cmaeg/deployment.yaml` and `infra/web/deployment.yaml`.
-The applied patch is `/tmp/cma-final-repo-sync-01/final-manifests.patch`. Their current hashes match
-`/tmp/cma-final-repo-sync-01/resolved-receipts.json` after hashes. This pins AM
-cd37968d, Web ac837, Gateway cabfe and default runtime 37d with their actual image
-sources and CI runs. YAML, configuration key/documentation, native contract and
-route ownership checks passed. The legacy storage seed example and deferred
-Image Manager are preserved. This manifest/document finish does not redefine or
-rebuild the independently identified deployed application images.
+The API/Web/default-runtime pins and source/CI annotations in
+`infra/api/configmap.yaml`, `infra/api/deployment.yaml` and
+`infra/web/deployment.yaml` match the completed combined publication receipt.
+The Gateway manifest retains its verified cabfe image. Repository synchronization
+records published identities. The verification report separately records
+completed rollout/pool readiness, the 21.122-second creation measurement, and
+remaining live acceptance.
+
+The earlier four-manifest synchronization for AM cd37968d, Web ac837, Gateway
+cabfe and default runtime 37d is retained in
+`/tmp/cma-final-repo-sync-01/resolved-receipts.json` and
+`/tmp/cma-final-repo-sync-01/final-manifests.patch`. Those historical hashes do
+not describe the new combined pins. The legacy storage seed example and
+deferred Image Manager are preserved. Updating manifests does not rebuild the
+independently identified application images.
 
 Agent access-request tools use the existing auth encryption key to derive a
 separate, deployment-scoped `cma_at_` capability. The `agent_access_tools`
@@ -782,6 +1091,13 @@ authority, a changed Agent identity or a later incompatible manual lifecycle
 must not be borrowed as authorization to continue the workflow.
 
 New Agents negotiate explicit ACP HTTP MCP support before tool installation.
+The pinned Codex bridge marks the injected `cma_access` server as required, so
+new and prepared conversation opens wait for its discovery before accepting the
+first task. Failed discovery fails the open instead of silently omitting the
+owner permission tool. Discovery authentication uses a read-only transaction
+snapshot of the capability receipt, creation lineage, current runtime and
+unexpired delivered key; it never writes the Agent being published. Tool calls
+and consent admission retain their independent current-authority write fences.
 Retained Agents without a confirmed tool-open receipt continue without the new
 tool; deploying an API image does not modify their live conversations. A worker
 takeover for a previously enrolled Agent preserves its bearer and exact native
@@ -918,3 +1234,502 @@ The pinned agent-sandbox v1.0.2 controller does not inject public DNS when custo
 rules are configured. Explicitly review cluster DNS reachability in the selected
 egress policy; do not copy only the ingress exception and accidentally drop DNS
 or public endpoint access.
+
+### Hot service-access scope compatibility
+
+Owner service-access Save now replaces the exact scope shared by every Agent in
+an existing managed-key Sandbox, retaining the runtime and conversations. The
+worker rotates the key and completes old-key revocation before confirming
+callback delivery. Live acceptance must measure final Save/Approve through
+credential delivery, revocation completion and actual callback write; the
+requested five-second budget excludes subsequent model response completion.
+Local scheduler and runtime continuity tests alone do not establish that live
+latency budget.
+
+The first hot update persists `SandboxCredentialState.service_scope`, a
+`ServiceAccessRevised` event, access-request `scope_mode` and
+`expected_scope_revision`, the `updating` phase, `progress.hot_update`, and a
+persistent notification intent. Every control-plane reader and retained rollback
+image must understand those fields and events before new writes are enabled.
+Legacy additive grants, paused workflows and notification records without the
+optional intent remain readable. Never remove scope revisions, rewrite historical
+receipts, or restart user runtimes to recover an older reader. The runtime wire
+credential operation already supports replacing the in-memory key on the pinned
+live runtime; this change does not require a new home file or a Pod replacement.
+
+
+### Runtime title provenance reader floor
+
+Automatic first-message purpose and runtime description provenance add optional
+fields to two strict persisted structures: `FirstMessageRecord.purpose` and
+`AgentRuntimeMetadata.description_source` / `description_is_setup_preview`.
+The latter is nested both in Agent observations and `RuntimeMetadataChanged`
+log records. Current readers accept old records with these fields absent; missing
+purpose/source remains unknown and the setup flag defaults to false. Payload
+hashes, creation fingerprints, turn identities and history remain unchanged.
+
+Deploy the compatible API reader before the new runtime image and frontend.
+Any API rollback target must include these readers before new durable writes
+occur: new Agent admissions write purpose even while older runtimes are retained.
+A pre-feature API binary uses `deny_unknown_fields` and cannot safely read these
+new records. Restoring that binary after feature writes is unsupported.
+
+A safe rollback restores the previous Web while retaining the compatible API
+reader and the latest released runtime default. Existing Sandboxes keep their pinned image,
+home, conversation and history. Never strip fields/events, rotate a live Sandbox,
+or restore an earlier database snapshot to accommodate an old reader. This reader
+floor is a release constraint; old-binary rollback has not been demonstrated.
+
+The title bridge change requires a new runtime image for new allocations. Retained
+runtimes emit unknown provenance until they supply positive evidence. The pinned
+local provider test proves empty-conversation reload, exact multiline prompt
+identity on completion and history reload, native explicit-title priority even
+when equal to the preview, and native `thread/settings/update` to metadata on the
+same running process/thread. It uses Codex 0.147.0, ACP 1.4.0 and a local Responses
+fixture. It does not establish production acceptance or generate semantic titles.
+
+
+The existing native empty-thread persistence workaround seeds the reserved name
+`New Agent`. A fresh provider history load cannot distinguish that seed from an
+identical deliberate native name if its explicit change was never durably
+observed. Already recorded `provider_title` metadata, including `New Agent`,
+remains authoritative over subsequent preview/unknown observations. No title is
+rewritten to resolve this retained provider ambiguity, and no provenance is
+invented for an unobserved legacy name.
+
+### Editable queued-input reader floor
+
+The composer queue release adds public queued-input discovery and atomic per-message
+edits. Queue listing uses pages of at most four entries; the repository SDKs traverse
+those pages within one bounded operation. Deploy the compatible Agent Manager before
+the frontend that consumes these routes. The Event Gateway backend requires no schema
+or runtime change for the unified portal navigation.
+
+Edited input retains its original admission identity and FIFO order. The effective
+text is a revisioned sidecar with an explicit compatibility marker, so a worker from
+before this release fails closed instead of dispatching the original text. Drain or
+cancel pending edited entries with the compatible API before rolling back that API to
+an older binary. Exact edit retries retain the original idempotency key and source
+revision; a lost response must not become a new edit request.
+
+The runtime command-discovery patch applies to new allocations through the default
+runtime pin. Existing Sandboxes retain their recorded image, home, conversation and
+native command inventory. Verify browser queue edits with attachments, independent
+removal, exact steering message binding, and retained Sandbox identity after rollout.
+
+### Atomic interruption and Agent Manager defaults
+
+Deploy the compatible Agent Manager before the web build that uses
+`POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt`. Its new durable
+`InterruptAfterTurn` ordering admits cancellation and replacement input together,
+waits for the current turn to finish, then runs the replacement ahead of ordinary
+queued messages. Keep the single-replica Recreate rollout so older workers cannot
+select commands concurrently with the new reader. The runtime still receives its
+existing Cancel and RecoverablePrompt messages; retained runtime images and native
+conversations require no rotation.
+
+After new interruption or lifecycle records have been written, retain a compatible
+API reader even when those records have completed or been cancelled. Completion
+does not remove their persisted fields, ordering variants or recovery receipts.
+Rolling web back is supported while keeping the compatible API; an older API
+cannot safely read this history. Never delete or rewrite user records to permit
+an incompatible binary rollback. Browser interruption recovery retains the original source,
+turn, revision, input (including attachment references) and idempotency key. A lost
+HTTP reply must recover both original receipts rather than issue another message.
+Verify Stop-only cancellation, replacement-message priority with an existing queue,
+independent queue edits/removals, and accepted versus actually completed turn status.
+
+New Agent Manager sandbox capacity comes from `CHRONO_AGENT_MANAGER_SANDBOX_CPU`
+(default `2`) and `CHRONO_AGENT_MANAGER_SANDBOX_MEMORY` (default `8Gi`). The same
+capacity selects the native warm pool and prepared-sandbox plan. New lifecycle
+admissions persist Always on (`always_keep_alive=true`) before provisioning; their
+private Sandbox Profile records that policy. Retained operations without the new
+field preserve the original false default. Existing Sandbox capacities, availability
+policies and seeded deployment-owned profiles remain authoritative. Validate new
+allocation requests/limits and recorded availability in production; do not infer
+warm-pool readiness merely from the changed configuration.
+
+### Native runtime interruption recovery
+
+Automatic recovery retains the original storage-owning runtime identity before
+clearing process authority. The worker idempotently suspends that retained object,
+verifies the original home, and resumes the same object with a new process
+incarnation. It does not delete the Claim, Sandbox or PVC to recover a process.
+An older recovery record without retained authority fails closed; neither the
+inventory sweep nor recovery worker may reclaim its unreleased native home.
+Explicit owner retirement remains the path that releases these resources.
+
+The optional persisted lifecycle `interruption` record exposes a bounded cause,
+detection time and original workload memory limit through public Sandbox reads.
+It survives recovery to explain the interruption in details. An `out_of_memory`
+cause requires explicit `OOMKilled` evidence from the exact owned runtime
+container with a termination time at or after its binding. Diagnostic reads run
+only after failed adoption, have a two-second bound, and do not block safe recovery
+when evidence is unavailable. Generic exit codes, readiness loss and API errors
+are not OOM evidence. In particular, a Kata hypervisor cgroup OOM may surface as
+exit 255 without an `OOMKilled` Pod reason. When existing evidence does not identify
+the specific cause, CMA displays **Internal error** and uses its existing recovery
+flow to resume the owned Sandbox with its original home. The recovery stage and
+any failure to finish remain visible separately from the recorded interruption.
+This behavior does not require new infrastructure development or a new diagnostic
+signal; the evidence limit only prevents CMA from incorrectly labelling a failure
+as out of memory.
+
+Roll forward when reverting a release that has persisted interruption metadata:
+older strict lifecycle decoders do not accept the additive persisted field.
+A compatibility rollback must retain this decoder and the native home safeguards.
+Do not deploy an older binary over records written by this release. Existing
+owned runtime images, immutable capacities and PVCs remain pinned; the 2 CPU /
+8 GiB default applies to newly created capacity, including matching warm/prepared
+members, and does not resize running users implicitly.
+
+
+## Managed runtime updates
+
+`CHRONO_SANDBOX_IMAGE` is the canonical latest formally deployed managed runtime,
+pinned to a verified GitHub CI image by explicit release promotion. Publishing a
+CI image or tag alone grants no deployment or migration authority. New default allocations, native warm capacity,
+owner-admitted resume and the managed update service use that same reference.
+An explicit custom image remains custom and is never migrated by this policy.
+
+Eligible native persistent-home Sandboxes expose `runtime_update` on owner
+Sandbox Details. `POST /api/v1/sandboxes/{id}/runtime-update` takes an
+`Idempotency-Key` and `{ "target_version": "<exact latest_version>" }`. The server
+accepts only its current released target or the unchanged target of an already
+accepted request. The metadata records queued/updating/failed progress and
+same-home preservation. The existing Details refresh observes it.
+
+The daily check runs at 02:00 Asia/Singapore. First observation of a release waits
+for the next boundary; a restart with an existing watermark catches up a missed
+boundary. Work waits until every Agent has no active turn, approval, queued input,
+work lease, pending cleanup or stop intent and every Workspace is idle. Admission
+fences the Sandbox and complete child set in the same transaction. New runtime
+writers cannot cross the admitted rotation. No active user turn is interrupted.
+
+The worker suspends the original native Sandbox and replaces only its image and
+generation, retaining its CRD UID, claim, PVC UID, home and all domain/conversation
+IDs. It reopens the original native conversations. An originally paused Sandbox
+returns to paused unless owner work supersedes that intent. A requested resume
+from Paused pins the current managed runtime in the same CAS as revival; a plain
+runtime-loss recovery retains the existing image unless an update was already
+admitted. Terminal failures park the exact phase and accept only exact-target
+retry, including across later releases. A lost provider response does not admit
+a fresh home or duplicate upgrade.
+
+Once `lifecycle.runtime_update` is persisted, every rollback reader must understand
+that optional field, pinned targets and paused-return behavior. Restoring an older
+binary with deny-unknown-fields readers is unsafe even when no update is active.
+A compatible API/Web rollback must retain the current released
+`CHRONO_SANDBOX_IMAGE`; it does not downgrade the runtime default. Accepted update
+targets and immutable original home authority remain intact.
+
+### Automatic retirement of obsolete pools
+
+After the latest runtime is promoted, obsolete pool definitions retire only when
+no stored allocation, paused old runtime, pending update or cleanup still needs
+them. The reconciler first records retirement under its lease, marks the original
+pool against new admission, then repeats the complete durable allocation scan.
+It drains spare capacity to zero and verifies all surviving Claim/Sandbox/PVC
+graphs against upgraded retained homes before deleting the exact original Pool
+and Template UIDs. It never deletes claimed user resources. Upgraded homes retain
+their original immutable pool authority and can resume after those definitions
+are gone; template-managed NetworkPolicy prevents this retirement path.
+
+Retired targets remain as small database records, hidden from pool administration
+and excluded from reconciliation. Their immutable first-activation time prevents
+an old API restart from recreating an old target and promoting its image. A
+superseded default is refused at startup. Activation ordering is checked before
+and after bounded scans; ambiguous ordering, incomplete inventories and corrupt
+authority defer cleanup. A two-minute rollout grace is additional delay, not the
+ownership proof. Partial retirement retries original UIDs without recreating
+deleted definitions.
+
+For initial activation, deploy the compatible API with the existing runtime
+first and verify the previous API Pod has exited. Then promote the verified CI
+runtime digest in `CHRONO_SANDBOX_IMAGE` and its source manifest. Before changing
+that pointer, prewarm at least one member of the new exact runtime/default-capacity
+pool using the current Pod and home policy. The API adopts the exact original
+Pool/Template UIDs under its durable target lease without draining this prepared
+capacity. Before binding HTTP, it waits up to 120 seconds for an observed matching
+pool with at least one ready member; an effective operator target of zero skips
+this check. Failure exits startup without admitting cold allocations. This guard
+does not keep the old API serving during the single-replica Recreate rollout,
+so release preparation must complete before restarting the API. New allocation,
+prepared and native warm capacity, owner resume and the daily update service all
+consume this same release pointer. Existing running users update only after
+their admitted idle update or resume; changing the pointer does not stop work.
+
+### API, Gateway and Web publication from PR #1118 (2026-10-26)
+
+The merged outbound-interaction candidate `7a9145735bf78abfc1764af4dd907fc710fa805f`
+was deployed to the existing northeast control-plane cluster using the passing
+GitHub CI run `40337886137`, attempt `1`. The three tested native archives carry
+merge checkout `db92f87c1de5d238f560c362b67fce41d6eee102` and source tree
+`183dedd0e9ebecfc55acc2b676fe532cc09a7cb5`. Each archive, image configuration,
+layer identity, CI scan result and imported destination digest was verified.
+
+| Deployment | Imported immutable image digest |
+|---|---|
+| `cma-agent-manager` | `sha256:8f64559e0cefd61a6d4db034697e94458f15a8584766e8495d643f12f9e8e474` |
+| `cma-event-gateway` | `sha256:9c25bb351e315b0f8485216b6e6c8e828c55e8d68946c5ce686d7e4a3b1ef0cb` |
+| `cma-web` | `sha256:ffd0b835ce397afbc696010a9a48b0b3cddf369ba66573bd37831a718e31c2e9` |
+
+All three Deployments became Ready. Before the Gateway switch, active turns,
+media jobs and media bytes were zero; its normal drain policy was retained.
+The existing runtime default, API configuration, Pod settings and pool targets
+were preserved. The new outbound, raw-verification, native-mention,
+multi-consumer, dynamic-source, relay-edit, native-media, Lark-card, WhatsApp and
+interaction gates remain explicitly disabled. The previously enabled thread
+contract remains enabled. This release does not activate those gated features.
+
+The production comparison passed all 15 checks, including the identities of
+8 mapped user Pods and 19 user PVCs, all recorded Agent lineages, unchanged owner
+Channel configuration, additive public operations and capability discovery.
+A separate owner history sample retained 21 Agent lineages and 1,656 durable
+events. All 7 assets referenced by the prior public entry page remained
+byte-identical, backed by the retained Web image initializer. A known orphan
+binding returned `409 binding_resources_unavailable` in 249 ms, replacing its
+incorrect previous `200 ready` response.
+
+Resource identity continuity does not mean every runtime restart counter stayed
+constant. One pre-existing failing runtime retained its Pod UID, image and PVC
+while its restart count increased from 270 to 271 during the comparison. Its
+previous container log reports a missing workspace identity file and exit code
+2 at `2026-10-26T15:16:13Z`, before the new API container started at
+`2026-10-26T15:17:39Z`. The same existing warm pool replaced one unassigned member
+and its PVC during background reconciliation; the current default target and
+ready count remained one. These observations are separate from the successful
+control-plane rollout and do not establish a repair of that runtime failure or
+external platform message delivery.
+
+The operator retained the publication receipt with SHA-256
+`c8f3b6df3a4c5c2c557ae7368008c3348623c37ac7268d243f15f740b81394e2`
+and production comparison with SHA-256
+`e6210d45ddc3bc0e4d9db9f685ff38b27452cc612391c080270bf498036f8bdb`.
+
+### API, Gateway and Web publication from PR #1119 (2026-10-27)
+
+The native message-effects candidate `4361756ab1bf88227f30e62c98a0e6bbc2813230`
+was published from GitHub CI run `40356228720`, attempt `1`. The three verified
+native archives carry merge checkout `4526e31d816fdf151736d10f209ca8607dae1771`
+and source tree `a813d0747a727174df1a56148870abf120bbe63b`, matching merged
+`develop` commit `e06ed57675c1fbf2fce75c0be999c76fb2652328`. Publication verified
+the CI scan, archive, image configuration, layer and imported destination
+identities. The deployment manifests record those exact immutable images and
+per-component artifact identities.
+
+| Deployment | Imported immutable image digest | CI artifact |
+|---|---|---|
+| `cma-agent-manager` | `sha256:359f348e2b026a82d3057ceecdc0d1eb467110834cb9270ec2ec15a4a419a434` | `12668132850` |
+| `cma-event-gateway` | `sha256:6c5688d8dc41e4efda285a1b60af57384c41f38526c8c295d2a29c6bce8cdda7` | `12668225504` |
+| `cma-web` | `sha256:2ee79459e6b103def05fb5c430d0aa6c060dc01ee97c868d781c24c2c8409f6e` | `12665818389` |
+
+All three Deployments became Ready on the recorded images. The production
+comparison passed all 15 checks: API configuration and service settings,
+8 mapped user Pod identities, 19 user PVC identities, Agent lineage, owner
+Channel configuration, retained assets and additive public operations were
+preserved. A separate history sample retained 21 owner Agents and 1,656 durable
+events. All 7 current entry-page assets loaded, and all 7 prior entry-page assets
+retained their exact hashes. The known orphan binding continues to return the
+typed `409 binding_resources_unavailable` response, measured at 231 ms.
+
+The comparison also observed the existing `cma-claim-c44c0a5e...` runtime's
+restart count increasing from 293 to 294 with its original Pod UID, image and
+PVC unchanged, plus one replenished warm-pool Pod/PVC. These observations were
+reviewed separately. This verification covers the control-plane rollout,
+resource/history continuity and public API contract; it does not establish
+that every runtime is healthy or that live external platform delivery works.
+The source-pin change itself performs no cluster mutation.
+
+Web initialization retains the preceding `ffd0b835ce39` release and all earlier
+asset initializers so existing browser tabs can still load their referenced
+files. The runtime image, runtime default, Sandbox/PVC resources and existing
+Pod policies are unchanged. The already enabled outbound-message and relay raw
+verification flags remain `true`; other feature gates retain their current
+values. The source annotations also retain the existing runtime CI artifact
+and Gateway authoring activation provenance.
+
+Source validation passed strict kubeconform for all 49 resources with no skipped
+resources, kube-linter policy checks, HTTPRoute ownership and native Sandbox
+isolation contracts. Image/provenance pins and the retained initializer settings
+match the generated release patch; semantic comparison found no other Pod-policy
+changes. These source checks do not establish production continuity.
+
+The operator retained the publication receipt with SHA-256
+`1fe81036befcd3e62ad866544553a56c67f88afb37cd278e53f327379d470ce7`
+and production comparison with SHA-256
+`b8b7402c1a06595e1df533649bcd8e4e46fdb6f405069c45201584d1106a673b`.
+
+### Live Channel Activity and flow workspace publication from PR #1122 (2026-10-27)
+
+Candidate `0ced1d6cf7d1c2a212b6daeca84aefa2e60d6c48` passed all 15 jobs in
+GitHub CI run `40401725379`, attempt `1`, and was squash-merged into `develop`
+as `ec8521e6cda77dc50ae01112e8b69bda495e155f`. The imported API, Gateway and Web
+archives identify merge checkout `dc595e845658aa5f783f833310f949ca95269d99` and
+source tree `66e33b9bb1e13048d2411267cbdf96e1231372b0`; that tree exactly matches
+the merged source. All three production Deployments completed their rollouts.
+
+| Deployment | Imported immutable image digest | CI artifact |
+|---|---|---|
+| `cma-agent-manager` | `sha256:bacc38df5ca7eb781ebe6e3d2daa0e811c11a8bc71a808b6eb2ce9bff1376107` | `12691412069` |
+| `cma-event-gateway` | `sha256:6adcecfcdccf6b86d2ccfe3f6edb0d9ebdab8e187fb3dd912a2472ffbf30c8d6` | `12689857419` |
+| `cma-web` | `sha256:fd9e43d1cbad3750cfae5aec5dcc96e5e07dcb2ad966ecd320d7d5be255fe1c1` | `12689068722` |
+
+The Event Gateway workspace uses a full-area React Flow map and shared Agent
+Manager components. Individual nodes open centered, bounded settings dialogs
+with section navigation and internal scrolling. Channel and consumer navigation
+includes creator and creation metadata. Local browser checks covered desktop and
+mobile, both themes, reduced motion, modal bounds, retained drafts and the full
+consumer management journey. Authenticated production browser interaction was
+not exercised; production verification used the public APIs and SSE below.
+
+Activity persists receipt before provider work and streams an authoritative
+snapshot on connection, subsequent changes and reconnect. The browser does not
+poll. Local notifications publish changes immediately; a bounded one-second
+server consistency check also observes another Gateway process during a rolling
+release. Displayed receipt, dispatch, native Agent identity and recipient outcome
+are grounded in recorded evidence rather than inferred success.
+
+An isolated production Custom Channel test measured **196 ms** from event POST
+to the corresponding live Activity snapshot. A latest-Activity GET at **402 ms**
+already contained that in-flight event; provider completion took **15,921 ms**.
+Thus receipt visibility did not wait for completion. Reconnect with the recorded
+cursor restored the final snapshot and exact native Agent identity. Provider
+history confirmed one turn before and after reconnect. This is one production
+sample, not a percentile or an external-platform latency guarantee.
+
+Separate production Custom tests passed invalid HMAC rejection (`401`, 129 ms),
+streamed text completion with the exact expected marker (16,639 ms), and an
+attached-file marker read by the Agent (3,130 ms). No external platform messages
+were sent. Native Discord and selected routed/multi-consumer activation remain
+disabled; the rollout preserved every existing feature flag and ConfigMap.
+
+The initial post-rollout comparison passed all 15 canonical checks, preserving
+9 mapped user Pod identities, 20 user PVC identities/backing volumes, Agent
+lineages, owner Channel configuration, service settings and additive public
+operations. The bounded history sample retained 22 owner Agents and 1,660 durable
+events. All 7 prior entry-page assets retained their hashes. Web retains every
+older asset initializer and adds the preceding `2ee79459e6b1` release.
+
+The strict unchanged-runtime guard did not pass after deployment, and its
+original baseline and refusal are retained. The previously documented exit-2
+runtime kept its UID/image/PVC while its restart counter rose from 348 to 350;
+it was subsequently observed Running/Ready, which does not establish permanent
+repair. A later observation found a different existing user's pool-named runtime
+restart once and then receive a new Pod UID. The kubelet reported `SandboxChanged`
+at `2026-10-26T22:15:02Z`; CMA recorded automatic `runtime_lost` revival at
+`22:15:10Z`. Its replacement became Ready at `22:15:39Z` on the same image and
+Bound PVC/PV. At review time conversation reopening was still retrying after
+`work_step_failed`. It is not the isolated verification sandbox. These observations
+do not prove the initial cause or establish a relationship to this release;
+they also prevent a claim of uninterrupted runtime continuity. Neither the
+baseline nor the guard was widened to suppress this difference.
+
+The three source manifests were synchronized against the verified publication
+and rollout receipts. Source validation passed strict kubeconform, kube-linter,
+HTTPRoute ownership and native Sandbox isolation contracts. This source pin
+update records the deployed images and does not mutate production resources.
+
+Retained operator evidence SHA-256 values:
+
+- Publication: `994e0eb447eba7a816fceff6544c7967941720a194278a4617e3c580f48cf9ad`.
+- Initial canonical comparison: `11bca04d62f725888748d80c360461770ce0fd29efe8b6b3d33050b0ce8feb39`.
+- Activity probe result: `8999b72bacc219e2f34758b6a53a24f352de9e63a705509467820109c84bd3e7`.
+
+## Selected-channel live Activity Web publication from PR #1130 — 2026-10-27
+
+Production Web was updated from successful GitHub CI run `40422087892`, artifact
+`12698071958`, to immutable image digest
+`sha256:79761f0057951636baa88f796562758c386d9e62a97ca76e3c528defb5151f1e`.
+The original verified source was `265e613ff7d50c6dcb5b2afa8cdcd14d721e4dfb`.
+Selecting a channel now starts one live feed and displays its latest receipt above
+the map. The Activity dialog shares that feed; leaving the channel closes it.
+The Web deployment retains all preceding asset initializers and adds the prior
+`fd9e43d1cbad` image for existing tabs.
+
+An isolated Custom event reached Activity SSE in **413 ms** and the production
+page's receipt DOM in **420 ms**; the provider completed after **10,108 ms**.
+A fresh Activity GET already contained the event at **623 ms**. Reopening the
+channel after receipt displayed the latest record in **149–392 ms**; one entrance
+animation finished in **367 ms**. Opening and closing the Activity dialog retained
+one stream. The final Activity named the exact Agent returned by the authenticated
+response and its owned workspace. API reconnect retained one provider turn.
+
+Browser checks used production assets and real public API/SSE through a scoped
+saved-token test transport; ordinary OAuth cookie login was not exercised. The
+first monitor's final assertion timed out because it expected `Completed` rather
+than the actual `Agent completed` label. Its failed result and measured receipt
+were retained, and separate read-only browser checks verified the completed state.
+No event was resent. These individual measurements do not establish percentiles
+or live Telegram/WhatsApp/Lark/Discord delivery latency.
+
+The release changed only Web. API/Gateway deployment and configuration checks
+passed, all 7 sampled old entry assets remained available, and a bounded history
+sample retained 1,731 events across 24 owner Agents. Runtime/PVC identities were
+unchanged; the previously documented exit-2 crash loop continued independently
+and its exact restart differences were explicitly recorded, not hidden by a new
+baseline. The isolated test Channel was deleted through its versioned public
+lifecycle API, its provider sandbox retired and home released, and its exact
+temporary key revoked. No user runtime or external platform was modified.
+
+## Readiness recovery and live Activity verification from PR #1135 — 2026-10-27
+
+Production API, Event Gateway and Web were updated from successful GitHub CI run
+`40445812082`, attempt 1. All 15 CI jobs passed. Candidate
+`b761d1dea26384d8fe494a44f9fe64f62367a6a2`, CI build source
+`32ac7cf32a2edadd1fb632c7b44e0867492520c7` and merged source
+`e5f94372deb4374e3a8491c7140e7a2cb242e1b6` share verified tree
+`a28acd8a66ee111d602e5be031902a71b5bd6c59`.
+
+| Service | Imported and serving image digest |
+| --- | --- |
+| Agent Manager | `sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683` |
+| Event Gateway | `sha256:391de8b3f0d8bc04415e2effb00d6584dc65a4b4a31085001fe0739c95481403` |
+| Web | `sha256:252a7fe72ba700e0656cd0649f80443cdceb28b2fbcd45e6392823bd1bd3586d` |
+
+The fixed readiness path recognizes only a complete, bounded pre-admission
+`429 conversation_not_ready` response without conflicting response identity as
+not accepted. Durable retry keeps the exact frozen request and idempotency key.
+Generic rate limits and uncertain outcomes retain their uncertainty contract.
+
+An isolated fresh Custom Channel completed its first cold event and the next
+attached-file event. Text receipt reached Activity SSE in **233 ms** and the
+production page DOM in **246 ms**, before completion SSE arrived at **12,783 ms**.
+Selecting the Channel after the message displayed its latest Activity in
+**180 ms**; a fresh full-page navigation took **1,719 ms**. The attachment marker
+was provided only inside a text file and read correctly by the Agent; completion
+SSE arrived in **4,227 ms**, and its Activity receipt arrived in **226 ms**. Both
+initial stream and in-flight GET observations were nonterminal with no completion
+timestamp.
+
+Each exact replay returned 202 without a duplicate Activity or provider turn.
+Activity reconnect retained the exact native Agent, response and conversation
+identities. The map and Activity dialog shared one stream, and browser checks
+reported no application errors. These are individual production samples, not
+percentiles. Browser checks used production assets and real public API/SSE with
+a saved-token transport adapter; ordinary OAuth cookie login was not exercised.
+
+After all predecessor Pods drained, the Gateway enabled opted-in Lark resources
+and explicit native Discord thread history. Authenticated capability discovery
+confirmed both flags and native Discord auto-activation. The temporary Custom
+selection was cleared, admission/recovery remained enabled, and the final exact
+Gateway configuration and serving fleet were verified. Complete replies remain
+disabled; this rollout does not certify external platform delivery or the newer
+runtime tool-proxy timeout. No external platform messages were sent.
+
+All 15 post-rollout continuity checks passed: 9 mapped user Pod identities,
+20 user PVC identities/backing volumes, Agent lineage, Channel configuration,
+service settings and public operations were retained. The bounded history sample
+retained 26 owner Agents and 1,775 durable events; all 7 prior entry-page assets
+retained their hashes. The known preexisting exit-2 runtime remained on its exact
+UID/image/PVC and restarted from 423 to 424 during rollout; that difference was
+explicitly reviewed against the original baseline. This is not a zero-restart
+claim or a repair of that preexisting failure.
+
+The fixture Channel was deleted once using its versioned lifecycle API. Provider
+retirement finished asynchronously; the cleanup retry only observed completion
+and revoked its exact temporary key. The provider Sandbox and home were retired,
+and the fixture key was confirmed revoked. The source deployment manifests now
+pin the verified images while preserving all prior Web asset initializers.
+Publication SHA-256:
+`196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7`.

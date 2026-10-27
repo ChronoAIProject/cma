@@ -25,7 +25,13 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
         store.insert(duplicate).await,
         Err(WarmPoolError::Conflict)
     ));
-    let leased = store.claim().await.unwrap().unwrap();
+    assert!(store
+        .claim_target("missing-target")
+        .await
+        .unwrap()
+        .is_none());
+    let leased = store.claim_target(&saved.id).await.unwrap().unwrap();
+    assert!(store.claim_target(&saved.id).await.unwrap().is_none());
     assert!(store.claim().await.unwrap().is_none());
     assert!(matches!(
         store
@@ -43,6 +49,7 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
         calls: Arc::default(),
         original: original.plan.clone(),
         refuse_replaced_uid: AtomicBool::new(false),
+        retired: AtomicBool::new(false),
     };
     let binding = provider.binding();
     store.bind(&leased, &binding).await.unwrap();
@@ -102,6 +109,19 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
         .unwrap();
     assert!(another_deployment.find(&saved.id).await.unwrap().is_none());
     assert!(another_deployment.list().await.unwrap().is_empty());
+    // Historical false acknowledgements do not suppress periodic reconciliation.
+    collection
+        .update_one(
+            doc! {"_id":&saved.id},
+            doc! {"$set":{
+                "applied_revision":resized.revision,"reconcile_after":DateTime::from_millis(0)
+            }},
+        )
+        .await
+        .unwrap();
+    let retry = store.claim().await.unwrap().unwrap();
+    assert_eq!(retry.target_replicas, 0);
+    assert_eq!(retry.applied_revision, retry.revision);
     collection
         .update_one(
             doc! {"_id":&saved.id},

@@ -40,6 +40,8 @@ guarded = mode == "release" ? [
   ["ci", "trigger-provider-smoke-contract", "Staging authority and evidence regressions"],
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
+  ["ci", "backend", "Image normalization budgets"],
+  ["ci", "backend", "Tests"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],
   ["ci", "backend", "Image Manager authenticated Mongo isolation"],
   ["nightly-staging", "smoke", "Initialize isolated evidence path"],
@@ -144,6 +146,54 @@ if mode == "release"
       next
     end
     raise "Gateway contract accepted non-readiness health"
+  end
+  %w[direct-gateway stripped-prefix].each do |mutation|
+    candidate = GatewaySourceContract.expected
+    route = candidate["infra/api/httproute.yaml"].find { |value| value.dig("metadata", "name") == "cma-web" }
+    bridge = route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/api/event-gateway" } }
+    if mutation == "direct-gateway"
+      bridge["backendRefs"] = GatewaySourceContract.backend("cma-event-gateway")
+    else
+      bridge["filters"] = GatewaySourceContract.service_route("event-gateway", "cma-agent-manager", "/")["filters"]
+    end
+    begin
+      GatewaySourceContract.validate(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted a bypass of the shared login bridge: #{mutation}"
+  end
+  %w[portal-capture wrong-protocol-target stripped-connect removed-legacy-host wrong-openapi-target unsupported-full-path-rewrite].each do |mutation|
+    candidate = GatewaySourceContract.expected
+    routes = candidate.fetch("infra/cmaeg/httproute.yaml")
+    public_route = routes.find { |value| value.dig("metadata", "name") == "cma-event-gateway-public" }
+    case mutation
+    when "portal-capture"
+      public_route["spec"]["rules"][0]["matches"][0]["path"]["value"] = "/event-gateway"
+    when "wrong-protocol-target"
+      public_route["spec"]["rules"][0]["backendRefs"] = GatewaySourceContract.backend("cma-agent-manager")
+    when "stripped-connect"
+      public_route["spec"]["rules"][-1]["filters"] = GatewaySourceContract.gateway_public_route("PathPrefix", "connect", "/connect")["filters"]
+    when "removed-legacy-host"
+      routes.delete_at(0)
+    when "wrong-openapi-target"
+      api_route = candidate.fetch("infra/api/httproute.yaml").find { |value| value.dig("metadata", "name") == "cma-web" }
+      discovery = api_route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/agent-manager/openapi.json" } }
+      discovery["backendRefs"] = GatewaySourceContract.backend("cma-web")
+    when "unsupported-full-path-rewrite"
+      # This formerly schema-valid rule is rejected by the GKE Gateway controller.
+      discovery = public_route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/event-gateway/openapi.json" } }
+      discovery["matches"] = [GatewaySourceContract.path("Exact", "/event-gateway/openapi.json")]
+      discovery["filters"] = [{ "type" => "URLRewrite", "urlRewrite" => { "path" => { "type" => "ReplaceFullPath", "replaceFullPath" => "/openapi.json" } } }]
+    end
+    begin
+      GatewaySourceContract.validate(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted incompatible service routing: #{mutation}"
   end
   config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
   GatewaySourceContract.validate_provider_origin(config)

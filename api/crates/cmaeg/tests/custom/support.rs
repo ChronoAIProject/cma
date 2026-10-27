@@ -95,6 +95,7 @@ impl App {
                 public_origin: "https://gateway.example".into(),
                 waiters: waiters.clone(),
                 webhooks: WebhookClient::with_transport(receiver.transport.clone()),
+                activity: Arc::new(cmaeg::turns::observer::NoopObserver),
             },
         );
         let provider = FakeProvider::start(provider_config).await;
@@ -119,12 +120,29 @@ impl App {
         .unwrap()
         .with_media_enabled(media_enabled);
         let tools = ToolsState {
+            discord_thread_history: None,
+            complete_replies_enabled: false,
+            whatsapp_templates_enabled: false,
+            discord_interactions_enabled: false,
+            whatsapp_interactions_enabled: false,
+            consumer_interactions_enabled: false,
+            telegram_effects_issuance_enabled: false,
+            telegram_effects: None,
+            native_media_enabled: false,
+            native_discord_edits_enabled: false,
+            discord_effects_issuance_enabled: false,
+            discord_effects: None,
+            relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
             providers,
             delivery,
+            routed_replies: None,
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
+            advertise_public_api_url: true,
             media: None,
             downloads: Default::default(),
         };

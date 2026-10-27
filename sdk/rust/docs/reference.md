@@ -20,12 +20,12 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `sandboxes()` | `list`, `read`, `create`, `delete`, `pause`, `revive`, `events` |
 | `workspaces()` | `list`, `read`, `create`, `delete` |
 | `worktrees()` | `list`, `read` |
-| `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `update_settings`, `skills`, `install_skill`, `access_requests`, `approve_access_request`, `deny_access_request` |
+| `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `update_settings`, `skills`, `install_skill`, `access_requests`, `approve_access_request`, `deny_access_request`, `update_service_access` |
 | `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
 | `triggers()` | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `list_revisions`, `list_placements`, `create_placement`, `retire_placement`, `embed`, `stats` |
 | `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |
 | `agui()` | `read_capabilities`, `read_sandbox`, `run`, `events` |
-| `responses_v2()` | `read_capabilities`, `create`, `create_for_agent`, `read`, `read_conversation`, `list_items`, `replay`, `observe_controls`, `submit_control`, `read_command`, `observe_queued_cancellation`, `cancel_queued_response` |
+| `responses_v2()` | `read_capabilities`, `create`, `create_for_agent`, `read`, `read_conversation`, `list_items`, `replay`, `observe_controls`, `submit_control`, `interrupt_with_input`, `read_command`, `observe_queued_cancellation`, `cancel_queued_response` |
 | `agent_events_v2()` | `read_transport_eligibility`, `snapshot`, `events` with `consume_next` and `acknowledged_cursor` |
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
 | `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
@@ -127,9 +127,21 @@ Provider binding management uses `client.provider_bindings().put/get/delete/ensu
 
 `cma_sdk::cmaeg::Cmaeg` is an independent client configured with the gateway origin,
 without `/v1`. Methods are `create_channel`, `get_channel`, `recover_channel`,
-`update_channel`, `delete_channel`, `test_channel`, `rekey_channel`, `post_event`,
+`update_channel`, `delete_channel`, `test_channel`, `test_channel_source`,
+`test_channel_consumer`, `update_channel_routing`, `rekey_channel`, `post_event`,
 `stream_event`, `reply_to_event`, `update_message`, `send_typing` and
 `read_event_context`. Wire types live in `cma_sdk::cmaeg::types`.
+
+Native Discord thread context is opt-in. When ordinary context advertises
+`capabilities.thread_history == Some(true)`, use
+`read_event_context_with_history(event_ref)` to read at most 20 text messages
+strictly before that event in the same thread. The optional `thread_history`
+includes author/timestamps and attachment counts, without download links or
+message action references. There is no caller-supplied channel, pagination or
+history backfill; ordinary context calls make no Discord history request.
+The gateway gate and native source's `thread_history: true` must both be enabled.
+Rust callers constructing `Source::Discord` or `SourceRequest::Discord` directly
+should use `thread_history: None` to preserve the legacy wire shape.
 
 Connection setup uses `get_channel_capabilities`, `create_channel_connection`,
 `list_channel_connections`, `get_channel_connection`, and
@@ -140,9 +152,22 @@ Reserve and retain the request's `record_id` for durable retries. Listing return
 one page; follow `next_after` even when `items` is empty. Channel creation/update
 includes optional `connection_ref` and `connection_admission`. Native Telegram
 source, credential and webhook endpoint fields are available in the wire types.
+
+Native bot mentions are an explicit source opt-in. Read
+`CapabilityView.source_features` and require `native_bot_mentions_v1` before
+selecting `BotMessageAdmission::NativeMentions`; the receiving identity and
+consumer's guest permissions and loop limits must also be configured. Older
+responses deserialize this field as an empty list, and scoped admission without
+`bot_messages` still defaults to denial and serializes without that field.
+When upgrading Rust code that constructs these public types directly, add
+`bot_messages: Default::default()` to existing `AdmissionPolicy::Scoped` values
+and `source_features: Vec::new()` to existing `CapabilityView` values. These are
+Rust source construction changes; existing JSON requests and responses remain
+compatible.
+
 A channel read with several consumers carries the read-only
 `definition.routing` (`RoutingPolicy`), with each consumer's public key hash and
-never a key; it is `None` on every other channel, and no request type sets it.
+never a key; it is `None` on every other channel.
 A routed event's `Activity`, and the `PublicActivity` that `read_event_context`
 returns, carry `routing` (`ActivityRouting`): the source slot, how the targets
 were resolved, the targets with the primary consumer first and, on a hand-off,
@@ -159,6 +184,9 @@ use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
     let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
     let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        whatsapp_template: None,
+        native_attachments: None,
+        thread_reply: None,
         text: Some("Received".into()), blocks: None, reply_to: None,
     }).await?;
     // Inspect receipt.delivery and receipt.rendering before claiming delivery.
@@ -179,6 +207,56 @@ response, retain the complete request and reconcile with `recover_channel`.
 Updates require the complete policy and `expected_version`; deletes require the
 observed `u64` version. Omitted update credentials retain their values. HTTP
 problems use `Error::Api`, preserving `code`, status and retry metadata.
+
+`test_channel_source(id, source_index)` checks saved producer configuration only:
+`scope` is `configuration_only` and `external_delivery_tested` is false. It sends
+no platform request or message. `test_channel_consumer(id, consumer_id)` runs an
+isolated turn for that exact consumer with a 125-second timeout and no external
+reply. `update_channel_routing(id, &body)` takes `expected_version` and editable
+policy; every consumer ID, order, binding and credential must remain unchanged.
+It does not provision or remove consumers, and extended policy writes require
+deployment support. An exact retry after lost success can confirm the immediately
+following revision; other stale revisions conflict. The SDK never retries it.
+
+`get_channel_activity(id, &ChannelActivityOptions { owner })` returns a typed
+`ActivityPage` of recent events, consumer processing states and actual transport
+observations. Use `Default::default()` for the authenticated creator or select an
+organization owner for that request. The page advertises `retention_days`,
+`limit` and `has_more`; it is a bounded recent view, not a complete audit log.
+`occurred_at` is normalized event time: the source timestamp when supplied, or
+gateway normalization time for custom CloudEvents without `time`. The original
+CloudEvent's `time` stays absent in that case; `occurred_at` alone does not establish
+a source timestamp. `received_at` is gateway receipt time. Processing
+completion does not itself prove delivery: inspect each delivery's `outcome`,
+`recipients`, `observed_at` and optional `confirmed_at` receipt timestamp.
+
+`stream_channel_activity(id, &StreamChannelActivityOptions::default())` opens a
+`ChannelActivityStream`. Its `next()` returns
+`Option<Result<ChannelActivityEvent>>`, with `Activity(ActivityPage)` and
+`Reset(ActivityPage)` variants. Each connection starts with a full snapshot;
+replace the prior snapshot atomically for either variant. `Reset` indicates
+expired retention or missed notifications. The SDK checks that the snapshot
+cursor matches the explicit SSE ID before returning it. Retain the cursor only
+after your application successfully applies the snapshot, then reconnect with
+`cursor` or `last_event_id` in `StreamChannelActivityOptions` (the header takes
+precedence). The SDK does not reconnect automatically. Clean EOF ends the
+connection normally; incomplete frames fail. Dropping the stream ends observation
+only. The configured request timeout covers the full stream, and the gateway
+also closes each connection after five minutes. Owner selection remains local
+to the request.
+
+`OutboundMessage::native_attachments` requests native image, file, audio or video
+delivery from an HTTPS URL or bounded base64. Check
+`ContextResponse.capabilities.native_media` first: support is deployment-gated.
+There may be at most four attachments and 64 KiB of total decoded inline data
+within the existing tool-body limit. Ordinary attachment blocks remain links.
+Text edits require the advertised edit capability and a retained message
+reference; inspect the update receipt. `verify_raw_event: true` on a Discord or
+WhatsApp relay source requests signed raw-event correlation and requires the
+deployment's extended-source writer support; omission preserves existing trust.
+When constructing these Rust types directly, add `native_attachments: None`,
+`native_media: None`, or `verify_raw_event: false` to the respective old literals.
+These are source-construction changes; existing JSON remains compatible.
 
 Custom events use structured CloudEvents. `EventOptions::default()` uses the
 configured source-key bearer; `EventOptions { webhook: Some(WebhookAuth { ... }) }`
@@ -247,3 +325,136 @@ CMA callback continuation, local path/method, optional body/owner, and a require
 `idempotency_key` for mutations. Inspect `AgentDelegationOperationResult.status`
 before treating the inner operation as successful. These provider APIs require
 the configured Bot Father binding; they never accept or return user credentials.
+
+## Persistent documents
+
+`client.documents()` exposes `list`, `create`, `read`, `update`, `source`,
+`revisions`, `shares`, `grant`, `revoke`, `links`, `create_link`, `revoke_link`,
+`comments`, `comment`, and `remove_comment`. Types live in `cma_sdk::documents`.
+The registry is independent of Agent and Sandbox lifetimes. `DocumentListOptions`
+supports literal title `q`, `scope`, `cursor`, and page `limit` (1–50).
+
+All writes take `&IdempotencyKey`; preserve the original key when retrying an
+uncertain result. Versioned mutations take `expected_revision`; source reads
+may select an immutable revision. Recipient grants are `Read` or `Comment`.
+The optional token on read/comment calls goes only in
+`X-CMA-Document-Share-Token` and still requires user authentication.
+`create_link` accepts a caller-generated random 256-bit lowercase hex token;
+returned metadata never includes it. Keep share tokens out of logs and URL
+queries. Link access alone never exposes a user's registry inventory.
+
+## Gateway native cards and relay authoring
+
+### Lark and Feishu native cards
+
+Discover the event context before using interactive blocks. When the operator
+enables native Lark cards, eligible contexts return `buttons: "native_card"` and
+`cards: "native_card"`; the SDK uses the existing button/choice/card/link message
+shapes. Button callbacks return the stored option IDs and selected set, never
+arbitrary client callback data. Retain the returned message reference for a
+replacement after the click. Named consumers require the operator's separate
+consumer-interaction gate and preserve their original binding and conversation.
+Disabled or threaded contexts retain their advertised fallback capabilities. Native forms and media mixed with
+cards are unsupported; inspect rendering and delivery outcomes. An unknown send
+or edit may have reached the platform and must not be blindly retried.
+
+### Approved WhatsApp templates
+
+Approved WhatsApp templates use the optional `whatsapp_template` field on
+`OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
+before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
+`WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the template
+name/language and bounded positional parameters. Header parameters can be text
+or typed image/video/document references; body parameters can be text, currency
+or a date/time fallback label. URL buttons accept a text suffix only. Templates
+are exclusive of ordinary text, blocks, native attachments and thread/reply targets.
+Event replies retain the event's authorized recipient; owner-initiated sends use
+their separately admitted saved route. Templates cannot be edited and grant no
+interactive callback authority. The template capability alone does not enable
+initiated sends. Templates must already be approved in the WhatsApp account;
+see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
+ordinary message behavior. An unknown receipt must not be retried automatically.
+
+### Relay authoring capabilities
+
+`get_channel_capabilities` also returns optional `relay_authoring`: relay platform verification
+modes and their `writes_enabled` status, plus independent raw-verification,
+dynamic-source, multi-consumer, native-mention and thread-contract writer gates.
+The existing `platforms` list remains native connection setup (Telegram only).
+Absent metadata means older discovery, not permission to opt into raw
+verification. Retain saved settings without silently switching to normalized
+trust. These capabilities do not attest upstream transport health or provide
+NyxID bot provisioning. Cache per authenticated owner context, not globally;
+the server still validates every write.
+
+
+### WhatsApp reply buttons and lists
+
+Eligible raw-verified private contexts advertise `buttons: "native_interactive"`
+after the gateway operator enables WhatsApp interactions. Use existing
+`OutboundMessage.blocks`: one `buttons` block (1–3 options, labels at most 20
+characters) or one `choice` with `multi: false` (1–10 options, labels at most 24
+characters). Optional text is limited to 1,024 characters including the choice
+prompt. Multiple controls, multi-select, cards/forms/links, native media and
+threaded replies are refused. Check the returned rendering report for plain
+style/preselection degradation. There are no new SDK types or request fields.
+
+Only the exact original sender can consume a confirmed message's controls.
+Callbacks return the existing interaction activity with stored action IDs and
+selected values. They do not trust selection titles. Repeated delivery keeps
+one event/idempotency identity; a new choice requires a new message because
+WhatsApp `updateMessage` is unsupported. Unknown receipts are not permission
+to resend. See `docs/CMAEG_Protocol.md` for durable binding and rollout limits.
+
+The existing public option-label bound of 64 UTF-8 bytes also applies.
+
+### Owner-initiated messages
+
+`prepare_outbound_message(channel_id, &PrepareOutboundMessage, key)` durably
+prepares without delivery. `commit_outbound_message(channel_id, delivery_id,
+&OutboundMessage)` repeats the exact message and commits at most once.
+`get_outbound_message` reads its receipt and `cancel_outbound_message` cancels only
+before commit. The owner needs channel update permission and an enabled deployment
+writer gate. Destinations must already exist in the owned channel configuration.
+The shared typed message supports native media and approved WhatsApp templates;
+thread/reply-to authority is never inferred from a caller's metadata.
+
+`send_outbound_message` prepares and commits once. It returns `OutboundSendError`
+on failure: a present `delivery_id` means commit was attempted and the caller
+must inspect that durable receipt before acting again. Neither this helper nor
+any other mutation retries automatically. A committed unknown result never causes
+another send. Keep the original message with the original key for recovery;
+preparations expire in 24 hours and idempotency is retained for seven days.
+
+
+### Named-consumer interactive callbacks
+
+Named Telegram, Lark/Feishu and WhatsApp controls use the same SDK message shapes.
+Discover capabilities: issuance needs the platform gate and the separate named
+consumer gate. A callback returns to exactly the consumer conversation that
+issued the card, including across gateway restart or consumer rename. Current
+ACLs and consumer readiness still apply. Credential rotation is supported;
+consumer removal or provider rebinding invalidates the old card's authority.
+Disabling issuance preserves already-issued callbacks. There is no callback
+fan-out or default fallback. Hand-off controls remain unavailable because CMA
+has not yet persisted the original human callback audience through hand-offs.
+
+### Typed WhatsApp template parameters
+
+Template header media uses exactly one non-null `id` (1–32 Meta digits) or
+`link` (public HTTPS, up to 8192 bytes). Only `document` accepts `filename`.
+`currency` carries `fallback_value`, a three-letter uppercase `code` and
+`amount_1000` (nonnegative integer, at most 9,007,199,254,740,991).
+`date_time` carries `fallback_value` only. The gateway validates placement,
+lengths and destination authority; Meta validates approval and media ownership.
+The SDK exposes these exact typed fields; it does not infer callback recipients.
+
+### Native Telegram message effects
+
+Native Telegram message effects use `read_message_capabilities`, `delete_message`, and `set_message_reaction`. Pass the existing confirmed
+CMA `message_ref`; raw chat or message IDs are not accepted. Delete and reaction
+require a stable caller-chosen idempotency key. Reactions accept zero entries to
+clear the bot reaction or one emoji/custom-emoji entry. Legacy references and
+relay transports report unsupported. An unknown receipt remains unknown and is
+never retried automatically. Capability support remains subject to Telegram's
+message-age, administrator-rights and reaction rules.

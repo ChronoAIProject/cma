@@ -67,12 +67,25 @@ impl SandboxReconciler {
             return Ok(());
         };
         for claim in pools.inventory_claims().await.map_err(provider_error)? {
+            let id = SandboxId(claim.request.home.sandbox_id.clone());
+            if self
+                .store
+                .unowned_home_reservation(&id)
+                .await?
+                .is_some_and(|home| {
+                    !home.released
+                        && home.native_pool.as_ref().is_some_and(|native| {
+                            !native.cleaned && native.request == claim.request
+                        })
+                })
+            {
+                continue;
+            }
             let owner = self
                 .adapter
                 .native_pools_for_home(&claim.request.home)
                 .map_err(provider_error)?
                 .ok_or_else(|| corrupt("native claim belongs to another home authority"))?;
-            let id = SandboxId(claim.request.home.sandbox_id.clone());
             if let Some(current) = self.store.get_sandbox(&id).await? {
                 current
                     .validate()

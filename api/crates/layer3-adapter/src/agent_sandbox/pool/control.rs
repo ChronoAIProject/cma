@@ -7,6 +7,34 @@ use crate::HomeVolumeAttachment;
 /// Native pool effects exposed to durable control-plane workers and operators.
 #[async_trait::async_trait]
 pub trait NativePoolControl: Send + Sync {
+    /// Freeze new admission before the caller rechecks its durable allocations.
+    async fn begin_retirement(&self, _binding: &NativePoolBinding) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "native pool retirement is unavailable".into(),
+        ))
+    }
+    /// Drain spare capacity after the marker and a fresh complete durable scan.
+    /// Retained homes may still block final definition retirement.
+    async fn drain_pool(
+        &self,
+        _binding: &NativePoolBinding,
+        _retained_homes: &[HomeVolumeAttachment],
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "native pool drain is unavailable".into(),
+        ))
+    }
+    /// Called only after the durable admission barrier and guarded drain.
+    /// False means controller drain or definition deletion is pending.
+    async fn retire_pool(
+        &self,
+        _binding: &NativePoolBinding,
+        _retained_homes: &[HomeVolumeAttachment],
+    ) -> Result<bool> {
+        Err(crate::AdapterError::Unsupported(
+            "native pool retirement is unavailable".into(),
+        ))
+    }
     async fn inventory_claims(&self) -> Result<Vec<NativePoolClaim>> {
         Err(crate::AdapterError::Unsupported(
             "native claim inventory is unavailable".into(),
@@ -39,6 +67,23 @@ pub trait NativePoolControl: Send + Sync {
 
 #[async_trait::async_trait]
 impl NativePoolControl for AgentSandboxPools {
+    async fn begin_retirement(&self, binding: &NativePoolBinding) -> Result<()> {
+        self.begin_retirement(binding).await
+    }
+    async fn drain_pool(
+        &self,
+        binding: &NativePoolBinding,
+        retained_homes: &[HomeVolumeAttachment],
+    ) -> Result<()> {
+        self.drain_pool(binding, retained_homes).await
+    }
+    async fn retire_pool(
+        &self,
+        binding: &NativePoolBinding,
+        retained_homes: &[HomeVolumeAttachment],
+    ) -> Result<bool> {
+        self.retire_pool(binding, retained_homes).await
+    }
     async fn inventory_claims(&self) -> Result<Vec<NativePoolClaim>> {
         self.inventory_claims().await
     }

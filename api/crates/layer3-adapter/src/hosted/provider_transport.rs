@@ -265,6 +265,16 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         agent_id: &AgentSlot,
     ) -> crate::Result<Socket> {
+        self.connect_with_prepared_stream(endpoint, agent_id, None)
+            .await
+    }
+
+    async fn connect_with_prepared_stream(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        agent_id: &AgentSlot,
+        prepared: Option<crate::agent_sandbox::RuntimeStream>,
+    ) -> crate::Result<Socket> {
         let mut url = endpoint.conversation(agent_id.as_str())?;
         url.query_pairs_mut().append_pair("outputAck", "1");
         let mut request = url
@@ -284,12 +294,16 @@ impl ProviderHostedControlTransport {
         };
         if endpoint.native_binding().is_some() {
             let connected = async {
-                let stream = self
-                    .native_stream(
-                        endpoint,
-                        crate::agent_sandbox::RuntimeStreamKind::Conversation,
-                    )
-                    .await?;
+                let stream = match prepared {
+                    Some(stream) => stream,
+                    None => {
+                        self.native_stream(
+                            endpoint,
+                            crate::agent_sandbox::RuntimeStreamKind::Conversation,
+                        )
+                        .await?
+                    }
+                };
                 let (socket, _) =
                     tokio_tungstenite::client_async_with_config(request, stream, Some(config))
                         .await
@@ -323,12 +337,23 @@ impl ProviderHostedControlTransport {
 mod control;
 #[path = "native_http_pool.rs"]
 mod native_pool;
+#[path = "provider_open.rs"]
+mod open;
 
+#[path = "native_status.rs"]
+mod native_status;
 #[path = "native_transport.rs"]
 mod native_transport;
 
 #[async_trait::async_trait]
 impl super::HostedControlTransport for ProviderHostedControlTransport {
+    async fn inspect_native_status(
+        &self,
+        inspection: &super::NativeStatusInspection<'_>,
+    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        self.inspect_reused_native_status(inspection).await
+    }
+
     async fn bind_runtime(&self, handle: &RuntimeHandle, sandbox_id: &str) -> crate::Result<()> {
         self.bind_sandbox(handle, sandbox_id).await
     }
@@ -377,6 +402,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         ProviderHostedControlTransport::export_agent_history(self, handle, agent).await
     }
 
+    #[tracing::instrument(skip_all, fields(agent_id = launch.request.agent_id.as_str()))]
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
@@ -385,20 +411,15 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         mut settings: HostedAgentOpenSettings,
         updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        let mut timing = super::startup_timing::StartupTiming::new();
         let key = (handle.clone(), launch.request.agent_id.clone());
         let epochs = self.open_epochs(&key).await;
         let endpoint = self.endpoint(handle).await?;
-        let response = self
-            .exchange_at(handle, &endpoint, RequestFrame::OpenAgent(launch.clone()))
+        timing.completed("transport_endpoint");
+        let (mut receipt, socket) = self
+            .open_and_connect(handle, &endpoint, &launch, &mut timing)
             .await?;
-        let mut receipt = match response {
-            ResponseFrame::OpenAgent(receipt) => receipt,
-            ResponseFrame::Failure(failure) => {
-                return Err(super::provider_http::runtime_failure(failure))
-            }
-            _ => unreachable!("control correlation verifies open response operation"),
-        };
-        let socket = self.connect(&endpoint, &launch.request.agent_id).await?;
+        timing.completed("conversation_transport");
         let subscription = if settings.own_credential {
             match &self.subscriptions {
                 Some(source) => Some(super::subscriptions::HostedSubscriptionBinding {
@@ -423,6 +444,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             updates,
         )
         .await?;
+        timing.completed("conversation_handshake");
         let channel = self.register_link(key, epochs, opened).await?;
         receipt.receipt.conversation_id = channel.conversation_id.clone();
         Ok((channel, receipt))

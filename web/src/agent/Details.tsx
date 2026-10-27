@@ -4,9 +4,11 @@ import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentCommand } from './controller';
 import './Details.css';
-import { SessionSettings } from './SessionSettings';
-import { ScopeSettings } from './ScopeSettings';
+import { DetailsServiceAccess } from './DetailsServiceAccess';
+import { openSandboxTab } from '../sandbox/sandboxTabRoute';
 import { SkillsSettings } from './SkillsSettings';
+import { AgentFiles } from './files/AgentFiles';
+import { AgentShareLinks } from '../resources/AgentShareLinks';
 
 interface AgentDetailsProps {
   readonly detail?: AgentDetail;
@@ -14,7 +16,8 @@ interface AgentDetailsProps {
   readonly historyLoading?: boolean;
   readonly open?: boolean;
   readonly onClose?: () => void;
-  readonly onSandboxProgress?: () => void;
+  /** Opens the Agent's Sandbox page; the drawer picks which tab. */
+  readonly onOpenSandbox?: () => void;
 }
 
 export function AgentDetails({
@@ -23,7 +26,7 @@ export function AgentDetails({
   historyLoading = false,
   open = false,
   onClose,
-  onSandboxProgress,
+  onOpenSandbox,
 }: AgentDetailsProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -55,24 +58,24 @@ export function AgentDetails({
         )}
       </header>
       <div className="agent-details__scroll">
-        <div className="agent-details__band">
-          <SessionSettings
-            key={`settings:${detail.id}`}
-            agentId={detail.id}
-            active={open}
-            busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
-          />
-          <ScopeSettings key={`scope:${detail.id}`} detail={detail} />
-          <SkillsSettings
-            key={`skills:${detail.id}`}
-            agentId={detail.id}
-            active={open}
-            busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
-          />
-          {onSandboxProgress === undefined ? null : (
-            <Button onClick={onSandboxProgress}>Sandbox operation progress</Button>
-          )}
-        </div>
+        <AgentFiles key={`files:${detail.id}`} agentId={detail.id} active={open} />
+        <AgentShareLinks key={`sharing:${detail.id}`} agentId={detail.id} active={open} />
+        <DetailsServiceAccess detail={detail} onOpenSandbox={onOpenSandbox} />
+        <SkillsSettings
+          key={`skills:${detail.id}`}
+          agentId={detail.id}
+          active={open}
+          busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
+        />
+        {onOpenSandbox === undefined ? null : (
+          <button
+            type="button"
+            className="agent-details__link"
+            onClick={() => openSandboxTab(onOpenSandbox, detail.sandbox.id, 'activity')}
+          >
+            Sandbox operation progress
+          </button>
+        )}
       </div>
     </aside>
   );

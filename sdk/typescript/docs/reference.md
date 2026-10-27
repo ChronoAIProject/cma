@@ -4,23 +4,23 @@
 
 `createClient(config)` returns a `Cma` with the following public resources:
 
-| Resource                                                | Methods                                                                                                                                                                                                                                                                                                   |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agentProfiles`, `workspaceProfiles`, `sandboxProfiles` | `list`, `read`, `create`, `save`, `publish`, `listRevisions`, `readRevision`, `setVisibility`, `retire`                                                                                                                                                                                                   |
-| `profileAuthoring`                                      | `bounds`, `services`, `searchSkills`, read-only `resolveRepository`                                                                                                                                                                                                                                       |
-| `marketplace.agent`, `.workspace`, `.sandbox`           | `list`, `read`, `fork`                                                                                                                                                                                                                                                                                    |
-| `sandboxes`                                             | `list`, `read`, `create`, `pause`, `revive`, `delete`, `events`                                                                                                                                                                                                                                           |
-| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `delete`                                                                                                                                                                                                                                   |
-| `worktrees`                                             | `list(workspaceId)`, `read`                                                                                                                                                                                                                                                                               |
-| `agents`                                                | `list`, `read`, `create(workspaceId, body, options)`, `input`, `steer`, `interrupt`, `answerApproval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `updateSettings`, `skills`, `installSkill`, `accessRequests`, `approveAccessRequest`, `denyAccessRequest`    |
-| `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                                                                                |
-| `launches`                                              | `preview`, `createOrResume`, `read`, `list`, `start`, `cancel`, `requirements`, `events`, `stream`, `createConnection`, `readConnection`                                                                                                                                                                  |
-| `agui`                                                  | `run`, `replay`, `readCapabilities`, `readSandboxSnapshot`, `streamLaunchEvents`                                                                                                                                                                                                                          |
-| `responsesV2`                                           | `readCapabilities`, `create`, `createForAgent`, `read`, `readEventContext`, `readConversation`, `listConversationItems`, `replay`, `observeControls`, `submitControl`, `readCommand`, `observeQueuedCancellation`, `cancelQueuedResponse`                                                                 |
-| `agentEventsV2`                                         | `readTransportEligibility`, `snapshot`, `events` with acknowledgement after consumer success                                                                                                                                                                                                              |
-| `responses`                                             | `createConversation`, `readConversation`, `listConversationItems`, `create`, `read`, `delete`, `cancel`                                                                                                                                                                                                   |
-| `auth`                                                  | `readSession`, `readSignupOptions`, `loginUrl`, `logoutUrl`                                                                                                                                                                                                                                               |
-| `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `patchSettings`, `resetSettings`, `pauseTriggers`, `resumeTriggers`, `readRuntimeInventory`, `listWarmPools`, `configureWarmPool`, `resizeWarmPool`, `listActivity` |
+| Resource                                                | Methods                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentProfiles`, `workspaceProfiles`, `sandboxProfiles` | `list`, `read`, `create`, `save`, `publish`, `listRevisions`, `readRevision`, `setVisibility`, `retire`                                                                                                                                                                                                                       |
+| `profileAuthoring`                                      | `bounds`, `services`, `searchSkills`, read-only `resolveRepository`                                                                                                                                                                                                                                                           |
+| `marketplace.agent`, `.workspace`, `.sandbox`           | `list`, `read`, `fork`                                                                                                                                                                                                                                                                                                        |
+| `sandboxes`                                             | `list`, `read`, `create`, `pause`, `revive`, `updateRuntime`, `delete`, `events`                                                                                                                                                                                                                                              |
+| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `delete`                                                                                                                                                                                                                                                       |
+| `worktrees`                                             | `list(workspaceId)`, `read`                                                                                                                                                                                                                                                                                                   |
+| `agents`                                                | `list`, `read`, `create(workspaceId, body, options)`, `input`, `steer`, `interrupt`, `answerApproval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `updateSettings`, `skills`, `installSkill`, `accessRequests`, `approveAccessRequest`, `denyAccessRequest`, `updateServiceAccess` |
+| `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                                                                                                    |
+| `launches`                                              | `preview`, `createOrResume`, `read`, `list`, `start`, `cancel`, `requirements`, `events`, `stream`, `createConnection`, `readConnection`                                                                                                                                                                                      |
+| `agui`                                                  | `run`, `replay`, `readCapabilities`, `readSandboxSnapshot`, `streamLaunchEvents`                                                                                                                                                                                                                                              |
+| `responsesV2`                                           | `readCapabilities`, `create`, `createForAgent`, `read`, `readEventContext`, `readConversation`, `listConversationItems`, `replay`, `observeControls`, `submitControl`, `interruptWithInput`, `readCommand`, `observeQueuedCancellation`, `cancelQueuedResponse`, `listQueuedInputs`, `editQueuedInput`                        |
+| `agentEventsV2`                                         | `readTransportEligibility`, `snapshot`, `events` with acknowledgement after consumer success                                                                                                                                                                                                                                  |
+| `responses`                                             | `createConversation`, `readConversation`, `listConversationItems`, `create`, `read`, `delete`, `cancel`                                                                                                                                                                                                                       |
+| `auth`                                                  | `readSession`, `readSignupOptions`, `loginUrl`, `logoutUrl`                                                                                                                                                                                                                                                                   |
+| `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `patchSettings`, `resetSettings`, `pauseTriggers`, `resumeTriggers`, `readRuntimeInventory`, `listWarmPools`, `configureWarmPool`, `resizeWarmPool`, `listActivity`                     |
 
 `readConformance(options?)` performs `GET /api/v1/conformance` anonymously.
 `readOpenApi(options?)` reads the generated `/openapi.json` anonymously, preserving
@@ -417,9 +417,19 @@ Provider binding management uses `client.providerBindings.put/get/delete/ensureC
 
 `Cmaeg` is an independent client configured with the gateway origin, without a
 `/v1` suffix. Its operations are `createChannel`, `getChannel`, `recoverChannel`,
-`updateChannel`, `deleteChannel`, `testChannel`, `rekeyChannel`, `postEvent`,
+`updateChannel`, `deleteChannel`, `testChannel`, `testChannelSource`,
+`testChannelConsumer`, `updateChannelRouting`, `rekeyChannel`, `postEvent`,
 `streamEvent`, `replyToEvent`, `updateMessage`, `sendTyping` and `readEventContext`.
 Gateway wire types and `signWebhook` are exported under `cmaeg`.
+
+Native Discord thread context is opt-in. When ordinary context advertises
+`capabilities.thread_history: true`, call
+`readEventContext(eventRef, { includeThreadHistory: true })` to read at most 20
+text messages strictly before that event in the same thread. The optional
+`thread_history` includes author/timestamps and attachment counts, without
+download links or message action references. There is no caller-supplied channel,
+pagination or history backfill; ordinary calls make no Discord history request.
+The gateway gate and native source's `thread_history: true` must both be enabled.
 
 Connection setup uses `getChannelCapabilities`, `createChannelConnection`,
 `listChannelConnections`, `getChannelConnection`, and `cancelChannelConnection`.
@@ -432,8 +442,8 @@ creation/update accepts `connection_ref` and `connection_admission`. Native
 Telegram source, credential and webhook endpoint fields are typed as well.
 A channel read with several consumers carries the read-only
 `definition.routing` (`cmaeg.RoutingPolicy`), with each consumer's public key
-hash and never a key; it is absent on every other channel, and no request type
-sets it. A routed event's `cmaeg.Activity`, and the `cmaeg.PublicActivity` that
+hash and never a key; it is absent on every other channel. A routed event's
+`cmaeg.Activity`, and the `cmaeg.PublicActivity` that
 `readEventContext` returns, carry `routing` (`cmaeg.ActivityRouting`): the source
 slot, how the targets were resolved, the targets with the primary consumer first
 and, on a hand-off, its `cmaeg.Causation`. It is absent on every unrouted event.
@@ -466,6 +476,52 @@ replicas. Keep the complete request after uncertainty and reconcile with
 requires `expected_version`; `deleteChannel(id, expectedVersion)` sends that
 version in the query. Omitted/null update credentials retain their current values.
 A stale mutation throws `ApiError` with `code === 'conflict'`.
+
+`testChannelSource(id, sourceIndex)` checks the saved producer configuration;
+it reports `scope: 'configuration_only'` and `external_delivery_tested: false`.
+It does not contact the platform or send a message. `testChannelConsumer(id,
+consumerId)` runs an isolated provider turn for that exact consumer, with a
+125-second timeout and no external reply. `updateChannelRouting(id, body)` takes
+`expected_version` and editable routing policy while preserving every consumer
+ID, order, binding and credential. Adding or removing consumers is not supported
+by this operation. Extended policy writes require deployment support. After a
+lost success, an exact retry can confirm the immediately following revision;
+other stale revisions return a conflict. The SDK never retries mutations itself.
+
+`getChannelActivity(id, {owner?})` returns a typed `cmaeg.ActivityPage` of recent
+events, consumer processing states and observed transport deliveries. The page
+advertises its retention window, item limit and `has_more`; it is a bounded view,
+not a complete audit log. `occurred_at` is normalized event time: the source
+timestamp when supplied, or gateway normalization time for custom CloudEvents
+without `time`. The original CloudEvent's `time` stays absent in that case;
+`occurred_at` alone does not establish a source timestamp. `received_at` is gateway
+receipt time. A consumer's completed processing state does not itself prove
+delivery: inspect each delivery's `outcome`, `recipients`, `observed_at` and
+optional confirmed receipt timestamp.
+
+`streamChannelActivity(id, {owner?, cursor?, lastEventId?, signal?})` is an async
+iterator of `cmaeg.ChannelActivityEvent`. Both `activity` and `reset` events carry
+a complete `ActivityPage` in `data`; replace the prior snapshot atomically. Each
+connection starts with a snapshot. `reset` indicates expired retention or missed
+notifications, and also replaces the entire snapshot. The SDK validates that the
+explicit SSE `id` equals the snapshot cursor before yielding it. Retain only the
+cursor of the snapshot your application successfully applied, then pass it to a
+new connection as `cursor` or `lastEventId` (`Last-Event-ID` takes precedence).
+The SDK never reconnects automatically. Clean EOF ends the connection; truncated
+frames fail. `timeoutMs` bounds the handshake, while `signal` cancels observation
+of the active stream. The gateway also closes each connection after five minutes.
+Owner selection applies to only that request and never changes client credentials.
+
+`OutboundMessage.native_attachments` explicitly requests native image, file,
+audio or video delivery using an HTTPS URL or bounded base64. Read event
+`capabilities.native_media` before using it; deployment support must be enabled.
+The limit is four attachments and 64 KiB of total decoded inline data within the
+existing tool-body limit. Ordinary attachment blocks remain links. Exact relay
+text editing also depends on deployment support and a retained message reference;
+inspect the event's edit capability and the update receipt rather than assuming
+every platform can edit every message. For Discord and WhatsApp sources,
+`verify_raw_event: true` opts into signed raw-event correlation and requires the
+deployment's extended-source writer support; omission preserves existing trust.
 
 `postEvent` and `streamEvent` accept a structured `cmaeg.CloudEvent` plus optional
 `{webhook:{secret,id,timestamp}}`. The timestamp is decimal Unix seconds; the
@@ -545,3 +601,137 @@ These methods require the configured Bot Father binding credential; they do not
 accept a user token or claimed grant ID. The operation result is `{ status, body }`;
 inspect the inner status before treating a mutation as successful. A CMA callback
 continuation is accepted only by CMA APIs, never gateway reply tools.
+
+## Persistent documents
+
+`client.documents` exposes `list`, `create`, `read`, `update`, `source`,
+`revisions`, `shares`, `grant`, `revoke`, `links`, `createLink`, `revokeLink`,
+`comments`, `comment`, and `removeComment`. Documents remain available after
+an originating Agent or Sandbox is removed. Listing supports `q`, `scope`
+(`owned`, `shared`, `all`), `cursor`, and `limit` (1–50).
+
+Every mutation requires `idempotencyKey`; retain it when retrying an uncertain
+result. Owner edits and grant changes carry `expected_revision`. Source reads
+accept an optional immutable source revision. Authorized recipients can read,
+or comment when their permission is `comment`. Optional `shareToken` is sent
+only in `X-CMA-Document-Share-Token`, alongside the user's authentication; it is
+never appended to a URL. The caller generates a random 256-bit token for
+`createLink` and keeps it in the application URL fragment. CMA returns link
+metadata without the token. Revocation is effective on subsequent source reads,
+including downloads that were in progress when authority was revoked.
+
+## Gateway native cards and relay authoring
+
+### Lark and Feishu native cards
+
+Discover the event context before using interactive blocks. When the operator
+enables native Lark cards, eligible contexts return `buttons: "native_card"` and
+`cards: "native_card"`; the SDK uses the existing button/choice/card/link message
+shapes. Button callbacks return the stored option IDs and selected set, never
+arbitrary client callback data. Retain the returned message reference for a
+replacement after the click. Named consumers require the operator's separate
+consumer-interaction gate and preserve their original binding and conversation.
+Disabled or threaded contexts retain their advertised fallback capabilities. Native forms and media mixed with
+cards are unsupported; inspect rendering and delivery outcomes. An unknown send
+or edit may have reached the platform and must not be blindly retried.
+
+### Approved WhatsApp templates
+
+Approved WhatsApp templates use the optional `whatsapp_template` field on
+`OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
+before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
+`WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the template
+name/language and bounded positional parameters. Header parameters can be text
+or typed image/video/document references; body parameters can be text, currency
+or a date/time fallback label. URL buttons accept a text suffix only. Templates
+are exclusive of ordinary text, blocks, native attachments and thread/reply targets.
+Event replies retain the event's authorized recipient; owner-initiated sends use
+their separately admitted saved route. Templates cannot be edited and grant no
+interactive callback authority. The template capability alone does not enable
+initiated sends. Templates must already be approved in the WhatsApp account;
+see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
+ordinary message behavior. An unknown receipt must not be retried automatically.
+
+### Relay authoring capabilities
+
+`getChannelCapabilities` also returns optional `relay_authoring`: relay platform verification
+modes and their `writes_enabled` status, plus independent raw-verification,
+dynamic-source, multi-consumer, native-mention and thread-contract writer gates.
+The existing `platforms` list remains native connection setup (Telegram only).
+Absent metadata means older discovery, not permission to opt into raw
+verification. Retain saved settings without silently switching to normalized
+trust. These capabilities do not attest upstream transport health or provide
+NyxID bot provisioning. Cache per authenticated owner context, not globally;
+the server still validates every write.
+
+### WhatsApp reply buttons and lists
+
+Eligible raw-verified private contexts advertise `buttons: "native_interactive"`
+after the gateway operator enables WhatsApp interactions. Use existing
+`OutboundMessage.blocks`: one `buttons` block (1–3 options, labels at most 20
+characters) or one `choice` with `multi: false` (1–10 options, labels at most 24
+characters). Optional text is limited to 1,024 characters including the choice
+prompt. Multiple controls, multi-select, cards/forms/links, native media and
+threaded replies are refused. Check the returned rendering report for plain
+style/preselection degradation. There are no new SDK types or request fields.
+
+Only the exact original sender can consume a confirmed message's controls.
+Callbacks return the existing interaction activity with stored action IDs and
+selected values. They do not trust selection titles. Repeated delivery keeps
+one event/idempotency identity; a new choice requires a new message because
+WhatsApp `updateMessage` is unsupported. Unknown receipts are not permission
+to resend. See `docs/CMAEG_Protocol.md` for durable binding and rollout limits.
+
+The existing public option-label bound of 64 UTF-8 bytes also applies.
+
+### Owner-initiated messages
+
+`prepareOutboundMessage(channelId, { source_id, route_id, message },
+{ idempotencyKey })` creates a durable preparation without sending. The route
+must already be configured in that owner's channel. `message` is the shared
+`OutboundMessage`, including supported native media and approved WhatsApp templates.
+`commitOutboundMessage(channelId, deliveryId, message)` repeats the exact message
+and commits one send. `getOutboundMessage` reads the receipt;
+`cancelOutboundMessage` cancels only before commitment. Preparation lasts 24 hours;
+idempotency records remain for seven days. The deployment authoring flag must be on.
+
+`sendOutboundMessage` is the convenience prepare-then-commit helper. It performs
+no automatic mutation retry. A failed commit throws
+`cmaeg.OutboundCommitUncertainError` with `deliveryId` and `isRetryable: false`;
+use `getOutboundMessage` to inspect the record. A replayed committed/unknown or
+cancelled preparation never causes another send. Never replace the key after an
+unknown outcome. The original message stays with the caller; CMA stores its hash,
+not the content. Thread/reply-to references cannot create unproven destination
+authority, and interactive blocks use the explicit text rendering report.
+
+### Named-consumer interactive callbacks
+
+Named Telegram, Lark/Feishu and WhatsApp controls use the same SDK message shapes.
+Discover capabilities: issuance needs the platform gate and the separate named
+consumer gate. A callback returns to exactly the consumer conversation that
+issued the card, including across gateway restart or consumer rename. Current
+ACLs and consumer readiness still apply. Credential rotation is supported;
+consumer removal or provider rebinding invalidates the old card's authority.
+Disabling issuance preserves already-issued callbacks. There is no callback
+fan-out or default fallback. Hand-off controls remain unavailable because CMA
+has not yet persisted the original human callback audience through hand-offs.
+
+### Typed WhatsApp template parameters
+
+Template header media uses exactly one non-null `id` (1–32 Meta digits) or
+`link` (public HTTPS, up to 8192 bytes). Only `document` accepts `filename`.
+`currency` carries `fallback_value`, a three-letter uppercase `code` and
+`amount_1000` (nonnegative integer, at most 9,007,199,254,740,991).
+`date_time` carries `fallback_value` only. The gateway validates placement,
+lengths and destination authority; Meta validates approval and media ownership.
+The SDK exposes these exact typed fields; it does not infer callback recipients.
+
+### Native Telegram message effects
+
+Native Telegram message effects use `readMessageCapabilities`, `deleteMessage`, and `setMessageReaction`. Pass the existing confirmed
+CMA `message_ref`; raw chat or message IDs are not accepted. Delete and reaction
+require a stable caller-chosen idempotency key. Reactions accept zero entries to
+clear the bot reaction or one emoji/custom-emoji entry. Legacy references and
+relay transports report unsupported. An unknown receipt remains unknown and is
+never retried automatically. Capability support remains subject to Telegram's
+message-age, administrator-rights and reaction rules.

@@ -15,14 +15,41 @@ for an overview of channel setup, ingress, execution, tools, delivery and recove
 
 | Interface | Production address |
 | --- | --- |
-| Direct REST base | `https://bot-gateway.chrono-ai.fun/v1` |
+| Direct REST base | `https://bot.chrono-ai.fun/event-gateway/v1` |
 | NyxID REST proxy base | `https://nyx-api.chrono-ai.fun/api/v1/proxy/s/cmaeg` |
-| Native MCP | `https://bot-gateway.chrono-ai.fun/mcp` |
-| OpenAPI | <https://bot-gateway.chrono-ai.fun/openapi.json> |
-| Integration guide | <https://bot-gateway.chrono-ai.fun/docs> |
-| Architecture section | <https://bot-gateway.chrono-ai.fun/docs#architecture> |
-| Complete protocol section | <https://bot-gateway.chrono-ai.fun/docs#protocol> |
-| Download complete document | <https://bot-gateway.chrono-ai.fun/docs/download> |
+| Native MCP | `https://bot.chrono-ai.fun/event-gateway/mcp` |
+| OpenAPI | <https://bot.chrono-ai.fun/event-gateway/openapi.json> |
+| Integration guide | <https://bot.chrono-ai.fun/event-gateway/docs> |
+| Architecture section | <https://bot.chrono-ai.fun/event-gateway/docs#architecture> |
+| Complete protocol section | <https://bot.chrono-ai.fun/event-gateway/docs#protocol> |
+| Download complete document | <https://bot.chrono-ai.fun/event-gateway/docs/download> |
+
+The canonical public API uses the `/event-gateway` namespace on the portal's
+origin. The portal itself remains at `/event-gateway`, and its browser-cookie
+bridge remains at `/api/event-gateway`. External REST and MCP clients use bearer
+or channel credentials directly; the browser-cookie bridge is not a general API
+proxy. The public OpenAPI document advertises the full canonical `/v1` base.
+
+The browser bridge also permits the editor's exact capability/connection list
+reads, routing update, and outbound-message preparation, status, cancellation
+and send operations. These retain the same origin check for mutations and the
+Gateway's owner and operation permission checks; arbitrary service routes and
+connection creation are not exposed by that bridge.
+
+Owner-authorized Channel Activity uses `GET /v1/channels/{channel_id}/activity`
+and its `/stream` SSE companion. The browser bridge allows those exact read
+routes and forwards SSE immediately, including `Last-Event-ID` on reconnect.
+It never buffers the feed until completion. It checks the retained browser
+credential before releasing each chunk, strips cookies and identity headers,
+and bounds each connection by the existing 125-second transport lifetime.
+Clients reconnect and atomically apply the server's latest activity snapshot;
+no periodic history polling is needed.
+
+
+Existing `https://bot-gateway.chrono-ai.fun` API, webhook and setup URLs continue
+to work. Keep retained callback URLs and signatures unchanged during migration;
+an installed Telegram webhook on the old host is preserved. Newly generated
+channel, setup and media links use the canonical namespace.
 
 The NyxID catalog display name is **Agent Event Gateway**, with slug `cmaeg`.
 It is a public, automatically connected service. Refresh `GET /api/v1/keys` in
@@ -35,6 +62,67 @@ The proxy already maps to the gateway's `/v1` base. For example, direct
 NyxID forwards the caller's bearer. An agent key also needs access to the user's
 gateway connection under NyxID's key policy; use that connection's ID from `/keys`,
 not the global catalog ID, when assigning an explicit service grant.
+
+## Live channel activity
+
+`GET /v1/channels/{channel_id}/activity` reads the owner's recent channel
+activity immediately. Verified incoming events are recorded before provider
+launch, so opening the channel after sending an event does not depend on an
+in-memory console queue or a refresh interval. The response is
+`{items,cursor,retention_days,limit,has_more}`. It contains at most 50 events
+across the current and previous six UTC days; the encrypted byte budget may
+retain fewer. `has_more=true` explicitly indicates truncation. This is recent
+operational activity, not a complete audit history.
+
+Native Discord receipts become visible after durable inbox persistence, before
+dispatch capacity or provider execution. Inbox recovery preserves that original
+receipt time, including when the reply capability has expired; recording the
+receipt never renews the capability or starts expired work.
+
+For live updates, connect to
+`GET /v1/channels/{channel_id}/activity/stream`. Each SSE `activity` event carries
+a complete replacement snapshot with the same shape; its `id` is the opaque
+cursor. Every connection sends the current snapshot first. Reconnect with
+`Last-Event-ID` or the `cursor` query parameter. A cursor older than retention
+receives an SSE `reset` event containing the current full snapshot. Apply each
+snapshot atomically. The service subscribes before reading, and commits changes
+before publishing update notifications. Local commits notify the stream
+immediately. While connected, a one-second server-side consistency refresh also
+observes commits from another Gateway process during rolling deployment; unchanged
+cursors do not emit duplicate activity frames. The refresh interval excludes
+record/authentication latency and does not replace normal immediate notifications.
+With the configured Gateway-owned Mongo store, unchanged refreshes use one indexed
+metadata query for the seven bucket versions, plus the channel ownership check;
+they do not load or decrypt the complete snapshots. No client polling is required.
+
+Activity names the source, actor, source conversation/thread, selected consumer,
+provider and provider conversation. Consumer display names and native agent IDs
+are present only when recorded authority supplies them. `occurred_at` is the
+normalized event timestamp: the source timestamp when supplied, or the gateway
+time at normalization for custom CloudEvents without `time`. The fallback leaves
+the original CloudEvent's `time` absent; `occurred_at` alone does not establish
+that a timestamp came from the source. `received_at` is the gateway's receipt
+timestamp.
+`dispatched_at` starts an attempt, `accepted_at` records actual provider
+acceptance, `produced_at` records committed response output, and `completed_at`
+records terminal response observation or recovered processing completion.
+`failed` means a provider reported failure or incomplete output. A completed
+processing checkpoint alone never proves a successful response: recovery retains
+the recorded terminal outcome, or reports `unknown` when that evidence is absent.
+Missing evidence remains null.
+
+Delivery entries identify their origin/default destination and recorded
+recipient. Platform confirmation and local HTTP buffering are distinct:
+`outcome=buffered` has no `confirmed_at`, while a confirmed platform or webhook
+receipt has one. Each legacy Custom HTTP webhook keeps its own result, including
+mixed success and failure. Webhook identities expose the destination origin,
+excluding credentials, path, query and fragments. Message bodies, raw attachment
+locators and channel credentials are excluded from activity snapshots.
+
+Reads and streams use the same owner authorization as channel management.
+Streams revalidate their credential and channel access before updated snapshots
+under the existing authentication cache policy, and reconnect after a bounded
+connection lifetime. Channel deletion or failed revalidation closes the stream.
 
 ## Choose your integration
 
@@ -269,10 +357,19 @@ JSON-RPC protocol `2025-06-18`, `Content-Type: application/json`, then
 | Native tool | Arguments | Purpose |
 | --- | --- | --- |
 | `readEventContext` | `{event_ref}` | Read full activity and actual transport capabilities |
-| `replyToEvent` | `{event_ref,message:{text}}` | Send a reply |
+| `replyToEvent` | `{event_ref,message:{text},idempotency_key?}` | Send a reply |
 | `updateMessage` | `{event_ref,message_ref,message:{text}}` | Edit when supported |
 | `sendTyping` | `{event_ref}` | Typing indicator when supported |
 | `readEventAttachment` | `{event_ref,index,view?,page?}` | Read one attachment as an image, transcript, frames or document page, or get a single-use download command; listed only when media is enabled |
+
+For durable routed replies, pass a stable `idempotency_key` (1–128 visible ASCII
+bytes); the REST equivalent is one optional `Idempotency-Key` header with the
+unchanged outbound-message body. Keep the key and message unchanged on retries.
+Use a new key for an intentional new send, including identical content. Changed
+content under an existing key conflicts before delivery. At most 64 keyed
+operations are retained per original target, until its original expiry; existing
+keys remain replayable at that bound. Unknown receipts do not authorize retrying
+with a new key. Legacy live events retain their existing non-idempotent behavior.
 
 `readEventAttachment` returns a text item with the view JSON followed by MCP
 image items, and no `structuredContent`. In code mode the model must call
@@ -287,6 +384,51 @@ metadata and text but never image bytes. These use the discovered REST
 parameter schemas; do not substitute native MCP argument shapes. Native MCP keeps
 the four camelCase names, plus `readEventAttachment` when media is enabled. The
 NyxID REST base does not include a `/mcp` endpoint.
+
+Ordinary relay replies can use complete-reply mode after operators coordinate
+an upgraded NyxID deployment and enable `CMAEG_NYXID_COMPLETE_REPLIES`. In that
+mode CMAEG sends the complete escaped logical text once; NyxID performs final
+ordinary/thread platform splitting. Acks, progress and intentional separate
+replies keep separate requests. Native Telegram and interactive/edit constraints
+retain their existing behavior. The default remains legacy chunking until the
+NyxID full-send contract is verified; see the [rollout procedure](CMAEG_Operations.md#coordinated-complete-reply-rollout).
+
+Rust embedders select this mode with `RelayClient::with_complete_replies(true)`
+when composing the delivery engine. Existing `Config` and `DeliveryConfig`
+struct shapes and constructor signatures are retained. Embedders must also set
+`ToolsState.complete_replies_enabled` to the same mode so the tool waits for the
+complete exchange. The low-level
+`RelayClient::send` and `send_rich` methods retain their existing payload and
+credential behavior; the new transport bound applies to complete ordinary
+delivery through the engine.
+
+The complete serialized relay JSON is limited to 2 MiB (2097152 bytes), including
+escaping, identifier and metadata. Oversized requests are refused before token
+claim or IO and are never truncated. Existing 128 KiB tool bodies, 32 KiB text
+fields and 16-block bounds remain unchanged. `max_text_chars` remains the existing
+per-platform single-message/control hint, not the tool input or complete relay
+payload limit. In complete mode, send one logical reply rather than manually
+chunking based solely on this hint. Complete ordinary replies have a fixed 15 s
+full-exchange budget. With this mode enabled, non-routed NyxID reply tools wait
+18 s including queueing/pacing, also for structured replies whose native-control
+eligibility is resolved later. Native card/control exchanges keep their configured
+timeout; media and template replies keep their separate existing budgets.
+Durable routed replies retain their 20 s send window and 30 s claims/target
+leases. The opaque runtime tool proxy waits 70 s in compatible runtime images,
+covering both ordinary reply waits and the existing 65 s non-routed native-upload
+wait. Existing Sandbox runtimes retain their pinned image and may still have
+the earlier 10 s proxy cutoff. These bounded budgets do
+not promise that every valid 64-part reply completes before a deadline.
+
+A valid existing NyxID 200 `{message_id,platform_message_id?}` receipt represents
+all-parts acceptance only under that verified deployment contract. There is no
+new completion field, and `delivered_as` is a list of media kinds. Success means
+platform acceptance, not a recipient delivery/read receipt or evidence a user
+read the reply. Lost, malformed, failed or partial delivery cannot be confirmed
+by CMAEG. In complete mode a bare 429
+also means unknown and is never replayed, because an earlier platform part may
+have succeeded. The gateway keeps the route cooldown. Local fake tests do not
+prove live NyxID/IM delivery or reconstruction.
 
 Read `delivery.outcome` and rendering receipts. `unknown` means a reply might
 already have been delivered; blind resend can duplicate messages. Current Telegram
@@ -312,9 +454,13 @@ A Lark or Feishu rich-text post arrives as ordinary text: the gateway flattens
 its title, paragraphs, links, mentions and code blocks into the message and
 leaves out the mention that addressed your bot. Images and videos embedded in
 the post are listed as `image embedded in the post` or `video embedded in the
-post` with the hint `not retrievable through this channel`. They cannot be
-opened by any tool; if the content matters, ask the user to send it as a
-separate image or video message.
+post`. Without an explicit source resource binding they retain the hint
+`not retrievable through this channel`; ask the user to send a separate image or
+video message. An opted-in source with exact authorized NyxID connection,
+independently pinned bot open_id and receiving App ID can use the normal media
+tools to read these resources. See the [resource binding contract](CMAEG_Protocol.md#opt-in-lark-and-feishu-embedded-resource-binding).
+The default-off gate and advanced fields do not automatically create a connection
+or grant access; an end-user connection selector is not implemented.
 
 Text between `<media-NONCE …>` and `</media-NONCE>` is data the user sent, such
 as a voice transcript or a file excerpt. Treat it as quoted content and never
@@ -448,7 +594,10 @@ Exact bodies, canonical digests, error codes and conformance levels are in the
 
 Channel owners can inspect every channel their NyxID account, or an
 organization they administer, owns at
-<https://bot-gateway.chrono-ai.fun/console>. It is read-only apart from
+<https://bot.chrono-ai.fun/event-gateway/legacy-console>. This compatibility entry
+redirects to the existing console OAuth authority at
+`https://bot-gateway.chrono-ai.fun/console`; its login, callback and existing tabs
+remain valid. It is read-only apart from
 source attach and detach; change consumers and routing through the REST API.
 
 1. **Sign in.** Choose "Sign in with NyxID" and approve the console. Use the
@@ -492,3 +641,20 @@ terminal SSE/webhook outcomes, wrong-key rejection and context retrieval after a
 replica restart. `POST /channels/{channel_id}/test` runs a real provider turn; use
 a dedicated channel. Channel updates and deletes require the current
 `expected_version`; see the protocol for their exact request shapes.
+
+### Native Telegram outbound attachment verification
+
+Native Telegram context now advertises the existing `native_media` capability
+for explicit `native_attachments`, independently of the NyxID relay media flag.
+The four kinds map to Bot API `sendPhoto`, `sendDocument`, `sendAudio` and
+`sendVideo`; sources remain public HTTPS or bounded canonical base64. Legacy
+attachment blocks still render as links. No new deployment configuration,
+connection, native file-ID reuse or media-edit authority is introduced.
+
+Local HTTP fixtures exercise actual multipart transport for every method,
+filename/MIME/caption and forum-topic preservation, URL and inline bytes,
+preparation-before-write, aggregate byte limits, unsafe URL rejection,
+wrong destination receipts, 429/5xx, response loss/truncation and partial delivery.
+Existing text and effect tests remain the regression boundary. A confirmed
+local fixture is not live Telegram acceptance; an authorized platform smoke
+test is still required for an operational rollout claim.

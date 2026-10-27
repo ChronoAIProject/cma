@@ -40,18 +40,8 @@
   gap: 12px;
   margin: 12px 0;
 }
-.bots__rows {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 24px;
-}
-.bots__rows li {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
-  overflow-wrap: anywhere;
+.bots__table {
+  margin: 16px 0 24px;
 }
 .bots__form {
   display: grid;
@@ -90,9 +80,6 @@
   .bots__header,
   .bots__body {
     padding: 16px;
-  }
-  .bots__rows li {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 

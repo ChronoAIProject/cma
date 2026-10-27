@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { agentClient } from '../test/agent';
@@ -226,7 +226,8 @@ it('keeps contextual Agent creation in the selected workspace and recovers only 
       />,
     );
   const first = draw();
-  expect(await screen.findByText(/Existing Sandbox · chrono-bot/)).toBeInTheDocument();
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+  expect(screen.getByText('Start an Agent in the selected workspace.')).toBeInTheDocument();
   expect(screen.queryByRole('group', { name: 'Runtime image' })).not.toBeInTheDocument();
   const user = await review();
   await user.click(screen.getByRole('button', { name: 'Create agent' }));
@@ -283,14 +284,12 @@ it('isolates a global creation from contextual creation and rejects a mismatched
   expect(screen.getByRole('alert')).toHaveTextContent('saved Agent request could not be read');
   expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
   expect(create).not.toHaveBeenCalled();
-  await waitFor(() =>
-    expect(screen.getByText(/Existing Sandbox · chrono-bot/)).toBeInTheDocument(),
-  );
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
 });
 
-it('uses server defaults without image, workspace or profile selectors and allows an empty repository', async () => {
+it('uses server defaults without image or profile selectors and allows an empty repository', async () => {
   const create = vi.fn().mockResolvedValue({ id: running.id });
-  const listSandboxes = vi.fn();
+  const listSandboxes = vi.fn(async () => ({ items: [] }));
   show(
     agentClient({
       listSandboxes,
@@ -298,6 +297,10 @@ it('uses server defaults without image, workspace or profile selectors and allow
       readAgentLifecycle: async () => running,
     }),
   );
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+  expect(
+    screen.getByText('Start an Agent in a new Sandbox with an empty workspace.'),
+  ).toBeInTheDocument();
   expect(screen.getAllByRole('textbox')).toHaveLength(1);
   expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
   for (const label of [
@@ -309,6 +312,11 @@ it('uses server defaults without image, workspace or profile selectors and allow
   ])
     expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
   expect(screen.queryByText('Detailed settings')).not.toBeInTheDocument();
+  const settings = screen.getByRole('region', { name: 'Agent settings' });
+  expect(settings).toHaveTextContent('gpt-6 · High · Autonomous');
+  expect(within(settings).queryByRole('button')).not.toBeInTheDocument();
+  expect(screen.getByText('Includes chrono-llm-public and ornn-api access.')).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'New agent' })).not.toHaveTextContent(/YOLO|Codex/);
   await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
   await waitFor(() => expect(create).toHaveBeenCalledOnce());
   expect(create.mock.calls[0]?.[0]).toEqual({ name: 'New agent' });
@@ -354,7 +362,7 @@ it('retains the contextual Sandbox and keeps its recovery separate from global c
 });
 
 it('keeps global new-Sandbox creation unavailable without its capability', async () => {
-  const create = vi.fn();
+  const create = vi.fn().mockRejectedValue(new Error('Lost response'));
   render(
     <AgentLifecycleCard
       client={agentClient({ createAgentLifecycle: create })}
@@ -365,20 +373,43 @@ it('keeps global new-Sandbox creation unavailable without its capability', async
     />,
   );
   expect(screen.queryByLabelText('Agent location')).not.toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent(
-    'Use New agent from an existing Sandbox or workspace',
-  );
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+  expect(screen.getByText('You don’t have permission to create a Sandbox.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
   expect(create).not.toHaveBeenCalled();
 });
 
-it('refuses invalid repository URLs before admission', async () => {
+it('validates the repository when the field is left, never while typing', async () => {
+  const create = vi.fn();
+  show(agentClient({ createAgentLifecycle: create }));
+  const user = userEvent.setup();
+  const input = screen.getByLabelText('GitHub repository (optional)');
+  await user.type(input, 'https://github.com/org/repo/tree/main');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(input).not.toHaveAttribute('aria-invalid');
+  await user.tab();
+  expect(screen.getByRole('alert')).toHaveTextContent('Enter an HTTPS GitHub repository URL.');
+  expect(input).toHaveAttribute('aria-invalid', 'true');
+  expect(input).toHaveAccessibleDescription(/Enter an HTTPS GitHub repository URL\./);
+  await user.clear(input);
+  await user.type(input, 'https://github.com/org/repo');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(input).not.toHaveAttribute('aria-invalid');
+  expect(create).not.toHaveBeenCalled();
+});
+
+it('refuses invalid repository URLs on submit before admission', async () => {
   const create = vi.fn();
   show(agentClient({ createAgentLifecycle: create }));
   const input = screen.getByLabelText('GitHub repository (optional)');
-  fireEvent.change(input, { target: { value: 'https://github.com/org/repo/tree/main' } });
-  expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
+  fireEvent.change(input, { target: { value: 'http://github.com/org/repo' } });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  const button = screen.getByRole('button', { name: 'Create agent' });
+  expect(button).toBeEnabled();
+  fireEvent.click(button);
   expect(screen.getByRole('alert')).toHaveTextContent('HTTPS GitHub repository URL');
+  expect(input).toHaveFocus();
   expect(create).not.toHaveBeenCalled();
+  expect(sessionStorage.length).toBe(0);
 });

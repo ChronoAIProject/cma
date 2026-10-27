@@ -1,5 +1,58 @@
 # Resource authorization foundation
 
+## Request-bound provider reads
+
+`CHRONO_NYXID_RESOURCE_REQUEST_ENABLED` is default false. Its separate NyxID
+issuance flag must remain off until compatible CMA readers are deployed and the
+read-only acceptance tests pass. Enabling this path does not require restarting
+any user Sandbox, changing its runtime, or touching its persistent home.
+
+When `X-NyxID-Resource-Request` is present, CMA uses only the request-proof path;
+disabled, duplicated, invalid, expired and unavailable proofs never fall back to
+an ambient bearer or browser cookie. CMA asks the configured authenticated
+NyxID introspection endpoint for `token_type_hint=resource_request`, the catalog
+service ID and the exact HTTP method, original encoded path/query, content type
+and body digest. Provider proof issuance follows normal proxy admission and
+checks live key, scope, connection, operation, approval and turn authority again
+at introspection. An ordinary identity token cannot substitute for this proof.
+The separate `X-NyxID-Identity-Token` header does not activate this proof path.
+When `CHRONO_NYXID_PROXY_ENABLED` is enabled, it authenticates the normal CMA API
+using the existing signed service identity, as described in
+[CMA Operations](CMA_Operations.md#nyxid-proxy-access-to-the-cma-api). That path
+supports lifecycle and interaction writes with explicit proxy command custody.
+If both headers are present, the request-bound proof path retains precedence.
+
+The first version accepts only GET/HEAD with an empty body. Idempotency keys,
+method overrides, duplicate content headers and non-identity content encoding
+are refused. The exact descriptor, service audience, token type, finite lifetime
+(at most 60 seconds), current subject/RBAC and `independent_commands=false` must
+match the provider response. No completed verification is cached. Read retries
+must pass another live provider check. Provider unavailability returns 503,
+separately from invalid-proof 401 and unsupported-read 403.
+
+The initial route allowlist is finite inventory/detail reads for Agents,
+Sandboxes, Workspaces and Worktrees, Sandbox Workspace listings, Workspace
+Worktree listings, `/api/v1/agents/{agent_id}/transcript`, and
+`/api/v2/agents/{agent_id}/events/snapshot`. The transcript reads and folds
+persisted conversation records without contacting the runtime. For the latest
+user message, list `/api/v1/agents`, select an Agent, read its `/transcript`, and
+select the greatest `sequence` among `turns[].messages[]` with `role=user`.
+This includes later owner steering within the same turn. The focused public
+OpenAPI also exposes the finite v2 snapshot for paginated event replay.
+
+SSE streams, runtime file/model/skill reads, Bot operations and other routes
+are outside this slice. In particular, `/history` invokes the runtime exporter
+and is refused; `/settings` and `/resources` are also outside the allowlist.
+Existing owner, ancestry and RBAC checks remain authoritative; the proof does
+not supply organization membership or another user's sign-in.
+
+The internal `RequestBoundRead` credential source expires with the proof and
+grants only resource detail/history reads. It cannot admit mutations, command
+custody or Bot authority even when the owner's RBAC includes write privileges.
+Neither the proof nor an ambient credential is attached as a delegated
+credential or persisted to the API-bearer store. Durable NyxBot actions use the separate signed service identity integration;
+they are not supported by this read-only feature.
+
 Milestone 17 separates retained resource ownership from the principal executing
 an action. The implementation in `layer2-core::resource_access` defines the
 policy, transactional ownership/share stores, and authenticated share-management

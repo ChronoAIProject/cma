@@ -98,7 +98,7 @@ pub struct Recording {
     pub http: Arc<FakeHttp>,
     hooks: Arc<Hooks>,
     waiters: Arc<SyncRegistry>,
-    commands: mpsc::Sender<DeliveryCommand>,
+    pub commands: mpsc::Sender<DeliveryCommand>,
     engine: DeliveryEngine,
     started: Instant,
     /// Whether offsets are recorded; only paused-clock offsets are exact.
@@ -118,6 +118,16 @@ impl Recording {
         interactions: Option<Arc<InteractionStore>>,
         timed: bool,
     ) -> Self {
+        Self::start_with_relay(http, hooks, config, interactions, timed, |relay| relay)
+    }
+    pub fn start_with_relay(
+        http: FakeHttp,
+        hooks: Arc<Hooks>,
+        config: DeliveryConfig,
+        interactions: Option<Arc<InteractionStore>>,
+        timed: bool,
+        configure: impl FnOnce(RelayClient) -> RelayClient,
+    ) -> Self {
         let keys = keys();
         let http = Arc::new(http);
         let telegram = TelegramClient::production(config.reply_timeout)
@@ -130,11 +140,13 @@ impl Recording {
         if let Some(store) = interactions {
             relay = relay.with_interactions(store);
         }
+        let relay = configure(relay);
         let waiters = Arc::new(SyncRegistry::default());
         let custom = CustomDelivery {
             public_origin: "https://gateway.example".into(),
             waiters: waiters.clone(),
             webhooks: WebhookClient::with_transport(hooks.clone()),
+            activity: Arc::new(cmaeg::turns::observer::NoopObserver),
         };
         let (commands, receiver) = mpsc::channel(256);
         let engine = DeliveryEngine::start(

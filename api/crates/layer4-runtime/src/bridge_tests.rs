@@ -95,3 +95,71 @@ async fn close_terminates_descendants_after_the_primary_has_exited() {
     bridge.terminate().await.unwrap();
     assert_ne!(unsafe { libc::kill(descendant, 0) }, 0);
 }
+
+#[tokio::test]
+async fn native_stdout_replay_over_both_windows_preserves_every_original_frame() {
+    let mut launch = launch();
+    let payload = "x".repeat(1024);
+    let count = 16_421_u64;
+    launch.args = vec!["-c".into(), format!("i=1; while [ \"$i\" -le {count} ]; do printf '%s:%s\\n' \"$i\" '{payload}'; i=$((i+1)); done")];
+    let bridge = Bridge::start(&launch, &BTreeMap::new()).unwrap();
+    assert_eq!(bridge.select_output_acknowledgement(true), Ok(true));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut changed = bridge.retained_output.subscribe();
+    let mut cursor = 0;
+    let mut bytes = 0;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while cursor < count {
+            let snapshot = bridge.retained_output.snapshot(cursor).await.unwrap();
+            if snapshot.frames.is_empty() {
+                changed.changed().await.unwrap();
+                continue;
+            }
+            for frame in snapshot.frames {
+                cursor += 1;
+                assert_eq!(frame.cursor, cursor);
+                assert_eq!(
+                    frame.bytes.as_ref(),
+                    format!("{cursor}:{payload}").as_bytes()
+                );
+                bytes += frame.bytes.len();
+                assert!(
+                    bridge
+                        .retained_output
+                        .acknowledge(bridge.retained_output.stream_id(), cursor)
+                        .await
+                );
+            }
+        }
+        bridge.ended().await;
+    })
+    .await
+    .expect("native stdout must drain without retention loss");
+    assert!(bytes > BUFFER_BYTES);
+    bridge.terminate().await.unwrap();
+}
+
+#[tokio::test]
+async fn retiring_a_detached_bridge_cancels_a_backpressured_stdout_reader() {
+    let mut launch = launch();
+    launch.args = vec![
+        "-c".into(),
+        format!("while :; do printf '%s\\n' '{}'; done", "x".repeat(1024)),
+    ];
+    let bridge = Bridge::start(&launch, &BTreeMap::new()).unwrap();
+    assert_eq!(bridge.select_output_acknowledgement(true), Ok(true));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(Duration::from_secs(5), bridge.terminate())
+        .await
+        .unwrap()
+        .unwrap();
+    let reader = bridge.reader.clone();
+    drop(bridge);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !reader.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("retired detached bridge must not leave a capacity waiter behind");
+}

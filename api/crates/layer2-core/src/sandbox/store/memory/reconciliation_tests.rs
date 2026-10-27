@@ -13,8 +13,13 @@ use crate::sandbox::lifecycle_test_support::{agent, checkpoint, sandbox, IDLE_AT
 use crate::sandbox::*;
 use crate::{AgentId, SandboxId, SubjectId};
 
+#[path = "interruption_tests.rs"]
+mod interruption_tests;
 #[path = "retirement_loss_tests.rs"]
 mod retirement_loss_tests;
+#[path = "reconciliation_test_support.rs"]
+mod support;
+use support::loss_request;
 
 #[tokio::test]
 async fn authority_scan_includes_every_state_owner_and_bound_runtime_in_stable_order() {
@@ -861,6 +866,7 @@ async fn runtime_loss_keeps_public_transcript_and_usage_readable_before_reopen()
             runtime_generation: 4,
         },
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 3,
             origin_key: None,
         },
@@ -991,13 +997,4 @@ fn fixture(agents: Vec<Agent>, with_checkpoint: bool) -> (InMemorySandboxStore, 
         }
     }
     (store, value)
-}
-
-fn loss_request(value: &Sandbox) -> SandboxRuntimeLossRequest {
-    SandboxRuntimeLossRequest {
-        sandbox_id: value.id.clone(),
-        expected_revision: value.revision,
-        expected_runtime: value.runtime.clone(),
-        observed_at: NOW.into(),
-    }
 }

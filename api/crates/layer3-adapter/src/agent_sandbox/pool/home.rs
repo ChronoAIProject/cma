@@ -18,8 +18,6 @@ impl AgentSandboxPools {
     /// a claim-side adoption record; pending controller observation is retryable.
     /// Publish the returned attachment before using it to start an assigned runtime.
     pub async fn adopt_home(&self, original: &NativePoolClaim) -> Result<HomeVolumeAttachment> {
-        self.verify_explicit_network_policy(&original.request.pool)
-            .await?;
         if original.request.home.policy.is_native_vct() {
             return match self.adopt_native_vct(original).await? {
                 super::native_home::NativeHomeAdoption::Ready(home) => Ok(*home),
@@ -28,6 +26,8 @@ impl AgentSandboxPools {
                 }
             };
         }
+        self.verify_explicit_template_policy(&original.request.pool)
+            .await?;
         let desired_claim = model::claim(&self.config, &original.request)?;
         if original.name != desired_claim.name_any() {
             return Err(rejected("native claim receipt is invalid"));
@@ -219,6 +219,11 @@ impl AgentSandboxPools {
         let original_config = model::binding_config(&self.config, &origin.claim.request.pool);
         let template = model::template(&original_config, &origin.claim.request.pool.spec)?;
         let mut desired = model::sandbox_spec(&template, &origin.claim.request.pool);
+        if let Some(proof) =
+            super::runtime_upgrade::RuntimeUpgradeProof::from_member(member, origin)?
+        {
+            super::runtime_upgrade::replace_image(&mut desired, proof.image())?;
+        }
         if model::contains(&member.data["spec"], &desired) {
             if member.data["spec"]["podTemplate"]["spec"]
                 .get("volumes")

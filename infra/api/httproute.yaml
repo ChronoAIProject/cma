@@ -56,16 +56,10 @@ spec:
         - path:
             type: PathPrefix
             value: /api/event-gateway
-      filters:
-        - type: URLRewrite
-          urlRewrite:
-            path:
-              type: ReplacePrefixMatch
-              replacePrefixMatch: /
       backendRefs:
         - group: ""
           kind: Service
-          name: cma-event-gateway
+          name: cma-agent-manager
           port: 80
           weight: 1
     - matches:
@@ -115,11 +109,25 @@ spec:
             value: /openapi.json
         - path:
             type: Exact
+            value: /agent-manager/openapi.json
+        - path:
+            type: Exact
             value: /.well-known/agent-card.json
       backendRefs:
         - group: ""
           kind: Service
           name: cma-agent-manager
+          port: 80
+          weight: 1
+    # Image Manager remains optional; this discovery route does not enable it.
+    - matches:
+        - path:
+            type: Exact
+            value: /image-manager/openapi.json
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-image-manager
           port: 80
           weight: 1
     - matches:

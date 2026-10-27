@@ -18,6 +18,7 @@ pub mod media_link;
 pub mod message_ref;
 pub mod pointer;
 pub mod reply_target;
+pub mod telegram_effect;
 
 pub use console_login::{open_console_login, seal_console_login, ConsoleLogin, CONSOLE_LOGIN_TTL};
 pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
@@ -27,9 +28,12 @@ pub use interaction::{
 };
 pub use lineage::{Lineage, RootId};
 pub use media_link::{MediaLinkPayload, MediaLinkRef, MAX_MEDIA_LINK_TTL};
-pub use message_ref::MessageRefPayload;
+pub use message_ref::{
+    DiscordEffectWindow, DiscordMessageDestination, MessageRefPayload, RelayMessageDestination,
+};
 pub use pointer::ChannelPointer;
 pub use reply_target::{ReplyTargetPayload, ReplyTargetRef, REPLY_TARGET_TTL};
+pub use telegram_effect::{TelegramAdmissionProof, TelegramEffectAuthority, TELEGRAM_EFFECT_TTL};
 
 pub const MAX_TOKEN_LENGTH: usize = 4_096;
 /// Maximum plaintext with space for the wire prefix, nonce, tag and base64 expansion.

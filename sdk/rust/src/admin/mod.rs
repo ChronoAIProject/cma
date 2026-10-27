@@ -119,6 +119,29 @@ impl Administration<'_> {
         identity(&result.id, id)?;
         Ok(result)
     }
+    /// Queue the managed runtime update across owners after existing work finishes.
+    pub async fn update_sandbox_runtime(
+        &self,
+        id: &str,
+        body: &crate::instances::UpdateSandboxRuntimeRequest,
+    ) -> Result<crate::instances::Sandbox> {
+        let result: crate::instances::Sandbox = self
+            .client
+            .operation(
+                Method::POST,
+                &["admin", "sandboxes", id, "runtime-update"],
+                Some(body),
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        identity(&result.id, id)?;
+        if result.runtime_update.is_none() {
+            return Err(Error::protocol(
+                "Runtime update response omitted its status",
+            ));
+        }
+        Ok(result)
+    }
     /// List profile metadata without private content.
     pub async fn list_profiles(
         &self,

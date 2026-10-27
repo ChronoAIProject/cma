@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AuthProvider, AuthState, SignInOptions } from './types';
+import { parseRoute, routePath } from '../routing/routes';
+import { retainDocumentShareToken } from '../documents/shareToken';
+import { retainAgentShareForSignIn } from '../resources/agentShareToken';
 
 /**
  * Wires an AuthProvider into React. Components consume `useAuth()` and never
@@ -56,6 +59,15 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   const signIn = useCallback(
     async (returnTo?: string, options?: SignInOptions) => {
       try {
+        const current = parseRoute(window.location.pathname);
+        if (current.kind === 'agent_share') {
+          retainAgentShareForSignIn(current.shareId);
+          returnTo = routePath(current);
+        }
+        if (current.kind === 'document') {
+          retainDocumentShareToken(current.documentId, true);
+          returnTo = routePath(current);
+        }
         await provider.signIn(returnTo, options);
         setState(await provider.current());
       } catch (error: unknown) {

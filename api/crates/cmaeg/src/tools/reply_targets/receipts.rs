@@ -17,13 +17,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-pub(super) struct Store {
+pub(crate) struct Store {
     records: RecordClient,
     keys: Arc<MasterKeyRing>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Claim {
+pub(crate) struct Claim {
     kind: String,
     id: String,
     owner: String,
@@ -34,7 +34,7 @@ pub(super) struct Claim {
     #[serde(skip)]
     version: u64,
 }
-pub(super) enum Admission {
+pub(crate) enum Admission {
     Claimed(Claim),
     Replay(IntentReceipt),
 }
@@ -56,19 +56,40 @@ impl Store {
         let scope = hash(&serde_json::json!({"channel":target.event.channel_id,
             "record":target.event.record_id,"provider":target.provider,"binding":target.binding_id,
             "key":target.agent_key_hash,"event":target.event}));
-        let digest =
-            Sha256::digest(format!("cmaeg.reply-delivery.v1\0{scope}\0{request_id}").as_bytes());
+        self.claim_scoped(
+            "reply_delivery_v1",
+            "cmaeg.reply-delivery.v1",
+            scope,
+            request_id,
+            hash(message),
+            owner,
+            target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
+        )
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn claim_scoped(
+        &self,
+        kind: &str,
+        namespace: &str,
+        scope: String,
+        request_id: &str,
+        request_hash: String,
+        owner: &str,
+        expires_at: i64,
+    ) -> Result<Admission, Problem> {
+        let digest = Sha256::digest(format!("{namespace}\0{scope}\0{request_id}").as_bytes());
         let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
         bytes[6] = (bytes[6] & 0x0f) | 0x40;
         bytes[8] = (bytes[8] & 0x3f) | 0x80;
         let mut claim = Claim {
-            kind: "reply_delivery_v1".into(),
+            kind: kind.into(),
             id: uuid::Uuid::from_bytes(bytes).to_string(),
             owner: owner.into(),
             scope,
-            request_hash: hash(message),
+            request_hash,
             // Retain through every target that can be minted from this original event.
-            expires_at: target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
+            expires_at,
             receipt: None,
             version: 0,
         };
@@ -109,7 +130,14 @@ impl Store {
             return Err(Problem::new(
                 ProblemCode::Conflict,
                 409,
-                "reply_idempotency_conflict",
+                if matches!(
+                    expected.kind.as_str(),
+                    "telegram_message_effect_v1" | "discord_message_effect_v1"
+                ) {
+                    "message_effect_idempotency_conflict"
+                } else {
+                    "reply_idempotency_conflict"
+                },
             ));
         }
         Ok(Admission::Replay(saved.receipt.unwrap_or_else(|| {
@@ -138,7 +166,7 @@ impl Store {
             .await
     }
 }
-fn hash(value: &impl Serialize) -> String {
+pub(crate) fn hash(value: &impl Serialize) -> String {
     format!(
         "{:x}",
         Sha256::digest(
@@ -146,7 +174,7 @@ fn hash(value: &impl Serialize) -> String {
         )
     )
 }
-pub(super) fn uncertain(reason: &str) -> IntentReceipt {
+pub(crate) fn uncertain(reason: &str) -> IntentReceipt {
     IntentReceipt {
         message_ref: None,
         rendering: RenderingReport {

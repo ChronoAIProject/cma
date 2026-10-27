@@ -6,6 +6,18 @@ metadata:
   labels:
     app.kubernetes.io/name: cma-web
     app.kubernetes.io/part-of: cma
+  annotations:
+    cma.chronoai.dev/build-mode: "github-ci-artifact"
+    cma.chronoai.dev/candidate: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:81ab4b695519f1bfc2771057b237ebd37c31633400c660b76d1466f849689b90"
+    cma.chronoai.dev/ci-artifact: "12708482143"
+    cma.chronoai.dev/ci-attempt: "1"
+    cma.chronoai.dev/ci-head: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7"
+    cma.chronoai.dev/ci-run: "40445812082"
+    cma.chronoai.dev/image-digest: "sha256:252a7fe72ba700e0656cd0649f80443cdceb28b2fbcd45e6392823bd1bd3586d"
+    cma.chronoai.dev/image-source: "32ac7cf32a2edadd1fb632c7b44e0867492520c7"
+    cma.chronoai.dev/source-tree: "a28acd8a66ee111d602e5be031902a71b5bd6c59"
 spec:
   replicas: 1
   selector:
@@ -14,9 +26,17 @@ spec:
   template:
     metadata:
       annotations:
-        cma.chronoai.dev/candidate: "fb3a652fdc93658f138096a704f0d162b6c6c483"
-        cma.chronoai.dev/image-source: "4fee2eb2562c26c58d1d61361ac1c43469673ba6"
-        cma.chronoai.dev/ci-run: "38513020577"
+        cma.chronoai.dev/build-mode: "github-ci-artifact"
+        cma.chronoai.dev/candidate: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:81ab4b695519f1bfc2771057b237ebd37c31633400c660b76d1466f849689b90"
+        cma.chronoai.dev/ci-artifact: "12708482143"
+        cma.chronoai.dev/ci-attempt: "1"
+        cma.chronoai.dev/ci-head: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7"
+        cma.chronoai.dev/ci-run: "40445812082"
+        cma.chronoai.dev/image-digest: "sha256:252a7fe72ba700e0656cd0649f80443cdceb28b2fbcd45e6392823bd1bd3586d"
+        cma.chronoai.dev/image-source: "32ac7cf32a2edadd1fb632c7b44e0867492520c7"
+        cma.chronoai.dev/source-tree: "a28acd8a66ee111d602e5be031902a71b5bd6c59"
       labels:
         app.kubernetes.io/name: cma-web
         app.kubernetes.io/part-of: cma
@@ -35,11 +55,438 @@ spec:
         runAsNonRoot: true
         runAsUser: 101
         runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: web-assets-release
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:252a7fe72ba700e0656cd0649f80443cdceb28b2fbcd45e6392823bd1bd3586d
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-c4686d1daece
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:c4686d1daece0771b9f0a21f111ec8a1baecf0fa8ac77d4e68a2851c611f186c
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-79761f005795
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:79761f0057951636baa88f796562758c386d9e62a97ca76e3c528defb5151f1e
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-fd9e43d1cbad
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:fd9e43d1cbad3750cfae5aec5dcc96e5e07dcb2ad966ecd320d7d5be255fe1c1
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-2ee79459e6b1
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:2ee79459e6b103def05fb5c430d0aa6c060dc01ee97c868d781c24c2c8409f6e
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-ffd0b835ce39
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:ffd0b835ce397afbc696010a9a48b0b3cddf369ba66573bd37831a718e31c2e9
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-34ea1f746de6
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:34ea1f746de69737eaeaa3b39c73d8307f0d216910a940e7d5214858acf36166
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-649440bb2d65
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:649440bb2d6559b23acbbac9149acb9aed368ccb4005ce47c8c363a8a9f0bebf
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-20e191fc122a
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:20e191fc122af38b10d6c0d8be8cffd991a57e1764afe9c28db2ac708340a358
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-7990bb498f02
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:7990bb498f029de23ef05f9cbdcfe553e842af6193d1b32a9d83c5f25ca00b23
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-90da735e49ce
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:90da735e49cea7980c2d5f304eb179d0be7c665c70c26fd134a7f5c2dc0290e4
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-5637f5d3d9fc
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:5637f5d3d9fc6ee9aa8b96ec9f9778a4be1c438d5f902435ad1a1690ed5a1e31
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-997edd387770
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:997edd38777065283bfb9e9b50234457c3021e462d6e6bc35ded8d1f17947f80
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-206be22e
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:206be22eb311ff1d69e86f613e486d9771b1c36dd3006dc8964afc8584750ac4
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-68552554
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:68552554e4fb7fa7a4bcd920db62dd3194e7a908fd5d209f5bc3426b07adc834
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-current
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:cb09a6a265dc8bfaa895c271e375ff341ed4878427c28c02a9015111f58e3ffc
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-previous
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:6e435fcd7e4157523e1dd23a713da74d10a380bce30d7f9f9be0a0810e4ccdc3
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              for file in /usr/share/nginx/html/assets/*; do
+                [ -e "$file" ] || continue;
+                name="${file##*/}";
+                [ -e "/compat/assets/$name" ] || cp -R "$file" "/compat/assets/$name";
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-legacy
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:50c3ced2c65495e22626fb0c6912a16563606336f27669bcc98fbe2fcb62409a
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              for file in /usr/share/nginx/html/assets/*; do
+                [ -e "$file" ] || continue;
+                name="${file##*/}";
+                [ -e "/compat/assets/$name" ] || cp -R "$file" "/compat/assets/$name";
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:ff9a6f1124f47a5d03de8f637ee2ac6318bc13ba6ed9760eff94e1278139f723
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:252a7fe72ba700e0656cd0649f80443cdceb28b2fbcd45e6392823bd1bd3586d
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -77,6 +524,12 @@ spec:
           volumeMounts:
             - name: nginx-cache
               mountPath: /tmp
+            - name: web-assets-compat
+              mountPath: /usr/share/nginx/html/assets
+              subPath: assets
+              readOnly: true
       volumes:
         - name: nginx-cache
+          emptyDir: {}
+        - name: web-assets-compat
           emptyDir: {}

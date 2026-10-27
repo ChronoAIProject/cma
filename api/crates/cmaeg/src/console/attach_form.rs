@@ -104,6 +104,8 @@ pub(crate) fn parse(form: &[u8]) -> Result<Parsed, &'static str> {
                 bot_username: fields.optional("bot_username"),
                 bot_id: fields.optional("bot_id"),
                 trust_normalized: fields.checked("trust_normalized"),
+                verify_raw_event: fields.checked("verify_raw_event"),
+                lark_resources: None,
                 admission: admission(&fields)?,
             }
         }
@@ -177,6 +179,7 @@ fn admission(fields: &Fields) -> Result<AdmissionPolicy, &'static str> {
             sender_ids: fields.list("sender_ids"),
         }),
         "scoped" => Ok(AdmissionPolicy::Scoped {
+            bot_messages: Default::default(),
             senders: identity(fields.text("senders"), fields.list("sender_ids"))?,
             chats: identity(fields.text("chats"), fields.list("chat_ids"))?,
             groups: match fields.text("groups") {

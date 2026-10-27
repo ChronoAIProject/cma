@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use cmaeg_core::{channel::ConformanceLevel, problem::ProblemCode};
@@ -24,6 +24,15 @@ use super::problems::{no_store, problem, protocol_headers};
 
 pub fn management_router(state: ManagementState) -> Router {
     Router::new()
+        .route(
+            "/v1/channels/{channel_id}/activity",
+            get(super::activity::latest),
+        )
+        .route(
+            "/v1/channels/{channel_id}/activity/stream",
+            get(super::activity::stream),
+        )
+        .merge(super::outbound::routes())
         .route("/v1/permissions", get(permission_catalog))
         .route("/v1/channels", get(list_channels).post(create_channel))
         .route(
@@ -35,6 +44,18 @@ pub fn management_router(state: ManagementState) -> Router {
             get(get_channel).put(update_channel).delete(delete_channel),
         )
         .route("/v1/channels/{channel_id}/test", post(test_channel))
+        .route(
+            "/v1/channels/{channel_id}/sources/{source_index}/test",
+            post(super::channel_nodes::test_source),
+        )
+        .route(
+            "/v1/channels/{channel_id}/consumers/{consumer_id}/test",
+            post(super::channel_nodes::test_consumer),
+        )
+        .route(
+            "/v1/channels/{channel_id}/routing",
+            put(super::channel_nodes::update_routing),
+        )
         .route("/v1/channels/{channel_id}/rekey", post(rekey_channel))
         .with_state(state)
         .layer(axum::middleware::from_fn(protocol_headers))
@@ -42,6 +63,11 @@ pub fn management_router(state: ManagementState) -> Router {
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChannelResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_activation: Option<crate::discord::activation::NativeDiscordActivation>,
+    /// Explicit opt-in support; absent/empty means unsupported.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub thread_contract_versions: Vec<u16>,
     pub channel_id: String,
     pub record_id: String,
     pub version: u64,
@@ -379,6 +405,8 @@ pub struct ListQuery {
 /// An owner-visible record whose original channel ID may predate recoverable creation.
 #[derive(Serialize, ToSchema)]
 pub struct ChannelListItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_activation: Option<crate::discord::activation::NativeDiscordActivation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<String>,
     pub record_id: String,

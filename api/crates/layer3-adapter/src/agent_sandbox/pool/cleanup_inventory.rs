@@ -141,7 +141,10 @@ impl AgentSandboxPools {
     }
 }
 
-pub(super) async fn complete(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
+pub(super) async fn complete<K>(api: &Api<K>) -> Result<Vec<K>>
+where
+    K: Clone + std::fmt::Debug + serde::de::DeserializeOwned + kube::Resource,
+{
     let mut params = ListParams::default().limit(200);
     let mut cursors = BTreeSet::new();
     let mut identities = BTreeSet::new();

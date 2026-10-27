@@ -50,6 +50,16 @@
           },
           "source": {
             "$ref": "#/components/schemas/SourceKind"
+          },
+          "thread": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -60,6 +70,82 @@
           "conversation",
           "occurred_at",
           "source"
+        ],
+        "type": "object"
+      },
+      "ActivityConsumer": {
+        "properties": {
+          "accepted_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "consumer_id": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deliveries": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityDelivery"
+            },
+            "type": "array"
+          },
+          "dispatched_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "produced_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConsumerState"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "state",
+          "deliveries"
         ],
         "type": "object"
       },
@@ -82,6 +168,50 @@
         "required": [
           "id",
           "kind"
+        ],
+        "type": "object"
+      },
+      "ActivityDelivery": {
+        "properties": {
+          "confirmed_at": {
+            "description": "Present only for a confirmed platform/transport receipt.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "destination": {
+            "type": "string"
+          },
+          "observed_at": {
+            "description": "When the gateway observed the actual transport outcome.",
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "platform_message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipients": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityRecipient"
+            },
+            "type": "array"
+          },
+          "step": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "destination",
+          "outcome",
+          "observed_at",
+          "recipients"
         ],
         "type": "object"
       },
@@ -211,6 +341,62 @@
           "event"
         ],
         "type": "string"
+      },
+      "ActivityPage": {
+        "properties": {
+          "cursor": {
+            "description": "Opaque channel-bound snapshot watermark, usable as Last-Event-ID.",
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelActivity"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retention_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "cursor",
+          "retention_days",
+          "limit",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "ActivityRecipient": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "thread_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "type": "object"
       },
       "ActivityRouting": {
         "additionalProperties": false,
@@ -359,6 +545,10 @@
           },
           {
             "properties": {
+              "bot_messages": {
+                "$ref": "#/components/schemas/BotMessageAdmission",
+                "description": "Native exact bot mentions only. The caller must bound downstream\nautomated execution; the gateway grants no human execution identity."
+              },
               "chats": {
                 "$ref": "#/components/schemas/IdentityAdmission"
               },
@@ -615,6 +805,33 @@
         "description": "Where an attachment's bytes can be fetched.\n\nLocators are non-secret and bound into the activity digest, but they never\ncarry retrieval authority: the NyxID message ID stays inside the sealed reply\naddress, and every fetch is authorized by the event_ref that sealed the\nactivity. Each type is valid only with its matching activity source.",
         "oneOf": [
           {
+            "description": "Exact native Discord message attachment; resolved with current bot custody.",
+            "properties": {
+              "attachment_id": {
+                "type": "string"
+              },
+              "channel_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "channel_id",
+              "message_id",
+              "attachment_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "description": "Position of the attachment in the NyxID relay callback.",
             "properties": {
               "index": {
@@ -631,6 +848,45 @@
             },
             "required": [
               "index",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Authenticated embedded Lark/Feishu resource, bound to its source authority revision.",
+            "properties": {
+              "binding": {
+                "$ref": "#/components/schemas/LarkResourceBinding"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "resource_key": {
+                "type": "string"
+              },
+              "resource_kind": {
+                "$ref": "#/components/schemas/LarkResourceKind"
+              },
+              "source_revision": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "lark_resource"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message_id",
+              "resource_key",
+              "resource_kind",
+              "binding",
+              "bot_id",
+              "source_revision",
               "type"
             ],
             "type": "object"
@@ -1186,6 +1442,13 @@
           }
         ]
       },
+      "BotMessageAdmission": {
+        "enum": [
+          "deny",
+          "native_mentions"
+        ],
+        "type": "string"
+      },
       "CallbackPayload": {
         "additionalProperties": false,
         "properties": {
@@ -1227,7 +1490,9 @@
           "sender": {
             "$ref": "#/components/schemas/RelaySender"
           },
-          "thread_context": {},
+          "thread_context": {
+            "description": "Additive NyxID hint; raw platform verification remains authoritative."
+          },
           "thread_id": {
             "oneOf": [
               {
@@ -1329,8 +1594,44 @@
             "minimum": 0,
             "type": "integer"
           },
+          "message_effects": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MessageEffectsCapabilities",
+                "description": "New exact-message effects; absent until compatible readers are deployed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "native_media": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeMediaCapabilities",
+                "description": "Explicit native attachments; relay sources require deployment attestation."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thread_history": {
+            "description": "A fixed 20-message prior window is available on explicit request.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "typing": {
             "type": "boolean"
+          },
+          "whatsapp_templates": {
+            "description": "Approved WhatsApp template replies only; no callbacks or initiated sends.",
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1346,8 +1647,26 @@
       "CapabilityView": {
         "properties": {
           "platforms": {
+            "description": "Native connection setup workflows; separate from NyxID relay ingestion.",
             "items": {
               "$ref": "#/components/schemas/PlatformCapability"
+            },
+            "type": "array"
+          },
+          "relay_authoring": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelayAuthoringCapabilities",
+                "description": "Additive relay authoring discovery; older gateways omit this field."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_features": {
+            "items": {
+              "type": "string"
             },
             "type": "array"
           }
@@ -1400,6 +1719,46 @@
         ],
         "type": "object"
       },
+      "ChannelActivity": {
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "consumers": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityConsumer"
+            },
+            "type": "array"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/ActivityConversation"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "description": "Normalized event time: source timestamp when supplied, otherwise gateway normalization time.",
+            "type": "string"
+          },
+          "received_at": {
+            "description": "Gateway receive timestamp, persisted before provider launch.",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceKind"
+          }
+        },
+        "required": [
+          "event_id",
+          "source",
+          "actor",
+          "conversation",
+          "occurred_at",
+          "received_at",
+          "consumers"
+        ],
+        "type": "object"
+      },
       "ChannelCreateRequest": {
         "additionalProperties": false,
         "description": "Request wrapper used by channel creation.",
@@ -1439,7 +1798,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/RecordId",
-                "description": "Optional UUID reserved by a durable creator before issuing the request."
+                "description": "Stable UUID reserved by a durable creator before issuing the request.\nRequired as a canonical UUID v4 when authoring a native Discord source;\noptional for existing non-native creation contracts."
               },
               {
                 "type": "null"
@@ -1520,6 +1879,16 @@
               }
             ]
           },
+          "native_discord_activation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordActivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "provider": {
             "$ref": "#/components/schemas/ProviderResponse"
           },
@@ -1571,11 +1940,30 @@
           "endpoints": {
             "$ref": "#/components/schemas/EndpointResponse"
           },
+          "native_discord_activation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordActivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "provider": {
             "$ref": "#/components/schemas/ProviderResponse"
           },
           "record_id": {
             "type": "string"
+          },
+          "thread_contract_versions": {
+            "description": "Explicit opt-in support; absent/empty means unsupported.",
+            "items": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
           },
           "version": {
             "format": "int64",
@@ -1878,6 +2266,43 @@
         "pattern": "^[a-z][a-z0-9_-]{1,31}$",
         "type": "string"
       },
+      "ConsumerPolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mentionable": {
+            "type": "boolean"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          },
+          "non_human": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "publish": {
+            "$ref": "#/components/schemas/PublishPolicy"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ConsumerReply"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
       "ConsumerReply": {
         "additionalProperties": false,
         "description": "A consumer's own reply policy, overriding the channel's.",
@@ -1895,6 +2320,20 @@
           }
         },
         "type": "object"
+      },
+      "ConsumerState": {
+        "enum": [
+          "received",
+          "queued",
+          "dispatching",
+          "accepted",
+          "produced",
+          "completed",
+          "refused",
+          "failed",
+          "unknown"
+        ],
+        "type": "string"
       },
       "ConsumerSummary": {
         "description": "Which of a routed channel's consumers a context response was read for.",
@@ -1995,6 +2434,17 @@
           },
           "source": {
             "$ref": "#/components/schemas/SourceKind"
+          },
+          "thread_history": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadHistory",
+                "description": "Explicitly requested current text context of the original native thread."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2068,6 +2518,16 @@
               }
             ]
           },
+          "discord_bot_token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "hmac_secrets": {
             "items": {
               "$ref": "#/components/schemas/HmacSecretRequest"
@@ -2107,6 +2567,16 @@
             "$ref": "#/components/schemas/Secret"
           },
           "channel_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "discord_bot_token": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Secret"
@@ -2247,7 +2717,7 @@
         "type": "object"
       },
       "DefaultReply": {
-        "description": "The channel's default reply destination. Never sealed: replies resolve it\nfrom the current definition when a message is sent.",
+        "description": "The channel's default reply destination. Routed preparation pins its exact\nnonsecret address; sends require the current definition to still authorize\nthat address and resolve credentials separately.",
         "oneOf": [
           {
             "description": "A chat of the native Telegram source.",
@@ -2411,6 +2881,10 @@
             "type": "object"
           }
         ]
+      },
+      "EmptyEffectRequest": {
+        "additionalProperties": false,
+        "type": "object"
       },
       "EndpointResponse": {
         "properties": {
@@ -2797,6 +3271,35 @@
         ],
         "type": "object"
       },
+      "LarkResourceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "description": "Receiving app from the independently configured relay bot.",
+            "type": "string"
+          },
+          "catalog_service_id": {
+            "type": "string"
+          },
+          "user_service_id": {
+            "description": "Exact allowed NyxID UserService; never a provider credential.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_service_id",
+          "catalog_service_id",
+          "app_id"
+        ],
+        "type": "object"
+      },
+      "LarkResourceKind": {
+        "enum": [
+          "image",
+          "file"
+        ],
+        "type": "string"
+      },
       "McpAuth": {
         "oneOf": [
           {
@@ -2867,7 +3370,7 @@
             "type": "string"
           },
           "url": {
-            "description": "`<CMAEG_PUBLIC_URL>/v1/media/content`, without the link.",
+            "description": "`<CMAEG_PUBLIC_API_URL>/v1/media/content`, without the link.",
             "type": "string"
           }
         },
@@ -2896,6 +3399,73 @@
           "embedded"
         ],
         "type": "string"
+      },
+      "MessageEffectReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/DeliveryOutcome"
+          }
+        },
+        "required": [
+          "delivery"
+        ],
+        "type": "object"
+      },
+      "MessageEffectsCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "delete": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_reactions": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reaction": {
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "Only an exact confirmed native bot message; never arbitrary chat/message IDs.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delete",
+          "reaction",
+          "scope",
+          "max_reactions"
+        ],
+        "type": "object"
+      },
+      "MessageReactionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "is_big": {
+            "description": "Telegram-only presentation hint; Discord refuses true.",
+            "type": "boolean"
+          },
+          "reaction": {
+            "description": "Empty clears the bot's reaction; the gateway supports at most one.",
+            "items": {
+              "$ref": "#/components/schemas/TelegramReaction"
+            },
+            "maxItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "reaction"
+        ],
+        "type": "object"
       },
       "MessageRef": {
         "type": "string"
@@ -2934,6 +3504,147 @@
           "thinking_effort"
         ],
         "type": "object"
+      },
+      "NativeAttachment": {
+        "additionalProperties": false,
+        "properties": {
+          "caption": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NativeMediaKind"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/NativeMediaSource"
+          }
+        },
+        "required": [
+          "kind",
+          "source"
+        ],
+        "type": "object"
+      },
+      "NativeDiscordActivation": {
+        "properties": {
+          "capacity": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "selected_records": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "detail",
+          "capacity",
+          "selected_records"
+        ],
+        "type": "object"
+      },
+      "NativeMediaCapabilities": {
+        "properties": {
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max_attachments": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_inline_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kinds",
+          "sources",
+          "max_attachments",
+          "max_inline_bytes"
+        ],
+        "type": "object"
+      },
+      "NativeMediaKind": {
+        "enum": [
+          "image",
+          "file",
+          "audio",
+          "video"
+        ],
+        "type": "string"
+      },
+      "NativeMediaSource": {
+        "oneOf": [
+          {
+            "description": "The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "url"
+                ],
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Standard padded base64, with at most 64 KiB decoded across the request.",
+            "properties": {
+              "data": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "base64"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "NyxIdIdentity": {
         "additionalProperties": false,
@@ -2977,6 +3688,13 @@
             },
             "type": "array"
           },
+          "native_attachments": {
+            "description": "Explicit native media delivery. Legacy attachment blocks remain links.",
+            "items": {
+              "$ref": "#/components/schemas/NativeAttachment"
+            },
+            "type": "array"
+          },
           "reply_to": {
             "oneOf": [
               {
@@ -2992,9 +3710,83 @@
               "string",
               "null"
             ]
+          },
+          "thread_reply": {
+            "description": "Request the verified source thread; never fall back when unavailable.",
+            "type": "boolean"
+          },
+          "whatsapp_template": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhatsappTemplate",
+                "description": "Approved WhatsApp template; exclusive of text, blocks, media and reply targets."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object"
+      },
+      "OutboundReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DeliveryOutcome",
+                "description": "Committed without a recorded receipt is unknown; never retry its send."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Last instant at which a prepared operation may commit.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "rendering": {
+            "$ref": "#/components/schemas/RenderingReport"
+          },
+          "retained_until": {
+            "description": "The idempotency key cannot be reused before this instant.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "route_id": {
+            "type": "string"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/SourceId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OutboundStatus"
+          }
+        },
+        "required": [
+          "delivery_id",
+          "source_id",
+          "route_id",
+          "status",
+          "expires_at",
+          "retained_until",
+          "rendering"
+        ],
+        "type": "object"
+      },
+      "OutboundStatus": {
+        "enum": [
+          "prepared",
+          "committed",
+          "cancelled"
+        ],
+        "type": "string"
       },
       "PartitionKey": {
         "enum": [
@@ -3098,6 +3890,27 @@
           "label",
           "connection_methods",
           "optional_capabilities"
+        ],
+        "type": "object"
+      },
+      "PrepareOutboundMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/OutboundMessage"
+          },
+          "route_id": {
+            "description": "Exact NyxID conversation UUID already configured on this source.",
+            "type": "string"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/SourceId"
+          }
+        },
+        "required": [
+          "source_id",
+          "route_id",
+          "message"
         ],
         "type": "object"
       },
@@ -3569,6 +4382,84 @@
         ],
         "type": "object"
       },
+      "RelayAuthoringCapabilities": {
+        "properties": {
+          "dynamic_sources_writes_enabled": {
+            "type": "boolean"
+          },
+          "lark_resource_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "multi_consumer_writes_enabled": {
+            "type": "boolean"
+          },
+          "native_bot_mentions_writes_enabled": {
+            "type": "boolean"
+          },
+          "native_discord_auto_activation_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_discord_capacity": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "native_discord_thread_history_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_discord_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_media_writes_enabled": {
+            "description": "The configured relay accepts new native attachments; platform limits still apply.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "outbound_messages_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "platforms": {
+            "items": {
+              "$ref": "#/components/schemas/RelayPlatformCapability"
+            },
+            "type": "array"
+          },
+          "relay_raw_verification_writes_enabled": {
+            "type": "boolean"
+          },
+          "thread_contract_writes_enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dynamic_sources_writes_enabled",
+          "relay_raw_verification_writes_enabled",
+          "multi_consumer_writes_enabled",
+          "native_bot_mentions_writes_enabled",
+          "thread_contract_writes_enabled",
+          "platforms"
+        ],
+        "type": "object"
+      },
       "RelayContent": {
         "additionalProperties": false,
         "properties": {
@@ -3613,6 +4504,28 @@
         ],
         "type": "object"
       },
+      "RelayPlatformCapability": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "verification_modes": {
+            "items": {
+              "$ref": "#/components/schemas/RelayVerificationCapability"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "verification_modes"
+        ],
+        "type": "object"
+      },
       "RelaySender": {
         "additionalProperties": false,
         "properties": {
@@ -3628,6 +4541,23 @@
         },
         "required": [
           "platform_id"
+        ],
+        "type": "object"
+      },
+      "RelayVerificationCapability": {
+        "properties": {
+          "id": {
+            "description": "native_event, raw_event or trusted_normalized. Not a delivery-health claim.",
+            "type": "string"
+          },
+          "writes_enabled": {
+            "description": "Whether this deployment accepts new writes selecting this mode.\nExisting exact settings may be retained even while this is false.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "writes_enabled"
         ],
         "type": "object"
       },
@@ -3690,6 +4620,16 @@
               "$ref": "#/components/schemas/Sink"
             },
             "type": "array"
+          },
+          "thread_contract": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadContract"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3797,6 +4737,67 @@
         ],
         "type": "object"
       },
+      "RoutingPolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "addressing": {
+            "$ref": "#/components/schemas/Addressing"
+          },
+          "agent_events": {
+            "$ref": "#/components/schemas/AgentEventPolicy"
+          },
+          "consumers": {
+            "items": {
+              "$ref": "#/components/schemas/ConsumerPolicyRequest"
+            },
+            "type": "array"
+          },
+          "default_consumer": {
+            "$ref": "#/components/schemas/DefaultConsumer"
+          },
+          "default_reply": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DefaultReply"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          },
+          "max_targets": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reply_label": {
+            "$ref": "#/components/schemas/ReplyLabel"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRule"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "default_consumer",
+          "default_targets"
+        ],
+        "type": "object"
+      },
       "RoutingRule": {
         "additionalProperties": false,
         "description": "A rule: events matching `when` target `targets`.",
@@ -3818,6 +4819,24 @@
         "required": [
           "id",
           "targets"
+        ],
+        "type": "object"
+      },
+      "RoutingUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "routing": {
+            "$ref": "#/components/schemas/RoutingPolicyRequest"
+          }
+        },
+        "required": [
+          "expected_version",
+          "routing"
         ],
         "type": "object"
       },
@@ -3991,6 +5010,39 @@
             "type": "object"
           },
           {
+            "description": "Native Discord Gateway, independently owned by CMAEG.",
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "intents": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "thread_history": {
+                "description": "Allow an admitted consumer to read up to 20 earlier messages in its exact thread.",
+                "type": "boolean"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "intents",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
@@ -4016,6 +5068,17 @@
               "key_id": {
                 "type": "string"
               },
+              "lark_resources": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LarkResourceBinding",
+                    "description": "Optional exact NyxID connection for embedded Lark/Feishu resources."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "platform": {
                 "$ref": "#/components/schemas/Platform"
               },
@@ -4033,6 +5096,10 @@
                   "nyxid_relay"
                 ],
                 "type": "string"
+              },
+              "verify_raw_event": {
+                "description": "Verify Discord/WhatsApp raw facts; omitted on retained normalized sources.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -4083,8 +5150,69 @@
           }
         ]
       },
+      "SourceCheck": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SourceCheckStatus"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "status",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "SourceCheckResponse": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/SourceCheck"
+            },
+            "type": "array"
+          },
+          "external_delivery_tested": {
+            "type": "boolean"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "source_index": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_index",
+          "platform",
+          "scope",
+          "external_delivery_tested",
+          "checks"
+        ],
+        "type": "object"
+      },
+      "SourceCheckStatus": {
+        "enum": [
+          "passed",
+          "unavailable"
+        ],
+        "type": "string"
+      },
       "SourceId": {
-        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
+        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), native \"discord\", \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
         "type": "string"
       },
       "SourceKind": {
@@ -4106,6 +5234,24 @@
             },
             "required": [
               "platform",
+              "bot_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bot_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
               "bot_id",
               "type"
             ],
@@ -4180,6 +5326,39 @@
             "type": "object"
           },
           {
+            "description": "Native Discord Gateway. New writes require the native Discord write gate.",
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "intents": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "thread_history": {
+                "description": "Allow an admitted consumer to read up to 20 earlier messages in its exact thread.",
+                "type": "boolean"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "intents",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
@@ -4202,6 +5381,16 @@
               "key_id": {
                 "type": "string"
               },
+              "lark_resources": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LarkResourceBinding"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "platform": {
                 "$ref": "#/components/schemas/Platform"
               },
@@ -4219,6 +5408,10 @@
                   "nyxid_relay"
                 ],
                 "type": "string"
+              },
+              "verify_raw_event": {
+                "description": "Opt into verified Discord/WhatsApp facts without changing retained sources.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -4278,6 +5471,46 @@
         ],
         "type": "string"
       },
+      "TelegramReaction": {
+        "oneOf": [
+          {
+            "properties": {
+              "emoji": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "emoji"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "emoji",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "custom_emoji_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "custom_emoji"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "custom_emoji_id",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "TestChannelResponse": {
         "properties": {
           "accepted_after_ms": {
@@ -4309,6 +5542,161 @@
         ],
         "type": "string"
       },
+      "ThreadAddress": {
+        "enum": [
+          "mention",
+          "reply_to_bot",
+          "not_addressed",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "ThreadContract": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_chat_ids": {
+            "description": "Admit ordinary human messages in these chats, preserving sender/chat ACLs.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
+      "ThreadFacts": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/ThreadAddress"
+          },
+          "chat_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ThreadKind"
+          },
+          "mentions_others": {
+            "type": "boolean"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "native_thread_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "root_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sender_kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "kind",
+          "chat_id",
+          "message_id",
+          "sender_kind",
+          "address"
+        ],
+        "type": "object"
+      },
+      "ThreadHistory": {
+        "description": "A current text-only window, with no pagination or transferable message authority.",
+        "properties": {
+          "before_message_id": {
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ThreadHistoryMessage"
+            },
+            "type": "array"
+          },
+          "text_truncated": {
+            "description": "True when text was clipped to the 32 KiB total content budget.",
+            "type": "boolean"
+          },
+          "thread_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "before_message_id",
+          "messages",
+          "text_truncated"
+        ],
+        "type": "object"
+      },
+      "ThreadHistoryMessage": {
+        "properties": {
+          "attachment_count": {
+            "description": "Historical attachments have no download or effect authority in this result.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "author": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "edited_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "author",
+          "text",
+          "occurred_at",
+          "attachment_count"
+        ],
+        "type": "object"
+      },
+      "ThreadKind": {
+        "enum": [
+          "native"
+        ],
+        "type": "string"
+      },
       "TypingOutcome": {
         "enum": [
           "sent",
@@ -4336,6 +5724,337 @@
           "keyframes"
         ],
         "type": "string"
+      },
+      "WhatsappTemplate": {
+        "additionalProperties": false,
+        "description": "The template must already be approved in the destination WhatsApp account.\nApproval and placeholder compatibility are checked by Meta on delivery.",
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/WhatsappTemplateComponent"
+            },
+            "type": "array"
+          },
+          "language": {
+            "$ref": "#/components/schemas/WhatsappTemplateLanguage"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "language"
+        ],
+        "type": "object"
+      },
+      "WhatsappTemplateButtonType": {
+        "enum": [
+          "url"
+        ],
+        "type": "string"
+      },
+      "WhatsappTemplateComponent": {
+        "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+        "oneOf": [
+          {
+            "properties": {
+              "parameters": {
+                "items": {
+                  "$ref": "#/components/schemas/WhatsappTemplateParameter"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "header"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "parameters",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "parameters": {
+                "items": {
+                  "$ref": "#/components/schemas/WhatsappTemplateParameter"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "body"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "parameters",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "index": {
+                "type": "string"
+              },
+              "parameters": {
+                "items": {
+                  "$ref": "#/components/schemas/WhatsappTemplateParameter"
+                },
+                "type": "array"
+              },
+              "sub_type": {
+                "$ref": "#/components/schemas/WhatsappTemplateButtonType"
+              },
+              "type": {
+                "enum": [
+                  "button"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "sub_type",
+              "index",
+              "parameters",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WhatsappTemplateCurrency": {
+        "additionalProperties": false,
+        "properties": {
+          "amount_1000": {
+            "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "code": {
+            "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+            "maxLength": 3,
+            "minLength": 3,
+            "pattern": "^[A-Z]{3}$",
+            "type": "string"
+          },
+          "fallback_value": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "fallback_value",
+          "code",
+          "amount_1000"
+        ],
+        "type": "object"
+      },
+      "WhatsappTemplateDateTime": {
+        "additionalProperties": false,
+        "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+        "properties": {
+          "fallback_value": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "fallback_value"
+        ],
+        "type": "object"
+      },
+      "WhatsappTemplateDocument": {
+        "additionalProperties": false,
+        "description": "Header document reference, with an optional displayed filename.",
+        "properties": {
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[0-9]+$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "link": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "WhatsappTemplateLanguage": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "Two- or three-letter language, optionally followed by an uppercase region.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "WhatsappTemplateMedia": {
+        "additionalProperties": false,
+        "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+        "properties": {
+          "id": {
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[0-9]+$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "link": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "WhatsappTemplateParameter": {
+        "oneOf": [
+          {
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "text"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "currency": {
+                "$ref": "#/components/schemas/WhatsappTemplateCurrency"
+              },
+              "type": {
+                "enum": [
+                  "currency"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "currency",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "date_time": {
+                "$ref": "#/components/schemas/WhatsappTemplateDateTime"
+              },
+              "type": {
+                "enum": [
+                  "date_time"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "date_time",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "image": {
+                "$ref": "#/components/schemas/WhatsappTemplateMedia"
+              },
+              "type": {
+                "enum": [
+                  "image"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "image",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "video"
+                ],
+                "type": "string"
+              },
+              "video": {
+                "$ref": "#/components/schemas/WhatsappTemplateMedia"
+              }
+            },
+            "required": [
+              "video",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "document": {
+                "$ref": "#/components/schemas/WhatsappTemplateDocument"
+              },
+              "type": {
+                "enum": [
+                  "document"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "document",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       }
     },
     "securitySchemes": {
@@ -5067,6 +6786,191 @@
         ]
       }
     },
+    "/channels/{channel_id}/activity": {
+      "get": {
+        "operationId": "getChannelActivity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/activity/stream": {
+      "get": {
+        "description": "SSE activity/reset events contain complete ActivityPage snapshots, including on every connection. Apply each snapshot atomically. id is an opaque cursor; reconnect with Last-Event-ID or cursor. reset means the cursor predates retained activity. This is recent bounded activity, not a complete audit log.",
+        "operationId": "streamChannelActivity",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/consumers/{consumer_id}/test": {
+      "post": {
+        "operationId": "testChannelConsumer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "consumer_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channels/{channel_id}/events": {
       "post": {
         "operationId": "receiveCustomEvent",
@@ -5276,6 +7180,236 @@
         ]
       }
     },
+    "/channels/{channel_id}/outbound-messages": {
+      "post": {
+        "operationId": "prepareOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareOutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      }
+    },
+    "/channels/{channel_id}/outbound-messages/{delivery_id}": {
+      "delete": {
+        "operationId": "cancelOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      },
+      "get": {
+        "operationId": "getOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      }
+    },
+    "/channels/{channel_id}/outbound-messages/{delivery_id}/send": {
+      "post": {
+        "operationId": "commitOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      }
+    },
     "/channels/{channel_id}/rekey": {
       "post": {
         "operationId": "rekeyChannel",
@@ -5326,6 +7460,115 @@
         "security": [
           {
             "serviceBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/routing": {
+      "put": {
+        "operationId": "updateChannelRouting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutingUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/sources/{source_index}/test": {
+      "post": {
+        "operationId": "testChannelSource",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_index",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCheckResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
           }
         ],
         "tags": [
@@ -5476,6 +7719,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Explicitly request up to 20 earlier messages from this event’s opted-in native Discord thread.",
+            "in": "query",
+            "name": "include_thread_history",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -5573,6 +7825,21 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Optional stable operation ID of 1–128 visible ASCII bytes for durable routed replies. Keep the same key and message on retries; a different key permits a new send, even with identical content. Changed content under the same key conflicts. Never change keys to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -5744,6 +8011,177 @@
         ],
         "tags": [
           "media"
+        ]
+      }
+    },
+    "/messages/{message_ref}/capabilities": {
+      "get": {
+        "operationId": "readMessageCapabilities",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageEffectsCapabilities"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/messages/{message_ref}/delete": {
+      "post": {
+        "operationId": "deleteMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyEffectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageEffectReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/messages/{message_ref}/reaction": {
+      "post": {
+        "operationId": "setMessageReaction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageReactionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageEffectReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
         ]
       }
     },

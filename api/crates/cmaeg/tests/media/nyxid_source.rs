@@ -105,6 +105,7 @@ impl Relay {
 
 fn relay_reply(expires_at: i64) -> ReplyAddress {
     ReplyAddress::NyxidRelay {
+        thread_reply: false,
         message_id: MESSAGE_ID.into(),
         route_id: "route-1".into(),
         platform: Platform::Telegram,

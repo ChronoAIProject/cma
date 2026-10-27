@@ -23,10 +23,20 @@ mod transaction;
 
 #[async_trait::async_trait]
 impl SandboxReconciliationStore for MongoSandboxStore {
+    async fn unowned_home_reservation(
+        &self,
+        id: &layer2_core::SandboxId,
+    ) -> Result<Option<layer2_core::sandbox::SandboxHome>, SandboxStoreError> {
+        self.native_prepared_home_reservation(id).await
+    }
+
     async fn unowned_home_authority(
         &self,
         request: &layer3_adapter::HomeVolumeRequest,
     ) -> Result<bool, SandboxStoreError> {
+        if self.native_prepared_home_authority(request).await? {
+            return Ok(true);
+        }
         // A retained Channel home stays held even when its canonical home or
         // root row was lost. Raw marker presence is a hold, not ownership proof.
         let sandbox = self
@@ -65,6 +75,12 @@ impl SandboxReconciliationStore for MongoSandboxStore {
         generation: u64,
         runtime_id: &str,
     ) -> Result<bool, SandboxStoreError> {
+        if self
+            .native_prepared_runtime_authority(id, generation, runtime_id)
+            .await?
+        {
+            return Ok(true);
+        }
         let Some(reservation) = self.warm_sandbox(id).await? else {
             return Ok(false);
         };

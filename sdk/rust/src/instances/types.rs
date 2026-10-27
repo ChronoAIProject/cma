@@ -1,6 +1,6 @@
 //! Sandbox, Workspace, and Worktree REST resource models.
 
-use crate::profiles::ProfileReference;
+use crate::profiles::{AgentProvider, ModelAccess, ProfileReference};
 use serde::{Deserialize, Serialize};
 
 string_enum! { /// Persisted Sandbox lifecycle status.
@@ -65,6 +65,8 @@ pub struct Sandbox {
     pub limits: SandboxLimits,
     /// Authoritative lifecycle eligibility and recorded progress; absent on older servers.
     pub lifecycle: Option<super::SandboxLifecycle>,
+    /// Managed runtime progress, when supplied on owner detail or update responses.
+    pub runtime_update: Option<super::SandboxRuntimeUpdate>,
     /// Currently bound runtime version, when present.
     pub runtime_version: Option<String>,
     /// Last recorded failure.
@@ -120,6 +122,10 @@ pub struct SandboxDetail {
     /// Sandbox and hierarchy counts, flattened on the wire.
     #[serde(flatten)]
     pub summary: SandboxSummary,
+    /// Pinned Agent provider; absent on older servers.
+    pub agent_provider: Option<AgentProvider>,
+    /// Pinned model access; absent on older servers.
+    pub model_access: Option<ModelAccess>,
     /// Workspace summaries in this Sandbox.
     pub workspaces: Vec<WorkspaceSummary>,
 }
@@ -197,6 +203,11 @@ pub struct Worktree {
 /// Compact Agent row included in Workspace hierarchy detail.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct HierarchyAgentSummary {
+    /// Canonical runtime metadata for this owned Agent.
+    pub runtime_metadata: Option<crate::agents::AgentRuntimeMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Explicit owner rename, which takes precedence over a provider-generated title.
+    pub owner_title: Option<String>,
     /// Agent identifier.
     pub id: String,
     /// Allocated Worktree identifier.

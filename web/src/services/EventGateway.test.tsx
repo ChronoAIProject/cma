@@ -25,10 +25,8 @@ it.each([undefined, { type: 'existing_agent' as const, agent_id: 'agt_borrowed' 
     vi.stubGlobal('fetch', fetcher);
     const done = vi.fn();
     render(<ChannelEditor channel={channel} denied={vi.fn()} onDone={done} />);
-    const input = screen.getByLabelText<HTMLTextAreaElement>('Channel configuration JSON');
-    const policy = JSON.parse(input.value);
-    policy.name = 'Renamed channel';
-    fireEvent.change(input, { target: { value: JSON.stringify(policy) } });
+    const input = screen.getByLabelText('Channel name');
+    fireEvent.change(input, { target: { value: 'Renamed channel' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save channel' }));
     await waitFor(() => expect(done).toHaveBeenCalledOnce());
     expect(fetcher).toHaveBeenCalledOnce();
@@ -43,31 +41,50 @@ it.each([undefined, { type: 'existing_agent' as const, agent_id: 'agt_borrowed' 
   },
 );
 
-it('keeps legacy channel metadata visible and uses its existing console while modern rows retain actions', async () => {
-  const fetcher = vi.fn().mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        items: [
-          {
-            record_id: 'legacy-record',
-            version: 4,
-            provider: { slug: 'cma', level: 'L3' },
-            definition: { name: 'Existing channel', sources: [{}] },
-          },
-          {
-            record_id: 'new-record',
-            channel_id: 'new-id',
-            version: 1,
-            provider: { slug: 'cma', level: 'L3' },
-            definition: { name: 'New channel', sources: [] },
-            endpoints: {
-              custom_event_url: 'https://example.test/event',
-              nyxid_callback_url: 'https://example.test/callback',
-            },
-          },
-        ],
-      }),
-    ),
+it.each([401, 403])('reports a refused channel read with its status %s', async (status) => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status })));
+  const denied = vi.fn();
+  render(
+    <EventGateway
+      session={{
+        authenticated: true,
+        subject: 'owner',
+        permissions: ['cma-eg:admin'],
+        expires_at: 9999999999,
+      }}
+      denied={denied}
+    />,
+  );
+  await waitFor(() => expect(denied).toHaveBeenCalledWith(status));
+});
+
+it('puts channels in the sidebar and shows only the selected channel details', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) =>
+    url === '/api/event-gateway/v1/channels'
+      ? new Response(
+          JSON.stringify({
+            items: [
+              {
+                record_id: 'legacy-record',
+                version: 4,
+                provider: { slug: 'cma', level: 'L3' },
+                definition: { name: 'Existing channel', sources: [{}] },
+              },
+              {
+                record_id: 'new-record',
+                channel_id: 'new-id',
+                version: 1,
+                provider: { slug: 'cma', level: 'L3' },
+                definition: { name: 'Modern channel', sources: [] },
+                endpoints: {
+                  custom_event_url: 'https://example.test/event',
+                  nyxid_callback_url: 'https://example.test/callback',
+                },
+              },
+            ],
+          }),
+        )
+      : new Response('{}', { status: 404 }),
   );
   vi.stubGlobal('fetch', fetcher);
   render(
@@ -81,20 +98,31 @@ it('keeps legacy channel metadata visible and uses its existing console while mo
       denied={vi.fn()}
     />,
   );
-  const legacy = (await screen.findByRole('heading', { name: 'Existing channel' })).closest('li')!;
-  expect(within(legacy).getByRole('link', { name: 'Manage existing channel' })).toHaveAttribute(
-    'href',
-    'https://bot-gateway.chrono-ai.fun/console/channels/legacy-record',
+  const sidebar = screen.getByRole('region', { name: 'Channels' });
+  expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: 'Existing channel' })).not.toBeInTheDocument();
+  await userEvent.click(await within(sidebar).findByRole('button', { name: /Existing channel/ }));
+  await screen.findByRole('heading', { name: 'Existing channel' });
+  expect(
+    await screen.findByRole('link', { name: 'Open existing channel console' }),
+  ).toHaveAttribute('href', '/event-gateway/legacy-console/channels/legacy-record');
+  expect(screen.queryByRole('button', { name: 'Send test event' })).not.toBeInTheDocument();
+  expect(within(sidebar).getByRole('button', { name: /Existing channel/ })).toHaveAttribute(
+    'aria-current',
+    'page',
   );
-  expect(within(legacy).queryByRole('button', { name: 'Delete channel' })).not.toBeInTheDocument();
-  expect(within(legacy).queryByRole('button', { name: 'Send test event' })).not.toBeInTheDocument();
-  expect(within(legacy).queryByText('Edit channel')).not.toBeInTheDocument();
-  await userEvent.click(within(legacy).getByText('Channel details'));
-  expect(within(legacy).getByText(/view its endpoints and manage it/)).toBeVisible();
-  const modern = screen.getByRole('heading', { name: 'New channel' }).closest('li')!;
-  expect(within(modern).getByRole('button', { name: 'Delete channel' })).toBeEnabled();
-  expect(within(modern).getByRole('button', { name: 'Send test event' })).toBeEnabled();
-  expect(fetcher).toHaveBeenCalledOnce();
+  await userEvent.click(within(sidebar).getByRole('button', { name: /Modern channel/ }));
+  expect(screen.queryByRole('heading', { name: 'Existing channel' })).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Modern channel' })).toBeVisible();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  await userEvent.click(await screen.findByRole('button', { name: /Channel: Modern channel/ }));
+  expect(screen.getByRole('button', { name: 'Send test event' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Delete channel' })).toBeEnabled();
+  expect(within(sidebar).getByRole('button', { name: /Modern channel/ })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
 it.each(['completed', 'timeout'] as const)(
@@ -137,6 +165,8 @@ it.each(['completed', 'timeout'] as const)(
         denied={vi.fn()}
       />,
     );
+    await userEvent.click(await screen.findByRole('button', { name: /^Cold channel/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /Channel: Cold channel/ }));
     const send = await screen.findByRole('button', { name: 'Send test event' });
     vi.useFakeTimers();
     const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
@@ -154,7 +184,7 @@ it.each(['completed', 'timeout'] as const)(
       await act(() => vi.advanceTimersByTimeAsync(120_000));
       expect(screen.getByRole('button', { name: 'Sending test…' })).toBeDisabled();
       fireEvent.click(send);
-      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher).toHaveBeenCalledTimes(3);
       if (outcome === 'completed') {
         await act(async () =>
           resolveTest(new Response(JSON.stringify({ first_text: 'Cold test completed' }))),
@@ -169,8 +199,8 @@ it.each(['completed', 'timeout'] as const)(
         ).toBeVisible();
       }
       expect(screen.getByRole('button', { name: 'Send test event' })).toBeEnabled();
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      expect(fetcher.mock.calls[1]?.[1]?.method).toBe('POST');
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
     } finally {
       timeout.mockRestore();
       vi.useRealTimers();

@@ -1,92 +1,102 @@
-import { chooseOptionValue } from '../test/select';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
+import type { AgentFilesClient } from '../api/agentFiles';
+import type { ResourceViewsClient } from '../resources/client';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
+import { NamedReferences } from '../test/references';
 import { AgentDetails } from './Details';
 
-const defaults = {
-  model: 'gpt-6',
-  reasoning_effort: 'high',
-  permission_mode: 'autonomous',
-} as const;
-
-it('shows the three settings and fixed Agent key scopes without technical or lifecycle panels', async () => {
-  const update = vi.fn().mockResolvedValue({ ...defaults, reasoning_effort: 'medium' });
-  const client = agentClient({
-    readAgentSettings: async () => defaults,
-    updateAgentSettings: update,
-  });
+it('summarises service access read-only beside skills without duplicating composer settings', async () => {
+  const readAgentSettings = vi.fn();
+  const client = agentClient({ readAgentSettings });
   render(
     <CmaClientProvider client={client}>
-      <AgentDetails detail={AGENT_DETAIL} open />
+      <NamedReferences>
+        <AgentDetails detail={{ ...AGENT_DETAIL, reach: ['ornn-api', 'github'] }} open />
+      </NamedReferences>
     </CmaClientProvider>,
   );
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
-  expect(await panel.findByLabelText('Model')).toHaveTextContent('gpt-6');
-  expect(panel.getByLabelText('Reasoning effort')).toHaveTextContent('High');
-  expect(panel.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
-  expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
-  for (const scope of [
-    'chrono-llm-public Required',
-    'ornn-api Required',
-    'github Already granted',
-  ]) {
-    const checkbox = panel.getByRole('checkbox', { name: scope });
-    expect(checkbox).toBeChecked();
-    expect(checkbox).toBeDisabled();
+  expect(panel.queryByLabelText('Model')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Permission mode')).not.toBeInTheDocument();
+  expect(panel.queryByRole('group', { name: 'Agent key scope' })).not.toBeInTheDocument();
+  expect(panel.queryByRole('checkbox')).not.toBeInTheDocument();
+  expect(panel.queryByRole('button', { name: /Save scope/ })).not.toBeInTheDocument();
+  await screen.findByRole('link', { name: 'GitHub' });
+  const services = within(panel.getByRole('list', { name: 'Services this Agent can use' }));
+  expect(services.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+    'chrono-llm-publicRequired',
+    'ornn-apiRequired',
+    'GitHub',
+  ]);
+  for (const required of services.getAllByText('Required')) {
+    expect(required).toHaveClass('agent-details__required');
+    expect(required.closest('.badge')).toBeNull();
   }
+  expect(panel.getByRole('link', { name: 'Manage on Sandbox' })).toHaveAttribute(
+    'href',
+    '/sandboxes/sbx_1?tab=access',
+  );
   expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
     'Details',
+    'Service access',
     'Skills',
   ]);
   expect(panel.queryByText(AGENT_DETAIL.workspace.path)).not.toBeInTheDocument();
   expect(panel.queryByText(AGENT_DETAIL.worktree.branch)).not.toBeInTheDocument();
   expect(panel.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   expect(panel.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
-  await chooseOptionValue(userEvent.setup(), panel.getByLabelText('Reasoning effort'), 'medium');
-  await userEvent.click(panel.getByRole('button', { name: 'Apply settings' }));
-  await panel.findByText('Settings applied to this Agent.');
-  expect(update).toHaveBeenCalledWith(
-    AGENT_DETAIL.id,
-    { ...defaults, reasoning_effort: 'medium' },
-    expect.objectContaining({ idempotencyKey: expect.any(String) }),
-  );
+  expect(readAgentSettings).not.toHaveBeenCalled();
 });
 
-it.each(['history', 'working', 'command'] as const)(
-  'holds settings updates during %s and preserves the draft until the Agent is ready',
-  async (busy) => {
-    const update = vi.fn();
-    const client = agentClient({
-      readAgentSettings: async () => defaults,
-      updateAgentSettings: update,
-    });
-    const draw = (blocked: boolean) => (
-      <CmaClientProvider client={client}>
-        <AgentDetails
-          open
-          detail={{ ...AGENT_DETAIL, status: blocked && busy === 'working' ? 'working' : 'ready' }}
-          historyLoading={blocked && busy === 'history'}
-          pending={blocked && busy === 'command' ? 'send' : undefined}
-        />
-      </CmaClientProvider>
+describe('reaching the Sandbox page', () => {
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
+  });
+  const draw = (onOpenSandbox?: () => void) =>
+    render(
+      <CmaClientProvider client={agentClient()}>
+        <AgentDetails detail={AGENT_DETAIL} open onOpenSandbox={onOpenSandbox} />
+      </CmaClientProvider>,
     );
-    const view = render(draw(true));
-    await screen.findByLabelText('Model');
-    await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Reasoning effort'), 'medium');
-    expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
-    expect(update).not.toHaveBeenCalled();
-    view.rerender(draw(false));
-    expect(screen.getByLabelText('Reasoning effort')).toHaveTextContent('Medium');
-    expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled();
-  },
-);
+  const address = () => window.location.pathname + window.location.search;
+  // Console's navigation pushes the bare Sandbox path, as the router does.
+  const navigate = vi.fn(() => window.history.pushState(null, '', '/sandboxes/sbx_1'));
+
+  it('opens the Access tab from Manage on Sandbox', async () => {
+    draw(navigate);
+    await userEvent.click(screen.getByRole('link', { name: 'Manage on Sandbox' }));
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(address()).toBe('/sandboxes/sbx_1?tab=access');
+  });
+
+  it('opens the Activity tab from Sandbox operation progress', async () => {
+    draw(navigate);
+    await userEvent.click(screen.getByRole('button', { name: 'Sandbox operation progress' }));
+    expect(address()).toBe('/sandboxes/sbx_1?tab=activity');
+  });
+
+  it('leaves a modified click, or a drawer without navigation, to the browser', () => {
+    navigate.mockClear();
+    const view = draw(navigate);
+    const link = screen.getByRole('link', { name: 'Manage on Sandbox' });
+    expect(fireEvent.click(link, { ctrlKey: true })).toBe(true);
+    expect(navigate).not.toHaveBeenCalled();
+    view.unmount();
+    draw();
+    expect(
+      screen.queryByRole('button', { name: 'Sandbox operation progress' }),
+    ).not.toBeInTheDocument();
+    expect(fireEvent.click(screen.getByRole('link', { name: 'Manage on Sandbox' }))).toBe(true);
+  });
+});
 
 it('focuses the Details heading on open and restores the opener on close', async () => {
   const onClose = vi.fn();
-  const client = agentClient({ readAgentSettings: async () => defaults });
+  const client = agentClient();
   const draw = (open: boolean) => (
     <CmaClientProvider client={client}>
       <button>Open details</button>
@@ -102,4 +112,37 @@ it('focuses the Details heading on open and restores the opener on close', async
   expect(onClose).toHaveBeenCalledOnce();
   view.rerender(draw(false));
   expect(opener).toHaveFocus();
+});
+
+it('orders the calm sections and gives every text action the same quiet link', () => {
+  // Neither client is read until its action is used, so inert stubs suffice.
+  const files = {} as AgentFilesClient;
+  const resourceViews = {} as ResourceViewsClient;
+  const draw = (open: boolean) => (
+    <CmaClientProvider client={agentClient({ files, resourceViews })}>
+      <AgentDetails detail={AGENT_DETAIL} open={open} onOpenSandbox={vi.fn()} />
+    </CmaClientProvider>
+  );
+  const view = render(draw(true));
+  const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
+  expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
+    'Details',
+    'Files',
+    'Sharing',
+    'Service access',
+    'Skills',
+  ]);
+  const actions = [
+    panel.getByRole('button', { name: 'Browse files' }),
+    panel.getByRole('button', { name: 'Manage share links' }),
+    panel.getByRole('link', { name: 'Manage on Sandbox' }),
+    panel.getByRole('button', { name: 'Sandbox operation progress' }),
+  ];
+  for (const action of actions) {
+    expect(action).toHaveClass('agent-details__link');
+    expect(action).not.toHaveClass('button');
+  }
+  expect(panel.getByRole('button', { name: 'Manage share links' })).toBeEnabled();
+  view.rerender(draw(false));
+  expect(screen.getByRole('button', { name: 'Manage share links' })).toBeDisabled();
 });

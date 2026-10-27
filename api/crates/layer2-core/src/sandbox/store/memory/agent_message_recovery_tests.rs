@@ -166,7 +166,9 @@ async fn foreign_native_generation_or_turn_cannot_restore_message_content() {
         }
         let replacement = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
         let mut fresh = AgentMessageAssembly::default();
-        replacement
+        let checkpoint = store.agent_message_checkpoint(&working.id).await.unwrap();
+        let before = store.agent_log(&working.id, 0, 200).await.unwrap();
+        let recorded = replacement
             .record_update(
                 &working.id,
                 1,
@@ -174,8 +176,23 @@ async fn foreign_native_generation_or_turn_cannot_restore_message_content() {
                 message_chunk("reply", "current"),
                 NOW.into(),
             )
-            .await
-            .unwrap();
+            .await;
+        if change == 1 {
+            // A newer checkpoint can own durable replacement startup receipts.
+            // The old recorder must refuse it without discarding that state.
+            assert!(matches!(
+                recorded,
+                Err(AgentConversationError::StaleGeneration)
+            ));
+            assert_eq!(
+                store.agent_message_checkpoint(&working.id).await.unwrap(),
+                checkpoint
+            );
+            assert_eq!(store.agent_log(&working.id, 0, 200).await.unwrap(), before);
+            assert!(fresh.is_empty());
+            continue;
+        }
+        recorded.unwrap();
         replacement
             .record_update(&working.id, 1, &mut fresh, turn_ended(), NOW.into())
             .await
@@ -245,6 +262,7 @@ async fn unrelated_semantic_write_advances_private_anchor_without_public_message
     next.conversation.last_seq += 1;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,
@@ -347,6 +365,7 @@ impl AgentConversationStore for LostCommitReply {
             next.conversation.last_seq += 1;
             self.store
                 .commit_agent_conversation(AgentConversationMutation {
+                    settings_fence: None,
                     command_claim: None,
                     execution_fence: None,
                     trigger_execution_fence: None,

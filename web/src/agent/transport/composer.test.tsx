@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { Composer } from '../Composer';
+import { useState } from 'react';
 
 it.each([
   ['Original message', ''],
@@ -14,16 +15,27 @@ it.each([
     onSend: vi.fn(),
     onStop: vi.fn(),
   };
-  const { rerender } = render(<Composer {...props} requestPending />);
+  function Surface({ accepted }: { accepted?: string }) {
+    const [content, setContent] = useState('Original message');
+    return (
+      <Composer
+        {...props}
+        draft={{ content, setContent, attachments: [], setAttachments: vi.fn() }}
+        requestPending={accepted === undefined}
+        acceptedMessage={accepted}
+      />
+    );
+  }
+  const { rerender } = render(<Surface />);
   const field = screen.getByRole('textbox', { name: 'Message' });
-  fireEvent.change(field, { target: { value: draft } });
+  if (draft !== 'Original message') fireEvent.change(field, { target: { value: draft } });
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(field).toBeEnabled();
-  rerender(<Composer {...props} acceptedMessage="Original message" />);
+  rerender(<Surface accepted="Original message" />);
   expect(field).toHaveValue(expected);
   // The receipt cannot erase a later independently edited draft.
   fireEvent.change(field, { target: { value: 'Original message' } });
-  rerender(<Composer {...props} acceptedMessage="Original message" />);
+  rerender(<Surface accepted="Original message" />);
   expect(field).toHaveValue('Original message');
   expect(props.onSend).not.toHaveBeenCalled();
 });

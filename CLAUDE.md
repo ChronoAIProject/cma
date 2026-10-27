@@ -229,7 +229,7 @@ Interfaces expose semantic operations in their protocol's own idiom:
 | 2 | **Responses** | compatible conversation clients; `conversation` is the Agent id | `layer1-public/src/responses/` |
 | 3 | **REST** | resource management, profiles, marketplace, Triggers and Launches | `layer1-public/src/rest/` |
 | 4 | **PTY** | absent in this release; no terminal plane | `layer1-public/src/pty/` (typed refusal only) |
-| 5 | **MCP** | `agent_key_scope_revision` proposes owner consent using a limited runtime capability; other operations remain explicitly unsupported | `layer1-public/src/mcp/` |
+| 5 | **MCP** | Limited runtime capabilities propose owner service consent and publish/update their own document artifacts; broader resource operations remain unsupported | `layer1-public/src/mcp/` |
 | 6 | **A2A** | public provider card; JSON-RPC explicitly unsupported, no invented Agent tasks | `layer1-public/src/a2a/` |
 
 Each interface is a **projection** of the same core model. It may expose a
@@ -250,6 +250,9 @@ It owns:
 - Append-only Sandbox and Agent event logs, per-object monotonic sequences,
   approval state, usage, idempotency and optimistic concurrency.
 - Platform defaults, count-based quotas, operator settings and audit events.
+- User-owned document artifacts, immutable source revisions, explicit sharing,
+  comments and bounded runtime-authorized publication. Document ownership is
+  independent of the originating Agent's lifecycle.
 
 Layer 2 is protocol-agnostic and provider-agnostic. **No protocol name or
 provider implementation name belongs in Layer 2 identifiers, types, or
@@ -263,10 +266,14 @@ provider, model access, resources, software and environment do not change
 implicitly. The owner may add Workspaces and Agents with inline configuration
 within the recorded limits. Published profile changes never mutate existing instances.
 
-An explicit owner service-access command may append additional NyxID grants
-while the Sandbox is fully Paused. It preserves the original profile and creation
-scope, records the owner and time, and renews scoped credentials before revival.
-Profile publication never grants this additional instance access implicitly.
+An explicit owner service-access command may replace the exact NyxID scope on
+an Active Sandbox without restarting its runtime. The latest owner-authorized
+scope revision controls new credential issuance while the original profile and
+creation scope remain immutable. Credential delivery and old-key revocation
+complete before confirmed callback delivery to the original Agent; an active turn
+receives durable steering without waiting for that turn to finish. Owners may add or remove optional
+services; the platform baseline remains required. Already admitted paused access
+workflows remain recoverable. Profile publication never changes instance access.
 
 Retained Sandbox Profile availability remains a mutable inactivity policy,
 separate from immutable environments. Always keep alive prevents inactivity
@@ -280,6 +287,22 @@ pool, original claim/member identities and adopted home before subsequent
 effects. Cleanup proves claim, member and Pod finality before releasing a disk.
 Legacy `warm_sandboxes` records remain for already-claimed runtime recovery and
 cleanup only; production no longer admits or prepares new Profile warmups.
+
+New spare native capacity uses only the configured runtime image and current
+home/Pod policy. Operators cannot re-enable an obsolete target, but may configure
+multiple resource sizes for the current image. Release cleanup drains obsolete
+spares only after release authority, a durable admission barrier and fresh complete
+allocation/Claim checks exclude pending adoption. A settled retained home,
+including a failed home, does not require spare capacity; its exact original
+attachment must still be proved, or its original Claim/Sandbox/PVC graph proved
+fully absent. Its history remains intact. Definitions remain until the separate
+full retirement check proves no retained home depends on them. Pool cleanup never
+rotates or deletes a claimed Sandbox; startup alone is not allocation finality.
+Upgraded homes may outlive their original definitions only after exact retained
+Claim/Sandbox/PVC and policy verification proves they can recover independently.
+Retired target records preserve immutable release order and cannot be activated
+again by an older process. API/Web rollback retains the latest released runtime
+default; it does not downgrade `CHRONO_SANDBOX_IMAGE`.
 
 #### Capabilities must be proved
 
@@ -454,16 +477,30 @@ does not need to repair a deployment by clicking a revive control.
 
 ### Runtime identity and persistent homes
 
-Changing the configured runtime image never rotates existing live Sandboxes.
-Reconciliation adopts each retained runtime using its recorded image; new
-allocations use the configured image. API/web upgrade and rollback must preserve
+Changing the configured runtime image does not immediately replace existing live
+Sandboxes. Reconciliation adopts each retained runtime using its recorded image;
+new allocations use the configured image. API/web upgrade and rollback preserve
 the existing runtime, native conversation, admitted turns, approvals and dirty
-work without user repair. An incompatible feature stays disabled until retained
-runtime coexistence and uninterrupted interaction are proved. Previously admitted
-rotation operations remain readable and recoverable; image drift cannot admit
-new ones. Native pause/resume retains the same Sandbox CRD and PVC, changes
-operating mode, and binds the replacement Pod with a new boot identity. A pooled
-runtime retains its original claim and member authority across that transition.
+work. An incompatible feature stays disabled until retained runtime coexistence
+and uninterrupted interaction are proved.
+
+Managed native homes support two explicit update policies: the owner's Sandbox
+Details update command, and a daily check at 02:00 Asia/Singapore. The first
+observation of a default runtime waits until the next daily boundary; deployment
+or restart does not authorize immediate replacement. A requested update pins
+its exact target and waits for all admitted Agent and Workspace work to settle.
+It suspends the native Sandbox, changes its image and generation, and reopens
+the original conversations on the same PVC/home. IDs and original pool/claim/home
+authority remain unchanged. An initially paused Sandbox returns to paused unless
+new owner work supersedes that intent. Failures retain their exact phase and
+pinned target for retry. Custom-image Sandboxes are excluded.
+
+An owner/control/message/creation revival from Paused uses the latest managed
+runtime on that same retained native Sandbox and home. Already admitted updates
+retain their pinned target; RuntimeLost alone never upgrades an otherwise
+unchanged runtime. Native pause/resume changes operating mode and binds the
+replacement Pod with a new boot identity. A pooled runtime retains its original
+claim and member authority across that transition.
 Deletion waits for the claim, Sandbox and every owned Pod to disappear before
 releasing its PVC and completing database cleanup.
 
@@ -561,9 +598,14 @@ The tag is the version of record. `api/Cargo.toml` and `web/package.json` are no
 
 Publishing is not deploying. `infra/` is untouched by a release, and a new image
 becomes live only when someone changes a manifest to name it.
-`CHRONO_SANDBOX_IMAGE` selects the image for new allocations. Under §5, existing
-live Sandboxes retain their recorded runtime images across control-plane
-upgrades and rollbacks; changing this default never admits image-drift rotation.
+`CHRONO_SANDBOX_IMAGE` is the single released default for new allocations,
+managed-runtime updates and owner-requested revival under §5. It is pinned to a
+verified CI artifact by explicit release promotion; publishing a CI tag alone
+never changes that authority, and no registry tag scan chooses a newer image. Existing live
+Sandboxes retain their image until an admitted update reaches idle. Deployment
+alone never starts immediate image-drift rotation. Persisted update requests
+require a compatible reader during rollback; older binaries that reject the new
+lifecycle metadata cannot safely be restored after admission.
 
 Full procedure in `docs/Release.md`.
 

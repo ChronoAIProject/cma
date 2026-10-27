@@ -6,7 +6,7 @@ use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use layer2_core::profiles::AgentProfileRef;
@@ -82,8 +82,20 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
         )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
         .route(
+            "/api/v1/agents/{id}/message-feedback",
+            get(super::message_feedback::list),
+        )
+        .route(
+            "/api/v1/agents/{id}/messages/{message_id}/feedback",
+            put(super::message_feedback::set),
+        )
+        .route(
             "/api/v1/agents/{id}/skills",
             get(super::agent_skills::read).post(super::agent_skills::install),
+        )
+        .route(
+            "/api/v1/agents/{id}/preferences",
+            get(super::agent_preferences::read).patch(super::agent_preferences::update),
         )
         .route(
             "/api/v1/agents/{id}/settings",

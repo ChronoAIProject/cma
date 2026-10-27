@@ -130,6 +130,17 @@ impl SourceChanges for RecordingSources {
                     bot_username,
                     admission,
                 },
+                SourceRequest::Discord {
+                    bot_id,
+                    intents,
+                    thread_history,
+                    admission,
+                } => Source::Discord {
+                    bot_id,
+                    intents,
+                    thread_history,
+                    admission,
+                },
                 SourceRequest::NyxidRelay {
                     issuer,
                     key_id,
@@ -138,6 +149,8 @@ impl SourceChanges for RecordingSources {
                     bot_username,
                     bot_id,
                     trust_normalized,
+                    verify_raw_event,
+                    lark_resources,
                     admission,
                 } => Source::NyxidRelay {
                     jwks_url: format!("{issuer}/jwks"),
@@ -148,6 +161,8 @@ impl SourceChanges for RecordingSources {
                     bot_username,
                     bot_id,
                     trust_normalized,
+                    verify_raw_event,
+                    lark_resources,
                     admission,
                 },
                 SourceRequest::Custom {

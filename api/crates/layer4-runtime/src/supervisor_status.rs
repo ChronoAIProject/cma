@@ -60,6 +60,8 @@ impl Supervisor {
             ));
         }
         let status = RuntimeStatus {
+            agent_filesystem: crate::agent_attachment::supported(&self.config),
+            agent_attachment_upload: crate::agent_attachment::supported(&self.config),
             agent_skill_install: true,
             agent_model_catalog: true,
             sandbox_id: request.sandbox_id.clone(),

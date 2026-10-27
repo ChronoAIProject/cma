@@ -1,4 +1,14 @@
 import {
+  readAgentPreferences,
+  changeAgentPreferences,
+  type UpdateAgentPreferencesRequest,
+} from './agents/preferences.js';
+import {
+  listMessageFeedback,
+  setMessageFeedback,
+  type MessageVote,
+} from './agents/message-feedback.js';
+import {
   readAgentSettings,
   changeAgentSettings,
   type UpdateAgentSettingsRequest,
@@ -13,7 +23,9 @@ import {
   listAgentAccessRequests,
   approveAgentAccess,
   denyAgentAccess,
+  updateAgentServiceAccess,
   type ApproveAgentAccessRequest,
+  type UpdateAgentServiceAccessRequest,
 } from './agents/access-requests.js';
 import type { ResolvedConfig } from './config.js';
 import { requestVoid, type OperationOptions } from './http.js';
@@ -97,6 +109,20 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
 
+  /** Read saved owner votes; use next as after until pagination completes. */
+  messageFeedback(id: string, options: EventOptions = {}) {
+    return listMessageFeedback(this.config, id, options);
+  }
+  /** Replace or clear feedback without creating an Agent turn. */
+  setMessageFeedback(
+    id: string,
+    messageId: string,
+    vote: MessageVote | null,
+    options: OperationOptions = {},
+  ) {
+    return setMessageFeedback(this.config, id, messageId, vote, options);
+  }
+
   /** Discover admitted models and their current runtime availability. */
   models(id: string, options: OperationOptions = {}) {
     return listAgentModels(this.config, id, options);
@@ -110,6 +136,14 @@ export class Agents {
     return installAgentSkill(this.config, id, body, options);
   }
 
+  /** Read editable owner preferences and current native instruction support. */
+  preferences(id: string, options: OperationOptions = {}) {
+    return readAgentPreferences(this.config, id, options);
+  }
+  /** Rename or update instructions using the last observed revision. */
+  updatePreferences(id: string, body: UpdateAgentPreferencesRequest, options: CommandOptions) {
+    return changeAgentPreferences(this.config, id, body, options);
+  }
   /** Read desired runtime settings and their confirmation state. */
   settings(id: string, options: OperationOptions = {}) {
     return readAgentSettings(this.config, id, options);
@@ -122,6 +156,10 @@ export class Agents {
   /** Read durable owner-visible service requests without granting access. */
   accessRequests(id: string, options: OperationOptions = {}) {
     return listAgentAccessRequests(this.config, id, options);
+  }
+  /** Replace exact shared service access without restarting the running Sandbox. */
+  updateServiceAccess(id: string, body: UpdateAgentServiceAccessRequest, options: CommandOptions) {
+    return updateAgentServiceAccess(this.config, id, body, options);
   }
   /** Approve an exact selection; retry uncertain replies with the original body and key. */
   approveAccessRequest(

@@ -1,4 +1,4 @@
-import { ProtocolError, type Cma } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, type Cma } from '@chronoai/cma-sdk';
 import { AgentLifecycleCreateError } from './client';
 import type {
   AgentLifecycleConnectionRequired,
@@ -9,10 +9,19 @@ import type {
 } from './client';
 import type { ConnectionTarget } from '../connections/client';
 import type { CreateInlineWorkspaceInput, ProfileReference } from './types';
-import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
+import {
+  agentDetail,
+  runtimeUpdate,
+  sandboxDetail,
+  sandboxSummary,
+  workspaceDetail,
+} from './rest/hierarchy';
 import { createAgentTransport, type AgentTransportOptions } from '../agent/transport/client';
 import { agentSettingsClient } from './rest/agentSettings';
 import { agentSkillsClient } from './rest/agentSkills';
+import { messageFeedbackClient } from './rest/messageFeedback';
+import { agentFilesClient } from './rest/agentFiles';
+import { documentsClient } from './rest/documents';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -58,7 +67,18 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
+    documents: documentsClient(),
+    files: agentFilesClient(),
+    updateSandboxRuntime: async (id, targetVersion, options) => {
+      const result = await sdk.sandboxes.updateRuntime(
+        id,
+        { target_version: targetVersion },
+        options,
+      );
+      return { runtimeUpdate: runtimeUpdate(result.runtime_update), revision: result.revision };
+    },
     ...agentSettingsClient(),
+    ...messageFeedbackClient(),
     ...agentSkillsClient(),
     grantSandboxServiceAccess: async (id, services, options) => {
       await sdk.sandboxes.grantServiceAccess(id, { services: [...services] }, options);
@@ -131,7 +151,10 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         },
       );
       if (!response.ok)
-        throw new ProtocolError(`Agent lifecycle status failed (${String(response.status)}).`);
+        throw new ApiError(
+          response.status,
+          `Agent lifecycle status failed (${String(response.status)}).`,
+        );
       const value = (await response.json()) as AgentLifecycleOperationView;
       if (
         value.id !== operationId ||
@@ -150,6 +173,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         throw new ProtocolError('Agent Manager returned an invalid lifecycle operation.');
       return value;
     },
+    uploadAgentAttachment: (id, file, options) => sdk.agentAttachments.upload(id, file, options),
     botViews: sdk,
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
@@ -232,6 +256,14 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       return {
         agentId: value.agent_id,
         throughSeq: value.through_seq,
+        currentTurn:
+          value.current_turn === undefined
+            ? undefined
+            : {
+                turnSequence: value.current_turn.turn_sequence,
+                inputTokens: value.current_turn.input_tokens,
+                outputTokens: value.current_turn.output_tokens,
+              },
         inputTokens: value.input_tokens,
         outputTokens: value.output_tokens,
         contextUsed: value.context_used,

@@ -143,7 +143,18 @@ pub(super) async fn apply(
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
-    fence_live_agents(store, &agents, session).await?;
+    if matches!(request, MaintenanceRequest::Rotation(_)) {
+        if !super::evidence::fence_idle_workspaces(store, &current, session).await? {
+            return Ok(MaintenanceReceipt {
+                sandbox: current,
+                event: None,
+                outcome: SandboxMaintenanceOutcome::NotEligible,
+            });
+        }
+        super::evidence::fence_agents(store, &agents, session).await?;
+    } else {
+        fence_live_agents(store, &agents, session).await?;
+    }
     let advanced = store
         .sandboxes
         .update_one(

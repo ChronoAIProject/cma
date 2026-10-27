@@ -33,6 +33,8 @@ pub const ACTIVITY_SCHEMA_VERSION: u16 = 1;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Activity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<crate::thread::ThreadFacts>,
     pub schema_version: u16,
     pub event_id: EventId,
     pub kind: ActivityKind,
@@ -119,6 +121,9 @@ pub enum SourceKind {
         platform: Platform,
         bot_id: String,
     },
+    Discord {
+        bot_id: String,
+    },
     NyxidRelay {
         platform: Platform,
         route_id: String,
@@ -150,11 +155,28 @@ impl Activity {
                 ));
             }
         }
+        if let SourceKind::Discord { bot_id } = &self.source {
+            if !crate::channel::discord::valid_id(bot_id) {
+                return Err(ValidationError::new(
+                    "/source/bot_id",
+                    "must be a canonical Discord ID",
+                ));
+            }
+        }
         if self.schema_version != ACTIVITY_SCHEMA_VERSION {
             return Err(ValidationError::new(
                 "/schema_version",
                 "unsupported schema version",
             ));
+        }
+        if let Some(thread) = &self.thread {
+            thread.validate()?;
+            if thread.chat_id != self.conversation.id
+                || thread.sender_kind != self.actor.kind
+                || self.conversation.kind == ConversationKind::Private
+            {
+                return Err(ValidationError::new("/thread", "thread identity mismatch"));
+            }
         }
         require_string(self.event_id.as_str(), "/event_id", 1, 512)?;
         let identity_limit = if matches!(self.source, SourceKind::Custom) {

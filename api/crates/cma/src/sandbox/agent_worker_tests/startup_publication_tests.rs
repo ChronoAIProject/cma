@@ -9,7 +9,8 @@ use layer3_adapter::wire::{
 use layer3_adapter::{AgentLaunch, ConversationChannel, RuntimeObservation};
 
 #[derive(Clone, Copy)]
-enum Interleaving {
+pub(super) enum Interleaving {
+    ObserveOnly,
     FirstPrompt,
     FirstPromptOnReady,
     Stop,
@@ -24,19 +25,23 @@ enum Interleaving {
     Expire,
 }
 
-struct InterleavingBackend {
+pub(super) struct InterleavingBackend {
     backend: InMemoryHostedBackend,
     store: Arc<InMemorySandboxStore>,
     agent: Agent,
     operation: WireOperation,
     now: SystemTime,
     calls: AtomicUsize,
+    pub(super) adoptions: AtomicUsize,
     action: Interleaving,
 }
 
 impl InterleavingBackend {
     async fn completed(&self, operation: WireOperation) {
         if operation != self.operation || self.calls.fetch_add(1, Ordering::SeqCst) != 0 {
+            return;
+        }
+        if matches!(self.action, Interleaving::ObserveOnly) {
             return;
         }
         if matches!(self.action, Interleaving::Expire) {
@@ -73,6 +78,7 @@ impl InterleavingBackend {
         assert!(matches!(result, AgentAdmissionResult::Existing(_)));
         let mut current = self.store.get_agent(&self.agent.id).await.unwrap().unwrap();
         match self.action {
+            Interleaving::ObserveOnly => unreachable!(),
             Interleaving::FirstPrompt | Interleaving::FirstPromptOnReady => {
                 current.title = Some("Owner's title during startup".into());
             }
@@ -147,6 +153,7 @@ impl HostedBackend for InterleavingBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.adoptions.fetch_add(1, Ordering::SeqCst);
         self.backend.adopt(handle, request).await
     }
 
@@ -186,7 +193,7 @@ impl HostedBackend for InterleavingBackend {
     }
 }
 
-fn interleave(
+pub(super) fn interleave(
     harness: &mut Harness,
     agent: &Agent,
     operation: WireOperation,
@@ -199,6 +206,7 @@ fn interleave(
         operation,
         now: harness.now,
         calls: AtomicUsize::new(0),
+        adoptions: AtomicUsize::new(0),
         action,
     });
     let adapter = Arc::new(CodexAdapter::new(
@@ -265,6 +273,7 @@ async fn completed_step_with_first_prompt(
     next: AgentWorkStep,
 ) {
     let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    harness.now = SystemTime::now();
     let agent = harness.admit("startup-race", vec![]).await;
     for _ in 0..prior_steps {
         harness.run(&agent.id, harness.now).await;
@@ -313,10 +322,7 @@ async fn completed_step_with_first_prompt(
     if native_id.is_some() {
         assert_eq!(dispatched.conversation.conversation_id, native_id);
     }
-    assert_eq!(
-        backend.calls.load(Ordering::SeqCst),
-        if prior_steps == 3 { 2 } else { 1 }
-    );
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
     let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
     assert_eq!(snapshot.worktrees.len(), 1);
     assert_eq!(snapshot.homes.len(), 1);

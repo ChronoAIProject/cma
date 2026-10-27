@@ -95,6 +95,8 @@ impl App {
             ManagementConfig {
                 master_keys: keys.clone(),
                 public_url: "http://127.0.0.1:8090".into(),
+                public_api_url: "http://127.0.0.1:8090".into(),
+                advertise_public_api_url: true,
                 cma_base_url: cma.base_url.clone(),
                 tools_nyxid_slug: "cmaeg".into(),
                 cma_service_token: Secret::new("cma-service"),
@@ -147,12 +149,29 @@ impl App {
             memory
         });
         let tools = ToolsState {
+            discord_thread_history: None,
+            complete_replies_enabled: false,
+            whatsapp_templates_enabled: false,
+            discord_interactions_enabled: false,
+            whatsapp_interactions_enabled: false,
+            consumer_interactions_enabled: false,
+            telegram_effects_issuance_enabled: false,
+            telegram_effects: None,
+            native_media_enabled: false,
+            native_discord_edits_enabled: false,
+            discord_effects_issuance_enabled: false,
+            discord_effects: None,
+            relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             resolver: state.resolver.clone(),
             keys,
             providers,
             delivery,
+            routed_replies: None,
             tracker: tracker.clone(),
             public_origin: "http://127.0.0.1:8090".into(),
+            public_api_url: "http://127.0.0.1:8090".into(),
+            advertise_public_api_url: true,
             media: None,
             downloads: Default::default(),
         };
@@ -232,6 +251,22 @@ impl App {
         }
     }
     pub async fn callback(&self, id: &str, lane: usize) -> reqwest::Response {
+        self.callback_request(id, lane).send().await.unwrap()
+    }
+    pub fn cold_callbacks(
+        &self,
+        events: impl IntoIterator<Item = (String, usize)>,
+    ) -> Vec<reqwest::RequestBuilder> {
+        // Signing is synchronous. Finish every envelope before invalidating so
+        // later callers do not sign while the first caller's restore completes.
+        let requests = events
+            .into_iter()
+            .map(|(id, lane)| self.callback_request(&id, lane))
+            .collect();
+        self.state.resolver.invalidate(&self.channel);
+        requests
+    }
+    pub fn callback_request(&self, id: &str, lane: usize) -> reqwest::RequestBuilder {
         let mut envelope = Envelope::new();
         envelope.callback["message_id"] = id.into();
         envelope.reply["inbound_message_id"] = id.into();
@@ -247,9 +282,6 @@ impl App {
             .header("x-nyxid-message-id", id)
             .header("x-nyxid-timestamp", now_rfc3339())
             .body(body)
-            .send()
-            .await
-            .unwrap()
     }
     pub async fn quiet(&self) {
         tokio::time::timeout(Duration::from_secs(5), async {

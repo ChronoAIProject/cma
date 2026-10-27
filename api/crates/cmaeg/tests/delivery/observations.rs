@@ -39,6 +39,7 @@ async fn answers_failures_and_tool_replies_report_their_step() {
     let mut app = App::observed(0, recording.clone()).await;
     app.outcome(TurnOutcome::Accepted {
         response_id: "response".into(),
+        thread_reply: false,
     })
     .await;
     app.outcome(TurnOutcome::MessageCommitted {
@@ -59,6 +60,27 @@ async fn answers_failures_and_tool_replies_report_their_step() {
             "default:Answer:confirmed:Origin",
             "default:Failure:confirmed:Origin",
             "default:ToolReply:confirmed:Origin",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn named_replies_report_only_their_own_consumer() {
+    let recording = Arc::new(Recording::default());
+    let mut app = App::observed(0, recording.clone()).await;
+    for id in ["csm_00000000000a", "csm_00000000000b"] {
+        app.event.consumer = Some(ConsumerId::parse(id).unwrap());
+        assert_eq!(
+            app.reply(json!({"text":"reply"})).await.delivery.kind(),
+            "confirmed"
+        );
+    }
+    app.drain().await;
+    assert_eq!(
+        *recording.0.lock().unwrap(),
+        [
+            "csm_00000000000a:ToolReply:confirmed:Origin",
+            "csm_00000000000b:ToolReply:confirmed:Origin",
         ]
     );
 }

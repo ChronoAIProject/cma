@@ -74,9 +74,10 @@ pub async fn callback(
 
 /// Authenticates and normalizes one native update into an admitted chat turn.
 ///
-/// Taking `request` by value means `parts`, `body` and the parsed update are
-/// dropped when this returns, before the caller waits for acceptance. The
-/// callback-query acknowledgement stays here so it still precedes dispatch.
+/// Headers and the parsed update are dropped when this returns. Selected
+/// durable ingress retains bounded authenticated wire bytes through commit;
+/// legacy ingress releases its body before acceptance waits. Callback-query
+/// acknowledgement stays here so it still precedes dispatch.
 async fn admit_update(
     state: &IngressState,
     channel_id: &str,
@@ -188,12 +189,17 @@ async fn admit_update(
         Ok(raw) => raw,
         Err(_) => return Err(reject(VerificationError("telegram_update_invalid"))),
     };
-    let observed =
-        match telegram::observe(raw, &bot_id, bot_username.as_deref(), state.media_enabled) {
-            Ok(Outcome::Admitted(observed)) => *observed,
-            Ok(Outcome::Refused(reason)) => return Err(refuse(reason)),
-            Err(error) => return Err(reject(error)),
-        };
+    let observed = match telegram::observe(
+        raw,
+        &bot_id,
+        bot_username.as_deref(),
+        state.media_enabled,
+        admission.native_bot_mentions(),
+    ) {
+        Ok(Outcome::Admitted(observed)) => *observed,
+        Ok(Outcome::Refused(reason)) => return Err(refuse(reason)),
+        Err(error) => return Err(reject(error)),
+    };
     if let Err(reason) = admit(
         admission,
         &AdmissionFacts {
@@ -201,7 +207,9 @@ async fn admit_update(
             chat_id: &observed.payload.conversation.platform_id,
             is_group: observed.facts.conversation
                 != cmaeg_core::activity::ConversationKind::Private,
-            is_bot_sender: false,
+            is_bot_sender: observed.facts.actor == cmaeg_core::activity::ActorKind::Bot,
+            receiving_bot_id: Some(&bot_id),
+            mentioned: observed.facts.mentioned,
             is_system: false,
             addressed: observed.facts.addressed(admission),
         },
@@ -235,13 +243,16 @@ async fn admit_update(
         &state.master_keys,
         timing.received(),
         now,
+        state.telegram_effects_issuance_enabled,
     ) {
         Ok(Built::Launch(request)) => *request,
         // A 202 refusal, so Telegram does not redeliver the update.
         Ok(Built::Refused(reason)) => return Err(refuse(reason)),
         Err(error) => return Err(reject(error)),
     };
+    let routed_source = state.capture_routed(&request, &body, true);
     Ok(AdmittedChat {
+        routed_source,
         request,
         callback,
         route,

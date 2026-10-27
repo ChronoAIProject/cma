@@ -40,20 +40,31 @@ impl SandboxWorker {
                 )
                 .await;
         }
-        if matches!(
-            sandbox.work.step,
+        let requires_adoption = match sandbox.work.step {
             SandboxWorkStep::RunInstall
-                | SandboxWorkStep::DeliverInitialCredential
-                | SandboxWorkStep::DeliverRotatedCredential
-                | SandboxWorkStep::CreateProfileWorkspace(_)
-        ) {
-            if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
+            | SandboxWorkStep::DeliverInitialCredential
+            | SandboxWorkStep::DeliverRotatedCredential => true,
+            SandboxWorkStep::CreateProfileWorkspace(_) => {
+                self.dependencies.workspaces.requires_runtime_adoption()
+            }
+            _ => false,
+        };
+        if requires_adoption {
+            let inspection_started = std::time::Instant::now();
+            let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
                 self.dependencies.adapter.as_ref(),
                 &sandbox,
                 &self.config.deployment_id,
             )
-            .await
-            {
+            .await;
+            tracing::info!(
+                sandbox_id = %sandbox.id,
+                step = ?sandbox.work.step,
+                elapsed_ms = inspection_started.elapsed().as_millis() as u64,
+                succeeded = attached.is_ok(),
+                "Sandbox runtime inspection completed"
+            );
+            if let Err(error) = attached {
                 return self
                     .handle_failure(sandbox, support::adapter_failure(error), now)
                     .await;

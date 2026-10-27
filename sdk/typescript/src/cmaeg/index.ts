@@ -1,3 +1,5 @@
+import { CmaegOutbound, type PrepareOutboundOptions } from './outbound.js';
+import type { PrepareOutboundMessage } from './types.js';
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
 import { CmaegChannels, type CreateChannelOptions, type ListChannelOptions } from './channels.js';
@@ -9,12 +11,19 @@ import {
 } from './connections.js';
 import { CmaegEvents, type EventOptions } from './events.js';
 import { CmaegTools } from './tools.js';
+import {
+  CmaegActivity,
+  type ChannelActivityOptions,
+  type StreamChannelActivityOptions,
+} from './activity.js';
 import type {
   ChannelCreateRequest,
   ChannelUpdateRequest,
   CloudEvent,
   CreateConnection,
   OutboundMessage,
+  RoutingUpdateRequest,
+  MessageReactionRequest,
 } from './types.js';
 
 /** Independent gateway deployment configuration; baseUrl names the origin, without /v1. */
@@ -25,6 +34,8 @@ export interface CmaegConfig extends ClientConfig {
 /** CMAEG management, custom event and tool operations. No mutation is retried automatically. */
 export class Cmaeg {
   readonly #channels: CmaegChannels;
+  readonly #activity: CmaegActivity;
+  readonly #outbound: CmaegOutbound;
   readonly #connections: CmaegConnections;
   readonly #events: CmaegEvents;
   readonly #tools: CmaegTools;
@@ -35,9 +46,39 @@ export class Cmaeg {
       fetch: (input, init) => resolved.fetch(input, { ...init, redirect: 'manual' }),
     };
     this.#channels = new CmaegChannels(transport);
+    this.#activity = new CmaegActivity(transport);
+    this.#outbound = new CmaegOutbound(transport);
     this.#connections = new CmaegConnections(transport);
     this.#events = new CmaegEvents(transport);
     this.#tools = new CmaegTools(transport);
+  }
+  prepareOutboundMessage(
+    channel: string,
+    body: PrepareOutboundMessage,
+    options: PrepareOutboundOptions,
+  ) {
+    return this.#outbound.prepareOutboundMessage(channel, body, options);
+  }
+  getOutboundMessage(channel: string, delivery: string, options?: OperationOptions) {
+    return this.#outbound.getOutboundMessage(channel, delivery, options);
+  }
+  cancelOutboundMessage(channel: string, delivery: string, options?: OperationOptions) {
+    return this.#outbound.cancelOutboundMessage(channel, delivery, options);
+  }
+  commitOutboundMessage(
+    channel: string,
+    delivery: string,
+    body: OutboundMessage,
+    options?: OperationOptions,
+  ) {
+    return this.#outbound.commitOutboundMessage(channel, delivery, body, options);
+  }
+  sendOutboundMessage(
+    channel: string,
+    body: PrepareOutboundMessage,
+    options: PrepareOutboundOptions,
+  ) {
+    return this.#outbound.sendOutboundMessage(channel, body, options);
   }
   getChannelCapabilities(options?: OperationOptions) {
     return this.#connections.getChannelCapabilities(options);
@@ -63,6 +104,12 @@ export class Cmaeg {
   getChannel(id: string, options?: OperationOptions) {
     return this.#channels.getChannel(id, options);
   }
+  getChannelActivity(id: string, options?: ChannelActivityOptions) {
+    return this.#activity.getChannelActivity(id, options);
+  }
+  streamChannelActivity(id: string, options?: StreamChannelActivityOptions) {
+    return this.#activity.streamChannelActivity(id, options);
+  }
   recoverChannel(id: string, options?: OperationOptions) {
     return this.#channels.recoverChannel(id, options);
   }
@@ -74,6 +121,15 @@ export class Cmaeg {
   }
   testChannel(id: string, options?: OperationOptions) {
     return this.#channels.testChannel(id, options);
+  }
+  testChannelSource(id: string, index: number, options?: OperationOptions) {
+    return this.#channels.testChannelSource(id, index, options);
+  }
+  testChannelConsumer(id: string, consumerId: string, options?: OperationOptions) {
+    return this.#channels.testChannelConsumer(id, consumerId, options);
+  }
+  updateChannelRouting(id: string, body: RoutingUpdateRequest, options?: OperationOptions) {
+    return this.#channels.updateChannelRouting(id, body, options);
   }
   rekeyChannel(id: string, options?: OperationOptions) {
     return this.#channels.rekeyChannel(id, options);
@@ -101,10 +157,24 @@ export class Cmaeg {
   updateMessage(ref: string, message: OutboundMessage, options?: OperationOptions) {
     return this.#tools.updateMessage(ref, message, options);
   }
+  readMessageCapabilities(ref: string, options?: OperationOptions) {
+    return this.#tools.readMessageCapabilities(ref, options);
+  }
+  deleteMessage(ref: string, idempotencyKey: string, options?: OperationOptions) {
+    return this.#tools.deleteMessage(ref, idempotencyKey, options);
+  }
+  setMessageReaction(
+    ref: string,
+    idempotencyKey: string,
+    request: MessageReactionRequest,
+    options?: OperationOptions,
+  ) {
+    return this.#tools.setMessageReaction(ref, idempotencyKey, request, options);
+  }
   sendTyping(ref: string, options?: OperationOptions) {
     return this.#tools.sendTyping(ref, options);
   }
-  readEventContext(ref: string, options?: OperationOptions) {
+  readEventContext(ref: string, options?: OperationOptions & { includeThreadHistory?: boolean }) {
     return this.#tools.readEventContext(ref, options);
   }
 }
@@ -113,9 +183,16 @@ export { signWebhook, type WebhookHeaders } from './signing.js';
 export type { CreateChannelOptions, ListChannelOptions } from './channels.js';
 export type { EventOptions } from './events.js';
 export type { GatewayStreamEvent } from './stream.js';
+export type {
+  ChannelActivityOptions,
+  StreamChannelActivityOptions,
+  ChannelActivityEvent,
+} from './activity.js';
 export type * from './types.js';
 export type {
   ConnectionOptions,
   CreateConnectionOptions,
   ListConnectionsOptions,
 } from './connections.js';
+
+export { OutboundCommitUncertainError, type PrepareOutboundOptions } from './outbound.js';

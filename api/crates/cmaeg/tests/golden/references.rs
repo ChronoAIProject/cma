@@ -74,6 +74,7 @@ fn assert_sealed_plaintext<T: Serialize>(name: &str, kind: TokenKind, payload: &
 
 fn event(reply: ReplyAddress) -> EventRefPayload {
     EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: Some("a".repeat(64)),
         channel_id: ChannelId::new("cmaeg1.ch.golden-references").unwrap(),
@@ -102,6 +103,7 @@ fn reply_addresses() -> [(&'static str, ReplyAddress); 5] {
         (
             "event_ref_nyxid_relay",
             ReplyAddress::NyxidRelay {
+                thread_reply: false,
                 message_id: "message-1".into(),
                 route_id: "route-1".into(),
                 platform: Platform::Lark,
@@ -138,14 +140,19 @@ fn default_event_refs_keep_their_canonical_plaintext_for_every_reply_address() {
 #[test]
 fn default_message_refs_keep_their_canonical_plaintext() {
     let plain = MessageRefPayload {
+        discord_message: None,
+        telegram_effect: None,
         channel_id: ChannelId::new("cmaeg1.ch.golden-references").unwrap(),
         event_id: EventId::new("message-1").unwrap(),
         platform_message_id: "42".into(),
         route_id: "route-1".into(),
         interaction_record_id: None,
+        relay_message: None,
         consumer: None,
     };
     let interaction = MessageRefPayload {
+        discord_message: None,
+        telegram_effect: None,
         interaction_record_id: Some("6f1e2d3c-4b5a-4978-8a69-5b4c3d2e1f00".into()),
         ..plain.clone()
     };

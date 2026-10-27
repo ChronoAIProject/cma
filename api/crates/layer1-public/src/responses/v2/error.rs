@@ -87,11 +87,19 @@ pub(super) fn read(error: AgentReadError) -> Response {
 }
 pub(super) fn admission(value: CommandAdmissionError) -> Response {
     tracing::debug!(error = %value, "Responses v2 command request refused");
+    if let CommandAdmissionError::Ledger(error) = &value {
+        // Stable categories distinguish stale observations from closed admission
+        // at production log levels without recording input, keys or credentials.
+        tracing::info!(
+            reason = error.code(),
+            "Responses v2 command admission refused"
+        );
+    }
     match value {
         CommandAdmissionError::ModelMismatch => field(
             "model",
             "model_mismatch",
-            "model must match the pinned Agent Profile model.",
+            "model must match the current Agent conversation settings.",
         ),
         CommandAdmissionError::Input(_) => field(
             "input",

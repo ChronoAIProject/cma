@@ -71,7 +71,9 @@ pub(super) async fn commit_lifecycle(
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         if attempt > 0 {
-            tokio::task::yield_now().await;
+            // A competing writer needs time to settle. A yield alone can burn
+            // every attempt while that same transaction still owns the row.
+            tokio::time::sleep(std::time::Duration::from_millis(10 << (attempt - 1).min(3))).await;
         }
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
@@ -139,10 +141,15 @@ pub(super) async fn commit_lifecycle(
             }
         }
     }
-    Err(SandboxStoreError::Unavailable(format!(
-        "sandbox lifecycle publication exhausted its retry budget: {}",
-        last_transient.unwrap_or_else(|| "no driver result".into())
-    )))
+    // Every path reaching here either failed before commit or was explicitly
+    // aborted by Mongo. Unknown commits return through reconciliation above.
+    // Expose definite contention so the worker can release only its unchanged
+    // lifecycle lease and re-observe; do not strand the long capture lease.
+    tracing::warn!(
+        reason = last_transient.as_deref().unwrap_or("no driver result"),
+        "Sandbox lifecycle contention exhausted the bounded retry budget"
+    );
+    Err(SandboxStoreError::Conflict)
 }
 
 async fn apply_lifecycle(
@@ -320,6 +327,20 @@ async fn advance_agent(
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     let mut fields = agent_replacement_fields(&change.agent).map_err(ApplyError::Domain)?;
+    let row = store
+        .agents
+        .find_one(doc! { "_id": current.id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    super::agent_conversation_store::carry_checkpoint_fields(
+        &row,
+        current,
+        &change.agent,
+        &mut fields,
+    )
+    .map_err(ApplyError::Domain)?;
     fields.insert(
         "last_seq",
         Bson::Int64(

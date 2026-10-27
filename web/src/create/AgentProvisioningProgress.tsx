@@ -1,13 +1,23 @@
 import { useEffect, useState } from 'react';
 import type { AgentLifecycleCreateReceipt, AgentLifecycleOperationView } from '../api/client';
+import { StateDot } from '../ui/StateDot';
 import {
   agentProvisioningSteps,
   orderedProvisioningEvents,
   provisioningDuration,
+  provisioningStepDot,
   provisioningStepDuration,
   provisioningStepState,
 } from './agentProvisioning';
 
+/**
+ * Agent setup as four reported milestones — `docs/Web_Style.md` §23, "Confirmed
+ * Agent creation".
+ *
+ * There is deliberately no percentage. A bar that counted the four steps plus
+ * success sat at 80% with every listed step Ready, which read as stalled; the
+ * stepper says which milestone the server has confirmed and nothing more.
+ */
 export function AgentProvisioningProgress({
   receipt,
   operation,
@@ -40,12 +50,24 @@ export function AgentProvisioningProgress({
     startedAt,
     active ? now : status === 'succeeded' ? Date.parse(completedAt ?? '') : NaN,
   );
+  const steps = agentProvisioningSteps.map(({ phase, label }) => ({
+    phase,
+    label,
+    state: provisioningStepState(phase, events, operation),
+    duration: provisioningStepDuration(phase, events, status, now),
+  }));
+  // Four Ready steps are not success: only the operation's own success with
+  // the Agent it created may say the Agent is ready to open.
+  const succeeded = status === 'succeeded' && operation?.agent_id !== undefined;
+  const current = steps.find((step) =>
+    ['In progress', 'Waiting for connection', 'Needs attention'].includes(step.state),
+  );
   return (
     <section className="agent-lifecycle-provisioning" aria-label="Agent provisioning progress">
       <h3>
         {status === 'failed'
           ? 'Agent provisioning needs attention'
-          : status === 'succeeded'
+          : succeeded
             ? 'Agent ready'
             : 'Preparing your Agent'}
       </h3>
@@ -54,30 +76,27 @@ export function AgentProvisioningProgress({
           ? (operation?.error ?? 'Agent provisioning failed.')
           : status === 'waiting_for_connection'
             ? 'Connect the required services to continue setting up your Agent.'
-            : status === 'succeeded'
+            : succeeded
               ? 'Your Agent is ready to open.'
-              : 'Your Agent is being prepared. You can close this dialog and return to follow its progress.'}
+              : current === undefined
+                ? 'Waiting for the next confirmed stage.'
+                : `${current.label} · ${current.state}`}
       </p>
-      {elapsed === undefined ? null : (
-        <p className="agent-lifecycle-provisioning__elapsed">Provisioning elapsed: {elapsed}</p>
-      )}
-      <ol>
-        {agentProvisioningSteps.map(({ phase, label }) => {
-          const state = provisioningStepState(phase, events, operation);
-          const duration = provisioningStepDuration(phase, events, status, now);
-          return (
-            <li
-              key={phase}
-              data-state={state}
-              aria-current={state === 'In progress' ? 'step' : undefined}
-            >
-              <strong>{label}</strong>
-              <span aria-live="polite">{state}</span>
-              {duration === undefined ? null : <small>{duration} elapsed</small>}
-            </li>
-          );
-        })}
+      <ol className="agent-lifecycle-steps" aria-label="Agent setup steps">
+        {steps.map(({ phase, label, state, duration }) => (
+          <li
+            key={phase}
+            data-state={provisioningStepDot(state)}
+            aria-current={state === 'In progress' ? 'step' : undefined}
+          >
+            <StateDot state={provisioningStepDot(state)} placement="agent-lifecycle-steps__dot" />
+            <strong>{label}</strong>
+            <span className="agent-lifecycle-steps__state">{state}</span>
+            {duration === undefined ? null : <small>{duration} elapsed</small>}
+          </li>
+        ))}
       </ol>
+      {elapsed === undefined ? null : <p>Provisioning elapsed: {elapsed}</p>}
     </section>
   );
 }

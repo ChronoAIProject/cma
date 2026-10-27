@@ -131,7 +131,7 @@ pub(crate) async fn fixture(bound: bool) -> Fixture {
     f
 }
 
-pub(super) async fn execute_next(f: &Fixture) -> AgentCommandId {
+pub(crate) async fn execute_next(f: &Fixture) -> AgentCommandId {
     let now = SystemTime::now();
     let claimed = f
         .store
@@ -207,6 +207,7 @@ pub(crate) async fn pending_approval(f: &Fixture, approval_id: &str) {
     agent.conversation.last_seq += 2;
     f.store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,

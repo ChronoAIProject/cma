@@ -3,10 +3,71 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/agents/{id}/files/tree': ({ client, param, query }) =>
+    client.agentFiles.list(param('id'), query.get('path') ?? ''),
+  'GET /api/v1/agents/{id}/files/content': ({ client, param, query }) =>
+    client.agentFiles.read(param('id'), query.get('path') ?? '', {
+      maxBytes: query.has('max_bytes') ? Number(query.get('max_bytes')) : undefined,
+    }),
+  'GET /api/v1/agents/{id}/files/download': async ({ client, param, query }) =>
+    new TextDecoder('utf-8', { fatal: true }).decode(
+      await client.agentFiles.download(param('id'), query.get('path') ?? ''),
+    ),
+  'POST /api/v1/agents/{id}/files': ({ client, param, body }) =>
+    client.agentFiles.write(param('id'), body),
+  'DELETE /api/v1/agents/{id}/files': ({ client, param, query }) =>
+    client.agentFiles.remove(
+      param('id'),
+      query.get('path') ?? '',
+      query.get('recursive') === 'true',
+    ),
+  'GET /api/v1/agents/{id}/share-links': ({ client, param }) =>
+    client.resourceAccess.listAgentShareLinks(param('id')),
+  'POST /api/v1/agents/{id}/share-links': ({ client, param, body, command }) =>
+    client.resourceAccess.createAgentShareLink(param('id'), body, command),
+  'DELETE /api/v1/agents/{id}/share-links/{share_id}': ({ client, param, query, command }) =>
+    client.resourceAccess.revokeAgentShareLink(
+      param('id'),
+      param('share_id'),
+      Number(query.get('expected_revision')),
+      command,
+    ),
+  'GET /api/v1/agents/{id}/share-recipients': ({ client, param, query }) =>
+    client.resourceAccess.shareRecipients(param('id'), query.get('q') ?? ''),
+  'POST /api/v1/agent-share-links/{share_id}/redeem': ({ client, param, body }) =>
+    client.resourceAccess.redeemAgentShareLink(
+      param('share_id'),
+      (body as { token: string }).token,
+    ),
+  'POST /api/v1/agents/{id}/attachments': async ({
+    client,
+    param,
+    body,
+    query,
+    command,
+    fixture,
+  }) => {
+    const value = await client.agentAttachments.upload(
+      param('id'),
+      new Blob([body], { type: fixture.request.headers['content-type'] }),
+      { ...command, name: query.get('name') ?? '' },
+    );
+    return {
+      id: value.id,
+      agent_id: value.agentId,
+      name: value.name,
+      path: value.path,
+      size_bytes: value.size,
+      media_type: value.mediaType,
+      sha256: value.sha256,
+    };
+  },
   'GET /api/v1/agents/{id}/models': ({ client, param }) => client.agents.models(param('id')),
   'GET /api/v1/agents/{id}/skills': ({ client, param }) => client.agents.skills(param('id')),
   'POST /api/v1/agents/{id}/skills': ({ client, param, body, command }) =>
     client.agents.installSkill(param('id'), body, command),
+  'PUT /api/v1/agents/{id}/service-access': ({ client, param, body, command }) =>
+    client.agents.updateServiceAccess(param('id'), body, command),
   'GET /api/v1/agents/{id}/access-requests': ({ client, param }) =>
     client.agents.accessRequests(param('id')),
   'POST /api/v1/agents/{id}/access-requests/{request_id}/approve': ({
@@ -17,6 +78,21 @@ export const resourceDispatch: Record<string, Dispatch> = {
   }) => client.agents.approveAccessRequest(param('id'), param('request_id'), body, command),
   'POST /api/v1/agents/{id}/access-requests/{request_id}/deny': ({ client, param, command }) =>
     client.agents.denyAccessRequest(param('id'), param('request_id'), command),
+  'GET /api/v1/agents/{id}/message-feedback': ({ client, param, query }) =>
+    client.agents.messageFeedback(param('id'), {
+      ...(query.has('after') ? { after: Number(query.get('after')) } : {}),
+      ...(query.has('limit') ? { limit: Number(query.get('limit')) } : {}),
+    }),
+  'PUT /api/v1/agents/{id}/messages/{message_id}/feedback': ({ client, param, body }) =>
+    client.agents.setMessageFeedback(
+      param('id'),
+      param('message_id'),
+      (body as { vote: 'up' | 'down' | null }).vote,
+    ),
+  'GET /api/v1/agents/{id}/preferences': ({ client, param }) =>
+    client.agents.preferences(param('id')),
+  'PATCH /api/v1/agents/{id}/preferences': ({ client, param, body, command }) =>
+    client.agents.updatePreferences(param('id'), body, command),
   'GET /api/v1/agents/{id}/settings': ({ client, param }) => client.agents.settings(param('id')),
   'PATCH /api/v1/agents/{id}/settings': ({ client, param, body, command }) =>
     client.agents.updateSettings(param('id'), body, command),
@@ -136,6 +212,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.sandboxes.pause(param('id'), command),
   'POST /api/v1/sandboxes/{id}/revive': ({ client, param, command }) =>
     client.sandboxes.revive(param('id'), command),
+  'POST /api/v1/sandboxes/{id}/runtime-update': ({ client, param, body, command }) =>
+    client.sandboxes.updateRuntime(param('id'), body, command),
   'POST /api/v1/sandboxes/{id}/service-access': ({ client, param, body, command }) =>
     client.sandboxes.grantServiceAccess(param('id'), body, command),
   'GET /api/v1/sandboxes/{id}/events': ({ client, param, options }) =>

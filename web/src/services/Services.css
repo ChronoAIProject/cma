@@ -4,81 +4,83 @@
   flex-direction: column;
   min-width: 0;
 }
-.service-tabs {
-  display: flex;
-  flex: 0 0 44px;
-  align-items: stretch;
-  gap: 8px;
-  padding: 0 20px;
-  overflow-x: auto;
-  background: var(--dsw-alias-bg-base);
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-.service-tabs__brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  color: var(--dsw-alias-label-primary);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-decoration: none;
-}
-.service-tabs__brand:hover {
-  color: var(--dsw-alias-brand-text);
-}
-.service-tabs__mark {
-  width: 26px;
-  height: 26px;
-  color: var(--dsw-alias-brand-primary);
-}
-.service-tabs__mark svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.service-tabs__divider {
-  width: 1px;
-  height: 22px;
-  align-self: center;
-  flex: none;
-  background: var(--dsw-alias-border-l1);
-}
-.service-tabs a {
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
-  white-space: nowrap;
-  font-size: 14px;
-  color: var(--dsw-alias-label-secondary);
-  text-decoration: none;
-  border-bottom: 2px solid transparent;
-}
-.service-tabs a[aria-current='page'] {
-  color: var(--dsw-alias-label-primary);
-  border-bottom-color: var(--dsw-alias-label-primary);
-}
-.service-tabs__description {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+/* The service switch is part of the shared sidebar, never a page header. */
+/* The service switch — `docs/Web_Style.md` §10. */
+.service-menu {
+  flex: 1;
   min-width: 0;
-  margin-left: auto;
-  padding-left: 16px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  line-height: 1.2;
-  white-space: nowrap;
+  display: flex;
 }
-.service-tabs__description strong {
+.service-menu--collapsed {
+  flex: none;
+}
+.service-menu__trigger {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--dsw-alias-label-primary);
-  font-size: 12px;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
-.service-tabs a:focus-visible,
+.service-menu__trigger:hover,
+.service-menu__trigger[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.service-menu__trigger:focus-visible,
 .service-link:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+.service-menu__icon {
+  display: none;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+.service-menu__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.service-menu__chevron {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+.service-menu--collapsed .service-menu__trigger {
+  flex: none;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+}
+.service-menu--collapsed .service-menu__name,
+.service-menu--collapsed .service-menu__chevron {
+  display: none;
+}
+/* Collapsed, the glyph is all that is left to say which service this is. */
+.service-menu--collapsed .service-menu__icon {
+  display: inline-flex;
+}
+@media (max-width: 30rem) {
+  .service-menu__trigger {
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .service-menu__trigger {
+    transition: none;
+  }
 }
 .service-shell__body {
   flex: 1;
@@ -129,6 +131,9 @@
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1);
   overflow-wrap: anywhere;
+}
+.service-forbidden {
+  margin-block: 16px;
 }
 .service-form {
   display: grid;
@@ -197,27 +202,18 @@
   .service-page {
     padding: 16px;
   }
-  .service-tabs {
-    gap: 0;
-    padding-inline: 4px;
-  }
-  .service-tabs a {
-    padding-inline: 7px;
-    font-size: 12px;
-  }
-  .service-tabs__description {
-    display: none;
-  }
-  .service-tabs__brand span:last-child {
-    display: none;
-  }
-  .service-tabs__divider {
-    display: none;
-  }
 }
-@media (max-width: 360px) {
-  .service-tabs a {
-    padding-inline: 4px;
-    font-size: 11px;
-  }
+
+.portal-home {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+}
+
+.service-page[data-layout='workspace'] {
+  padding: 0;
+}
+.service-page[data-layout='workspace'] > * {
+  max-width: none;
 }

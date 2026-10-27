@@ -2,7 +2,7 @@ import { Presence } from '../ui/Presence';
 import type { Failure } from '../api/types';
 import type { ProvisioningStep } from './progress';
 import './ProvisioningProgress.css';
-import { LandingCharacter } from '../landing/LandingCharacter';
+import { StateDot } from '../ui/StateDot';
 
 export function ProvisioningProgress({
   title,
@@ -19,18 +19,20 @@ export function ProvisioningProgress({
       <ol aria-live="polite">
         {steps.map((step) => (
           <li key={step.label} data-state={step.status}>
-            <LandingCharacter
-              compact
-              state={
-                step.status === 'Done'
-                  ? 'completed'
-                  : step.status === 'In progress'
-                    ? 'running'
-                    : step.status === "Didn't work"
-                      ? 'failed'
-                      : 'pending'
-              }
-            />
+            <span className="provisioning-progress__icon">
+              <StateDot
+                size={10}
+                state={
+                  step.status === 'Done'
+                    ? 'done'
+                    : step.status === 'In progress'
+                      ? 'ongoing'
+                      : step.status === "Didn't work"
+                        ? 'error'
+                        : 'neutral'
+                }
+              />
+            </span>
             <span>{step.label}</span>
             <strong>{step.status}</strong>
             {step.detail === undefined ? null : <p>{step.detail}</p>}

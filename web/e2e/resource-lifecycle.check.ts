@@ -2,6 +2,80 @@ import { test, expect } from '@playwright/test';
 import type { Launch } from '../../sdk/typescript/src/index';
 import { LocalStartup, localTime, recorded } from './agent-startup-fixtures';
 
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 800, height: 600 },
+  { width: 390, height: 844 },
+  { width: 320, height: 480 },
+  { width: 320, height: 240 },
+  { width: 900, height: 240 },
+]) {
+  test(`LOCAL modal controls remain reachable at ${viewport.width}x${viewport.height}`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    await page.goto('/agent-manager');
+    await page.getByRole('button', { name: 'New agent', exact: true }).first().click();
+    await page.setViewportSize(viewport);
+    const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
+    const geometry = await dialog.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const body = element.querySelector<HTMLElement>('.modal__body')!;
+      return {
+        margins: [
+          box.left / innerWidth,
+          (innerWidth - box.right) / innerWidth,
+          box.top / innerHeight,
+          (innerHeight - box.bottom) / innerHeight,
+        ],
+        centerX: (box.left + box.right) / 2,
+        centerY: (box.top + box.bottom) / 2,
+        bodyHeight: body.clientHeight,
+        horizontalOverflow: element.scrollWidth > element.clientWidth + 1,
+        overflow: [...element.querySelectorAll<HTMLElement>('*')]
+          .filter((child) => child.getBoundingClientRect().right > box.right + 1)
+          .map((child) => ({ name: child.className, width: child.clientWidth })),
+      };
+    });
+    expect(geometry.margins.every((margin) => margin >= 0.2 - 0.001)).toBe(true);
+    expect(geometry.centerX).toBeCloseTo(viewport.width / 2, 0);
+    expect(geometry.centerY).toBeCloseTo(viewport.height / 2, 0);
+    expect(geometry.bodyHeight).toBeGreaterThan(0);
+    expect(geometry.horizontalOverflow, JSON.stringify(geometry)).toBe(false);
+
+    const repository = dialog.getByLabel('GitHub repository (optional)');
+    await repository.fill('https://github.com/example/repository');
+    // Filling can focus a clipped input. A real click must also survive clipping and hit testing.
+    await repository.click();
+    await expect(repository).toHaveValue('https://github.com/example/repository');
+    await repository.fill('');
+    const create = dialog.getByRole('button', { name: 'Create agent', exact: true });
+    await create.click({ trial: true });
+    await page.screenshot({
+      path: info.outputPath(`modal-${viewport.width}x${viewport.height}-footer.png`),
+      animations: 'disabled',
+    });
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // Reopen to exercise the other footer action after scrolling through the body.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole('button', { name: 'New agent', exact: true }).first().click();
+    await page.setViewportSize(viewport);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(boundary.writes).toEqual([]);
+    expect(boundary.unexpected).toEqual([]);
+    expect(boundary.errors).toEqual([]);
+    await info.attach('modal-geometry', {
+      body: JSON.stringify({ viewport, ...geometry }, null, 2),
+      contentType: 'application/json',
+    });
+  });
+}
+
 for (const width of [1440, 390]) {
   for (const surface of ['launch', 'sandbox'] as const) {
     test(`LOCAL live restore progress on ${surface} at ${width}px`, async ({
@@ -212,9 +286,10 @@ for (const width of [1440, 390]) {
     });
     boundary.sandbox = { ...boundary.sandbox, status: 'installing' };
     await page.reload();
-    const advanced = page.getByRole('button', { name: 'Advanced', exact: true });
-    await advanced.click();
-    const dialog = page.getByRole('dialog', { name: 'Advanced sandbox details' });
+    const more = page.getByRole('button', { name: 'More actions', exact: true });
+    await more.click();
+    await page.getByRole('menuitem', { name: 'Technical details', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Technical details' });
     await expect(dialog.getByText('Workspace limit', { exact: true })).toBeVisible();
     for (const state of ['pending', 'completed']) {
       const logo = dialog.locator(`.landing__character[data-state="${state}"]`).first();
@@ -247,10 +322,12 @@ for (const width of [1440, 390]) {
     const geometry = await dialog.evaluate((element) => {
       const box = element.getBoundingClientRect();
       return (
-        box.left >= 0 &&
-        box.right <= innerWidth &&
-        box.top >= 0 &&
-        box.bottom <= innerHeight &&
+        box.left >= innerWidth * 0.2 - 1 &&
+        box.right <= innerWidth * 0.8 + 1 &&
+        box.top >= innerHeight * 0.2 - 1 &&
+        box.bottom <= innerHeight * 0.8 + 1 &&
+        Math.abs((box.left + box.right) / 2 - innerWidth / 2) <= 1 &&
+        Math.abs((box.top + box.bottom) / 2 - innerHeight / 2) <= 1 &&
         element.scrollWidth <= element.clientWidth
       );
     });
@@ -272,7 +349,7 @@ for (const width of [1440, 390]) {
     }
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
-    await expect(advanced).toBeFocused();
+    await expect(more).toBeFocused();
     expect(boundary.writes).toEqual([]);
     expect(boundary.unexpected).toEqual([]);
     expect(boundary.errors).toEqual([]);
@@ -297,24 +374,29 @@ for (const width of [1440, 390]) {
       const head = rect('.sidebar__head'),
         tree = rect('.resource-tree'),
         account = rect('.sidebar__account');
-      const brand = rect('.sidebar__brand'),
-        badge = rect('.sidebar__build'),
-        create = rect('.sidebar__new'),
+      const create = rect('.sidebar__new'),
         toggle = rect('.sidebar__toggle');
       return {
         fills: tree.height > 600 && account.top - tree.bottom <= 12 && tree.top - head.bottom <= 12,
-        separated:
-          brand.right <= badge.left && badge.right <= create.left && create.right <= toggle.left,
+        separated: create.right <= toggle.left,
         fits: toggle.right <= element.getBoundingClientRect().right,
       };
     });
     expect(geometry).toEqual({ fills: true, separated: true, fits: true });
+    await expect(page.locator('.sidebar__brand, .sidebar__build')).toHaveCount(0);
+    const brand = page.locator('.service-tabs__brand');
+    const badge = page.locator('.service-tabs__build');
+    await expect(badge).toBeVisible();
+    const brandBox = (await brand.boundingBox())!;
+    const badgeBox = (await badge.boundingBox())!;
+    expect(badgeBox.x).toBeGreaterThanOrEqual(brandBox.x + brandBox.width);
+    expect(badgeBox.y).toBeGreaterThan(brandBox.y);
     await home.click();
     await expect(page).toHaveURL(`${baseURL}/`);
-    await expect(page.getByRole('heading', { name: 'Welcome to CMA' })).toBeVisible();
-    await expect(page.locator('.frame__details')).toBeEmpty();
+    await expect(page.getByRole('heading', { name: 'ChronoAI Managed Agent' })).toBeVisible();
+    await expect(page.locator('.frame')).toBeHidden();
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    const character = page.getByRole('button', { name: 'Spin CMA character' });
+    const character = page.getByRole('button', { name: 'Get Started', exact: true });
     await expect(character).toHaveAttribute('data-ready', '');
     const canvas = character.locator('canvas');
     const pixels = () =>
@@ -338,16 +420,18 @@ for (const width of [1440, 390]) {
     const first = await pixels();
     expect(first.colored).toBeGreaterThan(1000);
     await expect.poll(async () => (await pixels()).signature).not.toBe(first.signature);
-    await character.click();
     await page.screenshot({ path: info.outputPath(`home-${width}.png`), fullPage: true });
     await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
     await page.evaluate(() => document.fonts.ready);
     await expect.poll(async () => (await pixels()).colored).toBeGreaterThan(1000);
     await page.screenshot({ path: info.outputPath(`home-${width}-dark.png`), fullPage: true });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await expect(character).toBeDisabled();
+    await expect(character).toBeEnabled();
     const still = await canvas.screenshot();
     expect(await canvas.screenshot()).toEqual(still);
+    await character.click();
+    await expect(page).toHaveURL(`${baseURL}/agent-manager`);
+    await expect(page.locator('.frame')).toBeVisible();
     if (width === 390)
       await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
     await page.locator('.sidebar__new').click();
@@ -392,10 +476,11 @@ for (const width of [1440, 390]) {
     await page.reload();
     await expect(page.getByRole('status').filter({ hasText: 'Resuming' })).toBeVisible();
     await expect(page.getByText(/Current step: home restore/)).toHaveCount(0);
-    await page.getByRole('button', { name: 'Advanced', exact: true }).click();
+    await page.getByRole('button', { name: 'More actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Technical details', exact: true }).click();
     await expect(
       page
-        .getByRole('dialog', { name: 'Advanced sandbox details' })
+        .getByRole('dialog', { name: 'Technical details' })
         .getByText(/Current step: home restore/),
     ).toBeVisible();
     await page.getByRole('button', { name: 'Close', exact: true }).click();
@@ -456,7 +541,7 @@ for (const width of [1440, 390]) {
               : JSON.stringify(kind === 'Sandbox' ? boundary.sandbox : boundary.workspace),
         });
       });
-      await page.goto('/');
+      await page.goto('/agent-manager');
       if (width === 390)
         await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
       const level = kind === 'Sandbox' ? 1 : kind === 'Workspace' ? 2 : 3;

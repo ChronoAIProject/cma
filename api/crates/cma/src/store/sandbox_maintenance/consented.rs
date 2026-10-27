@@ -1,9 +1,8 @@
 //! Admit owner-approved quiescence and its workflow receipt in one transaction.
 use layer2_core::sandbox::agent_access::AgentAccessError;
 use layer2_core::sandbox::store::{
-    apply_consented_quiet_pause, apply_sandbox_lifecycle_command, SandboxLifecycleCommand,
-    SandboxLifecycleCommandApplication, SandboxMaintenanceApplication, SandboxMaintenanceOutcome,
-    SandboxStoreError,
+    apply_sandbox_lifecycle_command, SandboxLifecycleCommand, SandboxLifecycleCommandApplication,
+    SandboxMaintenanceOutcome, SandboxStoreError,
 };
 use layer2_core::sandbox::{
     Sandbox, SandboxLifecycleOperation, SandboxReviveCause, SandboxStatus, SandboxWorkStep,
@@ -22,8 +21,12 @@ use super::super::sandbox_mongo::{
     CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
-use super::evidence::{fence_live_agents, live_activities};
+use super::evidence::fence_live_agents;
+#[cfg(test)]
+use super::evidence::live_activities;
 use super::transaction::{ApplyError, MaintenanceReceipt};
+#[cfg(test)]
+use layer2_core::sandbox::store::{apply_consented_quiet_pause, SandboxMaintenanceApplication};
 
 struct Receipt {
     maintenance: MaintenanceReceipt,
@@ -70,11 +73,14 @@ fn domain(error: SandboxStoreError) -> Error {
 
 #[derive(Clone, Copy)]
 enum Action {
+    #[cfg(test)]
     Pause,
     Revive,
 }
 
 impl MongoSandboxStore {
+    #[cfg(test)]
+    /// Seed historical paused workflows for recovery tests; new approvals update live.
     /// A consented pause never interrupts active/queued Agent work and cannot
     /// outlive the exact durable access-request lease that authorizes it.
     pub(crate) async fn schedule_access_request_pause(
@@ -173,13 +179,14 @@ async fn apply(
     let mut record = access::read(&document)?;
     if !matches!(record.decision, Some(AgentAccessDecision::Approved { .. }))
         || record.approved_at.is_none()
-        || !matches!(
-            (action, record.phase),
-            (
-                Action::Pause,
+        || !match action {
+            #[cfg(test)]
+            Action::Pause => matches!(
+                record.phase,
                 AgentAccessPhase::WaitingQuiet | AgentAccessPhase::Pausing
-            ) | (Action::Revive, AgentAccessPhase::Reviving)
-        )
+            ),
+            Action::Revive => record.phase == AgentAccessPhase::Reviving,
+        }
     {
         return Err(AgentAccessError::Conflict.into());
     }
@@ -201,6 +208,7 @@ async fn apply(
         access,
     };
     let recorded_operation = match action {
+        #[cfg(test)]
         Action::Pause if record.phase == AgentAccessPhase::Pausing => Some(
             record
                 .progress
@@ -209,10 +217,12 @@ async fn apply(
                 .ok_or(AgentAccessError::Unavailable)?,
         ),
         Action::Revive => record.progress.revive_operation_id.as_deref(),
+        #[cfg(test)]
         Action::Pause => None,
     };
     if let Some(operation) = recorded_operation {
         let expected_status = match action {
+            #[cfg(test)]
             Action::Pause => SandboxStatus::Paused,
             Action::Revive => SandboxStatus::Active,
         };
@@ -220,11 +230,13 @@ async fn apply(
             || current.status == expected_status && latest_operation_matches(&current, operation),
             |active| {
                 active.authority().operation_id == operation
-                    && matches!(
-                        (action, active),
-                        (Action::Pause, SandboxLifecycleOperation::Pause { .. })
-                            | (Action::Revive, SandboxLifecycleOperation::Revive { .. })
-                    )
+                    && match action {
+                        #[cfg(test)]
+                        Action::Pause => matches!(active, SandboxLifecycleOperation::Pause { .. }),
+                        Action::Revive => {
+                            matches!(active, SandboxLifecycleOperation::Revive { .. })
+                        }
+                    }
             },
         );
         if !matching {
@@ -247,7 +259,20 @@ async fn apply(
         .map_err(ApplyError::from)?;
     let requested_at = layer2_core::now_rfc3339();
     let (expected_revision, sandbox, event) = match action {
+        #[cfg(test)]
         Action::Pause => {
+            // Another approved request may have expanded this shared Sandbox
+            // while this one waited. Reject stale consent before downtime;
+            // the later grant must not discover it after pausing the runtime.
+            let approved = record.approved_services()?;
+            if current
+                .credential
+                .effective_reaches()
+                .iter()
+                .any(|service| !approved.contains(service))
+            {
+                return Err(AgentAccessError::Invalid.into());
+            }
             let activities = live_activities(store, &agents, session).await?;
             match apply_consented_quiet_pause(
                 &current,
@@ -288,12 +313,15 @@ async fn apply(
             {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let command = SandboxLifecycleCommand::revive(
+            let mut command = SandboxLifecycleCommand::revive(
                 current.id.clone(),
                 record.requester.owner.clone(),
                 requested_at.clone(),
                 SandboxReviveCause::ExplicitRequest,
             );
+            command
+                .managed_runtime_version
+                .clone_from(&store.managed_runtime_version);
             match apply_sandbox_lifecycle_command(current.clone(), &command).map_err(domain)? {
                 SandboxLifecycleCommandApplication::Commit {
                     expected_revision,
@@ -349,6 +377,7 @@ async fn apply(
         .filter(|revision| *revision <= i64::MAX as u64)
         .ok_or(AgentAccessError::Unavailable)?;
     record.phase = match action {
+        #[cfg(test)]
         Action::Pause => AgentAccessPhase::Pausing,
         Action::Revive => AgentAccessPhase::Reviving,
     };
@@ -364,6 +393,7 @@ async fn apply(
             .clone(),
     );
     match action {
+        #[cfg(test)]
         Action::Pause => record.progress.pause_operation_id = operation_id,
         Action::Revive => record.progress.revive_operation_id = operation_id,
     }
@@ -431,3 +461,7 @@ mod tests;
 #[cfg(test)]
 #[path = "consented_revival_tests.rs"]
 mod revival_tests;
+
+#[cfg(test)]
+#[path = "consented_scope_tests.rs"]
+mod scope_tests;

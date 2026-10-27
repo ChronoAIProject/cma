@@ -2,6 +2,7 @@
 use super::{
     BindingId, ChannelId, ConformanceLevel, EventWorkerProfile, GroupAdmission, NyxIdIdentity,
     PartitionKey, ProviderSlug, RecordId, RoutingPolicy, Secret, Source, SourceRequest,
+    ThreadContract,
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +22,9 @@ pub enum AdmissionPolicy {
     /// Wire variant `scoped`.
     #[serde(rename = "scoped")]
     Scoped {
+        /// Default deny; native mentions require pinned receiver identity and downstream loop bounds.
+        #[serde(default, skip_serializing_if = "BotMessageAdmission::is_deny")]
+        bot_messages: BotMessageAdmission,
         /// Wire field `chats`.
         chats: IdentityAdmission,
         /// Wire field `groups`.
@@ -74,6 +78,12 @@ pub struct ChannelCreation {
 /// CMAEG `ChannelResponse` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelResponse {
+    /// Native intake eligibility; selection does not attest connection health.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_activation: Option<NativeDiscordActivation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Versions this channel can explicitly negotiate; absent means unsupported.
+    pub thread_contract_versions: Option<Vec<u16>>,
     /// Wire field `channel_id`.
     pub channel_id: String,
     /// Wire field `definition`.
@@ -91,6 +101,9 @@ pub struct ChannelResponse {
 /// Owned channel metadata, including legacy records without a recoverable original ID.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelListItem {
+    /// Native intake eligibility; selection does not attest connection health.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_activation: Option<NativeDiscordActivation>,
     /// Original retained channel ID; never regenerated for a legacy record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<String>,
@@ -155,6 +168,9 @@ pub struct CredentialPatch {
     /// Wire field `channel_key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_key: Option<Secret>,
+    /// Native Discord bot credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_bot_token: Option<Secret>,
     /// Native Telegram bot credential.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_bot_token: Option<Secret>,
@@ -174,6 +190,9 @@ pub struct CredentialsRequest {
     /// Wire field `channel_key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_key: Option<Secret>,
+    /// Native Discord bot credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_bot_token: Option<Secret>,
     /// Native Telegram bot credential.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_bot_token: Option<Secret>,
@@ -373,6 +392,9 @@ pub struct RekeyResponse {
 /// CMAEG `ReplyPolicy` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReplyPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Opt in to verified thread facts, admission and bound replies.
+    pub thread_contract: Option<ThreadContract>,
     /// Wire field `ack_after_ms`.
     pub ack_after_ms: u64,
     /// Wire field `auto_final`.
@@ -411,4 +433,33 @@ pub struct TestChannelResponse {
     pub first_text: String,
     /// Wire field `level`.
     pub level: ConformanceLevel,
+}
+
+/// Admission of automated native group messages. No human execution authority is granted.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BotMessageAdmission {
+    /// Refuse bot-authored messages (the omitted-field default).
+    #[default]
+    Deny,
+    /// Admit only exactly addressed native group bots; consumers must bound execution loops.
+    NativeMentions,
+}
+impl BotMessageAdmission {
+    fn is_deny(&self) -> bool {
+        *self == Self::Deny
+    }
+}
+
+/// Owner-visible native Discord activation state. Future state identifiers are retained.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeDiscordActivation {
+    /// Selected, pending_discovery, capacity_exceeded, or a configuration refusal.
+    pub state: String,
+    /// Safe explanation without credentials or other channel identities.
+    pub detail: String,
+    /// Maximum records selected by this process.
+    pub capacity: usize,
+    /// Current process selection count, not a socket count.
+    pub selected_records: usize,
 }

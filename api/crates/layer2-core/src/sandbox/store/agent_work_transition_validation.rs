@@ -1,6 +1,7 @@
 use crate::sandbox::{Agent, AgentStatus, AgentWorkStep, Worktree, WorktreeStatus};
 use crate::seconds_from_rfc3339;
 
+use super::agent_work_prepared_pair::{paired_completion, paired_intent};
 use super::SandboxStoreError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +44,13 @@ pub(super) fn validate_position(
     };
     let positioned = match agent.work.step {
         AgentWorkStep::InstallSkill => false,
+        AgentWorkStep::WaitForWorkspace => {
+            agent.status == AgentStatus::Starting
+                && agent.requested_stop_reason.is_none()
+                && agent.has_no_runtime_effects()
+                && worktree.status == WorktreeStatus::Creating
+                && worktree.base_commit.is_empty()
+        }
         AgentWorkStep::AddWorktree
         | AgentWorkStep::MaterializeHome
         | AgentWorkStep::OpenConversation
@@ -124,7 +132,9 @@ pub(super) fn classify_publication(
             return Ok(PublicationKind::StartupNotice);
         }
         return Ok(
-            if next.work.cleanup_debt.len() == current.work.cleanup_debt.len() + 1 {
+            if next.work.cleanup_debt.len() == current.work.cleanup_debt.len() + 1
+                || paired_intent(current, next)
+            {
                 PublicationKind::Intent
             } else {
                 PublicationKind::Retry
@@ -159,7 +169,9 @@ pub(super) fn classify_publication(
     {
         return Ok(PublicationKind::Delete);
     }
-    if current.status == next.status && legal_advance(from, to) {
+    if current.status == next.status
+        && (legal_advance(from, to) || paired_completion(current, next))
+    {
         Ok(PublicationKind::Advance)
     } else {
         Err(SandboxStoreError::Conflict)
@@ -169,7 +181,8 @@ pub(super) fn classify_publication(
 fn startup_step(step: AgentWorkStep) -> bool {
     matches!(
         step,
-        AgentWorkStep::AddWorktree
+        AgentWorkStep::WaitForWorkspace
+            | AgentWorkStep::AddWorktree
             | AgentWorkStep::MaterializeHome
             | AgentWorkStep::OpenConversation
             | AgentWorkStep::PublishReady
@@ -179,7 +192,8 @@ fn startup_step(step: AgentWorkStep) -> bool {
 fn legal_advance(from: AgentWorkStep, to: AgentWorkStep) -> bool {
     matches!(
         (from, to),
-        (AgentWorkStep::AddWorktree, AgentWorkStep::MaterializeHome)
+        (AgentWorkStep::WaitForWorkspace, AgentWorkStep::AddWorktree)
+            | (AgentWorkStep::AddWorktree, AgentWorkStep::MaterializeHome)
             | (
                 AgentWorkStep::MaterializeHome,
                 AgentWorkStep::OpenConversation

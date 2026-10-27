@@ -34,11 +34,15 @@ export const IdentityAdmissionSchema = tagged(
 );
 export type IdentityAdmission = Output<typeof IdentityAdmissionSchema>;
 
+export const BotMessageAdmissionSchema = enumeration('deny', 'native_mentions');
+export type BotMessageAdmission = Output<typeof BotMessageAdmissionSchema>;
+
 export const AdmissionPolicySchema = tagged(
   {
     all: object({ type: enumeration('all') }),
     allowlist: object({ sender_ids: array(text), type: enumeration('allowlist') }),
     scoped: object({
+      bot_messages: optional(BotMessageAdmissionSchema),
       chats: IdentityAdmissionSchema,
       groups: GroupAdmissionSchema,
       senders: IdentityAdmissionSchema,
@@ -55,6 +59,7 @@ export type HmacSecretRequest = Output<typeof HmacSecretRequestSchema>;
 export const CredentialsRequestSchema = object({
   agent_key: SecretSchema,
   channel_key: optional(nullable(SecretSchema)),
+  discord_bot_token: optional(nullable(SecretSchema)),
   telegram_bot_token: optional(nullable(SecretSchema)),
   telegram_webhook_secret: optional(nullable(SecretSchema)),
   hmac_secrets: optional(array(HmacSecretRequestSchema)),
@@ -93,7 +98,14 @@ export const SinkSchema = tagged(
 );
 export type Sink = Output<typeof SinkSchema>;
 
+export const ThreadContractSchema = object({
+  version: integer,
+  follow_chat_ids: optional(array(text)),
+});
+export type ThreadContract = Output<typeof ThreadContractSchema>;
+
 export const ReplyPolicySchema = object({
+  thread_contract: optional(nullable(ThreadContractSchema)),
   ack_after_ms: integer,
   auto_final: boolean,
   sinks: optional(array(SinkSchema)),
@@ -115,8 +127,22 @@ export const CustomAttachmentsSchema = object({
 });
 export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
 
+export const LarkResourceBindingSchema = object({
+  user_service_id: text,
+  catalog_service_id: text,
+  app_id: text,
+});
+export type LarkResourceBinding = Output<typeof LarkResourceBindingSchema>;
+
 export const SourceRequestSchema = tagged(
   {
+    discord: object({
+      admission: AdmissionPolicySchema,
+      bot_id: text,
+      intents: integer,
+      thread_history: optional(boolean),
+      type: enumeration('discord'),
+    }),
     telegram: object({
       admission: AdmissionPolicySchema,
       bot_id: text,
@@ -132,6 +158,8 @@ export const SourceRequestSchema = tagged(
       platform: PlatformSchema,
       route_ids: array(text),
       trust_normalized: optional(boolean),
+      verify_raw_event: optional(boolean),
+      lark_resources: optional(nullable(LarkResourceBindingSchema)),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
@@ -318,6 +346,13 @@ export type PublicSecrets = Output<typeof PublicSecretsSchema>;
 
 export const SourceSchema = tagged(
   {
+    discord: object({
+      admission: AdmissionPolicySchema,
+      bot_id: text,
+      intents: integer,
+      thread_history: optional(boolean),
+      type: enumeration('discord'),
+    }),
     telegram: object({
       admission: AdmissionPolicySchema,
       bot_id: text,
@@ -334,6 +369,8 @@ export const SourceSchema = tagged(
       platform: PlatformSchema,
       route_ids: array(text),
       trust_normalized: optional(boolean),
+      verify_raw_event: optional(boolean),
+      lark_resources: optional(nullable(LarkResourceBindingSchema)),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
@@ -387,7 +424,18 @@ export const ProviderResponseSchema = object({
 });
 export type ProviderResponse = Output<typeof ProviderResponseSchema>;
 
+/** Native intake eligibility; selection is not a socket-health claim. */
+export const NativeDiscordActivationSchema = object({
+  state: text,
+  detail: text,
+  capacity: integer,
+  selected_records: integer,
+});
+export type NativeDiscordActivation = Output<typeof NativeDiscordActivationSchema>;
+
 export const ChannelResponseSchema = object({
+  native_discord_activation: optional(nullable(NativeDiscordActivationSchema)),
+  thread_contract_versions: optional(array(integer)),
   channel_id: text,
   definition: PublicChannelDefinitionSchema,
   endpoints: EndpointResponseSchema,
@@ -399,6 +447,7 @@ export type ChannelResponse = Output<typeof ChannelResponseSchema>;
 
 /** Owned channel metadata; legacy records omit an unrecoverable original ID and endpoints. */
 export const ChannelListItemSchema = object({
+  native_discord_activation: optional(nullable(NativeDiscordActivationSchema)),
   channel_id: optional(nullable(text)),
   definition: PublicChannelDefinitionSchema,
   endpoints: optional(nullable(EndpointResponseSchema)),
@@ -417,6 +466,7 @@ export type ChannelPage = Output<typeof ChannelPageSchema>;
 export const CredentialPatchSchema = object({
   agent_key: optional(nullable(SecretSchema)),
   channel_key: optional(nullable(SecretSchema)),
+  discord_bot_token: optional(nullable(SecretSchema)),
   telegram_bot_token: optional(nullable(SecretSchema)),
   telegram_webhook_secret: optional(nullable(SecretSchema)),
   hmac_secrets: optional(nullable(array(HmacSecretRequestSchema))),

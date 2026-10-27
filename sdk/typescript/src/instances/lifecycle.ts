@@ -59,6 +59,12 @@ const operation = tagged(
   'purpose',
 );
 export type SandboxLifecycleOperation = Output<typeof operation>;
+const interruption = object({
+  cause: enumeration('out_of_memory', 'runtime_restarted', 'runtime_unavailable'),
+  detected_at: text,
+  memory_limit_mib: positiveInteger,
+});
+export type SandboxInterruption = Output<typeof interruption>;
 export const sandboxLifecycle = object({
   pause: eligibility,
   revive: eligibility,
@@ -80,5 +86,6 @@ export const sandboxLifecycle = object({
     }),
   ),
   operation: optional(operation),
+  interruption: optional(interruption),
 });
 export type SandboxLifecycle = Output<typeof sandboxLifecycle>;

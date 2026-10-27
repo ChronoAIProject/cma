@@ -22,6 +22,15 @@ export interface ReadyAgent {
   readonly sandboxEvents?: readonly SandboxEvent[];
   readonly historyLoading?: boolean;
   readonly historyUnavailable?: boolean;
+  /** A complete transcript provides the durable baseline for background live replay. */
+  readonly replayReady?: boolean;
+}
+
+/** IDs from the current exact personal access read; projections are still read afresh. */
+export interface AgentLoadLineage {
+  readonly agentId: string;
+  readonly workspaceId: string;
+  readonly sandboxId: string;
 }
 
 function withUsage(conversation: ConversationState, usage: AgentUsage): ConversationState {
@@ -38,29 +47,75 @@ export async function loadAgent(
   signal: AbortSignal,
   allowIncompleteHistory = false,
   onHistoryProgress?: (ready: ReadyAgent) => void,
+  lineage?: AgentLoadLineage,
+  onInputReady?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
-  const v2 = await client.agentTransport?.open(agentId, { signal });
+  const v2 = await client.agentTransport?.openForLoad(agentId, { signal });
   if (v2 !== undefined)
-    return loadV2Agent(client, agentId, signal, v2, allowIncompleteHistory, onHistoryProgress);
-  const [detail, transcript, usage] = await Promise.all([
-    client.readAgent(agentId, { signal }),
+    return loadV2Agent(
+      client,
+      agentId,
+      signal,
+      v2,
+      allowIncompleteHistory,
+      onHistoryProgress,
+      lineage,
+      onInputReady,
+    );
+  const hierarchy = (async () => {
+    const detail = await client.readAgent(agentId, { signal });
+    signal.throwIfAborted();
+    if (
+      detail.id !== agentId ||
+      (lineage !== undefined &&
+        (lineage.agentId !== agentId ||
+          lineage.workspaceId !== detail.workspace.id ||
+          lineage.sandboxId !== detail.sandbox.id))
+    )
+      throw new Error('Agent projections referred to different resources.');
+    const workspace = await client.readWorkspace(detail.workspace.id, { signal });
+    signal.throwIfAborted();
+    if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id)
+      throw new Error('Agent projections referred to different resources.');
+    onInputReady?.({
+      detail,
+      workspace,
+      conversation: conversationFromTranscript({ agentId, turns: [], throughSeq: 0 }),
+      historyLoading: true,
+    });
+    return { detail, workspace };
+  })();
+  const projections = Promise.all([
+    hierarchy,
     client.readAgentTranscript(agentId, { signal }),
+  ]).then(([metadata, transcript]) => {
+    signal.throwIfAborted();
+    if (transcript.agentId !== agentId)
+      throw new Error('Agent projections referred to different resources.');
+    onInputReady?.({
+      ...metadata,
+      conversation: conversationFromTranscript(transcript),
+      historyLoading: true,
+      historyUnavailable: false,
+      replayReady: true,
+    });
+    return { ...metadata, transcript };
+  });
+  const [{ detail, workspace, transcript }, usage] = await Promise.all([
+    projections,
     client.readAgentUsage(agentId, { signal }),
   ]);
-  if (detail.id !== agentId || transcript.agentId !== agentId || usage.agentId !== agentId) {
+  signal.throwIfAborted();
+  if (transcript.agentId !== agentId || usage.agentId !== agentId)
     throw new Error('Agent projections referred to different resources.');
-  }
-
-  const workspace = await client.readWorkspace(detail.workspace.id, { signal });
-  if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id) {
-    throw new Error('Agent projections referred to different resources.');
-  }
   let conversation = conversationFromTranscript({ ...transcript, turns: [], throughSeq: 0 });
   const durableEvents: AgentEvent[] = [];
   let cursor: number | undefined = 0;
   const seen = new Set<number>([0]);
   let historyUnavailable = false;
   const snapshot = conversationFromTranscript(transcript);
+  const preview = withUsage(snapshot, usage);
+  let previewPublished = onInputReady !== undefined;
   const projectedConversation = () => {
     const merged = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
     return usage.throughSeq >= (merged.usage?.throughSeq ?? 0) ? withUsage(merged, usage) : merged;
@@ -84,23 +139,28 @@ export async function loadAgent(
     cursor = nextCursor;
     if (cursor !== undefined) {
       seen.add(cursor);
-      // One authorized event page permits a readable snapshot, not complete-history acceptance.
-      onHistoryProgress?.({
-        detail,
-        workspace,
-        conversation: projectedConversation(),
-        historyLoading: true,
-        historyUnavailable: false,
-      });
+      // Show the current transcript once, while rebuilding older rich activity
+      // offscreen. A historical tool/approval must not look newly active.
+      if (!previewPublished) {
+        onHistoryProgress?.({
+          detail,
+          workspace,
+          conversation: preview,
+          historyLoading: true,
+          historyUnavailable: false,
+        });
+        previewPublished = true;
+      }
     }
   } while (cursor !== undefined);
 
   return {
     detail,
     workspace,
-    conversation: projectedConversation(),
+    conversation: historyUnavailable ? preview : projectedConversation(),
     durableEvents,
     historyLoading: false,
     historyUnavailable,
+    replayReady: true,
   };
 }

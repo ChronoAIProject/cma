@@ -34,15 +34,28 @@ impl AgentSandboxPools {
     /// generation, so a changed image/pool cannot allocate a second claim on retry.
     pub async fn claim(&self, request: &NativePoolClaimRequest) -> Result<NativePoolClaim> {
         let desired = model::claim(&self.config, request)?;
-        let actual = match self
-            .claims
-            .get_opt(&desired.name_any())
-            .await
-            .map_err(api_error)?
-        {
+        let name = desired.name_any();
+        // Speculate only for native homes. Replay must not wait for policy:
+        // dropping its pending read is safe because neither branch can write.
+        let observed = self.claims.get_opt(&name);
+        let binding = self.verify_binding(&request.pool);
+        tokio::pin!(observed, binding);
+        let (observed, policy) = if request.home.policy.is_native_vct() {
+            tokio::select! {
+                observed = &mut observed => (observed, None),
+                policy = &mut binding => (observed.await, Some(policy)),
+            }
+        } else {
+            (observed.await, None)
+        };
+        let actual = match observed.map_err(api_error)? {
             Some(actual) => actual,
             None => {
-                self.verify_binding(&request.pool).await?;
+                if let Some(policy) = policy {
+                    policy?;
+                } else {
+                    binding.await?;
+                }
                 create(&self.claims, &desired).await?
             }
         };
@@ -52,6 +65,15 @@ impl AgentSandboxPools {
 
     /// A persisted claim receipt never silently acquires a replacement claim UID.
     pub async fn observe_claim(&self, original: &NativePoolClaim) -> Result<NativePoolClaim> {
+        self.observe_claim_resource(original)
+            .await
+            .map(|(current, _)| current)
+    }
+
+    pub(super) async fn observe_claim_resource(
+        &self,
+        original: &NativePoolClaim,
+    ) -> Result<(NativePoolClaim, DynamicObject)> {
         let desired = model::claim(&self.config, &original.request)?;
         if original.name != desired.name_any() || !super::super::model::dns_label(&original.uid) {
             return Err(rejected("native claim receipt is invalid"));
@@ -70,7 +92,7 @@ impl AgentSandboxPools {
         if original.sandbox_name.is_some() && original.sandbox_name != current.sandbox_name {
             return Err(rejected("native claim changed its assigned Sandbox"));
         }
-        Ok(current)
+        Ok((current, actual))
     }
 
     /// Request foreground deletion, then let the lifecycle worker establish both

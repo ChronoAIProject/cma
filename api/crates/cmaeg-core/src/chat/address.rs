@@ -1,4 +1,4 @@
-//! Leading bot addresses and Lark/Feishu mention keys in chat text.
+//! Leading bot addresses and native platform mention syntax in chat text.
 //!
 //! The turn renderer strips these and the routing resolver skips them before
 //! reading consumer addressing, so both share the matching rules below and
@@ -10,11 +10,17 @@ use crate::{activity::SourceKind, channel::Platform};
 const MENTION_KEY_PREFIX: &str = "@_user_";
 
 /// Remove every word-bounded, case-insensitive `@<bot_username>` from `text`, or, for
-/// Lark and Feishu relay activities, the leading `@_user_N` mention keys. Unchanged
-/// behaviour moved from the gateway renderer; the caller chooses which bot username applies.
+/// Lark and Feishu relay activities, the leading `@_user_N` mention keys. Native
+/// Discord removes only exact leading receiving-bot mentions. The caller chooses
+/// which bot username applies to transports that address bots by username.
 pub fn strip_address(text: &str, source: &SourceKind, bot_username: Option<&str>) -> String {
     if uses_mention_keys(source) {
         return strip_mention_keys(text);
+    }
+    if let SourceKind::Discord { bot_id } = source {
+        return text[discord_addresses_end(text, bot_id)..]
+            .trim_end()
+            .to_owned();
     }
     let Some(username) = bot_username else {
         return text.to_owned();
@@ -49,6 +55,9 @@ pub fn leading_address_end(text: &str, source: &SourceKind, bot_username: Option
     if uses_mention_keys(source) {
         return mention_keys_end(text);
     }
+    if let SourceKind::Discord { bot_id } = source {
+        return discord_addresses_end(text, bot_id);
+    }
     let mut offset = whitespace_end(text, 0);
     let Some(username) = bot_username else {
         return offset;
@@ -75,6 +84,27 @@ fn uses_mention_keys(source: &SourceKind) -> bool {
             ..
         }
     )
+}
+
+/// Native Discord identifies its receiving bot by ID, never a display name.
+/// Only its exact leading user mentions are addresses; role/channel mentions,
+/// other users and mention-shaped text later in the message stay untouched.
+fn discord_addresses_end(text: &str, bot_id: &str) -> usize {
+    let mut offset = whitespace_end(text, 0);
+    if !crate::channel::discord::valid_id(bot_id) {
+        return offset;
+    }
+    while let Some(mention) = text[offset..].strip_prefix("<@") {
+        let mention = mention.strip_prefix('!').unwrap_or(mention);
+        let Some(tail) = mention
+            .strip_prefix(bot_id)
+            .and_then(|rest| rest.strip_prefix('>'))
+        else {
+            break;
+        };
+        offset = whitespace_end(text, text.len() - tail.len());
+    }
+    offset
 }
 
 /// Where `@<username>` starting at `index` ends, when it is there: matched

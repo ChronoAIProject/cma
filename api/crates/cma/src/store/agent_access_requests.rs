@@ -10,17 +10,19 @@ use layer2_core::{AgentId, ServiceId, SubjectId};
 use mongodb::{bson::doc, ClientSession};
 
 pub(crate) const COLLECTION: &str = "agent_access_requests";
-const ACTIVE: [&str; 7] = [
+const ACTIVE: [&str; 8] = [
     "pending",
     "connecting",
     "waiting_quiet",
+    "updating",
     "pausing",
     "granting",
     "reviving",
     "notifying",
 ];
-const APPLYING: [&str; 5] = [
+const APPLYING: [&str; 6] = [
     "waiting_quiet",
+    "updating",
     "pausing",
     "granting",
     "reviving",
@@ -98,13 +100,20 @@ macro_rules! transaction {
 mod records;
 pub(in crate::store) use records::{document, lease_filter, read};
 pub(crate) use records::{
-    AgentAccessDecision, AgentAccessLease, AgentAccessPhase, AgentAccessProgress, AgentAccessRecord,
+    AgentAccessDecision, AgentAccessHotUpdate, AgentAccessLease, AgentAccessNotificationIntent,
+    AgentAccessPhase, AgentAccessProgress, AgentAccessRecord, AgentAccessScopeMode,
 };
 mod lineage;
 pub(in crate::store) use lineage::validate_lineage;
 mod admission;
 mod decisions;
 pub(in crate::store) mod grant;
+mod hot_grant;
+mod notification;
+mod owner_scope;
+mod retry;
+#[cfg(test)]
+mod retry_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 mod worker;
@@ -114,6 +123,7 @@ pub(super) async fn ensure_indexes(
 ) -> Result<(), layer2_core::StoreError> {
     for keys in [
         doc! {"record.requester.agent_id":1,"record.created_at":-1},
+        doc! {"record.requester.agent_id":1,"record.proposal.retry_of":1},
         doc! {"record.requester.sandbox_id":1,"record.phase":1},
         doc! {"record.phase":1,"record.retry_at":1,"record.lease.expires_at":1},
     ] {

@@ -219,6 +219,15 @@ impl HostedBackend for InMemoryHostedBackend {
             return refused(operation, "checkpoint_writers_held");
         }
         let response = match request {
+            RequestFrame::UploadAgentAttachment(_) => {
+                return refused(operation, "attachment_upload_unsupported")
+            }
+            RequestFrame::ListAgentFiles(_)
+            | RequestFrame::ReadAgentFile(_)
+            | RequestFrame::WriteAgentFile(_)
+            | RequestFrame::DeleteAgentFile(_) => {
+                return refused(operation, "filesystem_unsupported")
+            }
             RequestFrame::CacheSkillArchive(archive) => {
                 require_credential(runtime, operation)?;
                 archive.validate()?;

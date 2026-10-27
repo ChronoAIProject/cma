@@ -48,6 +48,8 @@ pub struct ChannelSecrets {
     #[serde(default, skip_serializing)]
     pub telegram_bot_token: Option<Secret>,
     #[serde(default, skip_serializing)]
+    pub discord_bot_token: Option<Secret>,
+    #[serde(default, skip_serializing)]
     pub telegram_webhook_secret: Option<Secret>,
     /// Additional consumers' agent keys, which are their provider
     /// credentials; only ever in the sealed blob, and only when non-empty.

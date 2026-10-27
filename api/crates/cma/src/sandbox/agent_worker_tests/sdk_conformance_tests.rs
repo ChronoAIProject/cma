@@ -24,6 +24,7 @@ use crate::projections::{AgentProjectionServices, UnavailableSandboxResources};
 
 mod approval_tests;
 mod binding_tests;
+mod bootstrap_tests;
 mod cancellation_tests;
 mod cross_interface_tests;
 mod mongo_tests;

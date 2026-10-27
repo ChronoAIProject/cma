@@ -1,6 +1,13 @@
 //! Telegram platform transport. Errors and tracing never contain token-bearing URLs.
+mod effects;
 mod files;
 mod management;
+mod media;
+pub(crate) use media::{media_token_matches, MediaUpload};
+#[cfg(test)]
+pub(crate) mod media_fixture;
+#[cfg(test)]
+mod media_tests;
 #[cfg(test)]
 mod tests;
 mod transport;

@@ -99,7 +99,7 @@ impl AgentWorker {
     }
 }
 
-fn holds_startup_authority(agent: &Agent, holder: &str, now: SystemTime) -> bool {
+pub(super) fn holds_startup_authority(agent: &Agent, holder: &str, now: SystemTime) -> bool {
     agent.status == AgentStatus::Starting
         && agent.requested_stop_reason.is_none()
         && agent.deleted_at.is_none()
@@ -119,7 +119,7 @@ fn holds_startup_authority(agent: &Agent, holder: &str, now: SystemTime) -> bool
         })
 }
 
-fn only_startup_metadata_changed(previous: &Agent, current: &Agent) -> bool {
+pub(super) fn only_startup_metadata_changed(previous: &Agent, current: &Agent) -> bool {
     if current.revision <= previous.revision
         || current.conversation.last_seq < previous.conversation.last_seq
     {

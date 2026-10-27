@@ -6,12 +6,19 @@
 
 mod adapter;
 mod agent;
+mod agent_attachment;
+mod agent_filesystem;
 mod agent_skill_install;
 pub use agent_skill_install::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
 mod agent_provider;
 mod capabilities;
 mod checkpoint;
 mod conversation;
+mod conversation_observation;
+pub use conversation_observation::{
+    ConversationDescriptionInput, ConversationDescriptionSource, ConversationMetadata,
+    ConversationUsage,
+};
 mod conversation_channel;
 mod error;
 mod home_finality;
@@ -56,11 +63,11 @@ pub use checkpoint::{
 pub use conversation::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
     ConversationId, ConversationInput, ConversationInputGuard, ConversationInputSender,
-    ConversationSendOutcome, ConversationUpdate, MessageId, PermissionDecision, PermissionLocator,
-    PermissionOption, PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
-    RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage,
-    UsageUpdate,
+    ConversationSendOutcome, ConversationSettingsSupport, ConversationUpdate, MessageId,
+    PermissionDecision, PermissionLocator, PermissionOption, PermissionOptionId,
+    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
+    SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage, UsageUpdate,
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
 pub use home_finality::{
@@ -96,7 +103,7 @@ pub use provider_finality::{
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
     RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection, RuntimeLifecycle,
-    RuntimeObservation, RuntimeProvisionRequest, SandboxCapacity, SandboxSpec,
+    RuntimeObservation, RuntimeProvisionRequest, RuntimeTermination, SandboxCapacity, SandboxSpec,
     DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY,
     DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
@@ -111,4 +118,15 @@ pub use workspace::{
 pub use workspace_removal::{
     same_runtime_writer, WorkspaceRemovalObservation, WorkspaceRemovalOutcome,
     WorkspaceRemovalRequest, WorkspaceRemovalSupport, WORKSPACE_REMOVAL_PROTOCOL,
+};
+
+pub use agent_attachment::{
+    AgentAttachmentReceipt, AgentAttachmentRequest, AgentAttachmentUpload,
+    AGENT_ATTACHMENT_DIRECTORY, MAX_AGENT_ATTACHMENT_BYTES,
+};
+pub use agent_filesystem::{
+    valid_identity as valid_agent_filesystem_identity, valid_path as valid_agent_file_path,
+    AgentFileDeleteReceipt, AgentFileDeleteRequest, AgentFileEntry, AgentFileKind,
+    AgentFileListReceipt, AgentFileListRequest, AgentFileReadReceipt, AgentFileReadRequest,
+    AgentFileWriteReceipt, AgentFileWriteRequest, MAX_AGENT_FILE_BYTES, MAX_AGENT_FILE_ENTRIES,
 };

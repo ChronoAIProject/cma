@@ -62,6 +62,20 @@ impl AgentSandboxClient {
         kind: RuntimeStreamKind,
         transport: NativeRuntimeTransport,
     ) -> Result<RuntimeStream> {
+        self.runtime_stream_after(runtime, expected, kind, transport, async { Ok(()) })
+            .await
+    }
+
+    /// Prepare only the unauthenticated loopback connection before authorization.
+    /// The final Pod observation remains after the caller's actual Open receipt.
+    pub(crate) async fn runtime_stream_after(
+        &self,
+        runtime: &RuntimeHandle,
+        expected: &PodBinding,
+        kind: RuntimeStreamKind,
+        transport: NativeRuntimeTransport,
+        authorized: impl Future<Output = Result<()>> + Send,
+    ) -> Result<RuntimeStream> {
         // No unbounded queue behind long-lived conversations. Clones share this budget.
         let permits = match kind {
             RuntimeStreamKind::Request => &self.runtime_requests,
@@ -70,7 +84,8 @@ impl AgentSandboxClient {
         let permit = permits.clone().try_acquire_owned().map_err(|_| {
             AdapterError::AtCapacity("native runtime stream capacity is exhausted".into())
         })?;
-        tokio::time::timeout(OPEN_TIMEOUT, async {
+        let started = tokio::time::Instant::now();
+        let stream = tokio::time::timeout(OPEN_TIMEOUT, async {
             if self.pod_binding(runtime).await? != *expected {
                 return Err(rejected("Sandbox Pod changed before runtime stream opened"));
             }
@@ -85,6 +100,15 @@ impl AgentSandboxClient {
                     return Err(rejected("direct transport cannot open a Kubernetes stream"));
                 }
             };
+            Ok(stream)
+        })
+        .await
+        .map_err(|_| unavailable("Kubernetes runtime stream opening timed out"))??;
+        // Waiting for the control mutation does not consume the stream I/O
+        // deadline; a slow Open retains its existing independent timeout.
+        let remaining = OPEN_TIMEOUT.saturating_sub(started.elapsed());
+        authorized.await?;
+        tokio::time::timeout(remaining, async {
             if self.pod_binding(runtime).await? != *expected {
                 return Err(rejected("Sandbox Pod changed while runtime stream opened"));
             }

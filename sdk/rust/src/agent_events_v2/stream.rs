@@ -118,6 +118,13 @@ impl AgentEventStream {
             }
             AgentFrame::Live(event) => {
                 self.identity(&event.agent_id, &event.incarnation)?;
+                if event
+                    .observed_at
+                    .as_ref()
+                    .is_some_and(|at| identifier(at).is_err())
+                {
+                    return Err(Error::protocol("invalid live observation timestamp"));
+                }
                 if event.turn_sequence == 0
                     || event.turn_sequence > event.after_sequence
                     || event.after_sequence > self.sequence

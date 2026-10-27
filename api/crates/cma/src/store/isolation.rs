@@ -6,7 +6,9 @@ use mongodb::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const COLLECTIONS: &[&str] = &[
+    crate::document_artifacts::COLLECTION,
     super::native_warm_pools::COLLECTION,
+    super::native_prepared::COLLECTION,
     "runtime_backend_routes",
     "activity",
     "agent_artifacts",
@@ -17,6 +19,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "agent_access_tools",
     "agent_access_requests",
     "agent_log",
+    super::message_feedback::COLLECTION,
     "agent_lifecycle_operations",
     "agent_profile_revisions",
     "agent_profiles",
@@ -24,6 +27,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "agents",
     "auth_api_bearers",
     "auth_actor_links",
+    super::auth::PROXY_GRANTS,
     "auth_browser_logins",
     "auth_login_attempts",
     "auth_subjects",
@@ -316,6 +320,10 @@ mod tests {
             stores.ping().await.unwrap();
             assert!(stores.sandbox_model.warm_runtime_version.is_none());
             assert!(stores.sandbox_model.warm_home_policy.is_none());
+            assert_eq!(
+                stores.sandbox_model.managed_runtime_version.as_deref(),
+                Some("runtime-isolation-contract")
+            );
         }
         use layer3_adapter::hosted::RuntimeRoutingStore;
         let routing =
@@ -381,11 +389,32 @@ mod tests {
 
     #[test]
     fn warm_pool_target_grants_are_required_without_database_wide_access() {
-        let mut grants = role("cma").get_array("privileges").unwrap().clone();
-        let target = super::super::native_warm_pools::COLLECTION;
-        let grant = grants
-            .iter()
-            .find(|grant| {
+        for target in [
+            super::super::native_warm_pools::COLLECTION,
+            super::super::native_prepared::COLLECTION,
+        ] {
+            let mut grants = role("cma").get_array("privileges").unwrap().clone();
+            let grant = grants
+                .iter()
+                .find(|grant| {
+                    grant
+                        .as_document()
+                        .unwrap()
+                        .get_document("resource")
+                        .unwrap()
+                        .get_str("collection")
+                        .unwrap()
+                        == target
+                })
+                .expect("the generated runtime role includes durable native pool targets");
+            assert!(grant
+                .as_document()
+                .unwrap()
+                .get_array("actions")
+                .unwrap()
+                .iter()
+                .any(|action| action.as_str() == Some("createIndex")));
+            grants.retain(|grant| {
                 grant
                     .as_document()
                     .unwrap()
@@ -393,28 +422,11 @@ mod tests {
                     .unwrap()
                     .get_str("collection")
                     .unwrap()
-                    == target
-            })
-            .expect("the generated runtime role includes durable native pool targets");
-        assert!(grant
-            .as_document()
-            .unwrap()
-            .get_array("actions")
-            .unwrap()
-            .iter()
-            .any(|action| action.as_str() == Some("createIndex")));
-        grants.retain(|grant| {
-            grant
-                .as_document()
-                .unwrap()
-                .get_document("resource")
-                .unwrap()
-                .get_str("collection")
-                .unwrap()
-                != target
-        });
-        let status = doc! {"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":grants}};
-        assert!(validate(&status, "cma").is_err());
+                    != target
+            });
+            let status = doc! {"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":grants}};
+            assert!(validate(&status, "cma").is_err());
+        }
     }
 
     #[test]

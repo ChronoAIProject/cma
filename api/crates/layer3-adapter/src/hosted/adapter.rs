@@ -24,12 +24,16 @@ use crate::{
 
 #[path = "adapter_agent.rs"]
 mod agent;
+#[path = "adapter_attachment.rs"]
+mod attachment;
 #[path = "adapter_checkpoint.rs"]
 mod checkpoint;
 #[path = "adapter_context.rs"]
 mod context;
 #[path = "adapter_exchange.rs"]
 mod exchange;
+#[path = "adapter_filesystem.rs"]
+mod filesystem;
 #[path = "adapter_install.rs"]
 mod install;
 #[path = "adapter_provider_tools.rs"]

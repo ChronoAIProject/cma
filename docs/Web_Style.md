@@ -23,8 +23,7 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | CMA Trigger | Signed-in authoring, publication, placements and integration snippets. |
 | Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
 | Operations | Capability-gated inventory, Profiles, activity and settings. |
-| Developer | Public TypeScript and Rust SDK guides bundled with the frontend. |
-| Bots | Owner Bot configuration and lifecycle through CMAEG, opened from the account menu. |
+| Bots | Owner Bot configuration and lifecycle through CMAEG, opened from Consumers in Event Gateway navigation. |
 
 Each view has a canonical route. Refresh and browser history restore it without
 admitting work. The terminal plane, separate Chat model, session list, canvas
@@ -55,9 +54,11 @@ value and a theme never names a component.
 **A component referencing a static token is a defect.** The static tier exists so the alias tier has
 something to point at; reaching past the alias is how a surface ends up unable to change theme.
 
-The Harness ramps (`neutral`, `neutral-bluish`, `blue`, `deepseek`, and `green`) retire. The palette
-is now first-party and comes from two reference libraries: **Inkwell** for light and **Lumen** for
-dark. The raw ramps are declared once and are available to either theme, even where one theme is their
+The Harness ramps (`neutral`, `neutral-bluish`, `blue`, `deepseek`, and `green`) retire. Since
+2026-10-21 both appearances are drawn from one neutral **`zinc`** ramp, the shadcn/ui neutral scale,
+with Chrono **`lime`** as the brand and accent: lime in dark, its deep `lime 800` in light where the
+bright step cannot carry text. The Inkwell `paper`/`ink` and Lumen `coal` ramps stay declared for
+the remaining static consumers but no alias reads them. The raw ramps are declared once and are available to either theme, even where one theme is their
 main consumer. A ramp and step expand directly to a static token name: for example, `paper 50` below
 is `--dsw-static-paper-50`.
 
@@ -66,7 +67,8 @@ is `--dsw-static-paper-50`.
 | `paper` | `0 #FFFBF2`, `50 #FAF2E0`, `100 #F5EAD3`, `200 #EFE4CB`, `250 #EFE2C6`, `300 #E5D8BC`, `400 #CFBE99`, `500 #B9A57C`                                                |
 | `ink`   | `50 #FDF8EC`, `200 #B7AB92`, `300 #8C8474`, `350 #756D5E`, `500 #4C5A68`, `800 #0E61AC`, `850 #0A4C88`, `900 #073A69`, `950 #15283C`                               |
 | `coal`  | `50 #EDF2E2`, `300 #A9B199`, `450 #7D876F`, `500 #6B7361`, `650 #3F4630`, `700 #333A26`, `750 #21251A`, `800 #191C14`, `850 #121410`, `900 #0C0D0A`, `950 #060606` |
-| `lime`  | `300 #D7FF7D`, `400 #C3FD43`, `500 #AEE734`, `600 #8FC121`, `900 #24300F`                                                                                          |
+| `lime`  | `300 #D7FF7D`, `400 #C3FD43`, `500 #AEE734`, `600 #8FC121`, `800 #3F6212`, `900 #24300F`                                                                                        |
+| `zinc`  | `0 #FFFFFF`, `50 #FAFAFA`, `100 #F4F4F5`, `200 #E4E4E7`, `300 #D4D4D8`, `400 #A1A1AA`, `500 #71717A`, `600 #52525B`, `700 #3F3F46`, `800 #27272A`, `850 #1F1F23`, `900 #18181B`, `925 #111113`, `950 #09090B` |
 | `moss`  | `100 #EDF6E7`, `400 #5F963B`, `500 #3E7A22`, `600 #2D6017`, `900 #1C2E14`                                                                                          |
 | `red`   | `100 #F8E4DE`, `300 #FF806F`, `400 #FF5A45`, `500 #D7604A`, `600 #BC3B26`, `700 #A42D1B`, `900 #3A1711`                                                            |
 | `amber` | `100 #F5E6C4`, `300 #FFC45A`, `400 #FFB020`, `500 #D18B12`, `600 #A9720B`, `700 #875A08`, `900 #33260C`                                                            |
@@ -81,106 +83,106 @@ derivation is still fixed here so implementation never has to guess. Component s
 names while their values change, which lets the rebrand land surface by surface without inventing a
 second vocabulary.
 
-| Alias                                 | Light — Inkwell                                            | Dark — Lumen                                             |
-| ------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------- |
-| `--dsw-alias-bg-base`                 | `#FAF2E0`                                                  | `#060606`                                                |
-| `--dsw-alias-bg-layer-1`              | `#FFFBF2`                                                  | `#0C0D0A`                                                |
-| `--dsw-alias-bg-layer-2`              | `#F5EAD3`                                                  | `#121410`                                                |
-| `--dsw-alias-bg-layer-3`              | `#EFE2C6`                                                  | `#191C14`                                                |
-| `--dsw-alias-bg-mask-1`               | `rgba(46,36,18,.42)`                                       | `rgba(3,3,3,.72)`                                        |
-| `--dsw-alias-bg-mask-2`               | `rgba(46,36,18,.24)` **derived**, a quieter warm scrim     | `rgba(3,3,3,.48)` **derived**                            |
-| `--dsw-alias-bg-mask-3`               | `rgba(46,36,18,.60)` **derived**, the strongest warm scrim | `rgba(3,3,3,.84)` **derived**                            |
-| `--dsw-alias-bg-mask-photo`           | `rgba(21,40,60,.88)` **derived**                           | `rgba(3,3,3,.92)` **derived**                            |
-| `--dsw-alias-bg-mask-drop`            | `rgba(255,251,242,.74)` **derived**                        | `rgba(12,13,10,.74)` **derived**                         |
-| `--dsw-alias-bg-module-platform`      | `#F5EAD3`                                                  | `#121410`                                                |
-| `--dsw-alias-bg-multi-select`         | `#F5EAD3`                                                  | `#191C14`                                                |
-| `--dsw-alias-bg-overlay`              | `#EFE2C6`                                                  | `#333A26`                                                |
-| `--dsw-alias-bg-skeleton`             | `rgba(122,96,52,.10)` **derived** from the warm shadow hue | `rgba(255,255,255,.08)` **derived** from Lumen's shimmer |
-| `--dsw-alias-border-inverted`         | `rgba(21,40,60,.06)` **derived**                           | `rgba(237,242,226,.08)` **derived**                      |
-| `--dsw-alias-border-inverted2`        | `rgba(21,40,60,.08)` **derived**                           | `rgba(237,242,226,.10)` **derived**                      |
-| `--dsw-alias-border-l1`               | `#EFE4CB` **derived**, one paper step before `line`        | `#191C14` **derived**, the adjacent coal hairline        |
-| `--dsw-alias-border-l2-darkmode-thin` | `#E5D8BC`                                                  | `#21251A`                                                |
-| `--dsw-alias-border-l2`               | `#E5D8BC`                                                  | `#21251A`                                                |
-| `--dsw-alias-border-l3`               | `#CFBE99`                                                  | `#333A26`                                                |
-| `--dsw-alias-border-l4`               | `#B9A57C`, the reference input-hover line                  | `#3F4630` **derived**, one coal step beyond `line-2`     |
+| Alias                                 | Light                   | Dark                    |
+| ------------------------------------- | ----------------------- | ----------------------- |
+| `--dsw-alias-bg-base`                 | `#FFFFFF`               | `#09090B`               |
+| `--dsw-alias-bg-layer-1`              | `#FFFFFF`               | `#111113`               |
+| `--dsw-alias-bg-layer-2`              | `#FAFAFA`               | `#18181B`               |
+| `--dsw-alias-bg-layer-3`              | `#F4F4F5`               | `#1F1F23`               |
+| `--dsw-alias-bg-mask-1`               | `rgba(9,9,11,.42)`      | `rgba(0,0,0,.72)`       |
+| `--dsw-alias-bg-mask-2`               | `rgba(9,9,11,.24)`      | `rgba(0,0,0,.48)`       |
+| `--dsw-alias-bg-mask-3`               | `rgba(9,9,11,.6)`       | `rgba(0,0,0,.84)`       |
+| `--dsw-alias-bg-mask-photo`           | `rgba(9,9,11,.88)`      | `rgba(0,0,0,.92)`       |
+| `--dsw-alias-bg-mask-drop`            | `rgba(255,255,255,.74)` | `rgba(17,17,19,.74)`    |
+| `--dsw-alias-bg-module-platform`      | `#FAFAFA`               | `#18181B`               |
+| `--dsw-alias-bg-multi-select`         | `#F4F4F5`               | `#1F1F23`               |
+| `--dsw-alias-bg-overlay`              | `#F4F4F5`               | `#27272A`               |
+| `--dsw-alias-bg-skeleton`             | `rgba(9,9,11,.06)`      | `rgba(255,255,255,.08)` |
+| `--dsw-alias-border-inverted`         | `rgba(9,9,11,.06)`      | `rgba(250,250,250,.08)` |
+| `--dsw-alias-border-inverted2`        | `rgba(9,9,11,.08)`      | `rgba(250,250,250,.1)`  |
+| `--dsw-alias-border-l1`               | `#E4E4E7`               | `#1F1F23`               |
+| `--dsw-alias-border-l2-darkmode-thin` | `#E4E4E7`               | `#27272A`               |
+| `--dsw-alias-border-l2`               | `#E4E4E7`               | `#27272A`               |
+| `--dsw-alias-border-l3`               | `#D4D4D8`               | `#3F3F46`               |
+| `--dsw-alias-border-l4`               | `#A1A1AA`               | `#52525B`               |
 
-| Alias                                        | Light — Inkwell                   | Dark — Lumen                        |
-| -------------------------------------------- | --------------------------------- | ----------------------------------- |
-| `--dsw-alias-brand-primary`                  | `#0E61AC`                         | `#C3FD43`                           |
-| `--dsw-alias-brand-primary-invert`           | `#FDF8EC`                         | `#060606`                           |
-| `--dsw-alias-brand-text`                     | `#0E61AC`                         | `#C3FD43`                           |
-| `--dsw-alias-button-contrast-fill`           | `#15283C`                         | `#EDF2E2`                           |
-| `--dsw-alias-button-elevated-fill`           | `#FFFBF2`                         | `#191C14`                           |
-| `--dsw-alias-button-floating-fill`           | `#FFFBF2`                         | `#121410`                           |
-| `--dsw-alias-button-floating-hover`          | `#F5EAD3`                         | `#191C14`                           |
-| `--dsw-alias-button-ghost-active-border`     | `#CFBE99`                         | `#333A26`                           |
-| `--dsw-alias-button-ghost-active-fill`       | `#F5EAD3`                         | `#191C14`                           |
-| `--dsw-alias-button-ghost-active-hover`      | `#EFE2C6`                         | `#21251A`                           |
-| `--dsw-alias-button-info-fill`               | `#0E61AC`                         | `#C3FD43`                           |
-| `--dsw-alias-button-info-hover`              | `#0A4C88`                         | `#AEE734`                           |
-| `--dsw-alias-button-primary-dimmed`          | `#E5D8BC` **derived**             | `#333A26` **derived**               |
-| `--dsw-alias-button-primary-fill`            | `#0E61AC`                         | `#C3FD43`                           |
-| `--dsw-alias-button-primary-hover`           | `#0A4C88`                         | `#AEE734`                           |
-| `--dsw-alias-button-primary-active`          | `#073A69`                         | `#8FC121`                           |
-| `--dsw-alias-button-tool-bar-fill-invisible` | `rgba(21,40,60,.12)` **derived**  | `rgba(237,242,226,.12)` **derived** |
-| `--dsw-alias-button-tool-bar-fill`           | `rgba(21,40,60,.64)` **derived**  | `rgba(237,242,226,.32)` **derived** |
-| `--dsw-alias-button-tool-bar-hover`          | `rgba(21,40,60,.78)` **derived**  | `rgba(237,242,226,.46)` **derived** |
-| `--dsw-alias-interactive-bg-active`          | `rgba(122,96,52,.14)` **derived** | `rgba(255,255,255,.08)` **derived** |
-| `--dsw-alias-interactive-bg-hover`           | `rgba(122,96,52,.08)` **derived** | `rgba(255,255,255,.04)` **derived** |
-| `--dsw-alias-interactive-bg-hover-accent`    | `rgba(14,97,172,.08)`             | `rgba(195,253,67,.10)`              |
-| `--dsw-alias-interactive-bg-hover-danger`    | `rgba(188,59,38,.09)`             | `rgba(255,90,69,.10)`               |
-| `--dsw-alias-interactive-bg-hover-solid`     | `#F5EAD3` **derived**             | `#191C14` **derived**               |
+| Alias                                        | Light                 | Dark                    |
+| -------------------------------------------- | --------------------- | ----------------------- |
+| `--dsw-alias-brand-primary`                  | `#3F6212`             | `#C3FD43`               |
+| `--dsw-alias-brand-primary-invert`           | `#FFFFFF`             | `#09090B`               |
+| `--dsw-alias-brand-text`                     | `#3F6212`             | `#C3FD43`               |
+| `--dsw-alias-button-contrast-fill`           | `#18181B`             | `#FAFAFA`               |
+| `--dsw-alias-button-elevated-fill`           | `#FFFFFF`             | `#1F1F23`               |
+| `--dsw-alias-button-floating-fill`           | `#FFFFFF`             | `#18181B`               |
+| `--dsw-alias-button-floating-hover`          | `#F4F4F5`             | `#1F1F23`               |
+| `--dsw-alias-button-ghost-active-border`     | `#D4D4D8`             | `#3F3F46`               |
+| `--dsw-alias-button-ghost-active-fill`       | `#F4F4F5`             | `#1F1F23`               |
+| `--dsw-alias-button-ghost-active-hover`      | `#E4E4E7`             | `#27272A`               |
+| `--dsw-alias-button-info-fill`               | `#18181B`             | `#C3FD43`               |
+| `--dsw-alias-button-info-hover`              | `#27272A`             | `#AEE734`               |
+| `--dsw-alias-button-primary-dimmed`          | `#E4E4E7`             | `#3F3F46`               |
+| `--dsw-alias-button-primary-fill`            | `#18181B`             | `#C3FD43`               |
+| `--dsw-alias-button-primary-hover`           | `#27272A`             | `#AEE734`               |
+| `--dsw-alias-button-primary-active`          | `#3F3F46`             | `#8FC121`               |
+| `--dsw-alias-button-tool-bar-fill-invisible` | `rgba(9,9,11,.12)`    | `rgba(250,250,250,.12)` |
+| `--dsw-alias-button-tool-bar-fill`           | `rgba(9,9,11,.64)`    | `rgba(250,250,250,.32)` |
+| `--dsw-alias-button-tool-bar-hover`          | `rgba(9,9,11,.78)`    | `rgba(250,250,250,.46)` |
+| `--dsw-alias-interactive-bg-active`          | `rgba(9,9,11,.08)`    | `rgba(255,255,255,.08)` |
+| `--dsw-alias-interactive-bg-hover`           | `rgba(9,9,11,.04)`    | `rgba(255,255,255,.04)` |
+| `--dsw-alias-interactive-bg-hover-accent`    | `rgba(63,98,18,.08)`  | `rgba(195,253,67,.1)`   |
+| `--dsw-alias-interactive-bg-hover-danger`    | `rgba(188,59,38,.08)` | `rgba(255,90,69,.1)`    |
+| `--dsw-alias-interactive-bg-hover-solid`     | `#F4F4F5`             | `#1F1F23`               |
 
-| Alias                                          | Light — Inkwell                                | Dark — Lumen                                  |
-| ---------------------------------------------- | ---------------------------------------------- | --------------------------------------------- |
-| `--dsw-alias-label-caption`                    | `#756D5E` **derived**, AA small-text ink       | `#7D876F` **derived**, AA small-text ink      |
-| `--dsw-alias-label-dimmed`                     | `#B7AB92` **derived**, disabled/non-text only  | `#4B523E` **derived**, disabled/non-text only |
-| `--dsw-alias-label-primary`                    | `#15283C`                                      | `#EDF2E2`                                     |
-| `--dsw-alias-label-primary-bluish`             | `#15283C`                                      | `#EDF2E2`                                     |
-| `--dsw-alias-label-primary-dimmed`             | `#756D5E` **derived**                          | `#7D876F` **derived**                         |
-| `--dsw-alias-label-primary-foreground`         | `#FDF8EC`                                      | `#060606`                                     |
-| `--dsw-alias-label-primary-inverted`           | `#FDF8EC`                                      | `#060606`                                     |
-| `--dsw-alias-label-secondary`                  | `#4C5A68`                                      | `#A9B199`                                     |
-| `--dsw-alias-label-tertiary`                   | `#8C8474`                                      | `#6B7361`                                     |
-| `--dsw-alias-markdown-citation`                | `#F5EAD3` **derived**                          | `#191C14` **derived**                         |
-| `--dsw-alias-markdown-code-block`              | `#F5EAD3`                                      | `#060606`                                     |
-| `--dsw-alias-markdown-code-block-banner`       | `#F5EAD3`                                      | `#121410`                                     |
-| `--dsw-alias-markdown-code-segment-selected`   | `#FFFBF2`                                      | `#191C14`                                     |
-| `--dsw-alias-markdown-code-segment-unselected` | `#EFE2C6`                                      | `#121410`                                     |
-| `--dsw-alias-markdown-inline-code`             | `#EFE2C6`                                      | `#191C14`                                     |
-| `--dsw-alias-markdown-placeholder`             | `#F5EAD3`                                      | `#121410`                                     |
-| `--dsw-alias-markdown-tag`                     | `#EFE2C6`                                      | `#191C14`                                     |
-| `--dsw-alias-scrollbar-bg-l1`                  | `#CFBE99`                                      | `#333A26`                                     |
-| `--dsw-alias-scrollbar-bg-l2`                  | `#B9A57C` **derived**, one stronger paper step | `#3F4630` **derived**, one stronger coal step |
-| `--dsw-alias-scrollbar-hover-l1`               | `#0E61AC`                                      | `#8FC121`                                     |
-| `--dsw-alias-scrollbar-hover-l2`               | `#0A4C88` **derived**, one stronger ink step   | `#AEE734` **derived**, one brighter lime step |
-| `--dsw-alias-state-business-primary`           | `#0E61AC`                                      | `#C3FD43`                                     |
-| `--dsw-alias-state-business-tertiary`          | `rgba(14,97,172,.15)`                          | `rgba(195,253,67,.18)`                        |
-| `--dsw-alias-state-error-primary`              | `#BC3B26`                                      | `#FF5A45`                                     |
-| `--dsw-alias-state-error-secondary`            | `#D7604A`                                      | `#FF806F`                                     |
-| `--dsw-alias-state-success-primary`            | `#3E7A22`                                      | `#C3FD43`                                     |
-| `--dsw-alias-state-success-secondary`          | `#5F963B`                                      | `#AEE734`                                     |
-| `--dsw-alias-state-success-tertiary`           | `#EDF6E7`                                      | `#24300F`                                     |
-| `--dsw-alias-state-warn-label`                 | `#875A08` **derived**, AA small-text amber     | `#FFB020`                                     |
-| `--dsw-alias-state-warn-primary`               | `#A9720B`                                      | `#FFB020`                                     |
-| `--dsw-alias-state-warn-secondary`             | `#D18B12`                                      | `#FFC45A`                                     |
-| `--dsw-alias-state-warn-tertiary`              | `#F5E6C4`                                      | `#33260C`                                     |
-| `--dsw-alias-toast-bg`                         | `#15283C` **derived**                          | `#121410` **derived**                         |
-| `--dsw-alias-tooltip-bg`                       | `#15283C`, the Inkwell tip                     | `#C3FD43`, the Lumen tip                      |
+| Alias                                          | Light                | Dark                   |
+| ---------------------------------------------- | -------------------- | ---------------------- |
+| `--dsw-alias-label-caption`                    | `#52525B`            | `#A1A1AA`              |
+| `--dsw-alias-label-dimmed`                     | `#A1A1AA`            | `#52525B`              |
+| `--dsw-alias-label-primary`                    | `#09090B`            | `#FAFAFA`              |
+| `--dsw-alias-label-primary-bluish`             | `#09090B`            | `#FAFAFA`              |
+| `--dsw-alias-label-primary-dimmed`             | `#52525B`            | `#A1A1AA`              |
+| `--dsw-alias-label-primary-foreground`         | `#FAFAFA`            | `#09090B`              |
+| `--dsw-alias-label-primary-inverted`           | `#FAFAFA`            | `#09090B`              |
+| `--dsw-alias-label-secondary`                  | `#52525B`            | `#A1A1AA`              |
+| `--dsw-alias-label-tertiary`                   | `#71717A`            | `#71717A`              |
+| `--dsw-alias-markdown-citation`                | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-alias-markdown-code-block`              | `#FAFAFA`            | `#09090B`              |
+| `--dsw-alias-markdown-code-block-banner`       | `#F4F4F5`            | `#18181B`              |
+| `--dsw-alias-markdown-code-segment-selected`   | `#FFFFFF`            | `#1F1F23`              |
+| `--dsw-alias-markdown-code-segment-unselected` | `#F4F4F5`            | `#18181B`              |
+| `--dsw-alias-markdown-inline-code`             | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-alias-markdown-placeholder`             | `#FAFAFA`            | `#18181B`              |
+| `--dsw-alias-markdown-tag`                     | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-alias-scrollbar-bg-l1`                  | `#D4D4D8`            | `#3F3F46`              |
+| `--dsw-alias-scrollbar-bg-l2`                  | `#A1A1AA`            | `#52525B`              |
+| `--dsw-alias-scrollbar-hover-l1`               | `#71717A`            | `#8FC121`              |
+| `--dsw-alias-scrollbar-hover-l2`               | `#52525B`            | `#AEE734`              |
+| `--dsw-alias-state-business-primary`           | `#3F6212`            | `#C3FD43`              |
+| `--dsw-alias-state-business-tertiary`          | `rgba(63,98,18,.12)` | `rgba(195,253,67,.18)` |
+| `--dsw-alias-state-error-primary`              | `#BC3B26`            | `#FF5A45`              |
+| `--dsw-alias-state-error-secondary`            | `#D7604A`            | `#FF806F`              |
+| `--dsw-alias-state-success-primary`            | `#3E7A22`            | `#C3FD43`              |
+| `--dsw-alias-state-success-secondary`          | `#5F963B`            | `#AEE734`              |
+| `--dsw-alias-state-success-tertiary`           | `#EDF6E7`            | `#24300F`              |
+| `--dsw-alias-state-warn-label`                 | `#875A08`            | `#FFB020`              |
+| `--dsw-alias-state-warn-primary`               | `#A9720B`            | `#FFB020`              |
+| `--dsw-alias-state-warn-secondary`             | `#D18B12`            | `#FFC45A`              |
+| `--dsw-alias-state-warn-tertiary`              | `#F5E6C4`            | `#33260C`              |
+| `--dsw-alias-toast-bg`                         | `#18181B`            | `#18181B`              |
+| `--dsw-alias-tooltip-bg`                       | `#18181B`            | `#FAFAFA`              |
 
-| Specific token                                  | Light — Inkwell                    | Dark — Lumen             |
-| ----------------------------------------------- | ---------------------------------- | ------------------------ |
-| `--dsw-specific-bubble`                         | `rgba(14,97,172,.08)` over layer 1 | `#121410`                |
-| `--dsw-specific-bubble-highlight`               | `rgba(14,97,172,.15)`              | `rgba(195,253,67,.18)`   |
-| `--dsw-specific-input-major`                    | `#FFFBF2`                          | `#121410`                |
-| `--dsw-specific-login-input`                    | `#FFFBF2`                          | `#121410`                |
-| `--dsw-specific-menu`                           | `#EFE2C6` (`bg-layer-3`)           | `#191C14` (`bg-layer-3`) |
-| `--dsw-specific-selector`                       | `#F5EAD3` **derived**              | `#191C14` **derived**    |
-| `--dsw-specific-sidebar-fill`                   | `#F5EAD3`                          | `#0C0D0A`                |
-| `--dsw-specific-sidebar-nav-item-active`        | `#EFE2C6` **derived**              | `#21251A` **derived**    |
-| `--dsw-specific-sidebar-nav-item-active-accent` | `rgba(14,97,172,.15)`              | `rgba(195,253,67,.18)`   |
-| `--dsw-specific-sidebar-nav-item-hover`         | `#F5EAD3` **derived**              | `#191C14` **derived**    |
-| `--dsw-specific-tip`                            | `#F5EAD3` **derived**              | `#191C14` **derived**    |
+| Specific token                                  | Light                | Dark                   |
+| ----------------------------------------------- | -------------------- | ---------------------- |
+| `--dsw-specific-bubble`                         | `#F4F4F5`            | `#18181B`              |
+| `--dsw-specific-bubble-highlight`               | `rgba(63,98,18,.12)` | `rgba(195,253,67,.18)` |
+| `--dsw-specific-input-major`                    | `#FFFFFF`            | `#111113`              |
+| `--dsw-specific-login-input`                    | `#FFFFFF`            | `#111113`              |
+| `--dsw-specific-menu`                           | `#FFFFFF`            | `#18181B`              |
+| `--dsw-specific-selector`                       | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-specific-sidebar-fill`                   | `#FAFAFA`            | `#111113`              |
+| `--dsw-specific-sidebar-nav-item-active`        | `#F4F4F5`            | `#27272A`              |
+| `--dsw-specific-sidebar-nav-item-active-accent` | `rgba(63,98,18,.12)` | `rgba(195,253,67,.18)` |
+| `--dsw-specific-sidebar-nav-item-hover`         | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-specific-tip`                            | `#F4F4F5`            | `#1F1F23`              |
 
 `--dsw-alias-brand-primary-new-colorprimary-new-color` is retired. Its malformed exported name had
 zero consumers under `web/src`; retaining it would preserve no compatibility. Every other alias and
@@ -194,32 +196,40 @@ themes; components still never read static tokens directly:
 
 | Alias | Both themes | Existing source |
 |---|---|---|
-| `--dsw-alias-preview-light-bg` | `#FFFBF2` | `paper 0` |
-| `--dsw-alias-preview-light-label` | `#15283C` | `ink 950` |
-| `--dsw-alias-preview-dark-bg` | `#0C0D0A` | `coal 900` |
-| `--dsw-alias-preview-dark-label` | `#EDF2E2` | `coal 50` |
+| `--dsw-alias-preview-light-bg` | `#FFFFFF` | `zinc 0` |
+| `--dsw-alias-preview-light-label` | `#09090B` | `zinc 950` |
+| `--dsw-alias-preview-dark-bg` | `#111113` | `zinc 925` |
+| `--dsw-alias-preview-dark-label` | `#FAFAFA` | `zinc 50` |
 
-- **Backgrounds.** Inkwell reverses the old light-theme rule: cards are visibly lighter than the
-  cream ground, while grooves are darker. Lumen climbs from near-black through green-shifted coal.
-- **Primary actions use the accent.** `brand-primary` and `button-primary-fill` are ink blue in
-  light and lime in dark. This deliberately reverses the old neutral-primary doctrine.
-- **Neutral interaction stays neutral.** Generic hover and active fills use warm brown alpha in
-  light and white alpha in dark. Only an explicitly accent interaction takes the blue/lime wash.
+Message-avatar fallback aliases are also appearance-independent:
+`--dsw-alias-avatar-bg` is `zinc 950` (`#09090B`), and
+`--dsw-alias-avatar-label` is `zinc 50` (`#FAFAFA`). They retain a black circle
+with readable initials in either theme.
+
+- **Backgrounds.** Light is white with `zinc 50` and `zinc 100` layers; dark climbs from
+  `zinc 950` through `zinc 925`, `900` and `850`. Separation comes from a 1px zinc border first and
+  shadow second, as in shadcn/ui.
+- **One primary per view.** `button-primary-fill` is `zinc 900` in light and lime in dark, so the
+  dark primary keeps the brand and the light primary keeps contrast. `brand-primary` and the accent
+  are `lime 800` in light and lime in dark.
+- **Neutral interaction stays neutral.** Generic hover and active fills are zinc alpha in light and
+  white alpha in dark. Only an explicitly accent interaction takes the lime wash.
 - **Status remains semantic.** Warning is `#A9720B` light / `#FFB020` dark; error is `#BC3B26` /
-  `#FF5A45`; success is moss `#3E7A22` in light and the same lime as the accent in dark. The light
-  asymmetry is required because blue is not success.
-- **Glow is dark-only.** Lumen may use the `rgba(195,253,67,.35)` family on the primary hover,
-  focus, live dot, progress fill, tab underline, and signed-out mark. Accent covers no more than 8%
-  of the viewport. Inkwell never glows; it uses warm shadow.
+  `#FF5A45`; success is moss `#3E7A22` in light and the same lime as the accent in dark.
+- **Glow is dark-only and rare.** Dark may use the `rgba(195,253,67,.35)` family on the primary
+  hover, focus, live dot, progress fill and tab underline. Accent covers no more than 8% of the
+  viewport. Light never glows; it uses a neutral `zinc 950` shadow at low alpha.
+- **Tooltips and toasts invert.** The tip is `zinc 900` in light and `zinc 50` in dark, with the
+  inverse label, so it reads as an overlay rather than another brand surface.
 - **Selection and focus follow the accent.** `::selection` is accent ground with
   `label-primary-foreground`. The global `--focus-ring` remains the same whole-value double ring:
   `0 0 0 2px bg-base, 0 0 0 4px state-business-primary`.
 
-Measured on the base grounds, primary text is 13.45:1 light / 17.75:1 dark, secondary text is
-6.34:1 / 9.10:1, the accent is 5.67:1 / 16.84:1, and light success is 4.70:1. The fixed reference
-tertiaries are 3.32:1 / 4.10:1 and therefore carry only non-essential or sufficiently large text;
-required small metadata uses `label-caption`, measured at 4.59:1 / 5.37:1. `label-dimmed` is a
-disabled or non-text paint and never the sole readable account of state.
+Measured on the base grounds, primary text is 19.9:1 light / 19.1:1 dark, secondary text is
+7.7:1 / 7.8:1, and the accent is 7.1:1 / 16.5:1. Tertiary (`zinc 500`) is 4.8:1 light and 4.1:1
+dark and therefore carries only non-essential or sufficiently large text in dark; required small
+metadata uses `label-caption`. `label-dimmed` is a disabled or non-text paint and never the sole
+readable account of state.
 
 The four former vendored sheets (`design-platform.css`, `effects-typography.css`, `scrollbar.css`,
 and `shiki.css`) keep their filenames but become first-party token sheets governed here. The
@@ -242,7 +252,7 @@ chrome 2 and 20, tooltip and menu 100, submenu 101, modal 1000, toast and onboar
 load-bearing rather than stylistic: sheets that style the scrollbar resolve against the same element
 the tokens are declared on, and an `html`-scoped rule cannot see them.
 
-Inkwell is `light`; Lumen is `dark`. The preference is `light | dark | system`, defaulting to
+The appearances are `light` and `dark`. The preference is `light | dark | system`, defaulting to
 `system`, and is stored only at `localStorage['cma:appearance']`. Invalid or inaccessible storage
 resolves to `system`; no historical key is read. The inline script immediately after `<body>`
 resolves the canonical value before first paint — resolving `system` through
@@ -257,18 +267,19 @@ sunset follows the machine.
 
 ## 4. Typography
 
-The interface has a self-hosted face for each appearance. This deliberately reverses the former
-no-interface-webfont rule:
+Both appearances use one self-hosted interface face and one code face, the shadcn/ui pairing:
 
-| Role      | Light — Inkwell                                                                                                                                                                                      | Dark — Lumen                                                                                                                                                                                |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Interface | `'Familjen Grotesk', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif` | `'Archivo', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif` |
-| Code      | `'IBM Plex Mono', 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei'`                                                           | `'JetBrains Mono', 'SF Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei'`                                                                   |
+| Role      | Both appearances                                                                                                                                                                  |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Interface | `'Geist', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif` |
+| Code      | `'Geist Mono', 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei'`                                          |
 
-Familjen Grotesk, Archivo, and JetBrains Mono are variable WOFF2 files. IBM Plex Mono has no official
-variable release, so weights 400, 500, and 600 are separate static WOFF2 files. Every family is OFL,
-is stored under `web/src/assets/fonts/` with its licence beside it, and uses `font-display: swap`.
-There is no font `@import`, Google Fonts link, or third-party request. The exact file list is tested.
+Geist and Geist Mono are variable WOFF2 files (weights 100–900) from Vercel under OFL 1.1. The
+earlier faces (Familjen Grotesk, Archivo, IBM Plex Mono, JetBrains Mono and Shrikhand) remain
+vendored for the brand lockups and the signed-out lockup until those assets are redrawn. Every
+family is OFL, is stored under `web/src/assets/fonts/` with its licence beside it, and uses
+`font-display: swap`. There is no font `@import`, Google Fonts link, or third-party request. The
+exact file list is tested.
 
 Bare `monospace` is forbidden because Windows may resolve it to a CJK serif.
 There is no terminal-specific font stack in this release.
@@ -314,18 +325,18 @@ The reference voice sits around that existing composite ramp:
 
 ## 5. Depth
 
-Depth changes with appearance. Inkwell shadows with warm brown, never black; Lumen separates by coal
+Depth changes with appearance. Light shadows with `zinc 950` at low alpha; dark separates by zinc
 luminance and black depth, then adds lime glow only to an accent element named in §2.
 
 | Whole-value token           | Light — Inkwell                                                      | Dark — Lumen                            |
 | --------------------------- | -------------------------------------------------------------------- | --------------------------------------- |
-| `--dsw-shadow-lv1`          | `0 1px 2px rgba(122,96,52,.10)`                                      | `0 1px 2px rgba(0,0,0,.45)` **derived** |
-| `--dsw-shadow-lv1-blur`     | `0 4px 12px rgba(122,96,52,.08)` **derived**                         | `0 8px 20px -8px #000` **derived**      |
-| `--dsw-shadow-lv2`          | `0 2px 4px rgba(122,96,52,.10), 0 8px 20px -8px rgba(122,96,52,.22)` | `0 20px 44px -14px #000`                |
-| `--dsw-shadow-lv3`          | `0 18px 44px -14px rgba(82,62,30,.32)`                               | `0 40px 90px -30px #000`                |
-| `--dsw-shadow-accent-hover` | the warm `--dsw-shadow-lv2` value                                    | `0 6px 26px -8px rgba(195,253,67,.35)`  |
+| `--dsw-shadow-lv1`          | `0 1px 2px rgba(9,9,11,.06)`                                         | `0 1px 2px rgba(0,0,0,.45)` **derived** |
+| `--dsw-shadow-lv1-blur`     | `0 4px 12px rgba(9,9,11,.06)` **derived**                            | `0 8px 20px -8px #000` **derived**      |
+| `--dsw-shadow-lv2`          | `0 2px 4px rgba(9,9,11,.06), 0 8px 20px -8px rgba(9,9,11,.12)`       | `0 20px 44px -14px #000`                |
+| `--dsw-shadow-lv3`          | `0 18px 44px -14px rgba(9,9,11,.18)`                                 | `0 40px 90px -30px #000`                |
+| `--dsw-shadow-accent-hover` | the neutral `--dsw-shadow-lv2` value                                 | `0 6px 26px -8px rgba(195,253,67,.35)`  |
 | `--dsw-glow-accent`         | `none`                                                               | `0 0 14px rgba(195,253,67,.35)`         |
-| `--dsw-ring-accent-soft`    | `0 0 0 3px rgba(14,97,172,.08)`                                      | `0 0 0 3px rgba(195,253,67,.10)`        |
+| `--dsw-ring-accent-soft`    | `0 0 0 3px rgba(63,98,18,.08)`                                       | `0 0 0 3px rgba(195,253,67,.10)`        |
 
 Every shadow, glow, and ring is a whole-value token. Component sheets never assemble a `box-shadow`
 themselves. A floating surface still carries a 1px border as well as shadow, so its edge survives on
@@ -408,6 +419,13 @@ leftover width.
 Below 1024px the sidebar auto-collapses, with an explicit override so somebody who opens it on a
 narrow screen keeps it open.
 
+**Phones have no rail.** Below the centre's 640px floor a permanent 56px rail would take a seventh
+of a 375px screen, so a collapsed sidebar takes no width and leaves the tab order. The centre gains
+the frame's only bar: 48px high, with a 44px **Show navigation** key and the current service name.
+The sidebar then opens as a sheet over the page, at most the viewport less 48px wide, behind the
+`bg-mask-1` scrim. The page behind is inert while the sheet is open. Escape, the scrim, or choosing
+a destination closes it. Between 640px and 1023px the rail and the automatic collapse remain.
+
 Column widths are **transient preferences**, not persisted state. Drag handles are 8px strips with
 pointer capture; the details edge shows a small pill on column hover, and the collapsed rail shows
 none — there is nothing to drag when the width is fixed.
@@ -418,29 +436,87 @@ The grid transitions its tracks, except while dragging, where the transition wou
 
 ## 10. The sidebar
 
-The brand row, browser tree, and account foot retain the established shell
-dimensions. The mark and wordmark link to Home and close Agent details. The
-navigation scope Picker sits between the build badge and the separate
-New agent icon button, which has its own hit area. When the Picker is available,
-the brand shows its mark without the wordmark, the header gap is 4px, the badge
-truncates within 8ch and the collapse control is 32px wide. The Picker fills the
-remaining width with a 60px minimum, 12px type and 4px inline padding; long names
-truncate while its menu shows the full choice. Collapsing hides the Picker and
-preserves its selected scope.
-The badge uses existing layer-2 ground, secondary ink and border,
-11px code type, 2px/4px padding and 4px radius; without the Picker it truncates
-within 11ch and exposes
-the complete build identity on hover. The standalone tool is 32px wide and 36px
-high; mobile header controls retain at least 44px height. Collapsing keeps the
-mark, separate creation tool and panel control. The browser region alone scrolls
-and fills all available space between header and account, with no competing spacer.
+The sidebar is how somebody gets to a conversation, so it spends its height on the list of Agents
+rather than on chrome.
 
-The tree is Sandbox -> Workspace -> Agent. Worktrees are facts of the Agent,
-not another navigable tree level. A Sandbox row shows name, status and pause
-notice; a Workspace row shows name and a repository/folder glyph; an Agent row
-shows title, state and last activity. Rows retain 32px minimum height and 8px
-radius, with consistent status/icon slots. Expansion state is scoped to the
-signed-in viewer and survives route changes.
+**Header.** One row: the CMA mark as the **CMA home** link (a 32px target), the **service menu**, and
+the 32px collapse key (**Hide navigation** / **Show navigation**). Clicking home opens `/`, the
+same landing before and after sign-in. The home landing starts with the sidebar collapsed on every
+visit; entering an app or service from home expands it, and direct service links start expanded.
+Within and between services the manual choice persists until the next visit home, browser history
+follows the same defaults, and below 1024px the automatic collapse still applies.
+
+**Service menu.** A button showing the current service's glyph and name, **Agent Manager** or
+**Event Gateway**, with a trailing chevron; its accessible name is `Service: <name>`. It opens the
+shared §12.3 menu titled **CMA services**. Agent Manager and Event Gateway are real links, so a
+modified or middle click opens a new tab, with the current one checked. **Image Manager** stays
+listed, `aria-disabled`, with the reason *Coming soon. Image Manager is not available yet.* under
+its label, and never routes. Consumer routes belong to Event Gateway. Collapsed, the button keeps
+only its glyph. The build revision is no longer in the header; it is the copyable **Build `<rev>`**
+row of the account menu.
+
+**Action row.** Directly under the header, in this order. Every entry is a plain full-width row,
+32px high: a 16px glyph, 8px gap, and a 14px label in the primary ink, with no border and no fill
+at rest and the hover ground on hover. Nothing in the sidebar is filled at rest, so the list of
+Agents, not the chrome around it, is what the eye lands on.
+
+- **New agent** is shown whenever the caller holds `use_own_sandboxes` and is not a visitor. When
+  it cannot be used right now it stays in place, `aria-disabled` at 40% opacity, with its reason in
+  12px secondary text beneath it and as its accessible description: *Switch to Personal to create
+  an Agent.* in Shared or Organization scope, *Checking your access.* while the scope is still
+  being confirmed.
+- **Search**, with its `⌘K` (Ctrl K elsewhere) key hint at the right in the tertiary ink and no
+  key-cap border, opens the command menu below. Visitors do not get it.
+- **Triggers**, a navigation row to `/triggers/manage` for callers who may publish Triggers and are
+  not visitors, current on every Trigger route, where it takes the active-item ground and medium
+  weight. It replaces the old *New agent trigger* row.
+
+Collapsed, each keeps only its glyph and a hover title. Below 30rem every row is 44px.
+
+**Filters.** One row holds the **Agents | Sandboxes** switch and the **Filter** key. The switch
+stays visible because it changes what the list is; it is two text tabs at 13px with no filled
+track: the selected one in the primary ink at weight 500, the other in the secondary ink. They
+keep their pressed-button semantics (`aria-pressed`, one Tab stop each) inside the group named
+**Navigation view**. Scope and status only narrow the list, so they sit behind the **Filter** key
+at the row's right: a 28px icon button (44px below 30rem) with the sliders glyph, named *Filter*.
+When any filter differs from its default (Personal, All statuses) a 6px accent dot sits at its
+top-right corner, and a 12px secondary summary line under the row names only the non-default
+parts, joined by ` · ` — *Shared*, *Working*, or *Shared · Working* — and serves as the key's
+accessible description. With every filter at its default there is no dot and no summary line. The
+key discloses a bordered panel with labelled **Scope** (Personal, Shared, `<Org> (Organization)`)
+and **Status** pickers and, once anything is applied, **Clear filters**, which returns both to
+their defaults. Each view keeps its own status choice.
+
+**Agents view.** One flat list of every Agent the scope shows, most recently active first, with no
+Workspace or Sandbox group headings. Each row is one line, 32px high (44px below 30rem):
+
+- A 16px leading slot that holds a 8px state dot (§12.1) only for a state that needs attention or
+  shows work — Starting, Working, Needs approval, Needs attention. Ready, Paused and Stopped draw
+  none; the slot stays so titles align with each other and with the action-row labels. The slot's
+  hover title is the status word.
+- The Agent title in 13px, truncated on one line with an ellipsis, full text on hover.
+- The relative age (12px tertiary, tabular) and the row's **⋯** menu at the right, shown only while
+  the row is hovered, holds focus, or is the current Agent. At rest the menu keeps its place
+  invisibly, so revealing it never shifts the title; it is still reached with Tab from its row.
+
+The status word is part of the row's accessible name even where no dot or word is drawn, so the
+list reads the same to a screen reader as before. The current row takes the active-item ground.
+Deleted Agents and removed Workspaces are absent; Agents of a paused Sandbox are dimmed but still
+open their conversation. The Shared and Organization Agent lists keep their two-line rows, which
+also carry each Agent's creation, channel and access facts.
+
+**Sandboxes view.** The tree is Sandbox -> Workspace -> Agent, grouped Live and Paused. Sandbox rows
+use the Sandbox's own name — the same selector the Sandbox page uses — never a generated
+`Sandbox Machine - <id>` label. Workspace labels use the selected Agent's confirmed runtime working
+directory, with the recorded workspace path as fallback. Agent labels share one selector with the
+Agent header and browser document title. An explicit native provider title takes priority, even
+when it equals the automatic setup message. A prompt preview confirmed by public provenance to come
+from automatic setup is omitted; the configured Agent name is the fallback. Preserve descriptions
+whose legacy provenance is unknown. Do not guess setup from wording or choose a task by its position
+among user messages: service-access callbacks can also use that role. Display selection leaves the
+raw runtime description and conversation history intact. Runtime metadata arrives through the
+public event stream, never a directory poll. Long labels truncate with ellipsis and expose full text
+on hover. Rows retain stable status/icon slots, and expansion belongs to the signed-in viewer.
 
 Agent metadata also shows its authorized immutable creation category in the
 existing secondary text style: Manual, Trigger, Channel, or Unknown origin.
@@ -450,23 +526,35 @@ activity filters. Loading and refused facts never become the Unknown origin
 category. No private actor or external source references appear in rows.
 
 Expansion and navigation are separate keyboard-operable commands, with named
-`aria-expanded` state. A collapsed group retains its count. Paused or reviving
-Sandboxes hide their descendants and expansion controls until fully Active with
-no pending lifecycle operation; revive has an explicit moving state that becomes
-a still glyph under reduced motion. Loading and failed child reads never
+`aria-expanded` state. A collapsed group retains its count. Paused, pausing and
+reviving Sandboxes retain descendant navigation and expansion for authorized
+Agent conversations and history. Runtime mutations remain unavailable until
+Active with no pending lifecycle operation. Revive has an explicit moving state
+that becomes a still glyph under reduced motion. Loading and failed child reads never
 masquerade as empty groups.
 
 Menus expose only public operations: Sandbox New workspace/Pause/Delete,
-Workspace New agent/Remove, Agent Stop/Delete. Destructive operations use §12.4.
+Workspace New agent/Remove, Agent Stop/Delete. A Workspace's New agent opens New
+agent in that Workspace rather than a new one. Destructive operations use §12.4.
 Visitors see their own hierarchy but no creation controls. Capabilities are read
 from the authenticated public snapshot, not inferred from a role label.
 
-The account row is the only foot content: avatar, name, and email. Long identity
-lines truncate within the fixed seat. Its upward-opening menu contains Profiles,
-capability-gated Bot settings, CMA Trigger, Developer, capability-gated Operations, appearance,
-and sign out. Profiles, Marketplace, publisher, Operations, and Developer use
-their canonical routes and work with refresh and browser history. Bot settings
-opens `/bots` from this menu; it is not a separate sidebar navigation row.
+**Command menu.** ⌘K on Apple keyboards and Ctrl+K elsewhere toggle it from anywhere, except while
+an input method is composing; the Search button opens it too. It is the shared §12.4 dialog, named
+**Command menu**, holding a 48px search field over a result list. The field is a combobox: focus
+stays in it while the arrow keys, Home and End move the active option, which wraps; Enter runs it
+and closes the menu, and Escape closes it. Results are grouped **Agents** (title, `<workspace> ·
+<sandbox>`, status word; most recent first), **Sandboxes**, **Workspaces**, **Actions** (New agent
+when it can be used now, Appearance: System / Light / Dark) and **Go to** (Agent Manager, Event
+Gateway, Triggers and Operations when permitted, Docs). Every word typed must match the label, its
+second line, its status or its group. At most 60 results are listed; an empty match says *No
+results.* The menu shows only what the shell has already read: opening it sends no request and
+starts no work. Visitors do not get it.
+
+The account row is the only foot content: avatar, name, and email. Long identity lines truncate
+within the fixed seat. Its upward-opening menu contains Docs, capability-gated Operations,
+Appearance, System text size, the copyable **Build `<rev>`** row (*Build revision copied* once
+copied; a refused clipboard leaves the revision readable) and Sign out.
 
 There is no Chat/Agent switch, session group, pricing control, or terminal plane
 choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
@@ -480,9 +568,41 @@ reduced motion or when hidden. Its geometry remains reserved while Three.js load
 
 ## 11. The centre column
 
-The header belongs to its surface: a Sandbox -> Workspace -> Agent breadcrumb,
-the Agent title and status, and compact Details and Interrupt controls. Other
-working views use the same restrained heading scale, not an oversized hero.
+**Every centre view starts with one page header**, so the same three questions — where am I, what
+state is this in, what can I do — are answered in the same place on every page. Top to bottom:
+
+- A **breadcrumb**, a `nav` named *Breadcrumb* holding an ordered list in 13/18 secondary text with
+  drawn `/` separators. Every step but the last is a real link (a modified click opens a new tab);
+  the last is the current page, `aria-current="page"`. Long steps truncate with their full text on
+  hover.
+- The **title** as the view's only `h1`, 20/28 semibold, truncating on one line, focusable
+  (`tabindex="-1"`) so a view can move focus to it. Beside it, the resource's **status** and short
+  facts in the code face as 22px chips, such as a Worktree branch or a Sandbox id.
+- An optional **description** line in 14/20 secondary text.
+- The **actions** on the right: at most one primary, one secondary, and a *More actions* menu
+  (§12.3) for everything else, destructive actions included, each unavailable row keeping its
+  reason. Below 48rem the actions take their own full-width row.
+
+The header has no padding or border of its own; each view places it in its own gutter. Breadcrumbs
+by view: Agent — `<Sandbox> / <Workspace> / <Agent title>` with the Worktree branch as a chip (a
+shared reader, authorized for the Agent but not its parents, sees `Agent Manager / <Agent title>`);
+Sandbox — `Agent Manager / <Sandbox>` with its id as a chip; Workspace — `<Sandbox> / <Workspace>`
+for its owner (a shared reader sees `Agent Manager / <Workspace>`); Agents — `Agent Manager / Agents`; Operations — `Operations / <tab>`; Triggers —
+`Triggers / <Trigger title>`; Event Gateway — `Event Gateway / Channels / <channel>` and `Event
+Gateway / Consumers / <consumer>`; Docs — `Docs / <document>`.
+
+The Agent header's actions are a Pin toggle and *More Agent actions*. The menu starts with
+**Show Agent details** / **Hide Agent details**, then the creation origin (§13), then **Stop agent**,
+**Export history** and **Delete agent**, with Delete unavailable until the Agent is stopped
+(*Stop this Agent before deleting it and its Worktree.*), every row unavailable while the Sandbox is
+not active, and every row held while another action is still being confirmed. These are the same
+public operations as the sidebar row menu, with the same confirmations. The Agent header folds its
+breadcrumb into the title line and collapses out of the way; §13 describes it.
+
+**The browser tab is named after the view**: `<view or resource> · CMA`. Services stay mounted
+while hidden, so each view registers its name rather than writing it: the most recently registered
+view that is on screen names the tab, and leaving or hiding a view hands the name back to the one
+behind it. A view whose name is not known yet registers nothing.
 
 There is no plane strip or terminal transition. Worktrees are Agent facts rather
 than another navigation band. The composer and history own the remaining height.
@@ -492,6 +612,12 @@ loaded history and the draft visible. A read error must not replace successful
 content or report an empty list. Errors and pending commands remain scoped to
 their resource. Boot reserves geometry and never disables sign-in while a
 decorative asset loads.
+
+When the service cannot be reached while checking identity, the page says so in words a person can
+act on: a 20px heading *CMA could not reach its service*, the line *It may be starting up. Reload
+to try again.*, a primary **Reload**, and the service's own sentence beneath as a 12px mono detail
+for whoever reads a report. Unreachable is never shown as signed out, and nothing on the page is
+coloured as an alarm.
 
 ---
 
@@ -522,7 +648,9 @@ pressable. Selection is an inset ring rather than a border, so moving it along a
 the row.
 
 A **state dot** is reinforcement and never the signal — it is `aria-hidden`, and every caller pairs it
-with the word, so a state reads the same to somebody who cannot distinguish the colours. Three of its
+with the word, so a state reads the same to somebody who cannot distinguish the colours. The
+one-line personal Agent list (§10) is the single place the word is not drawn beside the dot: there
+it is carried in the row's accessible name and the dot's hover title instead. Three of its
 four states are a solid core inside a same-coloured halo. The fourth is not colour alone: _running_ is
 a claim about right now, so its solid live core sends one expanding ping ring on a quiet loop. Under
 `prefers-reduced-motion: reduce` the ring is absent and the labelled core stays still. This replaces
@@ -531,6 +659,39 @@ the eight-cell 3×3 chase with the reference libraries' simpler liveness signal.
 A state that has ended draws **no dot at all**. Every state the dot has asserts something — succeeding,
 needing you, running, failed — and a finished Agent asserts none of them; painting it green because
 green was the nearest colour would claim it finished well, which is a different fact.
+
+**One tone per status word, everywhere.** Every resource status maps to one tone in
+`vocabulary/status.ts`, and the sidebar, page headers, tables and the command menu all draw it the
+same way:
+
+| Tone | Words | Dot |
+|---|---|---|
+| active | Starting, Working, Pausing, Resuming, Updating runtime, Updating access, Deleting | accent core with the ping |
+| neutral | Live, Ready | a quiet static dot in the tertiary ink, no halo |
+| warning | Needs approval | warning dot; the word takes the warning ink |
+| error | Needs attention | error dot; the word takes the error ink |
+| muted | Paused, Stopped, Deleted | no dot; the word in the secondary ink |
+
+Live and Ready are not the success colour: in dark that is the same lime as the accent, so a settled
+Sandbox read exactly like one that was working. A Sandbox with a lifecycle operation in flight takes
+the active tone of the operation's word. A sidebar status that may be stale draws no dot.
+
+A **badge** carries a status beside a title or in a table cell: 22px high at radius 6, a hairline
+border, the dot and the word in 12px medium, and no fill — a filled status beside a filled primary
+button reads as a second button. A badge whose status changes while somebody reads it announces
+politely.
+
+An **alert** is the one way a view says something about its resource: radius 12, one hairline, a
+glyph, the words and any actions on one row that wraps. Information (neutral ground and edge) and
+success (success glyph) are polite status updates; a warning (warning ground and edge) or an error
+(danger wash and edge) interrupts. Only the edge, ground and glyph take the tone; the words stay in
+the primary ink. A view stacks its alerts in one place under its header, 8px apart — on the Agent
+surface that is one grid row, so a second message can never be placed below the composer.
+
+**Loading reserves geometry.** A view that is loading draws a skeleton in the shape of what will
+arrive — rows for a list, the page outline while identity is checked — with one polite status
+naming what is loading. The shared `.skeleton` shimmer stops under reduced motion. Bare "Loading…"
+sentences and full-screen characters are not loading states.
 
 ### 12.2 Fields
 
@@ -549,7 +710,40 @@ bounds and converts to wire units at the boundary. Creation may select the
 exact pinned deployment-default profile, never an unrecorded resource default.
 Paired fields stack below 30rem.
 
-New Agent creation names **Sandbox environment** and **Project workspace**, with
+**New agent** is one step in one dialog titled *New agent*. Its description names
+where the Agent will work: *Start an Agent in a new Sandbox with an empty
+workspace.*, *Start an Agent with a new workspace in this Sandbox.* or *Start an
+Agent in the selected workspace.* **Where it works** is a radio group of bordered
+choice rows at radius 10 with 12px padding, two columns from 30rem and one below:
+*New Sandbox* (second line *Latest CMA runtime image*), then *New workspace in
+<Sandbox>* for each of the owner's Sandboxes, then *<Sandbox> / <Workspace>* for
+each of their Workspaces. A Sandbox or Workspace row shows its status badge as its
+second line. The selected row takes the accent edge and the accent wash. A row
+that cannot be used now stays listed and `aria-disabled`, with its reason as its
+second line: *Available when the Sandbox is active.* for a Sandbox that is not
+Active with no pending operation, *The Workspace is not ready.* for a Workspace
+that is not Ready, and *You don’t have permission to create a Sandbox.* for New
+Sandbox without that capability. Arrow keys move between rows and select a usable
+one. The rows come from the same public Sandbox and Workspace reads as the
+sidebar; until they arrive the target the dialog was opened for is still
+selected. Opening New agent from a Sandbox selects its new-workspace row, and
+from a Workspace selects that Workspace, whose Agent is created there through the
+lifecycle request's `workspace_id`.
+
+**GitHub repository (optional)** keeps its strict HTTPS github.com rules. It is
+checked when the field loses focus and on Create agent, never while typing; the
+error *Enter an HTTPS GitHub repository URL.* is announced once when it appears
+and leaves as soon as the value is valid. A read-only **Agent settings** summary
+reads *gpt-6 · High · Autonomous*; there is no control to change it here. The
+footer starts with the note *Includes chrono-llm-public and ornn-api access.* and
+ends with Cancel and the primary Create agent, which reads *Starting
+provisioning…* while the request is pending and *Recover creation* while a
+retained request is unconfirmed. Each location keeps its own retained request,
+so choosing a location with an unconfirmed one shows its recovery. The choice is
+locked while a request is pending and once a receipt exists. Labels and help use
+the shared field label and hint voices.
+
+The profile-based compatibility creation names **Sandbox environment** and **Project workspace**, with
 short 13px secondary explanations of the environment and the project folder.
 The profile step explains model, skills and independence; optional title and
 first-message fields explain their effect. Deleted and deleting resources are
@@ -616,14 +810,23 @@ the width is measured with the position.
 
 ### 12.4 Dialogs, and confirming something irreversible
 
-One card: 440px at radius 16 on layer 2, behind the theme's `bg-mask-1` and a blur — dimming alone
-leaves the page behind legible enough to keep reading, which is the one thing a dialog exists to stop.
-It portals out of the page, because an ancestor that establishes a stacking context leaves sticky
-chrome floating above the mask and no z-index can reach past it. The page behind does not scroll while
-it is open.
+Every modal uses the shared Modal primitive: one centered card on layer 2,
+behind the theme's `bg-mask-1` and blur. Width is `min(700px, 60vw)` and maximum
+height is `60dvh` with a `60vh` fallback. All four card edges stay at least 20%
+inside the whole viewport, including on narrow screens. No call site overrides
+width, height or placement. Header and wrapping footer retain the shared style;
+long contents scroll inside the body. Radius remains 16px. The overlay portals
+to the document root and locks background scrolling. Anchored selection menus
+and tooltips retain their menu semantics and are not modal dialogs.
 
-The two named wide forms remain 700px and 1000px. Every size is capped to the viewport; 440px is the
-base, not a minimum that can overflow a phone.
+At a viewport width of 480px or less the card takes the full width less a 16px
+gutter on each side: 60% of a 320px phone is 192px, too narrow for a form's fields
+or its footer keys. At viewport widths or heights of 480px or less, the entire card scrolls instead
+of shrinking the body between the header and footer. Content keeps its natural
+height so every field, close control and footer action remains reachable. The
+same centered card bounds, padding, radius and 20% margins still apply.
+Shared input wrappers may shrink to their available width without forcing a
+narrow dialog to scroll horizontally.
 
 Closed dialogs release their focus trap and return focus immediately. Their inert,
 accessibility-hidden exit frame may remain for the shared 200ms opacity fade,
@@ -632,7 +835,7 @@ while open; Escape closes a dismissible dialog. Reopening during the fade cancel
 the pending removal and restores one active dialog.
 
 A width chosen per call site is how two dialogs asking the same kind of question end up different
-sizes. The exceptions are named classes a reviewer can find, never a size prop.
+sizes. There are no per-dialog geometry exceptions or size props.
 
 **No dialog opens over a dialog.** A surface that must ask something while one is open asks in place of
 the row's own controls — which is also what a reversible destructive action does.
@@ -671,23 +874,101 @@ The footer moves backward with a secondary **Back** key and forward with the ord
 A step that states a cost states the rate the service supplied and never projects a total. A projection
 assumes how long somebody will work and presents a number the service will never actually charge.
 
+### 12.6 Tables
+
+Records somebody compares across rows — channels, consumers, Operations records — are a real
+`table` with column headers, so a row reads the same to a screen reader as it does to the eye. A
+list of cards or bare rows makes every reader rediscover which line holds which fact. One shared
+table carries them all:
+
+- The table sits in one box with a 1px level-2 border at radius 12. A **40px header row** on the
+  layer-1 ground names every column in 12px medium secondary text.
+- **Body rows are 52px**, 14/20 primary text, 16px from the box edges, divided by a 1px level-2
+  hairline — no zebra stripes, and no hover fill, because a row is not itself a control. A slug,
+  identifier or image reference takes the code face; a count is tabular.
+- **Row actions** take the last column, right aligned, in compact §12 buttons. Its header is
+  visually hidden but still read (*Actions*), so the column is announced without printing a word
+  that adds nothing on screen.
+- A row that has to say something about itself — a failure, an unconfirmed outcome, a retained
+  draft — gets a **note row** directly beneath it, spanning every column with no divider between the
+  two, so the note reads as part of its row rather than as the next record.
+- **Loading** draws three skeleton rows in the table's own columns, with one polite status naming
+  what is loading. **Empty** keeps the headers and says so in one row spanning every column, with the
+  view's create action when the caller may create. A failed refresh keeps the last rows and reports
+  in an alert above the table.
+
+A table never widens the page. Its box scrolls horizontally inside itself; below 48rem the table
+keeps a 40rem minimum width so its columns do not crush into one-word lines, and the box is a
+named, keyboard-focusable region so that scrolling does not need a pointer.
+
 ---
 
 ## 13. The Agent conversation surface
 
 An Agent owns one conversation in one Worktree, Workspace, and Sandbox. There is
 no separate Chat surface. The fixed header names the Agent and its Workspace and
-Sandbox ancestry. A 748px reading axis holds the durable history and live turn.
-Rows are neutral flow items; the composer has a stable seat below the scrollport.
+Sandbox ancestry. The history and the composer share one centred reading axis, at most 768px wide
+including the avatar column, like a desktop agent client's reading column: a reply
+stays at a comfortable measure however wide the screen is. The cap is in pixels, so the
+reader's text-size preference scales the text and not the measure. Below it the axis
+keeps at least 24px of side gutter. Container queries measure the space
+remaining beside the sidebar: at 48rem or less, use 24px side gutters; at 30rem
+or less, use 14px. History, lifecycle sections and the composer share these
+gutters. Rows are neutral flow items; the composer has a stable seat below the scrollport.
 
 The owner's message is right-aligned on the existing accent wash, capped at the
-smaller of 525px and 82% of the axis. The Agent message is unboxed at 16/28.
+smaller of 525px and its available message column. The Agent message is unboxed at 16/28.
 Use the existing markdown parser and theme tokens. Tables and code scroll within
 their own bounds; long words and links cannot widen the reading axis.
+Inline code is quiet, because replies name many identifiers: the code font at
+0.875em, 1px × 4px padding, radius 4 on the `markdown-inline-code` ground, with no
+border. Code blocks keep their framed ground.
 
-One active Thinking disclosure sits outside the conversation scrollport, on the
-same reading axis directly above the composer and its quick messages. Incoming
-text and manual history scrolling cannot move it out of view. Its 44px control
+A run of consecutive messages from one author shows its identity once. The first
+message of a run has a 32px circular avatar beside its reading column,
+separated by 12px, with a 1px border-l2 edge. User avatars sit at the right; Agent avatars at the left. The
+name uses caption ink at 12/18, weight 600, with 4px before the content. A message
+whose previous message has the same role continues the run: it keeps the empty
+32px avatar column, so its text stays aligned, and draws neither avatar nor name.
+Tool calls, plans, reasoning, approvals and notices between them do not break a
+run, because they are the same author at work. The message keeps its accessible
+name either way. The Agent
+name is always **Chrono Agent**, and its avatar is the CMA mark (§21) drawn inline as SVG in
+`brand-primary` ink on a `bg-layer-2` circle, so it follows the appearance with no raster ground
+of its own; message rows do not start WebGL scenes. Personal user
+messages use the current signed-in display name and avatar, falling back to the
+account handle and then **You**. Missing, unsafe or failed avatar images show
+centered uppercase initials at 12/18, weight 600, on the avatar fallback aliases.
+Only HTTPS avatar URLs and local absolute paths are rendered, without a referrer.
+Names wrap instead of widening the message column. Avatars are decorative beside
+the visible name. Durable, streaming and optimistic messages use the same layout
+and identity. Shared messages without author identity say **Participant**, never
+the viewer's name. Identity rendering does not alter message text or attribution.
+
+An explicit Send or quick-message action immediately adds its text to the
+owner's message flow before connection or network checks finish. Preserve line
+breaks and use the existing caption label token at 12/18 for **Sending…**.
+On valid Send, immediately hand the visible text and ready attachment records to
+that outgoing row and show an empty, editable composer. Retain the original draft
+snapshot until authorized acceptance; only then show **Sent** and discard that
+snapshot. A refusal or uncertain outcome restores untouched input and ready
+attachments without uploading again. New typing belongs to the next draft and
+must never be cleared or replaced by a late callback, even when its text is
+identical. Its earlier outgoing row still retains the submitted text and exact
+file references. Uncertain delivery shows **Awaiting confirmation**; a cancelled
+connection check or authoritative admission refusal shows **Not sent**. These
+local rows never submit or retry an input. Quick messages preserve the current draft.
+Reconcile with durable user messages by command or run identity, never text,
+so intentional identical messages remain separate. Account, Agent and access
+changes invalidate both local rows and late draft-clearing callbacks. Retained
+pending requests keep the existing explicit same-request recovery action.
+
+One active Thinking disclosure follows the current Agent reply and settled turn
+activity inside the conversation scrollport, before queued follow-up messages.
+Its left edge aligns with the Agent avatar and message row's left edge, without
+the message body's avatar-and-gap inset. Before the first reply, it uses the same alignment.
+It is transient turn status, never a persisted message or an extra transcript row.
+Its 44px control
 places the existing compact, rotating running CMA character before Thinking,
 followed by elapsed seconds and a single-line current-activity preview. Clicking
 or keyboard activation opens the existing 120px capped body, containing current
@@ -696,19 +977,69 @@ the shared visibility, static fallback and reduced-motion behavior in §23.
 The elapsed figure comes from the recorded active turn's start timestamp, so
 navigation, reload and reconnect do not reset it. A new turn uses its own start;
 an unavailable timestamp leaves the duration unstated rather than inventing zero.
-Thinking leaves the dock when the turn finishes, fails or stops. Reasoning is
-live-only and never presented as recovered history.
+Thinking leaves the conversation when the turn finishes, fails or stops. Reasoning
+is live-only and never presented as recovered history. Appearance and disappearance
+fade and expand/collapse over the shared 200ms duration; the exit is immediately
+inert and leaves no spacer after removal. Recorded reply growth may ease the status
+row's measured vertical movement over the same duration without animating message
+text. Reduced motion skips these transitions and cancels active motion. The
+existing follow-output behavior remains authoritative: reviewing older history
+never forces the reader back to the status row. Elapsed time, current activity and
+turn token reporting retain their existing sources and do not reset on relocation.
+On narrow screens the token line wraps within the message content width so actual
+counts and explicitly labelled estimates remain readable.
 
-Each settled tool call has its own neutral, 8px-radius bordered container in the
-message timeline, inserted at its completion position and retained on reload.
-Use 12px padding and the existing 16px entry rhythm. Show the recorded title,
-kind, written status and reported duration with wrapping text; failed and stopped
-calls remain individually inspectable. A call left pending by an ended turn
-states that its outcome was not reported, without inventing success or failure.
-Tool activity never invents missing arguments or results. Tool bodies are absent
-unless the public contract supplies them, use bounded disclosure when present,
-and unknown duration is not zero. Live and replayed activity reconcile by call
-identity without duplicate cards or regression to pending after completion.
+Tool activity is one quiet line in the timeline, not a box: no border, ground
+or radius. It reads in 13/20 secondary ink, so the replies around it lead.
+Each settled tool call is a row inserted at its completion position and retained
+on reload, named **Tool call: <title>**. Rows use 8px vertical padding; a tool
+line is 28px tall with 12px after it, and a message leaves 8px below its footer. The
+row leads with a state dot and pairs it with a plain word: **In progress** (the
+pinging dot, still under reduced motion), **Completed** (done dot), **Failed**
+(error dot), **Cancelled** (no dot) for a call the provider reports as cancelled
+or stopped, and **Outcome not reported (last status: <status>)** (neutral dot)
+for a call left pending by an ended turn, without inventing success or failure.
+The recorded title and kind wrap beside the word. A duration appears only when
+the public contract reports one; it reports none today, so no row carries a
+duration or a "not reported" filler, and unknown duration is never zero. Tool
+activity never invents missing arguments or results: the recorded detail sits
+behind a bounded **Details** disclosure only when the contract supplies it.
+
+Two or more consecutive tool calls, with no message, approval, plan or notice
+between them, form one group. Its header is a text button with `aria-expanded`:
+a chevron and **<n> tool calls**. While a call in the group runs, the header adds
+**· Running <title>**, truncated with an ellipsis; when calls failed it adds
+**· <n> failed** in error ink. A settled group repeats no command line. The
+header has the hover ground only on hover. A collapsed group hides its rows; an
+expanded one lists every row with the same dot, word and disclosure, indented
+past the chevron against a 1px border-l1 rule on its left. A group
+containing a failure starts expanded, and stays so until the reader collapses it;
+otherwise it starts collapsed. A single call stays a single row. Live and
+replayed activity reconcile by call identity without duplicate rows or
+regression to pending after completion.
+
+A plan the Agent reports through the public stream (`plan_set` in the durable
+history and Responses v2, the `/plan` state on AG-UI) renders as a **Plan** card
+in the timeline: an eyebrow "Plan" and one row per entry, its title wrapping
+beside a status badge. The badge reads **Done** (neutral), **In progress**
+(active) or **Waiting** (muted); an unfamiliar status is shown verbatim, muted,
+rather than mapped to a guess. Each turn has at most one card, placed where that
+turn first reported a plan and replaced in place by the turn's latest report,
+because a provider restates the whole plan on every change. Plans render when
+the public stream carries them; history read from the transcript alone has no
+plan, and no card is invented for it.
+
+An approval is a card in the timeline at the point of interruption, on the
+layer-1 ground with a warning-toned hairline and radius 8. An eyebrow reads
+**Approval**; the request's action reason is the heading and its detail the
+body. Below them sit **Deny**, **Abort** and the primary **Allow**, each over a
+one-line caption that states its effect: Deny refuses this request and lets the
+Agent continue another way; Abort cancels the request without an answer; Allow
+lets the Agent go ahead. The captions describe the buttons, they do not rename
+them. The buttons hold while an approval command is pending or input is not
+allowed. A viewer without authority reads **Waiting for an authorized
+participant to answer this approval.** in place of the buttons. A resolved
+approval shows its recorded decision instead.
 
 AG-UI identifies the thread by Agent id and the run by durable turn sequence.
 Live content can arrive without a preceding START frame. It must be visible
@@ -719,15 +1050,17 @@ history without losing an unsubmitted draft or replaying already committed text.
 If the authorized Agent, transcript, usage and Workspace reads succeed but an
 event-history page is temporarily unavailable, keep the known conversation
 visible. The existing status band names incomplete activity and automatic retry;
-it is not complete-history acceptance. Keep the draft editable, but hold Send,
-approval actions and live replay until a complete history read succeeds. Retry
+it is not complete-history acceptance. Keep ordinary message input available once
+current access, identity, connections and Sandbox eligibility are verified. Hold
+approval actions and history-dependent turn controls until their recorded targets
+are available. Retry
 from the start so missing tool and approval pages are not skipped. Authentication
 or permission denials and malformed identities remain explicit failures.
 
-After the first authorized event-history page, show the known transcript while
-remaining activity pages load. Use the same status band to name loading, retain
-the editable draft, and hold Send, approvals, lifecycle controls and live replay
-until history is complete. The snapshot's sequence does not skip activity pages.
+Show the current authorized transcript as soon as it arrives, independently of
+usage and rich event pages. Rebuild older activity offscreen; keep newer live
+messages and the draft when hydration completes. History-dependent controls
+remain held. The snapshot's sequence does not skip activity pages.
 
 For new Agent tabs, the authenticated transport eligibility selects Responses v2
 input with independent rich Agent snapshot/tail observation. Retain the tab's
@@ -735,8 +1068,77 @@ selection through reloads and flag changes; existing AG-UI tabs keep their
 transport. Preserve an uncertain message or response action with its exact key,
 body and original target. Use the existing status band and compact Button for
 **Recover pending request**; recovery is explicit and never retargets an action.
-Keep the draft editable and clear only the draft matching a retained acceptance.
+Keep the draft editable; the immediate visual handoff retains its original
+snapshot until matching acceptance and restores untouched input on uncertainty.
 A refused intent may be corrected after an authoritative admission refusal.
+
+Responses v2 may load Agent/Workspace details, usage and the first activity page
+concurrently. Publish identity-checked Agent/Workspace metadata after a fresh
+account check to enable ordinary input, then the latest transcript as soon as it
+arrives. Send still requires current Sandbox state and required connections; an
+early activity page alone does not authorize interaction. Rich history completes
+independently with its own fresh authorization check.
+
+Once a retained creation operation names its actual Agent, its modal may prepare
+that exact Agent's transport and owner-authorized connection check while lineage
+is checked. Transfer both once to the same Agent, owner and client after personal
+access is verified. Transfer the same v2
+selection once into navigation, keeping the loader's fresh account check and the
+existing persisted transport choice. Closing or changing the creation scope
+cancels preparation; account and local sign-in epoch changes invalidate it. A
+reload uses the normal freshly authorized opening path.
+
+After current personal access is verified for an exact Agent, check required
+connections while its conversation loads. Keep the result bound to that Agent,
+viewer, client and uninterrupted authorization generation. Refused or uncertain
+access discards the result and cancels pending checks. Send still waits for
+current Sandbox eligibility. A v2 send may consume the creation's
+transferred ready connection report once, within one second of receiving it on a
+monotonic clock. Opening settings, a known grant/profile change, loss of focus or
+visibility, or a changed authorization scope discards this handoff. Ordinary,
+expired and subsequent sends freshly check connections before submitting the
+captured draft; missing connections keep the existing recovery dialog. Every send
+still freshly checks account identity and the server independently authorizes
+admission and execution, including required connections before dispatch. No extra
+preparation notice is introduced.
+
+The same current personal access read may supply immutable Agent, Workspace and
+Sandbox IDs to overlap fresh reads. Load the Workspace beside the Agent after
+the normal v2 entry identity check, then verify both fresh projections against
+those IDs before the final account check and any publication. Observe the parent
+Sandbox while history loads; that observation admits input only with current
+identity-checked Agent metadata and required connections. Owner/client/access changes,
+visibility loss, observation expiry and newly discovered bootstrap authority
+retain their existing invalidation and recheck behavior. A changed lineage
+requires a new load and cannot reuse the previously loaded view.
+
+A newly admitted Agent may open while its recorded state is **Starting**, after
+verified Agent/Worktree/Workspace/Sandbox lineage and a fresh Active parent without
+an operation or save in progress. The server may also explicitly prove the exact
+creation operation's bootstrap lineage while its owned parent is Provisioning or
+Installing. That proof permits opening the actual Starting Agent and durably
+queuing v2 input before the runtime is ready. Match the creation receipt when
+opening from its modal; before enabling bootstrap input, freshly read both the
+exact Agent and parent, match the current owner and all lineage identifiers, and
+require no parent operation, checkpoint or checkpoint refusal. A missing,
+withdrawn or mismatched proof holds input. AG-UI does not use this allowance.
+An unresolved Worktree retains its empty commit and actual creation state;
+queued acceptance never claims runtime readiness. Keep the actual Starting label and recorded
+preparation visible. Responses v2 tabs offer the normal editable composer,
+**Message Agent** placeholder and **Send message** without an extra Starting or
+sending notification in the composer. Hand off its visible draft immediately and
+retain the snapshot until durable admission; the creation first
+message keeps its earlier queue position. Existing AG-UI tabs wait for readiness.
+Missing/stale parent state, access uncertainty, saving or lifecycle changes hold
+Starting input and its explicit uncertain-request recovery.
+
+Early navigation retains the owner-scoped creation request and follows its
+operation on the Agent page until confirmed success. If a worker restart requires
+connections again, reuse the status band and compact **Continue Agent setup**
+Button, then the existing connection dialog. A successful check resumes the same
+request; navigation and reload alone never resubmit it. A read failure offers
+**Retry setup status** without replacing the conversation or draft. Viewer,
+client or Agent changes cancel pending setup reads and connection callbacks.
 
 For the latest locally accepted message, a fresh public observation may offer
 **Cancel queued message** before execution starts. Reuse the existing status
@@ -749,12 +1151,14 @@ incomplete history and read-only access hold its actions. The draft and any othe
 active response stay visible while status observation and cancellation proceed.
 
 Responses v2 tabs offer **Queue message** beside **Stop response** while a turn
-is running, using the existing circular composer buttons. Keep both controls
-centered on the same row beside the input, with a flexible input column and two
-40px button columns (44px on mobile), separated by the existing 8px gap. Enter
+is running, as two circular buttons at the right end of the composer's control
+row. The steering chip beside the permission chip says whether that button
+queues or interrupts; it appears only while a turn runs, because outside a turn
+both modes send ordinary input. Enter
 and Trigger
 quick messages admit ordinary queued input; they do not steer the running turn.
-Keep the draft editable and retain it until admission is confirmed. An uncertain
+Keep the next draft editable while retaining the submitted snapshot until
+admission is confirmed. An uncertain
 earlier input holds another queue submission until explicit recovery. Existing
 AG-UI tabs retain their current composer behavior during protocol migration.
 
@@ -766,8 +1170,80 @@ local sign-in epoch changes clear the prior view before any new-account read is
 shown. A live gap discards uncommitted partial text and Thinking while preserving
 recorded messages, settled tools and the turn's original start time.
 
-The composer uses its existing capsule, send/stop icon seat, focus treatment, and
-bounded growth. Stop interrupts the current turn; it does not delete the Agent.
+The composer is **one rounded box**: radius 16, a 1px `border-l2` hairline and the
+level-1 shadow, on the floating-card ground (`--dsw-specific-menu`: white in light,
+layer 2 in dark). Focus within the box draws its hairline in the accent. The draft
+sits on top at 16/24 with the placeholder **Message Agent**; it starts at one line,
+grows with its content up to the smaller of 336px and 40dvh, then scrolls inside
+the box. The box grows upward from a stable bottom edge and never overlays history.
+Attachment thumbnails and upload records sit above the draft. Initial conversation
+and composer focus must not scroll the frame while its columns animate.
+
+The **control row** is inside the box along its bottom edge, with 32px controls
+(44px below 30rem) and 4px gaps. On the left: **Attach files** as a + icon button
+with its paste/drop hint in the title, the permission chip, and the steering chip
+while a turn runs. On the right: the model and effort chip, the context ring, and
+the Send (or Queue/Interrupt) and Stop circles. There is no settings row and no
+usage row below the box. A chip is quiet: 12/18 secondary ink, no border, radius 8,
+an interactive hover wash, a leading icon or trailing chevron. Send is a 28px
+circle (44px below 30rem): a neutral `bg-layer-3` ground with dimmed ink while
+there is nothing to send, the primary fill once the draft is ready. Below 30rem
+the permission and steering chips show only their icons and keep their names as
+accessible names; while a turn runs there the row wraps, putting the model chip,
+ring and buttons on a second line.
+
+The **permission chip** is a shield and **Guarded** or **Autonomous**, named
+*Permission mode*; it opens the shared dropdown (§12.3) with those two rows. The
+**steering chip** shows **Queue** or **Interrupt** and opens the shared dropdown
+with each mode's reason. The **model and effort chip** reads `<model> <Effort> ⌄`
+(the catalog label, else the model id) and is named *Model and reasoning effort*
+with both values. It opens a popover card drawn on the body like a dropdown list
+(§12.3): radius 12, the menu fill, an inverted hairline, the level-3 shadow,
+256px wide and nudged inside the viewport, above the chip. The card holds:
+
+- the current effort word (Minimal, Low, Medium, High, Very high) as its heading,
+  14/20 semibold in the accent ink, and at the top right a 24px reset icon button,
+  **Reset to current settings**, which returns model and effort to the Agent's
+  confirmed settings and is unavailable when they already match;
+- the model name with a `›` chevron, named *Model*, opening the shared dropdown of
+  the model catalog with each unavailable row keeping its reason; catalog loading,
+  failure (with **Retry models**), emptiness and runtime-capability notices sit
+  under it in 12/18 caption ink;
+- a discrete slider named *Reasoning effort*: a 4px rounded `bg-layer-3` track with a
+  6px dot per stop, filled in the accent up to a 16px round thumb on the
+  menu fill with an accent edge. It is operated by pointer or with the arrow keys,
+  Page Up/Down, Home and End, and announces the effort word as its value text. The
+  stops are the effort levels the settings contract accepts; the model catalog
+  reports no narrower set per model.
+
+Escape or a press outside closes the card and returns focus to the chip; Escape
+inside the open model list closes only that list.
+
+Choosing a model, effort or permission changes a **draft**: the explicit Apply
+rule, turn-idle and runtime-capability gating, and same-request recovery are
+unchanged, and changes never submit conversation input. A settings status line
+appears inside the box under the control row only when there is something to
+say, in 12/18 caption ink: **Apply settings** or **Retry settings update** as a
+compact button, *Applying settings…*, *Waiting for the runtime to confirm these
+settings.*, *Settings can be changed after the current turn finishes.*, an error,
+or the transient *Settings applied to this Agent.* (three seconds). While an
+update is pending or retained the chips stay readable but their controls hold.
+
+The **context ring** is a 20px ring in a 32px target (44px below 30rem), named
+*Context usage*. A 2.5px neutral `border-l2` track carries an accent arc drawn to
+scale of context used against the reported limit; without both figures the ring
+draws only its track, never an empty arc that reads as zero. Hover or keyboard
+focus opens a tooltip above it on the tooltip ground with inverted ink, 12/18,
+radius 8 and 8px by 10px padding, listing **Context** `<used> / <limit>` (or the
+used figure alone, or *not reported*), **Total tokens** `<input + output>` with
+`<input> input · <output> output`, and **This turn** with its input and output
+when the current turn reports usage. Figures are tabular; a missing figure reads
+*not reported*, never zero. Escape dismisses the tooltip without moving focus.
+
+Pasted screenshots use the clipboard's file items when its file list is empty;
+plain text paste retains normal editing behavior. A confirmed message includes
+both the text and the exact uploaded attachment paths for that Agent.
+Stop interrupts the current turn; it does not delete the Agent.
 Approval decisions are explicit at the point of interruption. Only public API
 operations appear as commands.
 
@@ -776,12 +1252,29 @@ the draft. Track composition lifecycle as well as native composition flags and
 the IME key code used by Safari. Ordinary Enter sends after composition ends;
 Shift+Enter inserts a newline. Composition completion alone never sends.
 
-The conversation header labels immutable creation as Created manually, Created
-by Trigger, Created by channel bridge, or Creation origin unknown. A missing or
-refused read says Creation origin unavailable. A resolvable published Trigger
-appears separately as a native link labeled Published Trigger; later Trigger
-reuse cannot relabel an Agent. Source loading or failure does not block history
-or ordinary messages. Do not substitute internal IDs for missing display names.
+The **Agent header** is one compact line on the base ground with a bottom hairline:
+the breadcrumb's Sandbox and Workspace links, then the title as the view's `h1` at
+14/20 semibold, its status badge and the branch chip, and at the end a Pin toggle
+and *More Agent actions* (§11), 32px controls with 8px 20px padding. It is
+**collapsed by default** to a 28px strip that shows only the title in caption ink.
+Hovering the strip or moving keyboard focus into it reveals the full line as an
+overlay above the conversation, on the same ground with the level-1 shadow, so
+the conversation never moves; it fades over the shared fast duration and stays
+while the pointer, focus or an open menu is inside it. The heading stays in the
+document and focusable for the surface's focus-on-open behaviour, and Tab reaches
+the breadcrumb links and actions in the collapsed strip, which reveals it.
+**Pin header** keeps the full line in flow; **Unpin header** collapses it again.
+The choice is remembered per viewer in the browser's local storage; a storage
+read or write that fails leaves the header unpinned and never breaks the view.
+
+The More Agent actions menu labels immutable creation as Created manually, Created
+by Trigger, Created by channel bridge, or Creation origin unknown, in a heading row
+after the Details toggle. A missing or refused read says Creation origin
+unavailable. A resolvable published Trigger appears separately as a link row
+labeled **Published Trigger: <title>**; later Trigger reuse cannot relabel an
+Agent. A subscription Agent offers **Sign in to your ChatGPT subscription again**
+in the same menu. Source loading or failure does not block history or ordinary
+messages. Do not substitute internal IDs for missing display names.
 
 An unframed, wrapping row directly above the composer contains up to eight
 publisher-defined quick-message buttons. Use existing compact outline buttons,
@@ -805,6 +1298,10 @@ unchanged. Retired Triggers expose provenance but no new quick-message actions.
 
 ### Preparation, pause, and recovery
 
+While the New agent request is in flight, show **Starting your Agent…**. Show
+same-request recovery wording only after the request has stopped waiting without
+a receipt; a healthy admission must not flash a recovery instruction.
+
 Preparation has stable step rows from Sandbox events and current instance facts:
 software installation, Workspace preparation, Worktree creation, Agent startup,
 and optional first-message delivery. Never infer successful work from elapsed time
@@ -821,6 +1318,24 @@ inventing token progress. A readiness timeout keeps the draft available. Runtime
 replacement is a quiet status notice, not an automatic failed state. When a
 checkpoint boundary is known, show its recorded time without claiming later work
 was captured. The owner never has to recreate the Agent after a rollout.
+
+An unexpected interruption has a concise recovery notice in the Agent conversation
+and Sandbox page. Only an explicit recorded out-of-memory cause names the configured
+memory. Unknown causes display **Internal error** without inventing a more specific
+diagnosis; the current recorded stage separately shows recovery progress.
+Historical interruption text never claims recovery is still running.
+Match the interruption time to the
+current operation before attributing a new recovery to an earlier interruption.
+The shared 44px character animates beside the actual recorded stage, with the
+existing visibility and reduced-motion behavior. Use layer-2 fill, a layer-2
+border, 12px radius and padding, a 12px gap and the existing 14px body voice.
+Stage text fades with the existing transition duration; it never advances on a
+timer. Entrance and exit use Presence. Failed recovery shows the recorded
+remediation and keeps history and draft editing available. Only an observed
+recovery-to-active transition shows a dismissible ready notice, which expires
+after eight seconds and is not replayed on navigation. The last interruption and
+its time remain in a closed Sandbox details disclosure. Saved-home stages name
+verification and reconnection, without inventing downloads or file percentages.
 
 The Agent conversation independently reads its exact public Sandbox while open,
 using the settled five-second and saving 1.5-second refresh cadence from §16.
@@ -850,10 +1365,19 @@ Profile model, effort, permission and skills; first-message state; and the
 separately confirmed Stop/Delete controls. No credential, provider token, private
 runtime authority, or internal checkpoint writer identifier is displayed.
 
-Usage and context sit below the composer with tabular figures. Missing usage is
-not zero. A context ceiling adds a neutral 2px track no wider than 240px, with
-accessible numeric values. Without a reported ceiling, show only the known
-figure. Context-summary boundaries use neutral metadata, not failure colour.
+**Service access** in the drawer is read-only. The NyxID key belongs to the
+Sandbox, not to one Agent, so it is edited in one place, the Sandbox page's
+Access tab (§17). The drawer lists the effective services as plain rows of
+catalog names, with chrono-llm-public and ornn-api followed by the word Required
+in the tertiary label colour, and ends with **Manage on Sandbox**, a real link to
+`/sandboxes/<id>?tab=access`. **Sandbox operation progress** opens the same
+page's Activity tab. How the panel is laid out is specified under Agent details
+panel below.
+
+Usage and context are read from the composer's context ring and its tooltip, with
+tabular figures. Missing usage is not zero. Without a reported ceiling, the tooltip
+shows only the known figure. Context-summary boundaries use neutral metadata, not
+failure colour.
 
 ### Organization inventory and shared Agent views
 
@@ -914,8 +1438,8 @@ Keep personal lifecycle pages behind their own accessible-resource classificatio
 
 ### Owner sharing
 
-The existing **Sharing** button in personal Agent Details and Sandbox actions
-appears only after current effective permission allows sharing management. Use
+The existing **Sharing** button in personal Agent Details, and the **Sharing** row
+of the Sandbox page's More actions, appear only after current effective permission allows sharing management. Use
 the existing Modal, Picker and Button primitives. The dialog starts on the Agent
 when opened from Agent Details. Whole-Sandbox scope is a separate explicit
 selection; creation requires acknowledging its current and future children.
@@ -939,20 +1463,54 @@ cancellation and keeps every control within phone and desktop viewports.
 
 ## 13a. Agent resources
 
-Resources are a public point read scoped to the Agent's Sandbox. Memory, CPU,
-and network occupy a stable three-column row on the reading axis. CPU uses a
-human unit in the ordinary surface; technical details may show the wire unit.
-The Agent's existing Sandbox lifecycle observation also gates live resources:
-only a fresh Active observation with a reported runtime version starts polling.
-Do not add another Sandbox poll or infer this from message eligibility. A paused
-Sandbox may accept messages while no runtime exists to report live resources.
-Before observation, show checking; when paused, retain Tokens and Context and
-show RAM, CPU and Network as paused with the quiet status "Sandbox paused. Live
-resources resume when it is active." Missing or stale lifecycle data holds live
-reads with an explicit unavailable status. Inactive runtime states are not an
-unsupported-resources error and never become zero readings. Cancel in-flight
-reads and discard the old sampling identity when the runtime becomes unavailable;
-fresh activation or a changed runtime version starts a new CPU sample pair.
+Machine resources are public point reads scoped to the Agent's Sandbox and
+appear only in the Sandbox page's Overview tab (§17), never below the conversation
+or in Agent Details. The read goes through one of the Sandbox's Agents; a Sandbox
+without an Agent says so instead of showing figures. RAM, CPU and
+network share a three-column row. The already observed Sandbox lifecycle gates
+samples: only a fresh Active state with a runtime version and no operation or
+checkpoint permits reads. Paused and unavailable runtimes show written states,
+never zeroes. Cancel requests and reset the CPU sample pair when the runtime
+identity changes. Mounting a conversation does not start machine-resource polls.
+
+The conversation footer contains Context quota and cumulative Agent input/output
+tokens, including earlier turns and preserved across compaction. The Thinking
+row shows the current turn's input/output totals. Unreported input says unavailable.
+Before a token report arrives, live visible reply and reasoning text may show
+an explicitly labeled `≈ N visible output tokens` estimate using a local
+o200k_base tokenizer. Its explanation excludes hidden reasoning, tool calls and
+inputs, and states that actual model usage may differ. Load the tokenizer only
+for an active turn, in a background worker; update at most five times per second,
+reuse unchanged text chunks, and cap counted text at 65,536 UTF-16 code units with
+a visible partial label. Missing text, unavailable tokenization and missing provider counts have
+written states. Estimates are never added to session totals or retained as actual
+turn usage. An authoritative turn report replaces its estimate and records the
+visible text boundary it covers. Later model calls in the same turn display
+`+ ≈ N newly visible output tokens` beside the last reported counts, counting
+only new visible text past that boundary. Repeated identical reports do not
+advance the boundary; restored text does not count twice. Missing counts
+are never displayed as zero or inferred from elapsed time or context quota. Each reported
+increase animates towards that actual value over 600ms, never beyond it. Values
+use tabular numerals; reduced motion and hidden documents settle immediately.
+Accessible labels expose the actual count without announcing every animation
+frame. The cumulative footer uses the same observed-count animation. A new turn
+resets only its own counters.
+
+Each completed turn keeps its reported input/output counts below its final Agent
+reply, in the existing 12/18 caption style, revealed with the message footer
+(hover, keyboard focus, or always on touch devices). Earlier intermediate replies do not
+repeat the same turn total. Full durable replay restores every available turn's
+counts. A completed turn without a report draws no line at all: absence is still
+never shown as zero, and the composer's context ring holds the totals.
+
+Routine stream reconnection is quiet for 2.5 seconds; a continuing failure then
+shows the existing connection status. If live fragments need refreshing, show
+one neutral caption while recorded replies are restored. Fresh live observations
+clear a reasoning-only refresh, and a recorded reply or turn completion clears
+its reply refresh. A new turn clears the previous transient refresh. Confirmed
+durable history gaps and authentication/terminal errors retain their separate
+recovery messages.
+
 Tracks use reported ceilings first, independently for each resource. When a
 ceiling is absent, the exact pinned Sandbox Profile revision may supply a
 configured capacity. Its id and revision must match, and its digest must match
@@ -1032,6 +1590,15 @@ your first message, and Ready. Each row has a fixed icon slot, visible state wor
 and safe detail. The state vocabulary is Waiting, In progress, Done, Needs you,
 Paused by CMA, and Didn't work. Colour is never the only account.
 
+The icon slot holds the §12.1 state dot the in-app setup rows use — done, the
+live ping while In progress, warning for Needs you, error for Didn't work, and a
+quiet dot while Waiting or Paused by CMA — not the 3D character, which stays on
+the landing and the brand. The word beside it takes the warning or error ink when
+the visitor must act or the step failed. The request's overall state under the
+heading is a §12.1 badge that announces politely. A failure, and updates that
+have stopped, are §12.1 alerts carrying their recovery actions. The words stay
+the visitor vocabulary below, never a wire value.
+
 Follow the owner-only Launch companion with bounded polling fallback. Retain the
 last acknowledged durable cursor; live transport failure does not erase progress.
 A ready result replaces the route with the Agent route and focuses its composer.
@@ -1054,8 +1621,8 @@ time. No elapsed-time heuristic changes a server state.
 
 During Sandbox preparation, the sandbox row also shows the public Sandbox's
 current operation in plain language, total elapsed time from its recorded start,
-and the last successful status check. The same unframed status band appears on
-the Sandbox page. A native Activity details disclosure contains the ordered
+and the last successful status check. The same unframed status band appears in
+the Sandbox page's Activity tab. A native Activity details disclosure contains the ordered
 operation stages and recorded start time, using existing 14/13px type, secondary
 ink, level-2 separators and 16/12/8px spacing. Completed stages derive only from
 the server's sequential phase contract. Unknown phases have no guessed steps.
@@ -1066,7 +1633,7 @@ visible-only every 1.5 seconds, and recover after transient failure. Authorizati
 or visibility denial clears the last observation. Raw runtime logs, credentials,
 commands and paths never enter the activity summary.
 
-Lifecycle screens also show **Live activity** outside Advanced: a keyboard-focusable
+Lifecycle screens also show **Live activity** outside Technical details: a keyboard-focusable
 scroll region, 180px high and at most 30vh, with a 1px level-2 border, 6px radius,
 12px padding, 8px row gap and existing 13/20 secondary text. Timestamp and message
 use a two-column grid that wraps text; the region cannot widen or lengthen the
@@ -1110,6 +1677,20 @@ too.
 **Nothing moves on hover**, and nothing is animated on the agent's own words. A turn arriving may
 fade; the text inside it does not animate as it is read.
 
+### View and message continuity
+
+Route changes fade the existing center surface over the shared slow duration
+(300 ms). Returning to an already visited service fades its retained body with
+the same timing. These transitions never remount working state, reset drafts or
+scroll positions, request resource reloads, or postpone input. A newer route
+cancels an unfinished transition. New optimistic outgoing messages and genuinely
+live assistant replies fade once over the normal duration (200 ms); loaded
+history, durable reconciliation, and subsequent streaming tokens do not replay
+that arrival. Use opacity only so text remains sharp and layout stays stable.
+Reduced motion disables arrivals and cancels an animation immediately if the
+preference changes while it is running. Menu and modal exit frames release
+interaction immediately; presentation must never delay an action.
+
 ### What motion is for here
 
 Inside a working surface, motion reports a changed surface or ongoing work.
@@ -1143,7 +1724,10 @@ duration and shared easing curve. A dismissing notification retains its final
 content only until the exit finishes, becomes inert and accessibility-hidden
 immediately, and cannot dispatch another action. The semantic element and its
 layout remain unchanged during the fade. Reappearance cancels stale removal;
-reduced motion skips both animations and any visual exit retention. Loading
+reduced motion skips both transitions and any visual exit retention. Interrupted
+menu, dialog and notice transitions reverse from the currently displayed opacity
+without flashing back to a keyframe endpoint. A newly inserted surface starts
+transparent through the shared starting style. Loading
 skeletons, whole-page error states and conversation text retain their own existing
 presentation rather than acquiring a notification wrapper.
 
@@ -1165,6 +1749,8 @@ carries a `reduce` block.
   carry the only account of state.
 - Focus enters the primary task; entering a ready Agent focuses its composer.
 - Minimum target 32px, 44px below 30rem.
+- ⌘K (Ctrl+K) opens the command menu from anywhere and is ignored while an input method composes.
+  It never takes the composer's `/` or Enter.
 
 ---
 
@@ -1182,8 +1768,9 @@ button until cleanup is confirmed; it does not expose child navigation.
 Each group has a 32px disclosure header (44px on narrow screens), 8px internal
 spacing, existing 13px secondary text, and a tabular count aligned to the right.
 Separate groups by 16px. Each expanded group contains its own accessible tree.
-Workspace children and expansion controls exist only when the Workspace is Ready
-inside an available live Sandbox; preparing and deleting rows remain informational.
+Workspace children and expansion controls exist when the Workspace is Ready
+inside an active, paused, pausing or reviving Sandbox; preparing and deleting
+Workspace rows remain informational.
 
 Sandbox state labels are Live, Starting, Resuming, Pausing, Paused, Deleting and
 Deleted. A genuine failure is explicitly Needs attention, never a successful state.
@@ -1197,7 +1784,7 @@ never a resource state. Header and sidebar use the same resource vocabulary.
 |---|---|
 | Sandbox provisioning | Recorded preparation and child progress; no invented percentage or success. |
 | Sandbox active | Workspaces and Agents; New workspace within limits, Pause, confirmed Delete. |
-| Sandbox paused | Only the Sandbox row is available in navigation; selecting it opens status, preserved-work information and the public Resume action. |
+| Sandbox paused | Retained Workspaces and Agent history remain navigable; the Sandbox page shows preserved-work information and the public Resume action. Existing durable message admission may revive a settled paused Sandbox. |
 | Sandbox pausing, reviving or rotating | Durable history and recorded progress; no conflicting command or input that could be lost. |
 | Agent starting | Recorded preparation; retain an unsent draft until readiness. |
 | Agent ready or working | Conversation and composer; Interrupt only during active work; Stop. |
@@ -1210,17 +1797,22 @@ unreported remain unknown. Failed commands never destroy successful content.
 Delete removes an Agent and its Worktree and requires the irreversible-action
 safeguard; Stop is a distinct operation.
 
-Paused, preparing, reviving, rotating and deleting Sandboxes expose no child
-Workspace or Agent navigation, including the Workspace band on the Sandbox page.
-Children return only after the Sandbox is active and its lifecycle operation has
-finished. An ordinary checkpoint save on an active Sandbox retains its readable
-children. Resume availability still comes from the public lifecycle record.
-The Sandbox page names the current state and explains why its children are
-unavailable. Pause, Resume and deletion show a brief state by default; their
-plain-language stages, activity and elapsed time are inside a closed
-**Sandbox operation progress** disclosure. Agent Details includes a standard
-Button to reach this Sandbox page. Initial creation progress remains visible.
-Raw phase names and other technical facts belong in Advanced.
+Paused, pausing and reviving Sandboxes keep retained Workspace and Agent navigation,
+including the Workspaces tab of the Sandbox page. Child rows show the parent's
+actual Pausing, Paused or Resuming state while preserving terminal child failures
+and stops. Opening an Agent shows its existing conversation and history; pending
+lifecycle work holds Send, approval decisions and runtime mutations without
+discarding drafts. It never admits a message merely because history is visible.
+Preparing, rotating and deleting Sandboxes keep their existing navigation limits.
+An ordinary checkpoint save on an active Sandbox retains its readable children.
+Resume availability still comes from the public lifecycle record. The Sandbox
+page names the current state and the available history. Pause, Resume and deletion
+show a brief state in the page's alert stack by default; their
+plain-language stages, activity and elapsed time are in the page's **Activity**
+tab, which reads nothing until it is first opened, and the state alert offers
+**View progress** to open it. Agent Details includes a standard Button,
+**Sandbox operation progress**, that opens this tab. Initial creation progress remains visible.
+Raw phase names and other technical facts belong in Technical details.
 No guessed readiness percentage.
 
 Deletion uses the existing risk confirmation, followed in the same overlay seat
@@ -1259,7 +1851,13 @@ and every 1.5 seconds while recorded lifecycle work is in progress; reads never
 overlap or admit work. Hidden pages defer refresh until visible again.
 Pause and Resume immediately show a polite submitting status in the existing
 action-status seat, followed by request acceptance and observed completion as
-separate facts. A standard Button opens the Sandbox's canonical progress page.
+separate facts. Accepted requests show a concise acknowledgement; the underlying
+wait and the standard Button to the Sandbox's canonical progress page stay in a
+closed **Operation progress** disclosure. Dismissing the acknowledgement keeps
+background observation and the target's busy lock, and a later failure becomes
+visible. Resume verifies the current owner's connections without opening a modal
+when they are ready; missing connections open the existing connection wizard.
+Unverifiable or changed-owner results keep the action held and show the error.
 After command acceptance, the targeted Sandbox status and open deletion dialog
 may poll every 250ms for ten seconds, then return to 1.5-second progress reads.
 These reads never overlap; failed reads back off to five seconds and report
@@ -1270,8 +1868,8 @@ including on initial load and explicit refresh. Their retained conversation
 history remains available through direct Agent reads, independently of navigation.
 
 An actual save reports **Saving progress** during capture and **Finishing save**
-while writers resume within operation progress and Advanced, not the resource
-state seat. The Advanced dialog includes the recorded start time;
+while writers resume within operation progress and Technical details, not the
+resource state seat. The Technical details dialog includes the recorded start time;
 there is no guessed percentage. Pause remains unavailable until the public
 eligibility permits it. These fields govern no Workspace or Agent creation rule.
 Tree menu reasons sit beneath their labels using the existing 13/20 voice and
@@ -1280,34 +1878,103 @@ Written tree states also use secondary ink so small status text remains readable
 
 ## 17. Sandbox and Agent details
 
-The Sandbox page serves the ordinary owner: current state and permitted actions,
-named profile, agent provider, own versus ChronoAI-managed model access, effective
-NyxID service scope, then Workspaces and each Agent's model, Guarded or Autonomous
-permission, profile and skills. Profile settings come from the exact pinned
-revision. Effective reach comes from the public Sandbox service list, including
-explicit owner grants, with public Agent lineage as an older-server fallback.
-Requested profile scope never substitutes for effective reach; unconfirmed
-access is explicitly unconfirmed. Optional metadata
-failures preserve the main status and actions and offer retry.
+The Sandbox page serves the ordinary owner: keeping an Agent environment healthy.
+It starts with the §11 header: `Agent Manager / <Sandbox>`, the name with its
+lifecycle badge (Live, Pausing, Resuming, Updating runtime, Needs attention,
+Deleting) and its id as a chip. The header holds one primary action, **New agent**
+(named *New agent in this Sandbox*); one secondary, **Pause** or **Resume**; and
+**More actions** with **New workspace**, **Sharing** when current access allows
+sharing management, **Technical details**, a separator and **Delete Sandbox**
+last. Pause and Resume take their eligibility from the public lifecycle record,
+never from the status alone. When either is unavailable its reason is one line of
+13/20 secondary text under the header, which the button's description points at.
+New agent's reason joins that line, and every unavailable menu row keeps its reason
+beneath its label, such as *Wait for the current Sandbox operation to finish.*, *Agents
+and Workspaces can start when the Sandbox is active.*, *Checking your service
+connections.* or *Checking the current Sandbox status.*
 
-An Advanced icon-and-text command opens the shared wide Modal. Runtime version,
-IDs, profile revisions, limits, paths, recorded preparation, operation phases,
-technical timestamps and Events appear only there, except for the ordinary
-operation progress, its recorded start time and translated Live activity. Raw
-technical Events load only while that dialog is open and never hold the ordinary
-page hostage. The dialog scrolls its body,
-traps focus, closes with Escape and returns focus to Advanced.
+One alert stack under the header holds every message about the Sandbox, each in
+its §12.1 tone: the reconnecting warning (content stays), the recovery notice,
+*Your sandbox needs attention.* with the reported remediation, and one information
+line for a paused, pausing, resuming, updating, preparing or deleting Sandbox. When
+the Activity tab has recorded progress to show, that line offers **View progress**,
+which opens it. No paragraph repeats what the header badge already says.
 
-Advanced also shows the latest completed snapshot's recorded timestamp and an
-owner-authenticated download link. The link resolves the actual whole-home archive,
-not a multipart manifest or runtime-local path. Before the first completed save,
-show the absence explicitly. Ongoing capture never changes the last completed time.
+Below the alerts an underlined tablist, drawn as in §19, offers **Overview**,
+**Workspaces**, **Access** and **Activity**. Arrow keys move between tabs and select
+them, Home and End go to the first and last, only the selected tab is in the tab
+order, and each tab names the panel it controls, which is labelled by it. The
+selected tab is the `tab` query of the Sandbox URL (`?tab=workspaces`), rewritten
+in place so a refresh keeps it and Back does not step through tabs; Overview has no
+query and an unknown value opens Overview, except that a Sandbox still being prepared
+opens on Activity, where its progress is. Panels stay mounted while hidden, so an
+unsaved scope selection or a connection check survives switching tabs; Activity
+starts its event reads only when it is first opened.
 
-Workspaces and Agents use unframed bands with existing 24/16/12/8px rhythm,
-definition lists and wrapping linked lists. Each Agent is separated by the
-existing level-2 border, without floating or nested cards. Paused or reviving
-parents still hide their children until ready. A successful create followed by
-a failed detail read recovers the created resource, not another creation.
+- **Overview** holds the Runtime card, Machine resources (§13a) and an
+  **Environment** list: Owner, Model access, Workspaces as a count of the limit, and
+  Agents per workspace. Model access comes from the exact pinned settings; when they
+  cannot be read the list says so and offers retry.
+- **Workspaces** holds **New workspace** and a table with Workspace, Path, Agents and
+  an actions column. The Workspace name links to its Workspace page; Agents are links
+  with their status badges, labelled by the shared Agent title selector, and once read
+  show their model and Guarded or Autonomous permission beneath. **New agent
+  here** starts an Agent in that Workspace and is available only when the Workspace is
+  Ready inside an Active Sandbox with no operation. Paused, pausing, resuming and
+  rotating parents keep the rows and links readable; children show the parent's state.
+  Empty states read *No workspaces* and *No agents*. On a phone the table scrolls
+  inside its own box rather than widening the page.
+- **Access** holds the NyxID service scope editor, *These services are shared by all
+  Agents in this Sandbox.*, with chrono-llm-public and ornn-api locked as Required and
+  the other services marked Already granted or Requested. The save path is the public
+  Agent service-access command of one Agent in the Sandbox, which is notified when the
+  key changes: the Agent holding a retained unsent or unconfirmed update first, then a
+  running Agent, then any Agent. Same-key retries, connection prompts and the paused
+  note are the editor's own. Without an Agent to carry the command, the tab lists the
+  effective services read-only and says that adding an Agent enables changes.
+  Effective reach comes from the public Sandbox service list, including explicit owner
+  grants, with public Agent lineage as an older-server fallback. Requested profile
+  scope never substitutes for effective reach; unconfirmed access is explicitly
+  unconfirmed.
+- **Activity** holds the recorded operation progress, the Live activity feed and the
+  last recorded interruption.
+
+Optional metadata failures preserve the header, the alerts and the actions and offer
+retry. Loading draws a skeleton in the page's own gutter.
+
+**Technical details** opens the shared wide Modal of the same name. IDs, limits,
+paths, recorded preparation, operation phases, technical timestamps and Events
+appear only there, except for the ordinary operation progress, its recorded start
+time and translated Live activity. Raw technical Events load only while that dialog
+is open and never hold the ordinary page hostage. The dialog scrolls its body, traps
+focus and closes with Escape. It states that the Sandbox keeps its home on persistent
+storage and offers no snapshot download.
+
+The owner Runtime card uses the Sandbox band, definition list, buttons and status
+seat. Show current and latest image references exactly as reported, wrapping long
+references without inventing semantic versions. Display the server's daily 02:00
+Asia/Singapore schedule and idle deferral. Manual updates retain their exact target
+and command key while an outcome is uncertain, including navigation away and back.
+Queued, updating, completed and failed states use the status dot, stage fade and
+reduced-motion behavior. Show same-home preservation only when the server confirms
+it. A rotating Sandbox keeps its Workspaces, Agents and conversation history
+readable. Update progress uses the existing detail refresh; it must not reload the
+page, reset drafts, or add a separate polling loop.
+
+The **owner Workspace page** (`/workspaces/<id>` for the Workspace's owner) starts
+with the header `<Sandbox> / <Workspace>`, the Sandbox step a link to the Sandbox
+page, the Workspace status badge, **New agent** as its primary action (an Agent in
+this Workspace, under the same availability as New agent here) and **More actions**
+with **Delete workspace**, which uses the existing Workspace deletion flow. Facts:
+Path, Source (the repository as a link, or Empty directory), Branch or ref, and
+Resolved commit. A table, **Agents and Worktrees**, pairs each Agent (link and status
+badge) with its Worktree branch and Worktree status, since each Worktree has exactly
+one Agent. The page refreshes on the Sandbox page's cadence and keeps its last
+content through a transient failure, marked as reconnecting; a refusal replaces it
+with the unavailable state. A viewer who does not own the Workspace keeps the shared
+projection: safe names, status, the access summary, authorized Agents with their
+access and channel lines, and Worktrees. A successful create followed by a failed
+detail read recovers the created resource, not another creation.
 
 All profile, service and skill references use their original catalog names and
 are links. Profiles open their canonical own-profile or public Marketplace page;
@@ -1450,21 +2117,38 @@ page. Do not retain the retired Chat hosts or Chat settings views.
 
 ### Record lists and details
 
-Use unframed compact record lists with hairline row separators, no zebra stripes,
-and no decorative section cards. A timestamp uses tabular numbers; the primary
-line uses `--text-body`, and metadata uses `--text-meta`. Identifiers use mono
+Sandboxes, Warm pools and Activity are §12.6 tables. A time column names its
+zone in its header — *Last activity (SGT)*, *Time (SGT)* — and draws an en-SG
+date and time in Asia/Singapore with tabular numbers. Identifiers use mono
 text that wraps without widening the viewport. People are identified by their
 retained public display names. Missing names say “Name unavailable”; subject IDs
 are never a fallback for a person's name. This applies to Sandbox and Profile
 owners, Activity actors, and Activity targets that are users. The ordinary Sandbox
 information page also shows its immutable creator under Owner.
 
-Sandboxes rows show owner, name, written status, runtime version, Agent count, and
-last activity. Owner, status, and version filters retain their values during reads.
-A named details command opens a drawer with Agents grouped beneath their named
-Workspaces, pinned Profile references, and
-the durable Sandbox event timeline. No row-wide destructive target exists.
-Unknown counts or unavailable runtime observations remain explicitly unknown.
+The Sandboxes table's columns are Sandbox (the name over its mono id), Owner,
+Status (a §12.1 badge in the shared Sandbox vocabulary), Runtime (or *not bound*),
+Agents, and Last activity (SGT), with Details and Retire as row actions. Owner,
+status, and version filters retain their values during reads. Details opens the
+existing dialog with Agents grouped beneath their named Workspaces, pinned Profile
+references, and the durable Sandbox event timeline. No row-wide destructive target
+exists. Unknown counts or unavailable runtime observations remain explicitly unknown.
+
+A capability the caller lacks is said once for the page, not on every row: without
+cross-owner control one information alert above the table reads *Cross-owner
+control is required.* and every Retire stays visible but disabled. A Deleting or
+Deleted status badge is the reason that row's Retire is unavailable.
+
+The Warm pools table's columns are Size (CPU and memory, with the Current default
+configuration tag and the Pool configuration disclosure), Status (Pending, Ready,
+Disabled or Unavailable as a §12.1 badge), Desired, Ready, Pending (Unknown until
+the controller has observed the pool), Target (the bounded input and Update
+target), and Disable pool as the row action. Waiting for the controller, a pool
+error, a failed or unconfirmed write, the retained-draft notice with Read current
+target, and Target saved are the pool's note row. The sentence on disabling spare
+capacity is said once above the table. Previous runtime pools use the same table
+inside their disclosure without the Target column, under one notice that only
+disabling is available and claimed Sandboxes keep running.
 
 Profiles rows show kind, visibility, owner, name, and update time. The three filters
 are native selectors or bounded inputs. A retired profile is not silently hidden
@@ -1477,7 +2161,10 @@ The confirmation names the target and the effect; it survives a failed request.
 Success rereads the record. Admin retirement has no invented idempotency-key
 contract. Never automatically repeat an ambiguous destructive request.
 
-Activity keeps the record-list treatment and public audit fields. It does not
+Activity is a table of Time (SGT), Actor (*Not signed in* or the actor's name),
+Action, Target (*User <name>* or the kind with its mono id), Outcome (Succeeded
+neutral, Refused warning, Failed error, as §12.1 badges) and Code. It keeps the
+public audit fields. It does not
 display credentials, profile contents, arbitrary runtime output, or internal
 checkpoint authority. All lists have loading, unavailable, empty, and pagination
 states. A failed refresh retains the last successful rows.
@@ -1512,55 +2199,11 @@ No new palette, type scale, radius, or spacing token is introduced here.
 
 ---
 
-## 19a. Developer
+## 19a. Developer (retired)
 
-**A reading surface at `/developer`, not a settings dialog.** Every signed-in
-user may open it from the account menu. Refresh and browser history restore the
-route; selecting an Agent opens its conversation. The surface adds no API
-request: its content is the TypeScript and Rust markdown bundled from
-`sdk/*/docs/` with the frontend build.
-
-The first band has the Agent header's fixed proportions and names **Developer**. Beneath it, one
-scrollport owns the page. Its contents use `--page-gutter` and centre a two-column document layout:
-a fixed 200px document rail, a 32px gap, and the existing 748px reading axis. The article is unframed;
-the navigation and prose never sit together inside a card. At widths below 48rem the rail becomes a
-full-width, 40px document selector above the article, the gap becomes 16px, and no label or control is
-allowed to widen the viewport.
-
-The SDK choice precedes the document choice. It is a two-part segmented control labelled **SDK**, with
-TypeScript and Rust as genuine buttons, a fixed 40px height, 8px outer radius and the shared focus
-ring. The active part uses the existing selected-navigation ground, primary ink, weight and
-`aria-pressed`; colour is not its only account. The document rail is an unframed list of 40px buttons
-at 8px radius. Its active row uses the same selected ground, a 2px leading accent rule, weight and
-`aria-current="page"`. Changing SDK keeps the same document when both sets contain it and otherwise
-opens that SDK's first document. The narrow selector exposes the same ordered labels and current
-value with a native `select` rather than a horizontally scrolling row of pills.
-
-One small deployment preface sits above the repository-authored article. It uses the layer-2 ground,
-a level-1 hairline, 8px radius and 16px padding; it is not a card containing the article. It names the
-current same-origin API base URL in inline-code treatment and says where a bearer credential comes
-from. Until issuance is self-service, the exact guidance is to ask the deployment operator or identity
-administrator. It never displays, accepts, stores or fetches a credential.
-
-The article uses §4's long-form ramp on the 748px reading axis: body at 16/28, H1 at 32px, H2 at 22px,
-and lower headings at 16px or 15px with weight and spacing carrying their rank. Letter spacing is zero.
-GFM tables scroll inside their own 8px frame rather than widening the axis. Fenced and inline code use
-§7's existing code-block and code-segment grounds, mono face and copy control. Heading identifiers are
-stable, lower-case slugs with duplicate headings suffixed in document order; every heading exposes its
-anchor without adding a second visible label.
-
-There is one markdown pipeline in the frontend. Developer documents use the conversation parser and
-block model, with a document rendering policy rather than a second parser: the H1 keeps its true rank,
-same-document fragments target heading anchors, and links to another bundled document switch the
-current document without a route. Safe HTTP(S) links open externally with opener and referrer access
-denied. Other relative links remain readable text because this build bundles no target for them.
-Images and raw HTML are not rendered on this surface. The `<!-- nav: order label -->` comment is build
-metadata, not article content.
-
-The build validates both SDK sets before the surface can ship: each has all nine named guides, each
-guide has exactly one leading H1 and one well-formed nav comment, orders and labels are unique, and the
-two sets carry the same filenames. Missing, extra or malformed input fails the build; there is no
-runtime empty state for a bundle CI was required to reject.
+The Developer reading surface is retired; nothing renders it. `/developer` still parses so old links
+keep working, but it opens Docs and the address bar is rewritten to `/docs` without adding a
+history entry. Nothing links to it.
 
 ---
 
@@ -1574,8 +2217,10 @@ Public `/t/{publicId}` and `/t/{publicId}/{placementId}` visitor pages are separ
 
 The fixed header names CMA Trigger and carries a compact New Trigger command.
 Below it, one scrollport holds an unframed 240px rail, a 32px gap, and the editor
-on a maximum 1,100px axis. Rail rows show title, written state, and short public
-identifier. Selected rows use the existing navigation ground, a leading accent
+on a maximum 1,100px axis. Rail rows show title, the Trigger's status as a §12.1
+badge (Draft muted, Published neutral, Retired muted), and short public
+identifier; the open Trigger's header carries the same badge beside its
+title. Selected rows use the existing navigation ground, a leading accent
 rule, weight, and `aria-current`. Below 48rem the rail becomes a full-width
 40px native selector, the gap becomes 16px, and field rows become one column.
 No text or control may widen the viewport.
@@ -1650,12 +2295,31 @@ existing tokens, field primitives, code treatment, and button hierarchy.
 
 ## 20. The signed-out surface
 
-The generic authentication gate is an unframed, centred brand lockup and one
-Sign in command. It uses the existing background and typography tokens, a
-bounded image that fits narrow screens, and no terminal simulation, 3D scene,
-marketing hero or animated prerequisite. Sign-in is available on the first
-interactive frame. Authentication errors preserve their explanation and a
-supported reload action.
+The signed-out home says what CMA is and offers one primary action. It sits in
+the centre column of the collapsed portal frame and scrolls as one page:
+
+- **Hero.** The product name, ChronoAI Managed Agent, is the page's `h1`, set
+  as a 13px 500 pill with a 1px `border-l2` outline, 999px radius and a 6px
+  accent dot. Below it a display line states the value in one sentence at
+  `clamp(36px, 5vw, 56px)`, 600, 1.05 leading and `-0.035em` tracking,
+  balanced across lines; then an 18/28 secondary lede. The one primary Button
+  is **Get Started**; an outline anchor styled as a Button jumps to How it
+  works. A 13px caption names NyxID and doubles as the polite live summary
+  while sign-in opens. The Three.js character sits beside the copy as a
+  companion: it spins on press and is never the way in.
+- **How it works.** Three ordered steps in 12px-radius `layer-1` cards with a
+  1px `border-l1`, each numbered in a 28px mono square.
+- **Services.** Agent Manager and Event Gateway cards each carry an outline
+  `Open …` Button that signs in and returns to that service. Image Manager is
+  a dashed card marked Coming soon, with no action, until its route exists.
+- Section kickers are 12px code-face `brand-text`; section headings are 32/40,
+  600, `-0.025em`, 24/32 under 760px.
+- Below 900px the hero stacks with the character first at most 220px wide;
+  below 760px the card grids become one column and nothing scrolls sideways.
+- Sign-in fades the page to 40% for 200ms, or immediately under reduced
+  motion, and starts once. A failure restores every action and shows an inline
+  alert with Try again.
+- Copy never names the agent provider; CMA is the brand.
 
 A public Trigger URL has its own complete read-only landing (§13b), not this
 generic gate. Sign in and Create account preserve the canonical local return
@@ -1745,13 +2409,11 @@ The original Three.js character geometry, materials, studio lights, pointer
 look, press-to-spin and visibility disposal return to the unframed Home and
 authentication surfaces. The stable square is bounded to the available width,
 220px minimum when space permits and 520px maximum; compact Home uses 280px.
-The signed-in wordmark is 48px, weight 700, with zero tracking. Only the signed-out
-landing names the product ChronoAI Managed Agent on one unbroken line, with
-responsive `clamp(18px, 4.8vw, 40px)` type, 1.2 leading and zero tracking.
-Its lockup is at most 760px wide, retaining 24px horizontal padding, and has no
-separate Sign in button. Its title and cloud invitation use self-hosted
-OFL Shrikhand with the interface stack as fallback; the regular face is deliberately
-synthesized at weight 700 for the requested bold treatment. The glasses have no text.
+The signed-in wordmark is 48px, weight 700, with zero tracking. The signed-out
+home follows §20: the character is a companion beside the hero copy, not the
+sign-in control, and carries no invitation cloud. The glasses have no text.
+The invitation cloud below is retired from the signed-out home by §20; its
+styles and Shrikhand remain only for a character given an activation handler.
 A cloud-shaped, 264px by 88px prompt says Click to start... above the character,
 with its top 120px above the reserved square. The signed-out lockup reserves
 144px top padding so the cloud never covers the character or clips the viewport.
@@ -1771,6 +2433,10 @@ prompt static when revealed and skips bump, turn and fade; unavailable WebGL ret
 labelled, clickable static fallback. Failed sign-in restores an explicit retry.
 This activation behavior never applies to signed-in Home or step characters.
 
+> Superseded by §12.1 (2026-10-21): in-app steps, connection rows, recovery and runtime notices and
+> the Thinking disclosure use a status dot, and loading surfaces use skeletons. The paragraph below
+> records the earlier behaviour.
+
 Every provisioning step uses that same character in a fixed 44px square.
 Completed steps are green and make one small jump every two seconds: a 0.6-second
 sine arc with 0.08 scene-unit lift followed by rest. Running steps stay blue and
@@ -1789,7 +2455,7 @@ gap, full-width 16/24 textarea growing to fourteen lines, and a separate lower r
 The 34px circular Send control becomes a neutral circular Stop control in the
 same seat. On narrow screens its visible circle remains 34px inside a transparent
 44px hit area contained by the existing 44px grid seat. The Thinking disclosure
-retains its 120px capped body, with the active dock, compact rotating character,
+retains its 120px capped body, with the inline status, compact rotating character,
 restored elapsed time and separate completed tool containers specified in §13.
 Tool output is disclosed only when actually supplied; live reasoning
 is never fabricated on reload. The character stops when the turn ends.
@@ -1831,12 +2497,52 @@ callbacks without this evidence remain read-only. Explicitly reviewed
 Triggers retain their review controls. This supersedes wording that limited
 the consent gesture to a second click on the CMA landing page.
 
+### Confirmed Agent creation and retained navigation
+
+New Agent preparation replaces the dialog's form with a heading, one status
+line and a four-step stepper with no percentage: **Sandbox**, **Workspace**,
+**Service access** and **Agent startup**. Each step shows a state dot, its name
+and its state word: Waiting, Queued, In progress, Ready, Waiting for connection,
+Needs attention or Not reported. Ready takes the done dot, In progress the
+ongoing dot (whose ring stops under reduced motion), Waiting for connection the
+warning dot, Needs attention the error dot and the rest the neutral dot; the step
+in progress is the current step. Steps sit in four columns from 30rem and stack
+below. The heading reads *Preparing your Agent*, *Agent ready* or *Agent
+provisioning needs attention*; *Agent ready* requires the successful operation
+plus its actual Agent identity, even when all four steps are Ready. Provisioning
+and per-step elapsed times are information only and never advance a step. The
+same stepper is the one setup band above a starting Agent's conversation. This
+replaces the 64px percentage circle and its closed Setup details disclosure.
+
+Agent key scope rows are 64px high. Skill rows are 112px, with 18px / 18px / 40px
+internal tracks and 6px gaps. Text is single-line ellipsis with full hover text;
+controls remain visible. All lists use existing typography, borders and tokens.
+
+Recently opened Agent conversations remain in a bounded memory-only cache for
+the current account and client. Switching back restores recorded content while
+current resource access is checked; actions remain unavailable during that
+check. Reopening resumes events at the saved cursor rather than downloading
+history from zero. Denied access clears the view, and account/client changes
+cannot reuse it. An ordinary stream handshake does not create a lost-update
+warning. Explicit lag and actually discarded live fragments remain visible.
+
+The same account/client scope retains up to six recently visited owner Sandbox
+snapshots and their loaded Workspace/Agent details. Re-entry paints this recorded
+content immediately while current access and lifecycle state are checked; all
+mutation controls, connection setup and live resource readings wait for those
+checks. Shared views never consume owner snapshots. Access denial, missing or
+retiring/retired resources clear their retained display data. Retain only the
+immutable Agent creation category for the owner header; privileged provenance
+and source actions still require fresh authorized reads. Memory retention adds
+no background polling and ends with the authenticated scope.
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
 
 | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-20 | Give conversations at most 300px wide a full-width draft and usage row, with a separate touch-sized action row; verify settled shell geometry, cold mobile loads and retained desktop navigation preferences. |
 | 2026-08-12 | Initial version. Established colour tokens for light and dark, semantic state colours, type stacks and scale, 4px spacing system, component rules for status chip, data table, terminal and buttons, interaction and accessibility baselines.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | 2026-08-13 | Terminal-first cyberpunk redesign. Reframed the frontend as a single full-bleed terminal page with no navigation, in two states (scripted introduction and live session). Replaced the colour system with a cyan/magenta-on-near-black palette, recording measured WCAG ratios and raising `--ink-3` to `#7C8A9E` in dark to clear AA for 11px metadata. Added the `--emphasis` token, a bounded three-step glow system with an ambient overlay cap, and an authoritative 16-slot ANSI palette. Promoted the monospace stack to primary and retuned the type scale. Made the page non-scrolling and the terminal full-bleed, and set radii to 0/2px. Specified the intro sequence timing, skip behaviour and reduced-motion equivalence, the session tab strip, and the profile menu. Added §8 Terminal safety covering OSC 52, tab-title suppression, scrollback caps and OSC 8 validation. Removed the data table component and the "information density over whitespace" premise, both of which described a dashboard this frontend no longer is.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | 2026-08-13 | Documented one focus-state variant in §7: the terminal prompt row carries its 2px accent indicator on the row's leading edge rather than as a ring around the input, because a ring around a full-width borderless field boxes in the whole prompt line and breaks the terminal illusion. A relocation, not a removal, scoped to that one input.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -2034,3 +2740,873 @@ draft. Summary readers never receive the management history control.
 | 2026-10-14 | Make consumer review fact labels wrap within their existing grid column, matching values and preserving accurate wording without overlap at narrow widths. |
 
 | 2026-10-14 | Acknowledge Pause and Resume immediately, distinguish durable acceptance from observed completion, and briefly accelerate targeted progress reads. Remove accepted Sandbox deletions from Live/Paused navigation while retaining a separate deletion-progress disclosure and same-request recovery. |
+
+| 2026-10-14 | Preserve navigation to retained Agent conversations and history while Sandboxes pause, remain paused or resume. Keep actual lifecycle labels and closed progress disclosures, retain drafts, and hold pending-operation input and child runtime mutations until authoritative readiness. |
+
+| 2026-10-14 | Open actual admitted Agents while Starting after lineage and parent checks; allow durable v2 queued input with receipt-based draft acknowledgement. Retain creation setup through early navigation and offer explicit same-request continuation when a worker rechecks connections. Preserve existing transports and hold input/recovery during uncertain access or parent lifecycle work. |
+
+| 2026-10-14 | Load independent Responses v2 Agent projections and the first activity page concurrently, while retaining the account check after all required reads and every history, Sandbox and connection barrier before Send. |
+
+| 2026-10-14 | Prepare transport for the actual created Agent during lineage reads, hand it to one navigation load with fresh entry authorization, and overlap exact-Agent connection verification with authorized conversation loading. Preserve retained transport choices, cancel stale account/target generations, and keep all history, parent and click-time Send checks. |
+
+| 2026-10-14 | Open actual Starting Agents during their own lifecycle bootstrap only with exact server-proven lineage and current owner/parent checks. Fresh Agent and parent reads permit durable v2 queued input while that parent is Provisioning or Installing; withdrawn proof, lifecycle barriers and AG-UI remain held. Preserve unresolved Worktree state and distinguish queued acceptance from runtime readiness. |
+
+| 2026-10-15 | During an explicit Sandbox revival, permit owner messages through the retained durable Responses v2 transport after fresh matching Agent, parent, owner and Worktree checks. Acknowledge the durable receipt while retaining actual Resuming state and inactive runtime resources; dispatch waits for backend readiness. Stale observations, checkpoints, other lifecycle operations and AG-UI keep input held. |
+
+| 2026-10-15 | Retry an explicit Responses v2 admission conflict up to three times while keeping the exact retained message and request key. Recheck account authority and the retained pending intent before each retry, honor navigation cancellation, and acknowledge only a durable receipt. A received receipt, uncertain network outcome, different refusal or exhausted retry budget retains the existing explicit recovery behavior. |
+
+| 2026-10-15 | Keep accepted Pause/Resume feedback concise and underlying waits in a closed Operation progress disclosure. Dismissal preserves observation and target locking; failures remain visible. Check the exact owner's connections silently before Resume and open connection assistance only when required. |
+| 2026-10-15 | Prepare exact-owner Agent connections during creation and transfer the result into its authorized personal view. Permit one immediate v2 send to consume that report within one second; scope, settings, grants and visibility changes invalidate it. Preserve normal per-send recovery and all client/server authorization checks. |
+| 2026-10-15 | Use only current personal-access lineage IDs to overlap fresh Workspace and Agent reads and start parent Sandbox observation during conversation loading. Keep entry/final account checks, full-history input gating, fresh projection identity checks and all observation invalidation rules. |
+| 2026-10-15 | Display outgoing messages immediately in the existing owner message flow with caption delivery status. Keep drafts until authorized acceptance, reconcile by exact command/run identity, preserve same-request recovery, and prevent stale account or access callbacks from clearing drafts. |
+
+| 2026-10-15 | Unify dialogs at centered 60vw/60dvh bounds; replace creation steps with confirmed circular progress; move the sole brand/build to the global home link; use runtime directory and description labels; fix scope/skill row heights; retain Agent navigation history and cursor replay; move machine metrics to Sandbox details and show cumulative/current-turn tokens with bounded observed-count animation. |
+
+| 2026-10-15 | Accept pasted images and dropped or selected files in the message composer. Show fixed-height upload records, image thumbnails, bounded two-file concurrency, individual retry/removal, and compact sent-file records. Wait for persistent upload receipts before sending exact sandbox paths. Retain up to six viewer-scoped drafts and ready attachments across navigation; abort in-flight uploads on departure and keep explicit same-key retry. |
+
+| 2026-10-15 | Show explicit unavailable input/output when a turn has no reported token counts; explain retained Agents that report only completed-turn totals. Animate real cumulative footer updates as well as current-turn observations, preserving actual initial totals and settling hidden/reduced-motion views without waiting for an animation frame. |
+
+| 2026-10-15 | Retain each completed turn's observed token counts under its final Agent reply using durable replay. Keep brief reconnects quiet, present live-fragment refresh as a neutral caption, and clear it on matching recovered observations while preserving confirmed history gaps and failures. |
+
+| 2026-10-15 | Compact the composer to one centered row with fixed Send/Stop seats, expand long drafts upward on focus or hover, and keep attachment previews above the row. Read screenshot clipboard file items when FileList is empty, avoid duplicate uploads, and preserve plain text paste and accepted-message clearing. |
+
+| 2026-10-15 | Add consistent avatar and display-name rows to durable, streaming and optimistic messages. Use the existing 3D character's static front-face capture for Chrono Agent, current personal account identity for user messages, and black-circle initials when an avatar is absent or fails. Keep unknown shared authors distinct from the viewer and preserve narrow-layout wrapping and accessible names. |
+| 2026-10-15 | Show clearly labeled approximate visible output tokens while a live turn awaits provider usage. Count current reply and visible reasoning with a lazily loaded o200k_base worker, throttle to five updates per second, cache bounded chunks and label the bounded text cap. Authoritative reports replace estimates and anchor their covered text; later model calls show only newly visible estimates beside actual counts. Preserve replay boundaries and cumulative totals. |
+| 2026-10-15 | Let the whole modal card scroll at viewport widths or heights of 480px or less. Preserve the shared centered geometry and 20% margins while keeping fields, Close and footer actions reachable instead of collapsing the body to zero height; let shared input wrappers shrink within the narrow content width. |
+| 2026-10-15 | Share Agent display-title selection across header, browser title and sidebar. Keep explicit native titles, omit only previews positively identified as automatic setup, and fall back to the configured name. Preserve unknown legacy descriptions and title provenance through live updates, hierarchy refresh and replay without selecting a message by role or position. |
+
+- 2026-10-15 — Apply the existing shared opacity presence to dropdown menus as well as dialogs: closing releases keyboard/pointer actions and focus immediately while its inert frame fades; quick reopening cancels stale removal. Use the existing duration/easing for composer drop-up max-height and menu hover tint, with reduced motion removing both transitions. No palette, geometry, menu action, or message admission changes.
+| 2026-10-15 | Hand visible text and ready attachments to the outgoing message immediately on valid Send. Retain the original snapshot until authorized acceptance, restore untouched input on refusal or uncertainty, and preserve newly typed text and later attachments. Keep exact request recovery, navigation drafts, IME and separate queue/Stop behavior; authoritative v2 refusals show Not sent. |
+
+- 2026-10-15 — Add shared opacity arrivals for stable route surfaces and retained service re-entry (300 ms), and newly sent/live assistant messages (200 ms). Preserve drafts, focus, scroll, controller identity and history; streaming updates do not restart an arrival. Cancel stale transitions and honor live reduced-motion preference changes.
+
+- 2026-10-15 — Preserve displayed opacity when menu, dialog or notification presence reverses mid-transition. Use shared opacity transitions with starting styles for first appearance; retain immediate inert exits, focus behavior, drafts and reduced-motion removal.
+
+- 2026-10-15 — Reuse already resolved profile/service/skill labels synchronously when a view returns within the same authenticated reference provider. Keep existing link identities and error handling, and discard names immediately when the client/account changes so loading text does not flash in place of known names.
+| 2026-10-15 | Preserve recent owner Sandbox content and immutable Agent creation labels across route re-entry within a bounded account/client scope. Revalidate access and lifecycle state before controls become usable; discard denied, missing, shared and retired projections, reject late replies, and retain no privileged provenance facts. |
+
+- 2026-10-15 — Keep New agent admission copy in its starting state while the request is in flight; retain same-request recovery wording after an unresolved outcome, avoiding a recovery flash during healthy creation.
+
+
+## 25. Unified service navigation and system text (2026-10-16)
+
+> Superseded in part by §10 (2026-10-21): the three service segments, the brand title and build
+> badge in the first row, and the labelled New agent trigger row are replaced by the service menu,
+> the action row and the Triggers navigation row. System text and the composer command drop-up
+> below are unchanged.
+
+The sidebar owns the single home brand link and build badge. Its first row holds a 20px mark,
+ChronoAI Managed Agent title, compact revision badge, and collapse control. The following row
+has three equal segments in this order: Agent Manager, Event Gateway, Image Manager. The active
+segment uses the existing selected navigation fill and a continuous sliding highlight; Image
+Manager remains visibly disabled and cannot open through a direct route. There is no global
+top service bar or duplicate current-service label. Account controls remain at the sidebar foot
+across services. Collapsed and mobile navigation retain a reachable brand, service switch and
+account control. Existing motion easing/duration and live reduced-motion preference apply.
+
+Agent Manager begins with labeled New agent and New agent trigger rows, then the
+Sandbox/Agent view switch and grouped permission-scope/status filters. Organization choices append `(Organization)`. Agent view
+starts at Personal and All statuses. Tree groups retain their existing machine/workspace/Agent
+structure. Ready Agents use neutral indicators; only actively Working Agents use a green light.
+Live Sandbox indicators remain green. Event Gateway lists channels in this same navigation area,
+with the selected channel's details and edit/delete/test actions in the main surface.
+
+The account menu includes Docs above admin-only Operations, Appearance, System text size, and
+Sign out. Docs contains Event Gateway Protocol, ported from the Gateway documentation. Agents
+and trigger creation no longer appear in the account menu. System text uses explicit Small,
+Medium and Large choices at 90%, 100% and 115% of the established ramp. Font sizes and fixed
+text line heights scale at their consuming element; spacing, icons and viewport geometry do
+not scale. The conversation message stream, including user/Agent messages, tools and Markdown,
+keeps its existing text sizes. Preferences apply before first paint, persist when storage is
+available, and stay consistent across retained service surfaces and browser tabs. Controls
+reflow or truncate within their rows and remain usable at 320px phone, 13/16-inch laptop and
+desktop widths for all three sizes.
+
+The composer opens a bounded, scrollable command drop-up when its draft starts with `/`. It
+uses the current session's native available-command inventory and installed skills, supports
+filtering, arrow keys, Enter/Tab selection and Escape, and retains focus in the composer.
+Commands retain their real runtime semantics. Presence and selection transitions use existing
+motion tokens, reverse without jumping and stop under reduced motion.
+
+- 2026-10-16 — Unify service navigation and account controls inside the sidebar, add labeled
+  creation and permission/view filters, expose native session commands in the composer, port
+  Gateway documentation, and add independent system-text sizing with responsive layouts.
+
+## 26. Composer steering and individual queued messages (2026-10-16)
+
+> Superseded in part by §13 (2026-10-21): Context and Total tokens moved into the composer's
+> context ring, and the steering menu became a chip inside the composer box shown only while a
+> turn runs. The queue and its editing below are unchanged.
+
+Context and cumulative Total tokens share the composer's input column, aligning to
+its left and right edges respectively. The adjacent Send/Stop group has a stable
+seat and a compact steering-mode menu directly below it. Its choices are Interrupt
+and Queue. Queue preserves ordered ordinary input; Interrupt cancels the active turn and admits the new input as a distinct
+replacement turn ahead of ordinary queued messages, preserving the remaining queue. Outside an active turn,
+both modes send ordinary input. Stop remains a separate cancellation action. Use the
+shared Menu, existing 8px gaps, 32px controls (44px touch targets), caption typography,
+neutral surfaces and motion tokens. Preserve draft content on refusal or uncertainty.
+
+Queued messages appear in the main conversation in a neutral, bordered queue group,
+replacing the separate yellow queued-message notice. Each row has the user's identity,
+its content and attachment records, a queued label and independent edit/remove actions.
+Clicking the content or choosing Edit opens an inline editor with normal paste, drop,
+file-picker and per-file removal. Existing uploaded files retain their exact paths;
+new uploads must finish before Save. Save preserves the original queue position.
+Cancel editing preserves the admitted message. A dispatch race refuses the edit/removal
+without changing a different entry. Never delete or replace the entire queue to edit
+one message. Keep uncertain requests recoverable using their original identity/body.
+Queue status comes from public authoritative reads; it survives reload and navigation.
+
+If an entry leaves the queue while its editor is open, keep the unsaved text and
+attachments in that editor as a retained draft. Explain that the original message
+can no longer be edited; offer Copy draft and Dismiss without implying it is still
+queued. Copy includes every confirmed attachment reference and explicitly identifies
+unfinished uploads. These local recovery actions remain available when sending is
+unavailable; network upload retries still respect current availability.
+
+Use existing presence transitions for row/editor entry and exit, existing fast easing
+for hover/focus, and no motion under reduced-motion preference. Queue rows wrap within
+the conversation width; actions remain reachable at phone widths and all text sizes.
+
+- 2026-10-16 — Align usage to the input, add active-turn steering selection below the
+  composer controls, and replace the latest-message banner with an individually
+  editable/removable durable queue including attachment editing.
+
+At phone widths, Context and Total tokens may occupy two successive rows in the
+input column while retaining their respective left and right alignment. Numeric
+groups remain whole rather than wrapping digit by digit. The action column reserves
+80px on desktop and 96px for two touch targets; its mode menu stays centered beneath.
+
+- 2026-10-16 — Retain unsaved queued-message edits and attachments after dispatch or
+  cancellation, with explicit local copy/dismiss recovery and no stale queue actions.
+
+
+## 27. Grouped filters and Gateway consumers (2026-10-16)
+
+> Superseded in part by §10 (2026-10-21): the scope and status pickers now sit behind one Filter
+> button with a summary line. The Event Gateway navigation below is unchanged.
+
+Agent Manager places the permission-scope and status dropdowns in one horizontal
+filter group below the Agent/Sandbox switch. Both controls share equal space,
+existing sidebar typography and an 8px gap. Long labels truncate inside their
+control while the menu exposes the full value. Keep 44px touch targets on mobile.
+
+Event Gateway navigation begins with Channels and, for authorized owners, Consumers.
+Use existing sidebar selected fills, focus rings, spacing and 44px navigation rows.
+Consumer list, detail and creation routes select Event Gateway in the service switch.
+Channel editors and consumer forms retain their DOM and in-flight work when switching
+sections. Account preferences no longer contain Consumers or Developer; Docs remains.
+Existing hover/presence motion and reduced-motion behavior apply.
+
+Channels opens on a §12.6 table of every channel — Name, Provider (the mono slug),
+Level, Sources (a count) and Version — under the *Event Gateway / Channels* header;
+the sidebar's New channel stays the one create action. Nothing is selected until somebody
+chooses a channel, from the table or from the sidebar list, which keeps its rows and
+selection; the detail's *Channels* breadcrumb returns to the table. Empty says *No
+channels yet* and *Connect an event source to your agent.* In a channel each
+endpoint is a row: its name, a one-line purpose, the URL in the code face, and a
+compact **Copy** button that says *Copied* politely. When the clipboard refuses,
+the row says so and selects the URL so it can be copied by hand.
+
+Signed out and not permitted are different pages. A 401 keeps the *Sign in with
+NyxID* link; a 403 says *Your account doesn't have Event Gateway permissions.* with
+a Check again action and never offers sign-in, which would only return the same
+account to the same refusal.
+
+Consumers is a §12.6 table of Name, State, Provider level, Last test (*Not tested*
+or *Accepted after <n> ms*) and Updated. State is a §12.1 badge: Creating and
+Deleting active, Active neutral, Needs attention error, Disabled and Deleted muted.
+The consumer page carries the same badge beside its title, and its failures are
+§12.1 alerts.
+
+- 2026-10-16 — Group permission/status dropdowns on one row, place Consumers in
+  Event Gateway navigation with retained section state, and remove Developer from
+  the account menu.
+
+
+Successful response-action delivery clears its temporary status automatically;
+the conversation shows the resulting turn state. Keep actionable failure and
+uncertain-request recovery visible without a persistent success banner.
+
+- 2026-10-16 — Clear completed response-action notices automatically, preserving
+  failure and recovery controls. Render command-help placeholders as inert text.
+
+
+- 2026-10-16 — Make Interrupt mode stop the current turn and start a distinct new
+  message next, including its attachments; keep Stop as cancellation only. Preserve
+  exact admission recovery, other queued messages and actionable failure states.
+
+- 2026-10-16 — Start each home visit with collapsed navigation and expand it when
+  entering an app or service. Preserve manual toggles across service navigation
+  and keep the narrow-screen automatic collapse rule.
+
+
+An ordinary Send while the Agent is idle remains a normal message while dispatch
+is prepared. Queue discovery does not turn that message into a queue card. Keep
+known waiting messages and uncertain queue edits/removals visible; match accepted
+messages by command identity, never by matching text. A starting queued message
+moves into the ordinary conversation without a duplicate or empty gap.
+
+Attachment selection notices use the existing compact caption/error seat and a
+labeled Close button. Dismiss after five seconds, restart that interval for each
+invalid selection, and clear after a valid selection. Use the existing presence
+fade and reduced-motion behavior. Dismissal never removes attachments or conceals
+per-file upload failure and Retry controls. The notice leaves no empty space after
+exit; retain the existing 44px mobile touch target.
+
+- 2026-10-16 — Keep idle Send dispatch preparation in its ordinary message bubble,
+  retain genuine queue/recovery cards, and make attachment selection notices
+  dismissible with a five-second lifetime.
+
+- 2026-10-16 — Check Agent connections quietly while opening or switching
+  conversations. Keep sending gated until verification, preserve actual lifecycle
+  notices, and show connection assistance only for confirmed missing services or
+  actionable verification failures with Retry.
+| 2026-10-16 | Added evidence-based memory interruption and recovery notices, recorded-stage character animation, bounded completion feedback and retained interruption details. |
+| 2026-10-16 | Unknown Sandbox interruptions display Internal error while recorded recovery progress and any failure to finish remain explicit; historical interruption details do not imply ongoing recovery. |
+| 2026-10-16 | Move the single transient Thinking and turn-token row below the current Agent reply inside the conversation, align it with message content, and preserve elapsed/token state, reduced motion, smooth appearance/removal and reader-controlled scrolling. |
+| 2026-10-19 | Align Thinking with the Agent avatar and widen the conversation and composer to 70% of the available Agent panel, with matching 24px/14px gutters in narrow containers. Preserve the existing transient-status animation and message behavior. |
+| 2026-10-19 | Add the owner Runtime band with exact current/latest image references, idle daily updates at 02:00 SGT, safe manual retries, recorded update states and existing character animation; keep history readable through runtime rotation. |
+
+
+### Operations profile inventory retirement (2026-10-19)
+
+Operations offers Sandboxes, Warm pools, Platform settings and Activity, with
+their existing capability gates and keyboard navigation. It has no Profiles tab,
+inventory or retirement action. This supersedes the Profiles inventory in §19.
+Immutable profile records and historical public APIs remain available to runtime
+recovery and compatibility; this navigation change does not modify them. Native
+warm-pool controls and current platform settings remain in their own views.
+
+| 2026-10-19 | Remove the obsolete Profiles inventory and retirement panel from Operations while retaining internal immutable profiles, historical APIs and current configuration controls. |
+
+### Current runtime warm pools (2026-10-19)
+
+Warm pools shows the current runtime image and its pools first. An exact match to
+its published default configuration hash receives a Current default configuration
+label; other resource sizes for the current image remain configurable. The full
+recorded configuration hash is available through Pool configuration disclosure.
+
+Previous runtime pools use the existing bordered disclosure style and start
+collapsed only when their targets and observed ready capacity are zero with no
+error. Positive targets, remaining ready capacity, failed observation or errors
+keep the previous-pool disclosure open and show a notice outside it. Older images
+are no longer prewarmed: their controls allow Disable and conflict recovery reads,
+never an increase. Disabling spare capacity does not interrupt claimed Sandboxes.
+
+| 2026-10-19 | Prioritize current-runtime warm pools, mark the exact default configuration, and collapse drained historical images while keeping unresolved capacity visible with disable-only controls. |
+
+### Composer settings and message feedback (2026-10-20)
+
+> Superseded in part by §13 (2026-10-21): model and effort became one chip with a popover card and
+> a discrete effort slider, and permission became a chip, all inside the composer box; there is no
+> settings row. Timestamps and message feedback below are unchanged.
+
+Model, reasoning effort and permission mode belong with the composer, in a
+dedicated row directly below its text input at every width, rather than in Agent
+Details. Use the
+shared small value pickers, with the selected value visible and full accessible
+labels. Arrange them in a compact horizontal group with existing 4px gaps;
+truncate long model names within 120px. Keep the current owner, runtime capability,
+turn-idle, explicit Apply and same-request recovery rules. Only a changed draft
+or retained update shows Apply/Retry; changes never submit conversation input.
+The row sits before usage, leaving Send/Stop and steering aligned in their action
+column, so the draft always keeps the full flexible column. At 30rem or less, retain 44px touch targets and let the
+three controls share the full input row. Preserve typed drafts, attachments,
+queue/interrupt behavior, and input-aligned Context/Total tokens.
+The permission picker reads **Guarded** and **Autonomous**, in the compact
+composer and the full settings alike; the wire values `guarded` and `autonomous`
+are unchanged. No other name for the unrestricted mode appears in the UI.
+
+Each normal message carries its recorded timestamp as a semantic time in
+Asia/Singapore, with an explicit SGT suffix, using existing 12/18 caption text
+and tabular numerals. Never substitute render time for a missing historical
+timestamp: state that its time is unavailable until an authoritative timestamp
+arrives. An outgoing local message uses its actual local submission time; live
+messages use the source event timestamp. The durable message timestamp replaces
+that provisional observation when the recorded message arrives.
+
+Reserve a compact footer for the timestamp and Copy content, Upvote and Downvote, using the existing
+copy/like/dislike glyphs on 28px keys (44px on a coarse pointer), because the footer
+is reserved under every message and its height sets the conversation's rhythm. At rest a message shows only its
+content. Fade the timestamp and these controls in on message
+hover or keyboard focus over the shared fast duration, with no movement or layout
+shift; keep them visible on touch devices. A copy, vote or feedback status stays
+visible while it is shown. A selected vote stays visible and uses
+the existing business-primary ink and a filled glyph. Copy reports a brief local
+confirmation and failures remain actionable. Votes toggle off or switch sides,
+persist for the authenticated owner and exact recorded message, and never create
+an Agent turn. Until a streamed message is recorded its voting controls explain
+why voting is unavailable. Failed writes preserve the last confirmed vote with a
+retry action; no success is inferred from a click. Shared readers retain copy and
+timestamps but cannot vote as the owner. Honor reduced motion and preserve focus.
+
+| 2026-10-20 | Move model, effort and permission controls beside the composer with responsive wrapping; add always-visible SGT message timestamps and accessible hover/focus/touch copy and durable owner feedback controls. |
+
+| 2026-10-20 | Request negotiated server live-fragment observation timestamps for streaming message footers, preserve the first observation during text growth, and replace it with recorded message time on commit. Existing strict clients keep their prior wire shape; older servers without timestamps retain the explicit unavailable-time fallback. |
+
+The composer settings row uses the available input width, so catalog errors and
+long values wrap below the controls without narrowing the message field. In the smallest layout the settings row follows
+input-aligned usage, allowing all three controls their full touch targets.
+
+| 2026-10-20 | Extend the full-width narrow composer through 320px conversation columns so 360px phones retain a readable draft; verify cold idle and active layouts at 320px, 360px and 390px viewport widths. |
+| 2026-10-21 | Moved both appearances onto a shadcn/ui-based neutral system: one `zinc` ramp for grounds, borders and labels, Chrono lime kept as the brand and accent (`lime 800` in light, where the bright step cannot carry text), a `zinc 900` light primary and lime dark primary, neutral low-alpha light shadows, inverted tooltips, and one interface/code pairing, Geist and Geist Mono, in both appearances. Kept every alias and specific name and the three-tier architecture so every surface re-inks without a migration vocabulary; the earlier ramps and faces stay declared only for remaining static and brand-asset consumers. Regenerated the §2 alias contract from the shipped sheet so the tables cannot drift from it. |
+| 2026-10-21 | Let the signed-out product name wrap with balanced lines when its column is narrower than the name. The unbroken line overflowed its 360px grid column between 761px and about 1040px, where the services cards covered it, and widened a phone's grid past the viewport. Restored the lockup's documented 144px top reservation so the cloud invitation no longer clips above the viewport. |
+| 2026-10-21 | Rebuilt the signed-out home around one visible primary action. The character had been the only way in, its Get Started name never appeared on screen and its invitation waited five seconds, so §20 now specifies a hero with the product name as `h1`, a one-sentence value line, Get Started, a NyxID caption that announces progress, three How it works steps and service cards that return to their service after sign-in. Image Manager is marked Coming soon until its route exists. The character stays as a companion without the cloud. Copy never names the agent provider. |
+| 2026-10-21 | Moved the composer settings into their own row under the input at every width. Beside the input, an `auto` grid track grew to the longest settings explanation and squeezed a 1440px desktop draft to about 120px; below the input the draft keeps the full flexible column, as narrow layouts already did. |
+| 2026-10-21 | Rebuilt the sidebar around getting into a conversation. The three service segments became one service menu (Image Manager listed, disabled with its reason); the build revision moved into the account menu as a copyable row; New agent became the sidebar's primary button and is disabled with a reason instead of disappearing in Shared or Organization scope; Search and a ⌘K command menu over the already-loaded hierarchy were added; Triggers became a navigation row instead of a creation row; scope and status moved behind one Filter button with a summary line; the Agents view groups Agents by Workspace and Sandbox in order of recent activity; Sandbox rows use the Sandbox's own name. Phones lost the permanent rail: a 48px top bar opens the sidebar as a sheet over a scrim. `/developer` now opens Docs, and the unreachable-service page explains itself and offers Reload. Supersedes the matching parts of §25 and §27 and retires §19a. |
+| 2026-10-21 | Gave every centre view one page header: a breadcrumb of real links ending at the current page, the title as the only `h1` with its status and short code-face facts, an optional description, and at most one primary, one secondary and a More actions menu. The Agent breadcrumb now names its Sandbox and Workspace as links instead of a path and the literal word "Agent", shows the Worktree branch, and moves Stop, Export history and Delete into the header with their reasons. Browser tabs are named after the view on every route, and a hidden service no longer leaves its name on the tab. Removed the agent provider's name from the remaining UI copy (subscription sign-in, model access, composer commands and the public Trigger details). |
+| 2026-10-21 | Gave every status word one tone everywhere (active, neutral, warning, error, muted) with a neutral dot for Live and Ready instead of the success colour, which in dark matched the accent. Added the status badge, a severity-toned alert that replaces the danger-tinted notice and stacks in one place per view (on the Agent surface in one grid row, so no message can fall below the composer), and skeleton loading for navigation, the Agent, Sandbox, Workspace and inventory, and the console outline while identity is checked. Retired the 3D character from in-app rows: Thinking, connection rows, setup steps, recovery and runtime notices use a status dot; the character remains on the signed-out home and the brand. Supersedes the step-character and loading-character paragraphs of §23. |
+| 2026-10-21 | Gave dialogs on a phone the full width less a 16px gutter instead of 60% of the viewport, which left a 192px card whose footer overflowed at 320px. Stopped the frame from ever scrolling sideways: as a clipping box it no longer shifts when a closed details column's content would otherwise count toward its width, which put a phone's page off its left edge. |
+| 2026-10-21 | Made the conversation say what the Agent is doing and what it needs. Consecutive tool calls form one group headed "<n> tool calls" with the latest call's summary, and every row carries a state dot with a plain word (In progress, Completed, Failed, Cancelled, or Outcome not reported) instead of the raw status; the "Duration not reported" filler is gone because no duration is reported. Groups with a failure open themselves. Plans reported through the public stream render as a per-turn Plan card with Done, In progress and Waiting badges. The approval card gained a one-line caption under Deny, Abort and Allow. The permission picker reads Guarded and Autonomous. |
+| 2026-10-21 | Made New agent one step that creates the Agent where the owner asked. A Workspace's New agent used to create another Workspace in its Sandbox, so a Workspace made with New workspace could never receive an Agent; it now opens the dialog on that Workspace and sends its `workspace_id`. §12.2 specifies the Where it works choice (New Sandbox, a Sandbox's new workspace, or a Workspace; unusable rows `aria-disabled` with their reasons), repository validation on blur and submit instead of on every keystroke, the read-only Agent settings summary and the access note. The preparation section replaces the percentage circle, which read 80% with every listed step Ready, with a four-step stepper (Sandbox, Workspace, Service access, Agent startup) that is also the setup band above the conversation. |
+| 2026-10-21 | Rebuilt the owner Sandbox page around one primary action and tabs. The header keeps New agent as primary and Pause or Resume as secondary, with its lifecycle reason line, and moves New workspace, Sharing, Technical details (formerly Advanced) and Delete Sandbox into More actions with their reasons. Every Sandbox message now sits in one toned alert stack. Overview, Workspaces, Access and Activity tabs keep their selection in the `tab` query and stay mounted while hidden. The Workspaces table's New agent here now starts an Agent in that Workspace instead of a new Workspace. The NyxID service scope editor moved from Agent Details to the Access tab, where the Sandbox-wide key belongs; Details keeps a read-only summary with Manage on Sandbox. Owners get a real Workspace page with Sandbox / Workspace breadcrumb, facts, an Agents and Worktrees table, New agent and Delete workspace; shared readers keep the shared projection. Supersedes the band layout, the closed Sandbox operation progress disclosure and the snapshot paragraph of §17. |
+| 2026-10-21 | Added one shared table (§12.6): a bordered box at radius 12 with a 40px header row, 52px rows on hairlines, a right-aligned actions column with a visually hidden header, note rows, skeleton loading and an empty row, scrolling inside its own box on narrow screens. Event Gateway channels and consumers and the Operations Sandboxes, Warm pools and Activity lists moved onto it, with status and outcome badges and SGT-labelled time columns; Operations says a missing cross-owner capability once for the page instead of on every row. Channels open on the table, endpoints gained Copy, and a 403 now says the account lacks Event Gateway permissions instead of offering sign-in again. Triggers carry their Draft, Published or Retired badge in the rail and header. Launch progress rows use state dots instead of the character, with the overall state as a badge and failures as alerts. |
+| 2026-10-21 | Rebuilt the composer as one rounded box with its controls inside: Attach files, a permission chip and, only while a turn runs, the steering chip on the left; one model and effort chip, a context ring and Send on the right. The chip opens a card with the effort word, the model list and a keyboard-operable effort slider with a reset to the confirmed settings; the explicit Apply rule is unchanged and its status sits inside the box. Context and Total tokens moved from a text row into the ring's tooltip, and a missing figure still reads not reported. The Chrono Agent avatar became the inline CMA mark on a themed circle, so light no longer shows a black square. The Agent header became one line that collapses to a 28px strip, reveals itself on hover or focus without moving the conversation and can be pinned per viewer; the Details toggle, creation origin and subscription sign-in moved into More Agent actions. |
+
+### Agent files and share links (2026-10-22)
+
+Agent Details offers Files for the mounted `/home/` directory. A Files dialog
+reuses the centered Modal and its 60vw/60dvh bounds, focus trap, dismissal and
+presence transitions. Its desktop body has a 200px directory rail and a flexible
+preview/editor; below 48rem the rail and editor stack. Directories expand on
+request, with fixed 32px rows, existing folder/code icons and ellipsis for long
+names. The path remains copyable. Show hidden defaults off and reveals dotfiles
+and hidden directories. Refresh is explicit; no background directory polling.
+
+Text is rendered as text, with a code-face editor for supported text files.
+Raster images use an isolated image preview. Other binary formats offer download.
+File content never executes scripts, HTML or SVG. Save uses the last read file
+version; a conflict retains the draft and asks the user to reload explicitly.
+New file, New folder and Upload use existing buttons and fields. Delete confirms
+inline, never with a second dialog. Unsaved changes are retained until saved or
+explicitly discarded. Read-only access hides mutations while preserving browsing
+and downloads. Requests and previews are cleared when Agent or authorization
+identity changes. Existing motion durations and reduced-motion behavior apply.
+
+Agent Details also offers Share Agent. It creates multiple independent links,
+each with View only or View and write and an audience of anyone with the link,
+an organization, or selected people. Links are accepted after sign-in and add
+only that Agent to Shared with me in Agents view. The recipient sees Shared by
+with the sharer's display name and the effective permission. View-only disables
+message input, settings and file changes; view-and-write enables those Agent
+operations, never Sandbox lifecycle or sharing management. Revoking a link
+removes access granted through it; other independently valid links remain valid.
+The sharing dialog states that Files exposes the shared Sandbox's full `/home/`
+so the owner can make an informed sharing decision. Secrets stay in URL fragments
+and are removed from the address after redemption.
+
+Returning to an Agent shows its latest authorized transcript at the conversation
+tail. Historical event pages rebuild rich state without presenting past turns as
+live Thinking or animating old messages as new arrivals. Agents navigation omits
+Workspace rows; Sandbox navigation retains them. Operations Actor is a named
+selector instead of a free-text identity field.
+
+| 2026-10-22 | Add lazy mounted-home Files browsing/editing and scoped Agent share links using existing Modal, controls, tokens and transitions; show latest conversation on return, simplify Agents navigation and select named Operations actors. |
+
+
+### Agent navigation, loading, and text preferences (2026-10-22)
+
+Agents view is a flat list of individual Agent cards, ordered by recent activity,
+without Sandbox or Workspace group headings. Sandbox view retains its hierarchy
+and contextual three-dot actions. The global New agent action always starts a
+new Sandbox and offers no destination chooser. Creating an Agent in an existing
+Sandbox uses that Sandbox's three-dot action; an explicit scoped action shows
+its fixed destination as a description. Sandbox Details keeps Pause/Resume in
+the header and places New agent in More actions, rather than a second primary
+creation button.
+
+Operations Sandbox Owner is a named dropdown with All owners. Choices use the
+canonical display names from the complete authorized, unfiltered Sandbox
+inventory and remain available across table filtering and pagination. Load once
+per mounted client, with bounded pagination, cancellation, loading and explicit
+retry on failure; do not poll. Existing explicit filter application is retained.
+
+The landing route keeps the sidebar collapsed and has no expand, drawer, drag,
+or keyboard expansion affordance. Service routes retain normal sidebar controls.
+The system text-size preference applies equally to conversation body, Markdown,
+code, and tool content; it changes typography without scaling control geometry.
+Only Chrono Agent replies have upvote/downvote controls. User messages retain
+copy and timestamp controls. The browser favicon uses the current lime
+`#C3FD43` mark in both OS appearances, with the visible glyph centered in its
+square viewport; PNG fallbacks use the same mark.
+
+Loading conversation history does not block sending a new message once the
+current identity, Agent access, and Sandbox input availability are verified.
+History-dependent approvals and turn controls still require their exact recorded
+targets. The latest transcript is displayed without waiting for older rich event
+pages, which hydrate offscreen without replaying historical Thinking. Returning
+to an authorized cached Agent preserves its latest visible conversation while
+metadata refreshes. Account/access changes clear or suspend the relevant state.
+History completion must preserve input receipts, newer messages and active live
+updates; it must never clear the user's next draft or submit a duplicate message.
+Shared Agent access enables interaction independently of transcript and rich
+history loading. Unchanged periodic access verification preserves the composer
+and stream without rereading the transcript; actual stream disconnection repairs
+the durable view before reconnecting.
+
+| 2026-10-22 | Flatten Agents navigation, fix global New agent to a new Sandbox, select Operations owners by name, lock the landing sidebar, apply text preferences to conversations, limit voting to Agent replies, center the green favicon, and decouple input/latest-message display from historical activity loading. |
+
+
+### Agent details panel (2026-10-22)
+
+The Agent details panel is a calm side panel, not a settings form. Below its
+header it scrolls as one region with a 16px inset; no list, catalogue or section
+inside it has a scroll area of its own. Sections are separated by 24px of space,
+never by hairlines, and appear in the order Files, Sharing, Service access and
+Skills, followed by the Sandbox operation progress action.
+
+Section headings are sentence case at 13px, weight 500, in
+`--dsw-alias-label-primary`, without uppercase or the code face. A section's
+explanatory sentence is 13px in `--dsw-alias-label-secondary`; code-face values
+such as `/home/` stay code. Every text action in the panel (Browse files, Manage
+share links, Manage on Sandbox, Sandbox operation progress, Refresh skill status,
+Retry installation, Retry Ornn catalog and More Ornn skills) uses one quiet-link
+style: 13px text in `--dsw-alias-label-secondary` with no fill, border, icon or
+indent, starting flush with the text above it, underlined on hover, with the
+shared `--focus-ring` on keyboard focus and the existing disabled treatment. Each
+keeps its accessible name and role: navigation stays a link, commands stay
+buttons.
+
+Service access lists each effective service as a plain row: its catalog name in
+the primary label colour, underlined on hover where it links, and, for
+chrono-llm-public and ornn-api, the word Required after it in
+`--dsw-alias-label-tertiary` rather than a bordered badge. Manage on Sandbox
+remains the single action.
+
+Skills lists the Agent's installed skills as plain rows: the name in the primary
+label colour, then its version and installation state (Installed, Installing…
+or Installation failed) in the tertiary colour, with an installation error on its
+own line beneath. Pending, unavailable and busy explanations and the install
+error with Refresh skill status remain directly under the list. The available
+Ornn catalogue sits behind a native **Add skills** disclosure, collapsed by
+default. Opening it reveals the search field, the catalogue rows with their
+version picker and Install button, the catalogue loading, empty and error
+states, Retry Ornn catalog and More Ornn skills. Catalogue rows grow with the
+panel and are separated by 12px of space, without a bordered box. Installing,
+version choice, same-key retry and lifecycle gating are unchanged.
+
+| 2026-10-22 | Calmed the Agent details panel. Section headings became sentence case at 13px weight 500 in the primary label colour (Files, Sharing, Service access, Skills; "Session sharing" became Sharing), sections are separated by 24px of space instead of hairlines, and every text action shares one quiet-link style flush with the text above it. Required services read as tertiary text instead of bordered badges. Installed skills are plain name and version rows, and the Ornn catalogue moved behind a collapsed Add skills disclosure that holds its error and retry states, so the panel scrolls as one region without nested scroll areas. |
+| 2026-10-22 | Quiet the Agent conversation so reply text leads: identity once per run of one author's messages, the timestamp revealed with the message actions on hover or focus (always on touch), no usage line for a turn without a report, lighter inline code, and tool calls as frameless lines whose group header reads "<n> tool calls" plus only the running call or failure count. |
+| 2026-10-22 | Quiet the Agent Manager sidebar: New agent, Search and Triggers become plain 32px rows with no fill or border at rest; Agents \| Sandboxes becomes text tabs sharing one row with an icon-only Filter key that carries an accent dot, and a summary line naming only non-default filters appears only when one is applied; personal Agent rows become one 32px line with a state dot only for Starting, Working, Needs approval and Needs attention, the status word kept in the accessible name, and age and ⋯ shown only on hover, focus or the current row. |
+| 2026-10-22 | Cap the Agent conversation at a centred 768px reading axis shared by the history and the composer, replacing the 15%-per-side rule that let replies run past 900px on wide screens; the cap is in pixels so text size scales the text, not the measure. |
+
+### Live replies during conversation loading (2026-10-22)
+
+An authorized live Agent head starts real-time observation independently of
+transcript, rich event history and usage loading. A new message shows its usual
+Thinking, streaming reply and message arrival motion while older history loads.
+Historical rows remain static. Late history enriches the conversation without
+clearing new text, restoring a completed turn, duplicating messages or restarting
+a healthy live connection. An account, access or conversation identity change
+still cancels observation and prevents stale output from entering another view.
+
+| 2026-10-22 | Start live Agent replies independently of conversation history loading and preserve current Thinking, replies and arrival motion when historical records finish loading. |
+
+
+### Anonymous editorial home and fixed CMA identity (2026-10-22)
+
+Authenticated `/` immediately renders Agent Manager and replaces the home history
+entry with `/agent-manager`. No authenticated landing is painted. Public Trigger,
+Launch and connection-return routes retain their own behavior. Anonymous home
+retains its collapsed navigation and explicit NyxID sign-in.
+
+The anonymous landing uses an editorial composition inspired by Anthropic's
+public site: generous space, a large restrained headline, a character companion,
+and thin horizontal divisions rather than stacked rounded cards. It remains CMA,
+with Geist, the existing palette aliases and the existing 3D mark geometry.
+The content width is at most 1200px, with 48px total side clearance, 64px top and
+80px bottom padding and 80px between sections. The hero uses columns 1.2fr/1fr,
+a 48px gap and a 480px minimum height. Product eyebrow is 13/20 medium; display
+copy is clamp(40px,5.5vw,72px), weight 500, 1.04 leading, -0.045em tracking.
+Lede is 18/28, max 560px. Steps and services are three plain columns with 24px
+gaps and 24px top padding over a border-l2 rule. Step numbers are 12/20 code,
+section headings 32/40 medium, and body 15/24. At 900px the hero stacks with
+character after text and capped at 280px; at 760px the grids stack, side clearance
+is 32px, section gap 56px, padding 40px/56px, and section headings are 24/32.
+The hero arrives with opacity and 8px translate over the existing slow duration;
+reduced motion removes both entrance and sign-in transitions. Existing single
+sign-in admission, 200ms fade, failure retry and service return routes remain.
+
+The brand character has the same fixed studio palette in both themes: lime-400
+body and fill; zinc-950 black lenses; zinc-50 sky/key/glint; zinc-800 ground;
+zinc-400 rim; lime-400 shadow. Operational character body colors remain semantic.
+Its WebGL fallback uses the same lime mark and black lenses. The favicon uses
+exactly the conversation avatar paths, a lime #c3fd43 mark in a 20px inner square
+on a 32px #18181b dark circle with its quiet #27272a 1px outline; PNG and apple
+icons are rasterizations of that SVG, not crops of a screenshot.
+
+The browser document title is exactly `ChronoAI Managed Agent (CMA)` on every
+route. In-page headings continue to identify the current view. The portal's
+upper-left mark is 40px rather than 20px, within a 44px brand control. Collapsed
+navigation retains its 56px rail, with 6px inline padding to fit the control.
+
+### Compact Agent toolbar and file split (2026-10-22)
+
+Replace §13's collapsed/pinned Agent banner with one always-visible compact toolbar. It uses 48px minimum height, 8px 20px padding, base ground and no banner/breadcrumb/status strip. The 14/20 semibold Agent title is a truncating button with a down chevron and the shared accessible action menu. The heading stays focusable. Rename, Update system prompt, Update skills installed, existing provenance/details and permitted lifecycle actions use public APIs and existing authorization. The title's tooltip includes the current status.
+
+A 32px computer control follows the title. Hover opens a 360px-wide Sandbox preview constrained to 12px viewport margins without moving keyboard focus; a 150ms pointer-exit grace period allows reaching its portalled contents. Keyboard activation and touch press open the same card, Escape/outside press dismiss it. Show the real Sandbox ID, live CPU/RAM/network readings and the currently enabled agent-key scope; show unavailable/measuring states instead of invented zero values. Resource reads run only while open. Share uses the existing Agent share dialog; Files is immediately to its right.
+
+Files opens in the frame's right column, reusing its 300–520px width bounds and 640px center floor; on narrow screens it uses the existing right overlay. Header: 48px minimum with 8px 16px padding and Close files. Body: 12px padding and gaps, full-height scrolling; persistent /home/ tree, 40px rows (44px on phones), truncating names, existing file actions and a preview beneath the tree only when selected. Close/open keeps owner file selection and unsaved draft; shared file access is independently revalidated. Losing authorization clears access. The chat remains mounted and retains draft/live history when opening, closing, switching or resizing panels.
+
+The vertical separator remains 8px with pointer capture and frame-coalesced movement. It is keyboard focusable, announces its current/minimum/maximum pixel width, ArrowLeft/Right changes width by 16px (48px with Shift), Home/End selects the bounds. Pointer cancellation ends dragging cleanly. Keep existing eased grid transitions except while dragging and honor reduced motion. At narrow conversation widths toolbar padding is 8px, title target 44px, and existing mobile button targets remain 44px.
+
+New local browser acceptance runs at 1600px and 390px, light and dark, with only public HTTP fixtures; captures file-panel screenshots, checks drag/keyboard resize, viewport bounds and preservation of the exact chat input DOM node/draft across Files toggles. No production records are touched.
+
+| 2026-10-22 | Route signed-in home directly to Agent Manager; introduce the editorial anonymous Landing, consistent lime character, dark circular avatar favicon and exact CMA tab title; double the portal logo. Replace the Agent banner with a compact toolbar, accessible Sandbox preview, real Share action and adjustable file panel while retaining the conversation and draft. |
+
+
+### Document Artifacts
+
+The authenticated Artifacts navigation entry opens `/artifacts`. Its All, Yours, and Shared with you filters and debounced search call the public document registry with cursor pagination. A Docs tile creates a document through the same public API. Cards use authoritative title, access, and update metadata; they do not fetch every source or invent document previews. Opening a document uses `/artifacts/doc_<32 lowercase hex>`, including links emitted inside Agent conversations, without a full page reload.
+
+The document workspace has an editable owner title, explicit Save state, Share, and Comments controls. A compact formatting toolbar sits above an approximately 864 px centered document. The paper scrolls independently from the header. The right Comments column becomes an overlay within the workspace on narrow screens. Shared readers receive no editing toolbar or Save/Share controls; comment permission enables comment posting only. Shared Modal, Button, Picker, Menu, Alert, focus handling, tokens, and reduced-motion conventions apply.
+
+The rich editor is lazy-loaded Tiptap 3.32.0 with Markdown as durable source. It supports headings, bold, italic, underline, lists/checklists, tables with row/column controls, images by URL or bounded raster paste/drop/upload, code, quotes, divider, date, dropdown details, fonts, and Mermaid fenced diagrams. Mermaid is lazy, strict, bounded, and SVG-sanitized; executable image URLs and SVG data images are rejected. A document is at most 1 MiB. Embedded image uploads are at most 600 KiB to leave room for Markdown/base64 overhead.
+
+Standard formatting uses normal Markdown/GFM. Additional formatting uses these explicit source forms:
+
+- Font: `[font family="serif"]Text[/font]`; families are only `sans`, `serif`, `mono`.
+- Date: `[date value="2026-10-22"]`.
+- Underline: the Tiptap Markdown extension’s supported inline underline HTML.
+- Dropdown details: nested Tiptap block directives, for example:
+
+````markdown
+:::details {open=true}
+
+:::detailsSummary
+
+More information
+
+:::
+
+:::detailsContent
+
+A paragraph, list or table inside the dropdown.
+
+:::
+
+:::
+````
+
+Save uses an exact revision compare-and-swap and idempotency key. Uncertain saves keep the original request body/key, including while navigating within this tab. Unsaved drafts are bounded, memory-only, viewer/document-scoped, and reauthorized before restoration. A newer source never silently changes the draft's original baseline or enables overwriting another editor's work; a conflict retains the draft and offers explicit download/discard/reload. Metadata changes (comments/sharing) retain the loaded source unless their source revision changed, which triggers the same conflict protection.
+
+Owners grant view/comment access by NyxID subject or create revocable view/comment links. Link authority is generated in-browser, appears only in URL fragments, and is sent only in `X-CMA-Document-Share-Token`. A tab-local, expiring session record preserves fragment authority through sign-in while OAuth return URLs contain only the document path. Existing Agent recipient search requires an Agent ID/owner authority, so standalone documents do not call it with an invented Agent.
+
+
+| 2026-10-22 | Add the persistent document Artifact registry, rich Markdown editor, revision-safe drafts, secure diagram/image rendering, direct sharing and authenticated share links, and comments using the common controls and motion system. |
+
+
+The title menu also exposes owner-only Rename Agent and Update system prompt when the public preferences client is available. Rename remains available during work and updates the current header/sidebar through the controller without reloading or remounting the conversation. System prompt changes require an idle Agent and a runtime reporting real support; older runtimes explain the unavailable capability. Both forms use the shared Modal and public revision CAS. Uncertain replies retain the original body/idempotency key for exact retry; conflicts retain the draft until an explicit reload. A real browser check keeps the same composer DOM node and its unsent text through both successful changes.
+
+
+| 2026-10-22 | Preserve the live composer through revision-safe Agent rename and owner system-prompt dialogs, retaining uncertain edits for exact retry and explaining unavailable native capabilities. |
+
+
+### Quiet document workspace (2026-10-23)
+
+Artifacts uses an editorial 1184px maximum gallery, 48px/32px page insets,
+32px/40px weight-500 title with -0.03em tracking and a 14px secondary introduction.
+The New document action is the single primary. A compact 280px creation tile
+uses a 40px icon seat, 16px padding, 12px radius and neutral hover; it does not
+pretend to preview source. Registry cards use 16px gaps, 240px minimum columns,
+12px radii, a quiet layer-2 preview, 20px/28px title and 16px metadata insets.
+Hover changes border and ground only, never position. Empty results and loading
+keep the same content geometry, with the shared skeleton for loading.
+
+The document header uses 56px minimum height, 12px/20px insets, a 14px medium
+title and a compact readable save status. Edit and Preview are named pressed
+buttons in one neutral 8px-radius group; preview changes only presentation and
+keeps the same editor, undo history, draft and explicit Save. Shared readers
+remain read-only. The 48px formatting row groups paragraph/font, emphasis,
+insert and history controls with quiet vertical separators. The document lives
+on a layer-1 sheet on a layer-2 canvas: 864px maximum width, 24px margin, 48px
+insets, radius 12 and a border-l1 edge. Body is 16px/28px; headings use 32/40,
+24/32 and 20/28 with weights 600, 600 and 500. Comments are a 300px layer-1
+column with plain 13px/20px text, 16px insets and 12px-radius comment surfaces.
+Sharing retains the shared centered Modal and all existing consent controls.
+
+On this page opens a quiet 180px outline beside the paper on wide documents,
+with 12px/18px rows and 12px nested heading indentation. On narrow surfaces it
+stacks above the document. It derives up to 64 actual headings from editor
+transactions, without polling or extra API calls; selecting one scrolls to that
+heading without changing the document or editor selection. Empty outlines say
+that headings will appear there. Preview, outline and comment changes retain
+the editor DOM. Shared 200ms opacity/grid transitions and reduced-motion rules
+apply; content text and hover positions never animate. Below 640px, document
+insets reduce to 20px/16px, controls wrap within the viewport, and phone targets
+retain the shared 44px minimum.
+
+| 2026-10-23 | Refine Artifacts into a calm document workspace with an editorial gallery, grouped formatting toolbar, readable paper surface, draft-preserving Preview, event-driven heading outline, quieter comments and shared light/dark motion. |
+
+### Legible browser favicon (2026-10-23)
+
+Keep the exact conversation-avatar geometry, lime #C3FD43 mark, #18181B
+circular tile and #27272A outline. The mark viewport is `12 7.25 76 76`, filling
+the 32px canvas with an approximately 30px visible glyph; this supersedes the
+20px inner-square treatment. The 16, 32, 48, 64, 180 and 512px raster fallbacks
+derive from that SVG, and content-hashed URLs refresh retained browser icons.
+
+| 2026-10-23 | Enlarge the existing favicon glyph within its circular tile for legibility in browser tabs while preserving its geometry and fixed CMA palette. |
+
+
+| 2026-10-23 | Render Mermaid diagrams with the current CMA alias palette, including connector and edge-label contrast, and re-render on appearance changes without changing source. Keep narrow-canvas outline destinations below wrapped formatting controls with a 128px scroll margin. |
+
+### Event Gateway delivery map (2026-10-26)
+
+A selected channel opens on a readable, interactive delivery map: every configured
+producer on the left, the channel in the middle, and the implicit default plus
+all recorded additional consumers on the right. Keep the existing channel table,
+sidebar, breadcrumbs and retained channel instances. The map describes configured
+connections, not live delivery or health. Connector lines are static; no animated
+traffic or green health claim is inferred from configuration. A pending consumer
+is explicitly labelled "Binding pending" and an unattached relay "No routes".
+
+The detail has a 1440px maximum width. At 1080px of available detail width,
+the map and inspector sit alongside each other in minmax(0,1fr)/360px columns
+with a 24px gap; below that they stack without changing component identity. The map uses a layer-2 ground, 1px border-l2,
+16px radius, 24px insets and a 24px dotted grid in border-l1. Its header uses
+16/24 medium text and a 13/20 secondary explanation. Inside, three columns use
+minmax(0,1fr), minmax(140px,.8fr), minmax(0,1fr), with 40px connection gutters.
+Each column has a 12/18 medium title and a readable count, and its node list is
+vertically centred with 12px gaps. Nodes are full-width real buttons, at least
+88px high, 12px insets, 12px radius and a layer-1 fill; names are 14/20 medium,
+metadata 12/18 secondary, and the 32px icon seat has an 8px radius and layer-3
+fill. Long names and metadata truncate, with their full value in a title.
+Selected nodes use the business-primary border and accent wash; hover changes
+only border and ground. The central channel has 16px insets and a business-tone
+icon seat. Decorative 1px border-l3 connectors join the node edges through a
+shared vertical rail; the producer/channel/consumer order conveys direction.
+The map has accessible stage labels, natural producer/channel/consumer tab order,
+named pressed-state node controls and the existing focus ring. It is not a
+canvas requiring pointer gestures.
+
+Below 600px of available map width, the map becomes a vertical roadmap in
+producer/channel/consumer reading order with a quiet vertical connector and no
+horizontal overflow. Its insets are 16px, every action remains at least 44px, and
+node text stays within the viewport. This layout follows the detail's width via
+a container query, so an expanded navigation rail cannot squeeze the map.
+
+Selecting a node opens its inspector alongside the map (below on narrower surfaces): a layer-1 surface with a
+1px border-l2 edge, radius 12, 20px insets, a 16/24 medium title and 13/20 secondary
+purpose. Read-only facts are a definition list with two equal columns, 16px gaps,
+12/18 secondary labels and 14/22 primary values; opaque IDs wrap. At 640px these
+facts stack. Render only named public configuration fields, never a raw JSON dump
+or credential. The channel inspector contains endpoints and the recorded routing
+summary; producers show their platform, routes and admission policy; consumers
+show their binding, target, reply policy and pending state. Tests identify their
+actual target and side effects. A provider test is never described as proof of
+platform ingress or message delivery. An uncertain outcome stays uncertain and
+never triggers an automatic retry. Tests and edits retain state across node and
+channel navigation; opening a node sends no mutation or extra resource request.
+
+Each node is the only entry to its own settings and tests. There is no whole-channel
+configuration form or editor toggle in channel detail. Creation retains its initial
+setup form. The structured editor reuses service-form and shared Input, Picker and Button.
+`.channel-form-section` is a min-width-zero fieldset with a 1px border-l2 edge,
+12px radius, 16px insets and 16px gaps; its legend is 14/22 medium.
+`.channel-form-grid` is two equal minmax-zero columns with 16px gaps, stacking at
+640px. `.channel-form-row` wraps aligned controls with an 8px gap. A
+`.channel-value-field` uses 14/22 text and wraps opaque IDs; `.channel-field-hint`
+is 12/18 secondary text with 4px top spacing. The editor stays mounted while
+changing the inspected node, retaining the exact draft, original revision and
+uncertain request. Read-only permissions remove mutation controls, not context.
+
+Node selection and inspector changes use the shared 200ms opacity and
+border/background transitions. Neither selection nor hover moves content;
+`prefers-reduced-motion: reduce` removes every map transition and entrance.
+No timers, polling or graph library are introduced for this projection.
+
+| 2026-10-26 | Replace the channel JSON disclosure with an interactive producer → channel → consumer delivery map and scoped readable inspectors, preserving channel navigation, drafts, permission checks and honest test outcomes. Establish responsive map geometry, structured field groups and reduced-motion selection transitions. |
+
+Map nodes carry their actual platform/provider identity in the existing 32px icon
+seat. Telegram, Discord and WhatsApp use locally bundled CC0 Simple Icons paths;
+Lark/Feishu reuse the user-supplied bird geometry already used in NyxID, with
+Feishu's outline variant. CMA consumers reuse the existing CMA face SVG; Nyxbot
+uses the existing NyxID identity glyph. Monochrome paths use currentColor and
+existing aliases; the CMA face retains its approved fixed palette. The mark is
+20px and decorative because the node names its platform/provider in text.
+Unknown providers retain a generic Agent glyph and their literal provider name.
+No logo fetch, dependency, palette or network-derived health indicator is added.
+
+| 2026-10-26 | Identify producer and consumer nodes with local platform and provider glyphs; make each node the sole entry to its own settings and real targeted tests in a retained adjacent inspector. |
+
+For channel editors with update permission, Add producer is a shared quiet button
+with 12px top spacing in the producer column. It opens an explicitly unsaved
+producer in the same inspector; tests become available only after save. Existing
+producer and consumer nodes continue to describe saved configuration. On stacked
+layouts, selecting a node brings the inspector into view with smooth scrolling
+and a 20px top scroll margin; reduced motion uses immediate scrolling. The
+scroll responds only to the user's selection and does not poll or change drafts.
+
+| 2026-10-26 | Keep a scoped unsaved producer in the map inspector until its versioned save and bring selected details into view on narrow layouts, preserving reduced-motion behavior. |
+
+Inside the node inspector, the form's outer fieldset and nested fieldsets keep
+their semantic legends but omit their extra borders and padding, with 16px block
+spacing. The inspector supplies the enclosing edge, avoiding repeated boxes
+around a single setting group. Test outcomes retained after a configuration
+change explicitly say that settings changed since that test was requested.
+
+| 2026-10-26 | Keep scoped setting groups visually quiet within the inspector and distinguish retained test results from verification of subsequently changed settings. |
+
+
+### Relay onboarding and capability discovery (2026-10-26)
+
+The structured producer editor keeps the same Section, Picker, Input and Button
+primitives. Verification choices that this gateway cannot currently write stay
+visible and disabled with an inline reason. Saved and drafted choices remain
+visible; loading capabilities never rewrites them or selects normalized trust.
+Explain the platform's NyxID setup and exact route identifiers beneath its
+fields. A failed capability check offers one explicit retry, with no polling.
+All editors share discovery within the current owner/permission context.
+
+Creation offers an explicit existing CMA-managed Telegram connection choice.
+Its owner-scoped list loads only when selected, supports manual pagination,
+and labels unavailable connection states. Switching back restores manual
+producer drafts and credentials. Admission starts with an empty allowlist.
+NyxID relay routes are never labelled as CMA-managed connection references,
+and platform verification support is never presented as native bot creation.
+
+| 2026-10-26 | Add capability-aware relay verification and platform setup guidance, preserving drafts and exact retries; distinguish owned Telegram connection setup from NyxID relay onboarding with explicit admission and no background polling. |
+
+
+### Owner-initiated channel messages (2026-10-26)
+
+The existing producer inspector may include a structured message composer only
+when the owner has update permission and the gateway advertises initiated sends.
+Use the existing Choice, TextField, Button, Alert and Presence primitives and
+inspector section styling. Show saved route choices only; never ask for arbitrary
+recipient metadata or credentials. Preparing retains the exact destination and
+message for review before the separate Send action. Keep that snapshot and its
+idempotency key while changing inspected nodes or recovering an uncertain request.
+No polling or automatic resend is permitted. Confirmed, cancelled and unknown
+outcomes use plain language; unknown offers an explicit status check and retains
+its delivery reference. The existing Presence transition respects reduced motion.
+
+| 2026-10-26 | Add explicit prepare, review, send, cancel and status recovery in the existing producer inspector for owner-initiated messages, retaining uncertain operations and their exact destination. |
+
+
+Owner-initiated message recovery retains the exact request, key and receipt in
+per-tab session storage scoped to the current owner and stable channel record.
+Save before network effects. A reload offers an explicit status check, never an
+automatic send, and account changes reset the visible composer. Storage failure
+blocks sending with an inline explanation. Use “Review message”, “Send message”
+and “Cancel” for the explicit actions; avoid internal preparation terminology.
+
+| 2026-10-26 | Retain owner/channel message recovery across reloads with original keys, explicit status checks and plain review/send labels. |
+
+### Initiated-message native media (2026-10-26)
+
+The producer inspector's existing message composer may show Media attachments
+when the gateway explicitly advertises native-media writes for a supported relay
+platform. An absent capability keeps new media controls hidden. Reuse Section,
+Choice, TextField and Button, the existing channel form grid, row and hint styles;
+introduce no new colors, spacing or motion. Each of at most four entries has a
+stable identity, an Image/File/Audio/Video picker and a required HTTPS URL, with
+optional filename, MIME type and caption. Remove affects only that entry. Show
+an inline validation reason and prevent review while any attachment is invalid.
+Message text is optional with valid media. Do not expose raw JSON or arbitrary
+recipient fields, and do not fetch previews when the inspector opens.
+
+Review shows every media kind, exact URL, optional metadata and saved destination
+as readable wrapping text. The separate Send action submits the exact reviewed
+body. Opening, returning or reloading never sends automatically. Preserve version
+1 text journals without reshaping requests; new media journals use version 2 and
+retain their exact body, idempotency key and uncertain receipt. Gate changes keep
+saved review, Cancel and Check delivery status available while blocking new
+media sends. Unsaved media fields are retained when temporarily hidden. Media
+send requests allow the gateway's longer upload budget before showing uncertainty;
+review, cancellation and status requests retain the normal short budget. Reuse
+the existing Presence notice transition and reduced-motion behavior.
+
+| 2026-10-26 | Add typed URL-based native media to initiated channel messages with up to four image/file/audio/video entries, explicit review/send, media-only support, validation and exact versioned recovery. Preserve saved media and status access when write capabilities change. |
+
+| 2026-10-26 | Keep Check saved request available after an uncertain initiated-message preparation when either write capability disappears. Recover only the retained exact request; new review and Send remain gated, while recovered status and cancellation stay available. |
+
+| 2026-10-26 | Return an initiated-message draft to editing after a definite first HTTP 413 preparation rejection. Preserve any earlier uncertain request and its key when a recovery attempt receives the same rejection. |
+
+### Event Gateway flow workspace (2026-10-27)
+
+The Event Gateway uses the Agent Manager's shared PortalFrame, sidebar rows,
+Geist typography, Button, Input, Picker, Modal, Alert, Presence and theme aliases.
+The following replaces the delivery map's adjacent inspector, table-first entry
+and prohibition on a graph library. It introduces no separate visual system.
+
+Channels and Consumers are expandable sidebar groups. Their retained lists sit
+directly beneath the group control and use the shared quiet navigation treatment.
+Rows show the authoritative name, creation time and creator; unavailable metadata
+reads "Not reported" instead of borrowing the current viewer's identity or time.
+The selected row remains visible through details and editor navigation. Lists
+retain loading, empty, error, explicit retry and bounded pagination controls.
+Before selection the main area contains one New channel or New consumer action
+and an illustrative React Flow diagram. Its copy clearly describes a possible
+event journey; it never represents sample activity as the owner's real data.
+
+A selected Channel's React Flow canvas fills the available main area below its
+compact PageHeader, without a reading-width cap. Producers occupy the left,
+the Channel the middle and Consumers the right. The canvas has the existing
+24px dotted ground and 24px edge clearance. Cards retain 12px radius, 12px
+insets, 32px icon seats, 14/20 medium names and 12/18 secondary metadata.
+They are 240px wide with an 88px minimum height; horizontal layout steps are
+360px and vertical steps 120px. Existing aliases supply all fills, borders,
+handles and connector colors. Fit, zoom and pan are accessible controls; nodes
+remain keyboard-activatable and connections are not editable by dragging.
+An accessible reading-order list exposes the same node actions on small screens
+and to assistive technology. Pan/zoom and selection never mutate configuration.
+
+Node activation opens the shared centered Modal. The configuration shell is
+fixed at min(960px,60vw) by 60dvh and never exceeds 60vw or 60dvh, including
+on narrow screens, preserving at least 20% page clearance on every edge.
+Its header and close control remain fixed. A 144px left section-title sidebar
+provides jump links to Overview, Configuration, Send message, Tests, Activity
+and Delete as applicable. The content scrolls internally; at 720px viewport
+width the section links wrap above the scroll area. Selected-node changes and
+closing/reopening the popup preserve drafts, exact uncertain requests, results
+and revisions. Hidden retained dialogs are inert, excluded from accessibility
+and release their focus trap and page scroll lock. Only one popup is interactive.
+
+Use the existing 200ms opacity/8px arrival motion, quiet hover background and
+border transitions, and shared easing. Illustrative connections may animate a
+slow 3s dash progression; real configuration connections remain static because
+they do not represent observed traffic. Reduced motion removes flow animation,
+viewport transitions, entrance transforms and smooth section scrolling.
+
+Channel Activity shows only public API evidence and receives live changes from
+the authenticated public event subscription. Initial history and live updates
+merge by event identity and sequence without periodic polling. Show recorded
+source receipt, target dispatch, producing agent/time and recipient delivery
+separately. Queued, accepted, delivered, failed and unknown retain their actual
+meaning; an absent delivery receipt is never displayed as sent. Live status uses
+the shared quiet status treatment, with explicit retry for a disconnected feed.
+Changing channel or identity closes the previous subscription and rejects its
+late responses. Opening Activity never sends an event or starts agent work.
+
+| 2026-10-27 | Standardize Event Gateway on Agent Manager primitives; introduce a full-area accessible React Flow workspace, expandable resource navigation, illustrative entry screens, retained centered node configuration with section navigation, and evidence-based live Channel Activity. |
+
+### Selected-channel Activity preview (2026-10-27)
+
+Keep the illustrative welcome diagram until a channel is explicitly selected.
+Selection opens one authenticated Activity subscription for that active channel;
+inactive retained channel views close their subscriptions. Returning starts a new
+subscription and receives its complete current snapshot. The map and retained
+Activity dialog share that feed and snapshot. Opening or closing the dialog
+never opens another subscription or starts work.
+
+Below the map heading, show a compact Latest activity region with connection
+status and the newest receipt from the authoritative snapshot: source, actor,
+received timestamp and each reported consumer state. With no consumer record,
+label the event Received. Do not synthesize a combined lifecycle state, traffic
+animation, event count or receipt time. Waiting for a snapshot differs from an
+authoritative empty history. Keep the last valid evidence visible during a
+reconnect, beside the current connection status. Native recoverable reconnects
+have no application retry limit; a terminal closed stream or malformed snapshot
+requires the existing explicit Reconnect activity action.
+
+The preview uses existing theme aliases, a level-2 border, 12px corner radius,
+12px insets, 8px wrapping gaps and 24px horizontal map margins (16px at narrow
+viewport widths). Use 13/20 primary text, medium headings and 12/18 secondary
+metadata. Each newly reported event uses the shared Presence arrival transition
+and reduced-motion behavior; updates to the same event do not restart it.
+
+| 2026-10-27 | Start one Activity stream on explicit channel selection; share its authoritative latest receipt with the map and retained dialog, close inactive streams and preserve native recoverable reconnects without an arbitrary error cap. |

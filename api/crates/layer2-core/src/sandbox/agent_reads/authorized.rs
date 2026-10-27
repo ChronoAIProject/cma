@@ -336,10 +336,10 @@ fn detail_projection(
     }
     let agent = lineage.agent;
     Ok(AgentDetailReading::Shared(Box::new(SharedAgentDetail {
+        model: agent.selected_model(),
         id: agent.id,
         status: agent.status,
-        title: agent.title,
-        model: agent.profile.content.model,
+        title: agent.conversation.preferences.title.or(agent.title),
         created_at: agent.created_at,
         updated_at: agent.updated_at,
         ready_at: agent.ready_at,

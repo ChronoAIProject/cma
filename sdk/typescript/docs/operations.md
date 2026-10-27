@@ -87,3 +87,11 @@ if (current) {
 ```
 
 `available: false` means provider inventory could not be observed. Recorded targets remain visible, and `ready_replicas: null` means readiness is unknown. A 202 response acknowledges durable intent; check `status` and `observed` for reconciliation progress. Refresh after a resize conflict before submitting a new revision. Setting the target to zero stops replenishment; claimed Agent runtimes keep their existing homes and lifecycle.
+
+Pool inventory exposes each target's immutable `config_sha256` and the current
+`default_config_sha256` for the default image, CPU, memory, home, and Pod policy.
+Older servers omit these fields, which the SDK preserves as `undefined`.
+Select default capacity only when both digests are present and equal;
+matching only image and resources can select a retained older policy.
+Use a new idempotency key to create a target after policy changes. Replaying an
+old key and resizing an old target preserve that target's original policy.

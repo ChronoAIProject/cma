@@ -3,17 +3,24 @@ mod claims;
 mod cleanup;
 mod cleanup_inventory;
 mod control;
+mod drain;
 mod home;
 mod home_origin;
 mod native_home;
+mod native_home_recovery;
 mod native_home_store;
 mod native_proof;
 pub use native_home_store::NativeHomeVolumes;
 mod management;
 mod model;
+mod pod_policy;
+pub use pod_policy::NativeFsGroupChangePolicy;
 mod reconciliation;
 mod recovery;
+mod retirement;
+mod retirement_inventory;
 mod runtime;
+pub(crate) mod runtime_upgrade;
 
 use kube::{
     api::{DynamicObject, PostParams},
@@ -151,18 +158,21 @@ impl AgentSandboxPools {
         Ok(())
     }
 
-    pub(crate) async fn verify_explicit_network_policy(
+    pub(crate) async fn verify_explicit_template_policy(
         &self,
         binding: &NativePoolBinding,
     ) -> Result<()> {
-        if binding.pod_policy.template_network_policy.is_some() {
+        if binding.pod_policy.template_network_policy.is_some()
+            || binding.pod_policy.fs_group_change_policy.is_some()
+        {
             self.bound_resources(binding).await?;
         }
         Ok(())
     }
 
     async fn verify_binding(&self, binding: &NativePoolBinding) -> Result<()> {
-        self.bound_resources(binding).await?;
+        let (_, pool) = self.bound_resources(binding).await?;
+        retirement::admitting(&pool)?;
         self.verify_seed(&binding.spec.home).await
     }
 }
@@ -235,3 +245,20 @@ mod native_home_tests;
 
 #[cfg(test)]
 mod network_policy_tests;
+
+#[cfg(test)]
+mod fs_group_policy_tests;
+
+#[cfg(test)]
+mod native_admission_read_tests;
+#[cfg(test)]
+mod native_startup_read_tests;
+#[cfg(test)]
+mod policy_read_tests;
+#[cfg(test)]
+mod read_fixture;
+#[cfg(test)]
+mod selection_read_tests;
+
+#[cfg(test)]
+mod drain_tests;

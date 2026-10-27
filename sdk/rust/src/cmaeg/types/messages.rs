@@ -214,6 +214,15 @@ pub struct IntentReceipt {
 /// CMAEG `OutboundMessage` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutboundMessage {
+    /// Approved WhatsApp template, exclusive of other message content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_template: Option<super::WhatsappTemplate>,
+    /// Explicit native media; omitted preserves link-only attachment blocks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_attachments: Option<Vec<NativeAttachment>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Explicit native-thread choice; absence preserves legacy delivery.
+    pub thread_reply: Option<bool>,
     /// Wire field `blocks`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocks: Option<Vec<Block>>,
@@ -240,4 +249,65 @@ pub struct RenderingReport {
 pub struct TypingReceipt {
     /// Wire field `outcome`.
     pub outcome: TypingOutcome,
+}
+
+/// Native media category supported by the destination relay.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeMediaKind {
+    /// Image rendered by the destination platform.
+    Image,
+    /// Downloadable file.
+    File,
+    /// Audio attachment.
+    Audio,
+    /// Video attachment.
+    Video,
+}
+
+/// Public HTTPS URL or a bounded standard-base64 body, never a local file path.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum NativeMediaSource {
+    /// Public HTTPS resource fetched by the relay.
+    Url {
+        /// HTTPS URL without credentials or a fragment.
+        url: String,
+    },
+    /// Inline bytes using standard padded base64.
+    Base64 {
+        /// Encoded attachment bytes, subject to the aggregate decoded limit.
+        data: String,
+    },
+}
+
+/// Explicit native attachment; consult context.native_media before sending.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeAttachment {
+    /// Destination media category.
+    pub kind: NativeMediaKind,
+    /// Public URL or inline attachment bytes.
+    pub source: NativeMediaSource,
+    /// Optional filename without directory components.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    /// Optional MIME type without parameters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Optional caption, bounded by the gateway contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+}
+
+/// Deployment-attested outbound media capabilities.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeMediaCapabilities {
+    /// Media categories supported for this event's destination.
+    pub kinds: Vec<String>,
+    /// Accepted source forms, such as url or base64.
+    pub sources: Vec<String>,
+    /// Maximum attachment count per logical reply.
+    pub max_attachments: u64,
+    /// Maximum aggregate decoded inline bytes per logical reply.
+    pub max_inline_bytes: u64,
 }

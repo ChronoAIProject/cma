@@ -18,13 +18,27 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
             issuer,
             platform,
             trust_normalized,
+            verify_raw_event,
             ..
         } = source
         {
+            if *verify_raw_event
+                && (*trust_normalized
+                    || !matches!(
+                        platform,
+                        cmaeg_core::channel::Platform::Discord
+                            | cmaeg_core::channel::Platform::Whatsapp
+                    ))
+            {
+                return Err(ValidationError::new(
+                    format!("{pointer}/verify_raw_event"),
+                    "requires Discord or WhatsApp without trust_normalized",
+                ));
+            }
             // Refuse up front: a stored source like this would admit no callbacks,
             // so a bot moved onto it would go silent. Ingress still refuses one as
             // defense in depth for definitions stored before this check existed.
-            if !platform.verifies_raw_event() && !trust_normalized {
+            if !platform.verifies_raw_event() && !trust_normalized && !verify_raw_event {
                 return Err(ValidationError::new(
                     format!("{pointer}/trust_normalized"),
                     "the platform has no raw-event verifier; set trust_normalized to true to admit its normalized callbacks",
@@ -57,6 +71,17 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_username: bot_username.clone(),
                 admission: admission.clone(),
             },
+            SourceRequest::Discord {
+                bot_id,
+                intents,
+                thread_history,
+                admission,
+            } => Source::Discord {
+                bot_id: bot_id.clone(),
+                intents: *intents,
+                thread_history: *thread_history,
+                admission: admission.clone(),
+            },
             SourceRequest::NyxidRelay {
                 issuer,
                 key_id,
@@ -65,6 +90,8 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_username,
                 bot_id,
                 trust_normalized,
+                verify_raw_event,
+                lark_resources,
                 admission,
             } => Source::NyxidRelay {
                 issuer: issuer.clone(),
@@ -75,6 +102,8 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_username: bot_username.clone(),
                 bot_id: bot_id.clone(),
                 trust_normalized: *trust_normalized,
+                verify_raw_event: *verify_raw_event,
+                lark_resources: lark_resources.clone(),
                 admission: admission.clone(),
             },
             SourceRequest::Custom {
@@ -107,6 +136,7 @@ pub(super) fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets 
             .collect(),
         provider_credential: Some(credentials.agent_key.clone()),
         telegram_bot_token: credentials.telegram_bot_token.clone(),
+        discord_bot_token: credentials.discord_bot_token.clone(),
         telegram_webhook_secret: credentials.telegram_webhook_secret.clone(),
         consumer_keys: Vec::new(),
     }
@@ -133,6 +163,16 @@ pub(super) fn validate_credentials(
                 ));
             }
         }
+    }
+    if credentials.discord_bot_token.as_ref().is_some_and(|token| {
+        token.as_str().is_empty()
+            || token.as_str().len() > 2048
+            || !token.as_str().bytes().all(|b| (33..=126).contains(&b))
+    }) {
+        return Err(ValidationError::new(
+            "/credentials/discord_bot_token",
+            "requires 1..=2048 printable bearer bytes",
+        ));
     }
     let mut keys = BTreeSet::new();
     for (index, secret) in credentials.hmac_secrets.iter().enumerate() {

@@ -13,8 +13,28 @@ const { managedModelCatalog, sourceSha256, before, after, beforeSelection, after
 
 function sources() {
   const installed = readFileSync(process.env.CMA_ACP_MANAGED_BASE_SOURCE ?? bridgePath, "utf8");
+  if (installed.includes(after)) {
+    assert.equal(installed.split(after).length, 2, "Expected exactly one managed catalogue patch");
+    assert.equal(installed.split(afterSelection).length, 2, "Expected exactly one managed selection patch");
+  }
   const base = installed.includes(after) ? installed.replace(after, before).replace(afterSelection, beforeSelection) : installed;
-  assert.equal(createHash("sha256").update(base).digest("hex"), sourceSha256);
+  const digest = (source) => createHash("sha256").update(source).digest("hex");
+  const finalCompositions = {
+    "4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888": "e4bb8df279fc7b63dde04057646686e411b46cccef753594b7e272096b54b83f",
+    "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4": "1beae76099ee89f15793c9ea2638934bc6cf10347220be362b29e624e27499ed",
+    bcbfa2156e69b630fb3777b275ff739efd6c030159348e9cbae79a56ffa663c5: "0f751c0500accfbd0bd5e8c11aac6f2d9e2ade3139b8c9fe355116e590879cf6",
+    b2676ef9a4a57a5bedf15c0b576b96f2c67c45e53880f08b4b8ba80f2f8ce8d9: "c4158cf17031d559adfc261104775ae04d6c688942fc3b23f6bdc5f1b267ada0",
+  };
+  if (Object.hasOwn(finalCompositions, digest(installed))) {
+    // The image includes the reviewed observation and access patches. Compare
+    // that exact installed composition with only the model patch removed, so
+    // the native regression also covers the final image's other behavior.
+    // Title provenance changed the composition, not either model-patch site.
+    assert.equal(digest(base), finalCompositions[digest(installed)]);
+    assert.equal(base.replace(before, after).replace(beforeSelection, afterSelection), installed);
+    return { base, patched: installed };
+  }
+  assert.equal(digest(base), sourceSha256);
   return { base, patched: managedModelCatalog(base) };
 }
 

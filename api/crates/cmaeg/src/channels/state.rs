@@ -14,6 +14,7 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub activity: Arc<crate::activity::ActivityStore>,
     pub resolver: super::resolver::ChannelResolver,
     pub readiness: crate::http::readiness::Readiness,
     pub providers: Arc<ProviderClient>,
@@ -21,13 +22,30 @@ pub struct ManagementState {
     pub creator_auth: Arc<CreatorAuthenticator>,
     pub master_keys: Arc<MasterKeyRing>,
     pub public_url: String,
+    pub public_api_url: String,
+    pub advertise_public_api_url: bool,
     pub cma_base_url: String,
     pub tools_nyxid_slug: String,
     pub cma_service_token: cmaeg_core::channel::Secret,
     pub telegram: Option<Arc<crate::telegram::TelegramClient>>,
+    /// Allows new native bot mention opt-ins once every reader and consumer
+    /// supports the policy. Does not disable execution of retained opt-ins.
+    pub native_bot_mentions_writes_enabled: bool,
+    /// Allows new thread contracts only after every reader supports them.
+    pub thread_contract_writes_enabled: bool,
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
+    pub multi_consumer_writes_enabled: bool,
+    pub dynamic_sources_writes_enabled: bool,
+    pub relay_raw_verification_writes_enabled: bool,
+    pub lark_resource_writes_enabled: bool,
+    pub native_discord_writes_enabled: bool,
+    pub native_discord_thread_history_enabled: bool,
+    pub native_discord: crate::discord::selection::Selection,
+    pub native_discord_admission_enabled: bool,
+    pub outbound_messages_writes_enabled: bool,
+    pub outbound_relay: Option<crate::delivery::relay_client::RelayClient>,
     /// Receives every record head management writes or deletes; a no-op
     /// unless the console is on.
     pub index: Arc<dyn super::observer::ChannelIndexObserver>,
@@ -43,6 +61,27 @@ pub(crate) struct CachedResponse {
 }
 
 impl ManagementState {
+    pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
+        super::write_gate::WriteFlags {
+            native_bot_mentions: self.native_bot_mentions_writes_enabled,
+            thread_contract: self.thread_contract_writes_enabled,
+            multi_consumer: self.multi_consumer_writes_enabled,
+            dynamic_sources: self.dynamic_sources_writes_enabled,
+            relay_raw_verification: self.relay_raw_verification_writes_enabled,
+            lark_resources: self.lark_resource_writes_enabled,
+            native_discord: self.native_discord_writes_enabled,
+            discord_thread_history: self.native_discord_thread_history_enabled,
+        }
+    }
+
+    pub fn advertised_api_url(&self) -> &str {
+        if self.advertise_public_api_url {
+            &self.public_api_url
+        } else {
+            &self.public_url
+        }
+    }
+
     pub fn new(
         providers: Arc<ProviderClient>,
         records: Arc<RecordClient>,
@@ -76,6 +115,10 @@ impl ManagementState {
             index.clone(),
         );
         Self {
+            activity: Arc::new(crate::activity::ActivityStore::new(
+                (*records).clone(),
+                config.master_keys.clone(),
+            )),
             resolver,
             readiness: crate::http::readiness::Readiness::initialized(),
             providers,
@@ -83,11 +126,25 @@ impl ManagementState {
             creator_auth,
             master_keys: config.master_keys,
             public_url: config.public_url,
+            public_api_url: config.public_api_url,
+            advertise_public_api_url: config.advertise_public_api_url,
             cma_base_url: config.cma_base_url,
             tools_nyxid_slug: config.tools_nyxid_slug,
             cma_service_token: config.cma_service_token,
             telegram: None,
+            native_bot_mentions_writes_enabled: false,
+            thread_contract_writes_enabled: false,
             media_enabled: false,
+            multi_consumer_writes_enabled: false,
+            dynamic_sources_writes_enabled: false,
+            relay_raw_verification_writes_enabled: false,
+            lark_resource_writes_enabled: false,
+            native_discord_writes_enabled: false,
+            native_discord_thread_history_enabled: false,
+            native_discord: Default::default(),
+            native_discord_admission_enabled: false,
+            outbound_messages_writes_enabled: false,
+            outbound_relay: None,
             index,
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),

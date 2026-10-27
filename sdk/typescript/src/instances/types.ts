@@ -1,6 +1,8 @@
-import { profileReference } from '../profiles/types.js';
+import { modelAccess, profileReference } from '../profiles/types.js';
 import { sandboxLifecycle } from './lifecycle.js';
+import { sandboxRuntimeUpdate } from './runtime-update.js';
 export type * from './lifecycle.js';
+export type * from './runtime-update.js';
 import {
   array,
   boolean,
@@ -59,6 +61,7 @@ const sandboxFields = {
   limits: object({ max_workspaces: positiveInteger, max_agents_per_workspace: positiveInteger }),
   lifecycle: optional(sandboxLifecycle),
   runtime_version: optional(text),
+  runtime_update: optional(sandboxRuntimeUpdate),
   failure: optional(failure),
   last_activity_at: text,
   created_at: text,
@@ -85,6 +88,8 @@ export type WorkspaceSummary = Output<typeof workspaceSummary>;
 export const sandboxDetail = object({
   ...sandboxFields,
   ...counts,
+  agent_provider: optional(enumeration('codex')),
+  model_access: optional(modelAccess),
   workspaces: array(workspaceSummary),
 });
 export type SandboxDetail = Output<typeof sandboxDetail>;
@@ -124,6 +129,15 @@ export const worktree = object({
 });
 export type Worktree = Output<typeof worktree>;
 export const hierarchyAgentSummary = object({
+  owner_title: optional(text),
+  runtime_metadata: optional(
+    object({
+      working_directory: optional(text),
+      description: optional(text),
+      description_source: optional(enumeration('provider_title', 'prompt_preview')),
+      description_is_setup_preview: optional(boolean),
+    }),
+  ),
   id: text,
   worktree_id: text,
   workspace_id: text,

@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { IconCheckOutline16 } from './icons';
 import { placeMenu, type MenuAlign, type MenuSide } from './menuPlacement';
+import { presenceAttributes, usePresence, usePresenceExiting } from './Presence';
 import './Menu.css';
 
 /**
@@ -39,6 +40,14 @@ export interface MenuItem {
   readonly icon?: ReactNode;
   /** Destructive: error-coloured, with its own hover fill. */
   readonly danger?: boolean;
+  /**
+   * Where choosing this row goes, when it is navigation.
+   *
+   * The row becomes a real link, so a modified click or a middle click opens
+   * the destination in a new tab as any other link does; an ordinary click
+   * still reports the selection and leaves navigation to the owner.
+   */
+  readonly href?: string;
 }
 
 /** A hairline between groups. Not selectable, not focusable. */
@@ -54,7 +63,16 @@ export interface MenuLabel {
   readonly text: string;
 }
 
-export type MenuEntry = MenuItem | MenuSeparator | MenuLabel;
+/** Compact alternatives within one menu, with independent radio semantics. */
+export interface MenuChoices {
+  readonly type: 'choices';
+  readonly id: string;
+  readonly text: string;
+  readonly selectedId: string;
+  readonly choices: readonly { readonly id: string; readonly label: string }[];
+}
+
+export type MenuEntry = MenuItem | MenuSeparator | MenuLabel | MenuChoices;
 
 function isChoosable(entry: MenuEntry): entry is MenuItem {
   return !('type' in entry);
@@ -121,6 +139,9 @@ export function Menu({
 }: MenuProps) {
   const rootRef = useRef<HTMLSpanElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const parentExiting = usePresenceExiting();
+  const interactive = open && !parentExiting;
+  const { present, exiting } = usePresence(interactive);
 
   /*
    * The list is positioned by writing to its node rather than by holding
@@ -132,7 +153,7 @@ export function Menu({
    * thing a layout effect exists for.
    */
   useLayoutEffect(() => {
-    if (!open) {
+    if (!interactive) {
       return;
     }
     const place = () => {
@@ -165,14 +186,18 @@ export function Menu({
      */
     window.addEventListener('scroll', place, true);
     window.addEventListener('resize', place);
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
+    if (listRef.current) observer?.observe(listRef.current);
+    if (rootRef.current) observer?.observe(rootRef.current);
     return () => {
+      observer?.disconnect();
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
-  }, [open, side, align, matchAnchorWidth]);
+  }, [interactive, side, align, matchAnchorWidth]);
 
   useEffect(() => {
-    if (!open) {
+    if (!interactive) {
       return;
     }
     const onPointerDown = (event: PointerEvent) => {
@@ -199,7 +224,7 @@ export function Menu({
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [open, onClose]);
+  }, [interactive, onClose]);
 
   /*
    * Focus lands on the first row when the list opens, and on the selected one
@@ -207,13 +232,13 @@ export function Menu({
    * from the keyboard rather than merely reachable.
    */
   useEffect(() => {
-    if (!open) {
+    if (!interactive) {
       return;
     }
     const rows = rowsIn(listRef.current);
     const chosen = rows.find((row) => row.dataset.id === selectedId);
     (chosen ?? rows[0])?.focus();
-  }, [open, selectedId]);
+  }, [interactive, selectedId]);
 
   /*
    * And returns to the trigger when the list closes, if it was still inside
@@ -226,9 +251,9 @@ export function Menu({
    */
   const wasOpen = useRef(false);
   useEffect(() => {
-    const closing = wasOpen.current && !open;
-    wasOpen.current = open;
-    if (!closing) {
+    const closing = wasOpen.current && !interactive;
+    wasOpen.current = interactive;
+    if (!closing || parentExiting) {
       return;
     }
     const active = document.activeElement;
@@ -236,20 +261,33 @@ export function Menu({
     if (inList || active === document.body) {
       rootRef.current?.querySelector('button')?.focus();
     }
-  }, [open]);
+  }, [interactive, parentExiting]);
 
   const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!interactive) return;
     const rows = rowsIn(listRef.current);
     if (rows.length === 0) {
       return;
     }
-    const here = rows.indexOf(document.activeElement as HTMLButtonElement);
+    const here = rows.indexOf(document.activeElement as HTMLElement);
     const move = (to: number) => {
       event.preventDefault();
       rows[(to + rows.length) % rows.length]?.focus();
     };
 
     switch (event.key) {
+      case 'ArrowLeft':
+      case 'ArrowRight': {
+        const group = (document.activeElement as HTMLElement | null)?.closest('.menu__choices');
+        if (!group) return;
+        const choices = [...group.querySelectorAll<HTMLButtonElement>('button')];
+        const current = choices.indexOf(document.activeElement as HTMLButtonElement);
+        event.preventDefault();
+        choices[
+          (current + (event.key === 'ArrowRight' ? 1 : -1) + choices.length) % choices.length
+        ]?.focus();
+        return;
+      }
       case 'ArrowDown':
         move(here + 1);
         return;
@@ -266,13 +304,14 @@ export function Menu({
     }
   };
 
-  const list = !open ? null : (
+  const list = !present ? null : (
     <div
       ref={listRef}
       className={['menu', dense ? 'menu--dense' : '', 'menu--portal'].filter(Boolean).join(' ')}
       style={MEASURING}
       role="menu"
       aria-label={label}
+      {...presenceAttributes(exiting)}
       onKeyDown={onListKeyDown}
       /*
        * A portal's events still bubble through the React tree, so without
@@ -289,7 +328,9 @@ export function Menu({
           entry={entry}
           selected={entry.id === selectedId || selectedIds?.includes(entry.id) === true}
           choosing={selectedId !== undefined || selectedIds !== undefined}
-          onSelect={onSelect}
+          onSelect={(id) => {
+            if (interactive) onSelect(id);
+          }}
         />
       ))}
     </div>
@@ -302,7 +343,7 @@ export function Menu({
       onKeyDown={(event) => {
         // Portalled rows bubble here too. Dismiss this menu before Escape
         // reaches an enclosing dialog, including when its trigger has focus.
-        if (open && event.key === 'Escape') {
+        if (interactive && event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
           onClose();
@@ -316,8 +357,8 @@ export function Menu({
 }
 
 /** Every focusable row, in order. Separators and headings are neither. */
-function rowsIn(list: HTMLElement | null): HTMLButtonElement[] {
-  return list === null ? [] : [...list.querySelectorAll<HTMLButtonElement>('button.menu__item')];
+function rowsIn(list: HTMLElement | null): HTMLElement[] {
+  return list === null ? [] : [...list.querySelectorAll<HTMLElement>('.menu__item')];
 }
 
 function MenuRow({
@@ -342,40 +383,37 @@ function MenuRow({
       </div>
     );
   }
+  if ('type' in entry && entry.type === 'choices') {
+    return (
+      <div className="menu__choice-group" role="group" aria-label={entry.text}>
+        <div className="menu__label" aria-hidden="true">
+          {entry.text}
+        </div>
+        <div className="menu__choices">
+          {entry.choices.map((choice) => (
+            <button
+              key={choice.id}
+              type="button"
+              role="menuitemradio"
+              className="menu__item menu__choice"
+              data-id={choice.id}
+              aria-checked={entry.selectedId === choice.id}
+              onClick={() => onSelect(choice.id)}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
   if (!isChoosable(entry)) {
     return null;
   }
 
   const unavailable = entry.disabled === true;
-  return (
-    <button
-      type="button"
-      /*
-       * A menu with a current value is a set of alternatives, not a list of
-       * actions, and `menuitemradio` is what says so — it is also the role
-       * `aria-checked` is actually defined for.
-       */
-      role={choosing ? 'menuitemradio' : 'menuitem'}
-      data-id={entry.id}
-      data-has-reason={entry.reason === undefined ? undefined : ''}
-      className={['menu__item', entry.danger === true ? 'menu__item--danger' : '']
-        .filter(Boolean)
-        .join(' ')}
-      /*
-       * `aria-disabled` rather than `disabled`, so the row keeps its place in
-       * the keyboard order. A row that cannot be reached cannot have its
-       * reason read, and the reason is the whole point of listing something
-       * that cannot be chosen (§12.3).
-       */
-      aria-disabled={unavailable}
-      aria-checked={choosing ? selected : undefined}
-      onClick={() => {
-        if (unavailable) {
-          return;
-        }
-        onSelect(entry.id);
-      }}
-    >
+  const content = (
+    <>
       {entry.icon === undefined ? null : (
         <span className="menu__icon" aria-hidden="true">
           {entry.icon}
@@ -392,6 +430,66 @@ function MenuRow({
         )}
       </span>
       {selected ? <IconCheckOutline16 className="menu__check" /> : null}
+    </>
+  );
+  const shared = {
+    /*
+     * A menu with a current value is a set of alternatives, not a list of
+     * actions, and `menuitemradio` is what says so — it is also the role
+     * `aria-checked` is actually defined for.
+     */
+    role: choosing ? 'menuitemradio' : 'menuitem',
+    'data-id': entry.id,
+    'data-has-reason': entry.reason === undefined ? undefined : '',
+    className: ['menu__item', entry.danger === true ? 'menu__item--danger' : '']
+      .filter(Boolean)
+      .join(' '),
+    /*
+     * `aria-disabled` rather than `disabled`, so the row keeps its place in
+     * the keyboard order. A row that cannot be reached cannot have its
+     * reason read, and the reason is the whole point of listing something
+     * that cannot be chosen (§12.3).
+     */
+    'aria-disabled': unavailable,
+    'aria-checked': choosing ? selected : undefined,
+  } as const;
+  if (entry.href !== undefined && !unavailable) {
+    return (
+      <a
+        {...shared}
+        href={entry.href}
+        onClick={(event) => {
+          // A modified click is the browser's: a new tab or window, not a
+          // selection in this one.
+          if (
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          ) {
+            return;
+          }
+          event.preventDefault();
+          onSelect(entry.id);
+        }}
+      >
+        {content}
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      {...shared}
+      onClick={() => {
+        if (unavailable) {
+          return;
+        }
+        onSelect(entry.id);
+      }}
+    >
+      {content}
     </button>
   );
 }

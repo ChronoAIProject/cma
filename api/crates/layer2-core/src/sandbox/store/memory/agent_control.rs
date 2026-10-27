@@ -46,6 +46,13 @@ impl AgentControlStore for InMemorySandboxStore {
             });
         }
 
+        if state
+            .sandboxes
+            .get(&current.sandbox_id)
+            .is_some_and(|sandbox| sandbox.status == crate::sandbox::SandboxStatus::Rotating)
+        {
+            return Err(AgentControlStoreError::Conflict);
+        }
         let mut next = current;
         next.request_stop(request.reason, request.requested_at)
             .map_err(|_| AgentControlStoreError::Conflict)?;
@@ -94,6 +101,13 @@ impl AgentControlStore for InMemorySandboxStore {
             });
         }
 
+        if state
+            .sandboxes
+            .get(&current.sandbox_id)
+            .is_some_and(|sandbox| sandbox.status == crate::sandbox::SandboxStatus::Rotating)
+        {
+            return Err(AgentControlStoreError::Conflict);
+        }
         let mut next = current;
         next.request_delete(request.requested_at)
             .map_err(|_| AgentControlStoreError::Conflict)?;
@@ -178,6 +192,7 @@ fn can_supersede_with_stop(step: AgentWorkStep) -> bool {
     matches!(
         step,
         AgentWorkStep::InstallSkill
+            | AgentWorkStep::WaitForWorkspace
             | AgentWorkStep::AddWorktree
             | AgentWorkStep::MaterializeHome
             | AgentWorkStep::OpenConversation

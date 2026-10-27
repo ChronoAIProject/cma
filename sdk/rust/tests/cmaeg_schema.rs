@@ -11,6 +11,19 @@ fn fixtures() -> Value {
     ))
     .unwrap()
 }
+
+#[test]
+fn legacy_relay_sources_never_gain_a_resource_binding_on_roundtrip() {
+    for platform in ["telegram", "lark", "feishu", "discord", "whatsapp", "slack"] {
+        let request = json!({"type":"nyxid_relay","platform":platform,"issuer":"https://nyx.example","key_id":"key-fixture","route_ids":["route-fixture"],"admission":{"type":"all"}});
+        let decoded: SourceRequest = serde_json::from_value(request.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), request);
+        let mut source = request;
+        source["jwks_url"] = json!("https://nyx.example/.well-known/jwks.json");
+        let decoded: Source = serde_json::from_value(source.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), source);
+    }
+}
 fn roundtrip<T: DeserializeOwned + Serialize>(name: &str, examples: &Value) {
     for example in examples[name].as_array().unwrap() {
         let decoded: T = serde_json::from_value(example.clone())
@@ -28,8 +41,12 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         AcceptedStatus,
         ActionMode,
         Activity,
+        ActivityConsumer,
         ActivityConversation,
+        ActivityDelivery,
         ActivityKind,
+        ActivityPage,
+        ActivityRecipient,
         Actor,
         ActorKind,
         AdmissionPolicy,
@@ -39,6 +56,8 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         Attachment,
         AttachmentKind,
         AttachmentSource,
+        LarkResourceBinding,
+        LarkResourceKind,
         AttachmentImage,
         AttachmentImageOrigin,
         AttachmentStatus,
@@ -51,16 +70,21 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         Block,
         BlockRendering,
         BlockRenderingOutcome,
+        BotMessageAdmission,
         CallbackPayload,
         CallbackResponse,
         Capabilities,
         CapabilityView,
+        RelayAuthoringCapabilities,
+        RelayPlatformCapability,
+        RelayVerificationCapability,
         ConnectionPage,
         ConnectionView,
         CreateConnection,
         PlatformCapability,
         Status,
         ChannelCreateRequest,
+        ChannelActivity,
         ChannelCreation,
         ChannelId,
         ChannelListItem,
@@ -72,6 +96,8 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ConformanceLevel,
         ContextConfig,
         ContextResponse,
+        ThreadHistory,
+        ThreadHistoryMessage,
         ConversationId,
         ConversationKind,
         CredentialPatch,
@@ -93,6 +119,11 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         IdentityAdmission,
         InboundMediaCapabilities,
         IntentReceipt,
+        EmptyEffectRequest,
+        MessageEffectReceipt,
+        MessageEffectsCapabilities,
+        MessageReactionRequest,
+        TelegramReaction,
         InteractionResult,
         McpAuth,
         McpServerRef,
@@ -105,6 +136,9 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         NyxIdIdentityKind,
         OptionStyle,
         OutboundMessage,
+        PrepareOutboundMessage,
+        OutboundReceipt,
+        OutboundStatus,
         PartitionKey,
         PartitionRule,
         PermissionConfig,
@@ -142,6 +176,10 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         SourceRequest,
         TestChannelResponse,
         ThinkingEffort,
+        ThreadAddress,
+        ThreadContract,
+        ThreadFacts,
+        ThreadKind,
         TypingOutcome,
         TypingReceipt,
         VisualSupport,
@@ -152,6 +190,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ConsumerId,
         ConsumerName,
         ConsumerReply,
+        ConsumerState,
         DefaultConsumer,
         DefaultReply,
         Pattern,
@@ -167,7 +206,27 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         Causation,
         ConsumerSummary,
         ConsumerTarget,
-        RouteResolution
+        RouteResolution,
+        WhatsappTemplate,
+        WhatsappTemplateLanguage,
+        WhatsappTemplateParameter,
+        WhatsappTemplateMedia,
+        WhatsappTemplateDocument,
+        WhatsappTemplateCurrency,
+        WhatsappTemplateDateTime,
+        WhatsappTemplateButtonType,
+        WhatsappTemplateComponent,
+        NativeDiscordActivation,
+        NativeAttachment,
+        NativeMediaKind,
+        NativeMediaSource,
+        NativeMediaCapabilities,
+        SourceCheckResponse,
+        SourceCheck,
+        SourceCheckStatus,
+        RoutingUpdateRequest,
+        RoutingPolicyRequest,
+        ConsumerPolicyRequest
     );
     inventory.sort_unstable();
     assert_eq!(
@@ -414,4 +473,24 @@ fn legacy_channel_listing_omits_unknown_ids_and_endpoints() {
     assert!(decoded.items[0].channel_id.is_none());
     assert!(decoded.items[0].endpoints.is_none());
     assert_eq!(serde_json::to_value(decoded).unwrap(), example);
+}
+
+#[test]
+fn native_bot_extensions_preserve_legacy_omitted_defaults() {
+    let capabilities = json!({"platforms":[]});
+    let parsed: CapabilityView = serde_json::from_value(capabilities.clone()).unwrap();
+    assert!(parsed.source_features.is_empty());
+    assert_eq!(serde_json::to_value(parsed).unwrap(), capabilities);
+    let policy = json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"mention"});
+    let parsed: AdmissionPolicy = serde_json::from_value(policy.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), policy);
+}
+
+#[test]
+fn retained_native_sources_keep_thread_history_absent() {
+    let value = json!({"type":"discord","bot_id":"77","intents":37377,"admission":{"type":"all"}});
+    let source: Source = serde_json::from_value(value.clone()).unwrap();
+    let request: SourceRequest = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(source).unwrap(), value);
+    assert_eq!(serde_json::to_value(request).unwrap(), value);
 }

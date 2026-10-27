@@ -257,7 +257,7 @@ impl ToolsState {
                 return Err(LinkRefusal::Unavailable);
             }
         };
-        let url = format!("{}/v1/media/content", self.public_origin);
+        let url = format!("{}/v1/media/content", self.advertised_api_url());
         // Neither the token's alphabet nor a safe name contains `'`, so the
         // single-quoted words cannot be broken out of.
         let curl = format!(

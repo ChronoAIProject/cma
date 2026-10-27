@@ -69,6 +69,20 @@ const agentEvents = {
     context_used: 30,
     context_window: 100,
   },
+  runtime_metadata_changed: {
+    type: 'runtime_metadata_changed',
+    metadata: { working_directory: '/home/cma', description: 'Review' },
+  },
+  usage_updated: {
+    type: 'usage_updated',
+    input_tokens: 10,
+    output_tokens: 2,
+    context_used: 12,
+    context_window: null,
+    turn_sequence: null,
+    turn_input_tokens: 0,
+    turn_output_tokens: 0,
+  },
   mode_changed: { type: 'mode_changed', mode: 'review' },
   plan_set: { type: 'plan_set', entries: [{ title: 'Review', status: 'in_progress' }] },
   config_options_set: {
@@ -144,6 +158,16 @@ const sandboxEvents = {
       authorized_by: 'owner-1',
       authorized_at: '2026-09-09T00:00:00Z',
       credential_generation_floor: 2,
+    },
+  },
+  service_access_revised: {
+    type: 'service_access_revised',
+    scope: {
+      revision: 2,
+      services: ['chrono-llm-public', 'ornn-api'],
+      authorized_by: 'owner-1',
+      authorized_at: '2026-10-15T00:00:00Z',
+      credential_generation_floor: 4,
     },
   },
   checkpoint_sealed: { type: 'checkpoint_sealed', object_reference: 'checkpoint-1' },

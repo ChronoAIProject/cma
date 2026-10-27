@@ -1,9 +1,10 @@
 # Secret Scanner Build
 
 The API image contains a **CMA security rebuild of Gitleaks 8.30.1**, not the
-untouched upstream release binary. The upstream release's Go standard library
-and `golang.org/x/crypto` and `golang.org/x/text` versions failed the strict image
-vulnerability gate. The rebuild preserves upstream source, embedded default
+untouched upstream release binary. The upstream release's Go standard library,
+`golang.org/x/crypto`, `golang.org/x/text`, and `github.com/klauspost/compress`
+versions failed the strict image vulnerability gate. The rebuild preserves
+upstream source, embedded default
 rules, regex implementation, and version output while updating those build
 inputs. It does not add scanner configuration, ignore entries, or policy
 exceptions. The Rust scanner's bounded, fully redacted stdin protocol and exact
@@ -11,8 +12,8 @@ version check are unchanged.
 
 ## Reviewed Inputs
 
-All artifact and dependency pins are literal values in `infra/api/Dockerfile`,
-not overrideable build arguments.
+All artifact and dependency pins are literal values in `infra/api/Dockerfile`
+and `infra/cmaeg/Dockerfile`, not overrideable build arguments.
 
 | Input | Pin |
 | --- | --- |
@@ -20,10 +21,10 @@ not overrideable build arguments.
 | Upstream commit | `83d9cd684c87d95d656c1458ef04895a7f1cbd8e` |
 | Source archive SHA-256 | `6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115` |
 | Embedded `config/gitleaks.toml` SHA-256 | `e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf` |
-| Go toolchain | `1.26.9` |
-| Go builder | `golang:1.26.9-alpine3.23@sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c` |
-| Resolved `go.mod` SHA-256 | `e0edfb0862afb47842aee08811984801fef09c60865c77988c814a2b58450404` |
-| Resolved `go.sum` SHA-256 | `8220b35a8d9ab7e2befe8880db36aded4fc68547ce5c2b42bb28c102d933e09c` |
+| Go toolchain | `1.26.10` |
+| Go builder | `golang:1.26.10-alpine3.23@sha256:a07f231c19b03e6106cf442f02a5bcf262147e744d15b7b5e4b6d81d420c70a0` |
+| Resolved `go.mod` SHA-256 | `0d21d8af0e74395d5b88a1fd5ca4f421818c45b3f7a2b38100566eeca61ad675` |
+| Resolved `go.sum` SHA-256 | `c1f21f073cc203c7678f230b9cb14131a25729f3e2fdbd73475d0de44be5711e` |
 
 The source archive is downloaded from
 `https://codeload.github.com/gitleaks/gitleaks/tar.gz/83d9cd684c87d95d656c1458ef04895a7f1cbd8e`
@@ -31,8 +32,11 @@ and verified before extraction. The multi-platform builder index supports both
 Linux architectures accepted by the scanner stage. Current API delivery targets
 Linux amd64; the web image also targets Linux arm64.
 
-The only explicit dependency requests are `golang.org/x/crypto@v0.55.0` and
-`golang.org/x/text@v0.41.0`. Go's module resolver raises the source language floor
+The only explicit dependency requests are `golang.org/x/crypto@v0.55.0`,
+`golang.org/x/text@v0.41.0`, and `github.com/klauspost/compress@v1.18.7`.
+The compress pin fixes CVE-2026-63209 in the upstream `v1.17.11` dependency.
+Go 1.26.10 fixes the crypto/x509 standard-library advisory CVE-2026-111943.
+Go's module resolver raises the source language floor
 from `1.24.11` to `1.25.0` and selects `x/sys v0.47.0` and `x/sync v0.22.0` for
 existing requirements. Crypto also requires `x/net v0.57.0` and `x/term v0.45.0`;
 text declares `x/tools v0.48.0` and `x/mod v0.38.0` in its graph. No blanket

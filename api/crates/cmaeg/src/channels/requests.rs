@@ -12,7 +12,9 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelCreateRequest {
-    /// Optional UUID reserved by a durable creator before issuing the request.
+    /// Stable UUID reserved by a durable creator before issuing the request.
+    /// Required as a canonical UUID v4 when authoring a native Discord source;
+    /// optional for existing non-native creation contracts.
     #[serde(default)]
     pub record_id: Option<RecordId>,
     pub schema_version: u16,
@@ -69,6 +71,15 @@ pub enum SourceRequest {
         bot_username: Option<String>,
         admission: AdmissionPolicy,
     },
+    /// Native Discord Gateway. New writes require the native Discord write gate.
+    Discord {
+        bot_id: String,
+        intents: u64,
+        /// Allow an admitted consumer to read up to 20 earlier messages in its exact thread.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_history: bool,
+        admission: AdmissionPolicy,
+    },
     NyxidRelay {
         issuer: String,
         key_id: String,
@@ -81,6 +92,11 @@ pub enum SourceRequest {
         bot_id: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         trust_normalized: bool,
+        /// Opt into verified Discord/WhatsApp facts without changing retained sources.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        verify_raw_event: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_resources: Option<cmaeg_core::channel::LarkResourceBinding>,
         admission: AdmissionPolicy,
     },
     Custom {
@@ -104,6 +120,8 @@ pub struct CredentialsRequest {
     #[serde(default)]
     pub telegram_bot_token: Option<Secret>,
     #[serde(default)]
+    pub discord_bot_token: Option<Secret>,
+    #[serde(default)]
     pub telegram_webhook_secret: Option<Secret>,
     #[serde(default)]
     pub hmac_secrets: Vec<HmacSecretRequest>,
@@ -118,6 +136,8 @@ pub struct CredentialPatch {
     pub channel_key: Option<Secret>,
     #[serde(default)]
     pub telegram_bot_token: Option<Secret>,
+    #[serde(default)]
+    pub discord_bot_token: Option<Secret>,
     #[serde(default)]
     pub telegram_webhook_secret: Option<Secret>,
     #[serde(default)]

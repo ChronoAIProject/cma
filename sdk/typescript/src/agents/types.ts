@@ -14,6 +14,7 @@ import {
 } from '../profiles/types.js';
 import {
   array,
+  boolean,
   enumeration,
   integer,
   nullable,
@@ -38,6 +39,8 @@ export const firstMessageDelivery = enumeration(
 export type FirstMessageDelivery = Output<typeof firstMessageDelivery>;
 export const firstMessageState = object({
   state: firstMessageDelivery,
+  purpose: optional(enumeration('setup', 'task')),
+  turn_sequence: optional(integer),
   queued_at: text,
   completed_at: optional(text),
   failed_at: optional(text),
@@ -79,7 +82,22 @@ export const agentSandbox = object({
   profile: instanceProfileReference,
 });
 export type AgentSandbox = Output<typeof agentSandbox>;
+export const agentRuntimeMetadata = object({
+  working_directory: optional(text),
+  description: optional(text),
+  description_source: optional(enumeration('provider_title', 'prompt_preview')),
+  description_is_setup_preview: optional(boolean),
+});
+export type AgentRuntimeMetadata = Output<typeof agentRuntimeMetadata>;
+export const agentTurnUsage = object({
+  turn_sequence: integer,
+  input_tokens: integer,
+  output_tokens: integer,
+});
+export type AgentTurnUsage = Output<typeof agentTurnUsage>;
 export const agentSummary = object({
+  runtime_metadata: optional(agentRuntimeMetadata),
+  owner_title: optional(text),
   id: text,
   sandbox_id: text,
   workspace_id: text,
@@ -92,12 +110,15 @@ export const agentSummary = object({
 });
 export type AgentSummary = Output<typeof agentSummary>;
 export const agent = object({
+  runtime_metadata: optional(agentRuntimeMetadata),
+  owner_title: optional(text),
   id: text,
   status: agentStatus,
   profile: agentProfileSummary,
   worktree: agentWorktree,
   workspace: agentWorkspace,
   sandbox: agentSandbox,
+  bootstrap: optional(object({ operation_id: text, sandbox_id: text, workspace_id: text })),
   conforms_to: array(text),
   reach: array(text),
   title: optional(text),
@@ -176,6 +197,7 @@ export const agentTranscript = object({
 });
 export type AgentTranscript = Output<typeof agentTranscript>;
 export const agentUsage = object({
+  current_turn: optional(agentTurnUsage),
   agent_id: text,
   through_seq: integer,
   input_tokens: integer,

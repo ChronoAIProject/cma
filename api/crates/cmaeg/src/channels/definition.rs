@@ -153,6 +153,9 @@ pub fn build_update(
         if let Some(channel_key) = &patch.channel_key {
             credentials.channel_key = Some(channel_key.clone());
         }
+        if let Some(token) = &patch.discord_bot_token {
+            credentials.discord_bot_token = Some(token.clone());
+        }
         if let Some(token) = &patch.telegram_bot_token {
             credentials.telegram_bot_token = Some(token.clone());
         }
@@ -166,6 +169,17 @@ pub fn build_update(
                 .collect();
         }
     }
+    let sources = build_sources(&request.sources)?;
+    if current
+        .sources
+        .iter()
+        .any(|source| matches!(source, Source::Discord { .. }))
+        && !sources
+            .iter()
+            .any(|source| matches!(source, Source::Discord { .. }))
+    {
+        credentials.discord_bot_token = None;
+    }
     let definition = ChannelDefinition {
         schema_version: request.schema_version,
         name: request.name.clone(),
@@ -175,7 +189,7 @@ pub fn build_update(
         profile: request.profile.clone(),
         profile_digest: request.profile.digest(),
         provider: current.provider.clone(),
-        sources: build_sources(&request.sources)?,
+        sources,
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
@@ -223,7 +237,7 @@ pub fn channel_pointer(
 /// Validate a definition a management write would store, replacing `current`
 /// (`None` for a create). The write gate runs first, so a write it refuses
 /// reports the legacy error it always has before any check below can answer.
-fn validate_definition(
+pub(super) fn validate_definition(
     current: Option<&ChannelDefinition>,
     definition: &ChannelDefinition,
     flags: WriteFlags,
@@ -252,6 +266,7 @@ fn validate_definition(
             .unwrap_or_else(|| Secret::new("")),
         channel_key: definition.secrets.channel_key.clone(),
         telegram_bot_token: definition.secrets.telegram_bot_token.clone(),
+        discord_bot_token: definition.secrets.discord_bot_token.clone(),
         telegram_webhook_secret: definition.secrets.telegram_webhook_secret.clone(),
         hmac_secrets: definition
             .secrets
@@ -363,6 +378,9 @@ impl ChannelCreateRequest {
                 serde_json::to_value(admission).expect("admission serializes");
         }
         // Omit absent additions so retained creation fingerprints stay stable.
+        if let Some(token) = &self.credentials.discord_bot_token {
+            value["discord_bot_token"] = hash_secret(token.as_str()).into();
+        }
         if let Some(token) = &self.credentials.telegram_bot_token {
             value["telegram_bot_token"] = hash_secret(token.as_str()).into();
         }
@@ -376,3 +394,33 @@ impl ChannelCreateRequest {
 #[cfg(test)]
 #[path = "definition_tests.rs"]
 mod tests;
+
+/// Stored-definition construction and mutation for service test fixtures.
+#[cfg(test)]
+pub(crate) mod fixture {
+    use super::{hash_secret, BindingId, ChannelDefinition, Secret};
+
+    pub(crate) fn with_agent_key(agent_key: &str) -> ChannelDefinition {
+        let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
+            "../../../cmaeg-core/tests/fixtures/channel.json"
+        ))
+        .unwrap();
+        replace_default_agent_key(&mut definition, agent_key);
+        definition.profile_digest = definition.profile.digest();
+        definition
+    }
+
+    /// Model a stored default credential rotation for recovery fixtures.
+    pub(crate) fn replace_default_agent_key(definition: &mut ChannelDefinition, agent_key: &str) {
+        definition.secrets.agent_key_hash = hash_secret(agent_key);
+        definition.secrets.provider_credential = Some(Secret::new(agent_key));
+    }
+
+    /// Model a stored binding replacement to test revocation of old authority.
+    pub(crate) fn replace_default_binding(
+        definition: &mut ChannelDefinition,
+        binding_id: BindingId,
+    ) {
+        definition.provider.binding_id = binding_id;
+    }
+}

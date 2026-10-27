@@ -1,10 +1,15 @@
 # CMA public API inventory
 
+The focused Agent Manager contract is served at `/agent-manager/openapi.json`;
+see [Agent Manager API](API_Agent_Manager.md) for one Agent lifecycle and Responses v2 flow.
+The full `/openapi.json` compatibility contract and existing API paths remain available.
+
 This inventory describes the implemented CMA control-plane surface after legacy
 Bridge retirement. `GET /openapi.json` is the authoritative machine-readable
 contract; [REST](API_REST.md), [AG-UI](API_AGUI.md), and the Responses documents
-provide request, replay and error semantics. CMAEG has a separate origin and
-[protocol](CMAEG_Protocol.md); its endpoints are not CMA endpoints.
+provide request, replay and error semantics. CMAEG remains a separate service,
+exposed under `/event-gateway` on the same origin with its own
+[protocol](CMAEG_Protocol.md) and `/event-gateway/openapi.json` contract.
 
 ## Interface families
 
@@ -36,7 +41,7 @@ native MCP event tools are implemented independently.
 
 ## Exact method and path inventory
 
-The generated OpenAPI document contains **180 operations across 144 paths**.
+The generated OpenAPI document defines the full operation and path inventory.
 Each row below names a public method and path; schemas, authentication schemes,
 request parameters and error contracts are in `GET /openapi.json`. Disabled
 features and typed unsupported operations are included because they remain part
@@ -46,7 +51,7 @@ of the public contract.
 | --- | ---: |
 | administration | 14 |
 | ag ui | 4 |
-| agent events v2 | 3 |
+| agent events v2 | 4 |
 | agent operations | 4 |
 | agent profiles | 9 |
 | agent usage | 2 |
@@ -64,7 +69,7 @@ of the public contract.
 | responses | 7 |
 | responses v2 | 7 |
 | sandbox profiles | 9 |
-| sandboxes | 11 |
+| sandboxes | 12 |
 | service connections | 2 |
 | trigger launches | 8 |
 | trigger placements | 4 |
@@ -106,6 +111,7 @@ of the public contract.
 | Method and path |
 | --- |
 | `GET /api/v2/agents/{agent_id}/events` |
+| `GET /api/v2/agents/{agent_id}/events/head` |
 | `GET /api/v2/agents/{agent_id}/events/snapshot` |
 | `GET /api/v2/ui/transport` |
 
@@ -306,6 +312,7 @@ of the public contract.
 | `GET /api/v1/sandboxes/{id}/events` |
 | `POST /api/v1/sandboxes/{id}/pause` |
 | `POST /api/v1/sandboxes/{id}/revive` |
+| `POST /api/v1/sandboxes/{id}/runtime-update` |
 | `POST /api/v1/sandboxes/{id}/service-access` |
 
 ### service connections
@@ -452,3 +459,40 @@ upstream request. Missing, expired, or mismatched Sandbox credential custody,
 invalid provider responses, and upstream failures return 503 without exposing
 credentials or the upstream response body. Public Chrono LLM scope is preferred;
 retained Sandboxes with the legacy Chrono LLM scope use their original service.
+
+
+### Queued input revisions
+
+`GET /api/v2/agents/{agent_id}/queued-inputs` requires current Agent operation
+authority and returns `cma.agent.queued_inputs`, the Agent ID and at most four entries
+ordered by original admission order. Optional `limit` is 1 through 4 (default 4);
+optional `after` is an exclusive positive admission-order cursor. `next_after` is
+the final returned order when more entries exist, otherwise null. Each entry includes
+the safe command status, `command_revision`, complete `text` and current `editable`
+observation. Four maximum 256 KiB texts remain below the SDK's unchanged 8 MiB HTTP
+limit even with worst-case JSON escaping. The SDKs follow pages with strict cursor,
+identity and 64-entry traversal bounds. Each page observes current state; later
+refreshes reconcile concurrent edits. No entries are silently truncated.
+
+`POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input` requires a
+retained `Idempotency-Key` and exactly `source_command_id`,
+`expected_command_revision` and `text`. Text obeys the existing nonempty 256 KiB
+input limit. The transaction retains the original admission envelope, command ID,
+response ID, metadata and queue position; it atomically invalidates any matching
+claim, records the replacement input and increments the source revision. A bound
+runtime dispatch is never editable, including ambiguous delivery. The independent
+terminal edit receipt allows exact recovery after a lost reply. Another key cannot
+reuse the old revision, and the same key cannot change target or text.
+
+The response is `cma.response.queued_input` with `edit`, current `response`, original
+`target`, applied `command_revision` and immutable replacement `text`.
+`queued_input_not_admitted` is a committed stale-intent refusal; clients may refresh
+and explicitly create a new edit. Existing queued cancellation removes an item.
+Queue changes before dispatch are ledger mutations, so visible clients refresh
+periodically as well as on local operations and focus.
+
+Pending edited command documents include a required revision marker that older
+strict readers reject. This prevents a rolled-back worker from silently executing
+original input. Drain or cancel edited pending inputs before rolling back to a
+release without queued input support. Forward recovery reads the retained revisions;
+active or completed dispatch records remain compatible after the marker is removed.

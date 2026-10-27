@@ -13,7 +13,7 @@ pub const BUILD: &str = "cma-im:builds:create";
 pub const BUILD_READ: &str = "cma-im:builds:read";
 pub const ADMIN: &str = "cma-im:admin";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Role {
     pub slug: &'static str,
     pub permissions: &'static [&'static str],

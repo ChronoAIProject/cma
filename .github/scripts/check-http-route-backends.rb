@@ -44,9 +44,13 @@ api_backend = [{ "group" => "", "kind" => "Service", "name" => "cma-agent-manage
 web_backend = [{ "group" => "", "kind" => "Service", "name" => "cma-web", "port" => 80, "weight" => 1 }]
 expected_api = { ["PathPrefix", "/"] => api_backend }
 expected_web = {
+  # The cookie-authenticated portal bridge retains its full path at Agent Manager.
+  ["PathPrefix", "/api/event-gateway"] => api_backend,
   ["PathPrefix", "/api"] => api_backend,
   ["PathPrefix", "/auth"] => api_backend,
   ["Exact", "/openapi.json"] => api_backend,
+  ["Exact", "/agent-manager/openapi.json"] => api_backend,
+  ["Exact", "/image-manager/openapi.json"] => [{ "group" => "", "kind" => "Service", "name" => "cma-image-manager", "port" => 80, "weight" => 1 }],
   ["Exact", "/.well-known/agent-card.json"] => api_backend,
   ["PathPrefix", "/"] => web_backend,
 }
@@ -54,7 +58,6 @@ expected_web = {
 expected_api.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
 expected_web.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
 {
-  "/api/event-gateway" => ["cma-event-gateway", "/"],
   "/api/image-manager" => ["cma-image-manager", "/"],
   "/api/agent-manager" => ["cma-agent-manager", "/api"],
 }.each do |prefix, (service, replacement)|

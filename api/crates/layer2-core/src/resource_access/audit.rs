@@ -39,6 +39,10 @@ pub enum ResourceAuthorizationBasis {
         binding_id: String,
         generation: u64,
     },
+    ShareRecipient {
+        subject: SubjectId,
+        share: ResourceGrantObservation,
+    },
     Organization {
         issuer: String,
         organization: SubjectId,
@@ -85,6 +89,12 @@ impl ResourceAuthorizationAudit {
                 return Err(invalid);
             }
             if observation.capabilities.is_empty() {
+                return Err(invalid);
+            }
+            if matches!(&observation.basis, ResourceAuthorizationBasis::ShareRecipient { subject, share }
+                if subject.as_str().trim().is_empty() || share.id.trim().is_empty()
+                    || share.revision == 0 || share.revision > self.policy_revision)
+            {
                 return Err(invalid);
             }
             if let ResourceAuthorizationBasis::Organization {

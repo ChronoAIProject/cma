@@ -60,6 +60,7 @@ impl FakeReply {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let router = Router::new()
             .route("/api/v1/channel-relay/reply", post(reply))
+            .route("/api/v1/channel-relay/thread-reply", post(reply))
             .with_state(data);
         let task = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
@@ -88,7 +89,20 @@ impl FakeReply {
             .collect()
     }
 }
-async fn reply(State(data): State<Data>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
+async fn reply(
+    State(data): State<Data>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+    Json(body): Json<Value>,
+) -> Response {
+    assert_eq!(
+        uri.path(),
+        if body["thread_reply"] == true {
+            "/api/v1/channel-relay/thread-reply"
+        } else {
+            "/api/v1/channel-relay/reply"
+        }
+    );
     let count = {
         let mut requests = data.requests.lock().unwrap();
         requests.push(Recorded {

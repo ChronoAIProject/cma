@@ -47,6 +47,7 @@ pub(super) struct ReliableOutput {
     queued: VecDeque<HeldOutput>,
     queued_bytes: usize,
     acknowledgements: mpsc::Sender<RuntimeOutputSource>,
+    durable_progress: tokio::sync::watch::Sender<u64>,
 }
 
 impl ReliableOutput {
@@ -61,11 +62,18 @@ impl ReliableOutput {
             queued: VecDeque::new(),
             queued_bytes: 0,
             acknowledgements,
+            durable_progress: tokio::sync::watch::channel(0).0,
         }
     }
 }
 
 impl Bridge {
+    pub(super) async fn output_progress(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        let state = self.output.as_ref()?.lock().await;
+        state.session.as_ref()?;
+        Some(state.durable_progress.subscribe())
+    }
+
     pub(super) async fn receive_output(
         &self,
         bytes: &[u8],
@@ -172,6 +180,20 @@ impl Bridge {
         held: HeldOutput,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
+        if let Ok(frame) = serde_json::from_slice::<serde_json::Value>(&held.payload) {
+            if matches!(
+                frame.get("method").and_then(serde_json::Value::as_str),
+                Some("session/update" | "session/request_permission")
+            ) && frame
+                .pointer("/params/sessionId")
+                .and_then(serde_json::Value::as_str)
+                != state.session.as_deref()
+            {
+                return Err(AdapterError::Rejected(
+                    "retained output changed the original conversation identity".into(),
+                ));
+            }
+        }
         let update = match held.prepared {
             Some(effect) => effect,
             None => self.capture_output(&held.payload).await?,
@@ -209,6 +231,20 @@ impl Bridge {
             .await
             .map_err(|error| {
                 AdapterError::Unavailable(format!("runtime acknowledgement write failed: {error}"))
-            })
+            })?;
+        if let Some(state) = &self.output {
+            state
+                .lock()
+                .await
+                .durable_progress
+                .send_if_modified(|last| {
+                    if source.cursor <= *last {
+                        return false;
+                    }
+                    *last = source.cursor;
+                    true
+                });
+        }
+        Ok(())
     }
 }

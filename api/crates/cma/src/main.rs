@@ -11,6 +11,8 @@ mod commands;
 mod composition;
 mod config;
 mod connections;
+mod document_artifacts;
+mod document_storage;
 mod gateway;
 mod health;
 mod permissions;
@@ -96,6 +98,19 @@ async fn serve() -> Result<(), String> {
     let auth_mode = config.auth_mode_name();
     let app = with_request_context(with_cors(composition.router, config.cors_origins));
 
+    // Do not admit allocations against a newly promoted runtime until its
+    // exact default pool has ready capacity (unless an operator disabled it).
+    composition
+        .native_warm_pools
+        .ensure_default()
+        .await
+        .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
+    composition
+        .native_warm_pools
+        .await_default_ready()
+        .await
+        .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
+
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .map_err(|error| format!("cannot bind {}: {error}", config.bind))?;
@@ -128,6 +143,7 @@ async fn serve() -> Result<(), String> {
             .spawn(shutdown.subscribe()),
     );
     shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
+    shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
     shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));

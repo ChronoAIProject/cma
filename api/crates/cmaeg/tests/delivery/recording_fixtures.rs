@@ -102,6 +102,7 @@ pub fn relay_activity() -> Activity {
 
 pub fn relay_reply() -> ReplyAddress {
     ReplyAddress::NyxidRelay {
+        thread_reply: false,
         message_id: "inbound-1".into(),
         route_id: "route-1".into(),
         platform: Platform::Telegram,
@@ -119,6 +120,7 @@ pub fn event(
     reply: ReplyAddress,
 ) -> EventRefPayload {
     EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: Some(activity_digest(activity)),
         channel_id: channel.id.clone(),

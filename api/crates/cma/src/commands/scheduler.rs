@@ -7,12 +7,13 @@ use layer2_core::sandbox::agent_io::{AgentCommandWorker, CommandLedgerError};
 use layer2_core::sandbox::store::{Page, PageRequest};
 use tokio::sync::watch;
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 
 const PAGE_SIZE: u16 = 50;
 // At idle, at most four indexed discovery scans per second per replica. Existing
 // single-discovery, pagination and eight-command backpressure remain bounded.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_DEFERRED: usize = 4_096;
 
 pub(crate) struct CommandScheduler {
     worker: Arc<dyn CommandScheduleWork>,
@@ -27,7 +28,7 @@ trait CommandScheduleWork: Send + Sync {
         &self,
         page: &PageRequest,
     ) -> Result<Page<AgentCommandId>, CommandLedgerError>;
-    async fn run_one(&self, id: &AgentCommandId) -> Result<(), CommandLedgerError>;
+    async fn run_one(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError>;
 }
 
 #[async_trait::async_trait]
@@ -47,8 +48,8 @@ impl CommandScheduleWork for AgentCommandWorker {
         })
     }
 
-    async fn run_one(&self, id: &AgentCommandId) -> Result<(), CommandLedgerError> {
-        self.run_one(id).await
+    async fn run_one(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError> {
+        self.run_scheduled(id).await
     }
 }
 
@@ -108,7 +109,7 @@ enum TaskKind {
 }
 enum TaskOutput {
     Discovered(Page<AgentCommandId>),
-    Completed,
+    Completed(Duration),
 }
 type TaskResult = Result<TaskOutput, CommandLedgerError>;
 
@@ -118,6 +119,7 @@ struct ScheduledWork {
     tasks: JoinSet<TaskResult>,
     kinds: HashMap<Id, TaskKind>,
     in_flight: BTreeSet<AgentCommandId>,
+    not_before: HashMap<AgentCommandId, Instant>,
     queued: VecDeque<AgentCommandId>,
     polling: bool,
     cursor: Option<String>,
@@ -131,6 +133,7 @@ impl ScheduledWork {
             tasks: JoinSet::new(),
             kinds: HashMap::new(),
             in_flight: BTreeSet::new(),
+            not_before: HashMap::new(),
             queued: VecDeque::new(),
             polling: false,
             cursor: None,
@@ -138,6 +141,8 @@ impl ScheduledWork {
     }
 
     fn poll(&mut self) {
+        let now = Instant::now();
+        self.not_before.retain(|_, deadline| *deadline > now);
         if self.polling || !self.queued.is_empty() || self.in_flight.len() >= self.concurrency {
             return;
         }
@@ -158,17 +163,19 @@ impl ScheduledWork {
             let Some(id) = self.queued.pop_front() else {
                 break;
             };
-            if !self.in_flight.insert(id.clone()) {
+            if self
+                .not_before
+                .get(&id)
+                .is_some_and(|deadline| *deadline > Instant::now())
+                || !self.in_flight.insert(id.clone())
+            {
                 continue;
             }
             let worker = self.worker.clone();
             let work_id = id.clone();
-            let task = self.tasks.spawn(async move {
-                worker
-                    .run_one(&work_id)
-                    .await
-                    .map(|()| TaskOutput::Completed)
-            });
+            let task = self
+                .tasks
+                .spawn(async move { worker.run_one(&work_id).await.map(TaskOutput::Completed) });
             self.kinds.insert(task.id(), TaskKind::Command(id));
         }
     }
@@ -182,6 +189,13 @@ impl ScheduledWork {
             Some(TaskKind::Discover) => self.polling = false,
             Some(TaskKind::Command(id)) => {
                 self.in_flight.remove(&id);
+                if let Ok((_, Ok(TaskOutput::Completed(delay)))) = &result {
+                    if !delay.is_zero() && self.not_before.len() < MAX_DEFERRED {
+                        // Backoff belongs to discovery, not a scarce execution slot.
+                        // Expired/retired entries leave on the next bounded poll.
+                        self.not_before.insert(id, Instant::now() + *delay);
+                    }
+                }
             }
             None => {}
         }
@@ -194,10 +208,10 @@ impl ScheduledWork {
                 self.queued = page
                     .items
                     .into_iter()
-                    .filter(|id| !self.in_flight.contains(id))
+                    .filter(|id| !self.in_flight.contains(id) && !self.not_before.contains_key(id))
                     .collect();
             }
-            Ok((_, Ok(TaskOutput::Completed))) => {}
+            Ok((_, Ok(TaskOutput::Completed(_)))) => {}
             Ok((_, Err(CommandLedgerError::StaleClaim | CommandLedgerError::Conflict))) => {}
             Ok((_, Err(error))) => {
                 tracing::error!(

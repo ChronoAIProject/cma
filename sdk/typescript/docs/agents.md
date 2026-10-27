@@ -419,3 +419,107 @@ is being applied; reconnecting preserves the approved scope and current request.
 access. Read the list again after a connection return. `denied` and `failed` are
 terminal outcomes; an optional `error` supplies safe failure detail. SDK validation rejects crossed Agent/request identities,
 inconsistent connection targets, and duplicate list IDs.
+
+An explicit retry after a failed access request is a new pending consent attempt.
+Its optional `retry_of` names the preserved failed request. The Agent tool returns
+new attempt parameters after failure; old-key replay continues to return the old
+outcome. New attempts require fresh owner approval and never inherit an earlier
+approval or runtime update.
+
+To add or revoke services directly, call `agents.updateServiceAccess(agentId, body, options)` with `{ services, expected_services }`.
+`services` is the exact desired shared Sandbox scope; `expected_services` is the
+last observed effective scope. Both must include `chrono-llm-public` and
+`ornn-api`. Save is explicit owner consent. The service returns HTTP 202 and the
+durable access request, and rejects stale selections with HTTP 409 before
+changing access. Preserve the same body and key after an uncertain reply.
+Prepare any external service connections before final approval. An active
+Sandbox receives its replacement credential without restarting Agents;
+`succeeded` confirms runtime acknowledgement, old-key revocation and callback
+delivery to the originating Agent. An already paused Sandbox waits for resume.
+
+## Runtime observations
+
+Owned Agent detail and hierarchy entries optionally expose `runtime_metadata`
+with the provider's canonical `working_directory` and session `description`.
+The `runtime_metadata_changed` event updates the same snapshot. These fields
+do not rewrite the immutable Workspace/Worktree paths or infer changes from
+shell commands. Shared readers do not receive private directory metadata.
+
+`description_source` optionally identifies `provider_title` or `prompt_preview`;
+absence means unknown. `description_is_setup_preview: true` is positive evidence
+that this provider preview came from the exact recorded automatic setup input.
+Only a `prompt_preview` with that flag should be excluded from the display title.
+An explicit `provider_title` remains authoritative even if its text equals setup
+text. Use the configured Agent title when a setup preview is excluded; no semantic
+title generator or first actual user-task inference is implied. Keep these fields
+with `description` as one snapshot when replaying metadata updates.
+
+Owned Agent detail also exposes optional `first_message.purpose` (`setup` or
+`task`) and `first_message.turn_sequence`. Missing purpose is legacy unknown;
+Agent creation origin and user-role message position are not substitutes for it.
+A Trigger task attached to a reused lifecycle Agent retains `task` purpose.
+
+`usage_updated` contains absolute lifetime input/output consumption and
+`turn_sequence`, `turn_input_tokens`, `turn_output_tokens` for the most recent
+observed turn. The usage read also exposes optional `current_turn`. Match that
+sequence to the running turn before displaying a current-turn counter. Context
+compaction can reduce context size while lifetime counts remain unchanged.
+Counts include cached input and advance only on provider reports; absent
+historical usage is never inferred from message length. Retained older runtimes
+continue emitting the compatible `usage` vocabulary.
+
+## File attachments
+
+`client.agentAttachments.upload(agentId, file, { idempotencyKey, signal })` uploads one browser `File` or `Blob` to the owner's active Agent. Pass `name` when using a plain `Blob`. Any regular file type is accepted, including images; each file may contain up to 20 MiB, including empty files. The binary body retains its declared media type. Names are sanitized into an ASCII basename and each operation gets a distinct directory.
+
+The result contains `id`, `agentId`, `name`, `path`, `size`, `mediaType` and `sha256`. The verified `path` is under `/home/attachments/<agent-id>/<attachment-id>/`. Include that path in your subsequent Agent input when ready; uploading never sends a message or executes content. A lost response may be retried with exactly the same key, filename, media type and bytes. Reusing a key for different content returns a conflict. Aborting an uncertain request does not guarantee the file was not committed; preserve the key for recovery.
+
+Only current owner authority may upload. Shared conversation readers and delegated Agents cannot write files through this route. The runtime must prove a full persisted home and the attachment capability; older runtime images and inactive Agents return a typed refusal. Existing Sandboxes are not rotated by this feature. File storage lasts with the Sandbox's persisted home; the approved artifact API remains the separate publication and download interface.
+
+## Message feedback
+
+`agents.messageFeedback(agentId, { after, limit })` reads private owner votes as
+`{ items, next }`. Pass each non-null `next` as `after` until it is null; page size
+is 1–200. `agents.setMessageFeedback(agentId, 'event:42', 'up')` sets a positive
+vote; use `'down'` to switch or `null` to remove it. The message ID uses the
+transcript's durable message sequence. These idempotent metadata writes need no
+command key and never create turns. Serialize changes to one message and avoid
+replaying an old write after a newer choice. Current owner authority is required;
+shared readers cannot inspect or change these votes.
+
+### Agent session share links
+
+`client.resourceAccess.createAgentShareLink(agentId, { audience, mode, token }, options)`
+creates an Agent-only share link. `mode` is `view` or `view_write`. `audience` is
+`{ kind: 'public' }`, `{ kind: 'organization', organization_id }`, or
+`{ kind: 'users', subjects }`. Resolve display names to canonical user subjects
+with `shareRecipients(agentId, search)` before creating a users link. The owner
+must select an existing CMA user; arbitrary usernames are not identity proofs.
+
+Generate `token` from 32 cryptographically random bytes encoded as 64 lowercase
+hex characters. Store the secret only in the share URL fragment, never a query
+parameter. Reuse the exact body and idempotency key on retry. The server retains
+only a digest and never returns the secret. `listAgentShareLinks` returns active
+link metadata. The signed-in recipient calls `redeemAgentShareLink(shareId,
+token)` once, then uses ordinary Agent APIs. `revokeAgentShareLink` takes the
+current revision and invalidates this link's recipients immediately; independent
+links remain valid. `effective(...).shared_by` provides the owner's public
+identity for a shared-session banner. No Agent link grants Sandbox lifecycle or
+sharing-management access.
+
+### Persistent-home files
+
+`client.agentFiles.list(agentId, '')` lists `/home/`; pass a relative directory
+path to lazily expand it. Hidden entries are included. `read(agentId, path,
+{ maxBytes })` returns base64 content and its SHA-256; `download(agentId, path)`
+returns bytes. Transfers are bounded to 32 MiB. File responses use their own
+bounded transport; ordinary API responses retain their existing limit.
+
+`write(agentId, { path, content_base64, expected_sha256 })` saves only if the
+last-read digest matches. Omit `expected_sha256` for create-only uploads, or use
+`directory: true` and empty content to create a folder. A conflict preserves
+server contents; retain the local draft and reread before explicitly retrying.
+`remove(agentId, path, recursive)` deletes only that target. These file mutations
+need no command key and are never retried automatically. The owner or a current
+view-write link may write; view links may browse and download. An old runtime
+returns `file_runtime_unsupported` until it is updated while idle.

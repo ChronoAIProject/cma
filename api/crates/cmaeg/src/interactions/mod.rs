@@ -1,11 +1,10 @@
 //! Durable, encrypted transport interaction state. Business workflow state belongs to providers.
 use crate::{
     channels::resolver::ResolvedChannel,
-    providers::ProviderClient,
+    providers::{EventContextSnapshot, ProviderClient},
     records::{RecordClient, RecordError},
 };
 use cmaeg_core::{
-    activity::{Activity, InteractionResult},
     ids::{ConsumerId, MessageRef, RecordId},
     message::OutboundMessage,
     seal::{
@@ -13,12 +12,19 @@ use cmaeg_core::{
         EventRefPayload, MasterKeyRing, MessageRefPayload, ReplyAddress,
     },
 };
-use keyboard::{actions, keyboard};
-use serde_json::json;
+use keyboard::keyboard;
 use std::sync::Arc;
 
 mod card;
+mod consume;
+pub(crate) mod discord;
+pub(crate) mod discord_consume;
+#[cfg(test)]
+mod discord_tests;
 mod keyboard;
+pub(crate) mod lark;
+pub(crate) mod owner;
+pub(crate) mod whatsapp;
 
 pub use card::*;
 pub use keyboard::has_controls;
@@ -100,7 +106,22 @@ impl InteractionStore {
             );
             return Err(Error::Denied);
         }
-        if card.id != id || card.expires_at <= now() {
+        if card.id != id
+            || card.expires_at <= now()
+            || !owner::valid(&card)
+            || !whatsapp::valid_record(&card)
+            || !discord::valid(&card)
+            || card.lark.as_ref().is_some_and(|identity| {
+                !lark::supported(identity.platform)
+                    || card.thread.is_some()
+                    || card.revision == 0
+                    || !matches!(
+                        identity.conversation,
+                        cmaeg_core::activity::ConversationKind::Private
+                            | cmaeg_core::activity::ConversationKind::Group
+                    )
+            })
+        {
             return Err(Error::Denied);
         }
         Ok((card, value.version))
@@ -115,6 +136,17 @@ impl InteractionStore {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> Result<PreparedCard, Error> {
+        let context = self.event_context(channel, event).await?;
+        self.prepare_with_context(channel, event, message, context)
+            .await
+    }
+    /// Read once before selecting a native representation. Invalid authority is
+    /// an error, never a reason to fall back to another delivery path.
+    pub(crate) async fn event_context(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+    ) -> Result<EventContextSnapshot, Error> {
         let consumer = channel
             .consumer(event.consumer.as_ref())
             .ok_or(Error::Unavailable)?;
@@ -133,14 +165,97 @@ impl InteractionStore {
         if context.channel_id != channel.id || !event.verifies_activity(&context.activity) {
             return Err(Error::Denied);
         }
+        Ok(context)
+    }
+    /// Reuse the verified preflight snapshot without a second provider request.
+    /// The final binding check also applies to the existing public prepare path.
+    pub(crate) async fn prepare_with_context(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+        context: EventContextSnapshot,
+    ) -> Result<PreparedCard, Error> {
+        self.prepare_with_discord_thread(channel, event, message, context, None)
+            .await
+    }
+    /// Thread controls require fresh authenticated channel evidence in addition
+    /// to the sealed event's retained existing-thread destination.
+    pub(crate) async fn prepare_with_discord_thread(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+        context: EventContextSnapshot,
+        thread: Option<crate::discord::component_thread::ThreadIdentity>,
+    ) -> Result<PreparedCard, Error> {
+        if context.channel_id != channel.id
+            || !event.verifies_activity(&context.activity)
+            || (message.thread_reply
+                && matches!(event.reply, ReplyAddress::Discord { .. })
+                && thread.is_none())
+            || (thread.is_some() && !matches!(event.reply, ReplyAddress::Discord { .. }))
+        {
+            return Err(Error::Denied);
+        }
         let route_id = match &event.reply {
             ReplyAddress::NyxidRelay { route_id, .. } => route_id.clone(),
             ReplyAddress::Telegram {
                 bot_id, chat_id, ..
             } => crate::telegram::route(bot_id, chat_id),
+            ReplyAddress::Discord {
+                bot_id, channel_id, ..
+            } => discord::route(bot_id, channel_id),
             _ => return Err(Error::Denied),
         };
+        let lark = match &event.reply {
+            ReplyAddress::NyxidRelay { platform, .. } if lark::supported(*platform) => {
+                if context.activity.actor.kind != cmaeg_core::activity::ActorKind::Human
+                    || context.activity.conversation.thread_id.is_some()
+                    || context.activity.thread.is_some()
+                {
+                    return Err(Error::Denied);
+                }
+                Some(LarkIdentity {
+                    platform: *platform,
+                    conversation: context.activity.conversation.kind,
+                })
+            }
+            _ => None,
+        };
+        let whatsapp = if matches!(
+            event.reply,
+            ReplyAddress::NyxidRelay {
+                platform: cmaeg_core::channel::Platform::Whatsapp,
+                ..
+            }
+        ) {
+            if !whatsapp::eligible(channel, event, &context.activity) {
+                return Err(Error::Denied);
+            }
+            let (markup, _) = whatsapp::render(message, "00000000000000000000000000000000", 1)?;
+            Some(if markup["type"] == "button" {
+                WhatsappKind::Button
+            } else {
+                WhatsappKind::List
+            })
+        } else {
+            None
+        };
         let card = Card {
+            discord: if matches!(event.reply, ReplyAddress::Discord { .. }) {
+                Some(discord::identity(
+                    channel,
+                    event,
+                    &context.activity,
+                    thread,
+                )?)
+            } else {
+                None
+            },
+            callback_owner: owner::prepare(channel, event, &context.activity)?,
+            lark,
+            whatsapp,
             id: uuid::Uuid::new_v4().to_string(),
             owner: channel.definition.owner.subject.clone(),
             channel_id: channel.id.clone(),
@@ -160,7 +275,7 @@ impl InteractionStore {
             // its exact stored bytes.
             consumer: event.consumer.clone(),
         };
-        let markup = keyboard(&card)?;
+        let markup = markup(&card)?;
         let version = self.save(&card, None).await?;
         Ok(PreparedCard {
             card,
@@ -185,11 +300,14 @@ impl InteractionStore {
         let destination = card.destination.as_ref().ok_or(Error::Denied)?;
         MessageRef::seal(
             &MessageRefPayload {
+                discord_message: None,
+                telegram_effect: None,
                 channel_id: card.channel_id.clone(),
                 event_id: card.event_id.clone(),
                 platform_message_id: destination.platform_id.clone(),
                 route_id: card.route_id.clone(),
                 interaction_record_id: Some(card.id.clone()),
+                relay_message: None,
                 consumer: card.consumer.clone(),
             },
             &self.keys,
@@ -212,6 +330,9 @@ impl InteractionStore {
             .await?;
         let destination = old.destination.as_ref().ok_or(Error::Denied)?;
         if old.channel_id != channel.id
+            || !owner::current(&old, channel)
+            || old.whatsapp.is_some()
+            || old.discord.is_some()
             || old.route_id != reference.route_id
             || old.event_id != reference.event_id
             || destination.platform_id != reference.platform_message_id
@@ -220,6 +341,13 @@ impl InteractionStore {
             || old.consumer != reference.consumer
         {
             return Err(Error::Denied);
+        }
+        if old.lark.is_some() {
+            lark::render(
+                message,
+                &old.id,
+                old.revision.checked_add(1).ok_or(Error::Denied)?,
+            )?;
         }
         // Fence old buttons before changing an external message. Uncertain edits cannot revive them.
         old.superseded = true;
@@ -232,89 +360,13 @@ impl InteractionStore {
         card.consumed = None;
         card.reference = None;
         card.message = message.clone();
-        let markup = keyboard(&card)?;
+        let markup = markup(&card)?;
         let version = self.save(&card, None).await?;
         Ok(PreparedCard {
             card,
             version,
             markup,
         })
-    }
-    /// Consume a click on a card. `admit` decides, from the card's consumer,
-    /// whether the click may be routed at all; it runs after the actor, chat
-    /// and thread checks and before `consumed` is written, so a refused click
-    /// leaves the card clickable.
-    // Each argument is one fact of the click the card is checked against;
-    // bundling them would only rename them at the one production caller.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn consume(
-        &self,
-        channel: &ResolvedChannel,
-        activity: &Activity,
-        route: &str,
-        callback_id: &str,
-        data: &str,
-        platform_message_id: &str,
-        admit: &Admit,
-    ) -> Result<(InteractionResult, String), Error> {
-        let (id, index) = decode(data)?;
-        for _ in 0..2 {
-            let (mut card, version) = self.load(&id).await?;
-            if card.channel_id != channel.id
-                || card.route_id != route
-                || card.actor != activity.actor.id
-                || card.chat != activity.conversation.id
-                || card.thread != activity.conversation.thread_id
-                || card.superseded
-                || card.reference.is_none()
-                || card
-                    .destination
-                    .as_ref()
-                    .is_none_or(|d| d.platform_id != platform_message_id)
-            {
-                return Err(Error::Denied);
-            }
-            if !admit(card.consumer.as_ref()) {
-                tracing::info!(card = %id, "card click not admitted for its consumer");
-                return Err(Error::Denied);
-            }
-            let action = actions(&card.message)
-                .get(index)
-                .cloned()
-                .ok_or(Error::Denied)?;
-            if let Some(click) = &card.consumed {
-                if click.event_id != activity.event_id.as_str()
-                    || click.callback_id != callback_id
-                    || click.action != index
-                {
-                    return Err(Error::Denied);
-                }
-            } else {
-                card.consumed = Some(Click {
-                    event_id: activity.event_id.to_string(),
-                    callback_id: callback_id.into(),
-                    action: index,
-                    occurred_at: activity.occurred_at.clone(),
-                });
-                match self.save(&card, Some(version)).await {
-                    Ok(_) => {}
-                    Err(Error::Denied) => continue,
-                    Err(e) => return Err(e),
-                }
-            }
-            // Reference sealing is randomized. Retrying the same click must carry identical context.
-            let destination = card.destination.as_ref().ok_or(Error::Denied)?;
-            let values = json!({"selected":action.selected,"message_ref":card.reference,"interaction_record_id":card.id,"revision":card.revision,"platform_message_id":destination.platform_id});
-            return Ok((
-                InteractionResult {
-                    block_id: action.block,
-                    action_id: action.id,
-                    values: values.as_object().unwrap().clone(),
-                },
-                card.consumed.as_ref().unwrap().occurred_at.clone(),
-            ));
-        }
-        Err(Error::Denied)
     }
     pub async fn parent_reference(
         &self,
@@ -331,5 +383,17 @@ impl InteractionStore {
             return Err(Error::Denied);
         }
         self.reference(&card)
+    }
+}
+
+fn markup(card: &Card) -> Result<serde_json::Value, Error> {
+    if card.discord.is_some() {
+        discord::render(&card.message, &card.id, card.revision)
+    } else if card.whatsapp.is_some() {
+        whatsapp::markup(card)
+    } else if card.lark.is_some() {
+        lark::markup(card)
+    } else {
+        keyboard(card)
     }
 }

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from './ConnectionWizard';
-import { connectionClient, type ConnectionTarget } from './client';
+import { connectionClient, type ConnectionReport, type ConnectionTarget } from './client';
 
 interface PendingAction {
   readonly id: number;
@@ -9,24 +9,27 @@ interface PendingAction {
   readonly forceSubscription: boolean;
   readonly owner?: string;
   readonly request?: AbortController;
+  readonly onCancelled?: () => void;
 }
 
 /** Keep the original operation in memory; only the verified server result releases it. */
-export function useConnectionGate() {
+export function useConnectionGate(enabled = true, scope?: object) {
   const [pending, setPending] = useState<PendingAction>();
   const [interactive, setInteractive] = useState(false);
   const [error, setError] = useState<string>();
   const active = useRef<PendingAction | undefined>(undefined);
   const serial = useRef(0);
-  useEffect(
+  useLayoutEffect(
     () => () => {
       active.current?.request?.abort();
+      active.current?.onCancelled?.();
       active.current = undefined;
+      setPending(undefined);
     },
-    [],
+    [enabled, scope],
   );
   const run = (target: ConnectionTarget, action: () => void, forceSubscription = false) => {
-    if (active.current !== undefined) return;
+    if (!enabled || active.current !== undefined) return;
     const value = { id: ++serial.current, target, action, forceSubscription };
     active.current = value;
     setError(undefined);
@@ -35,6 +38,7 @@ export function useConnectionGate() {
   };
   const cancel = () => {
     active.current?.request?.abort();
+    active.current?.onCancelled?.();
     active.current = undefined;
     setPending(undefined);
   };
@@ -44,8 +48,17 @@ export function useConnectionGate() {
     setPending(undefined);
     value.action();
   };
-  const checkAndRun = async (target: ConnectionTarget, owner: string, action: () => void) => {
-    if (active.current !== undefined) return;
+  const checkAndRun = async (
+    target: ConnectionTarget,
+    owner: string,
+    action: () => void,
+    prepared?: () => ConnectionReport | undefined,
+    onCancelled?: () => void,
+  ) => {
+    if (!enabled || active.current !== undefined) {
+      onCancelled?.();
+      return;
+    }
     const value: PendingAction = {
       id: ++serial.current,
       target,
@@ -53,13 +66,15 @@ export function useConnectionGate() {
       owner,
       forceSubscription: false,
       request: new AbortController(),
+      onCancelled,
     };
     active.current = value;
     setError(undefined);
     setInteractive(false);
     setPending(value);
     try {
-      const report = await connectionClient.check(target, undefined, value.request!.signal);
+      const report =
+        prepared?.() ?? (await connectionClient.check(target, undefined, value.request!.signal));
       if (active.current !== value) return;
       if (report.owner !== owner)
         throw new Error('Your CMA account changed. Open the Agent again to continue.');
@@ -78,7 +93,7 @@ export function useConnectionGate() {
     }
   };
   const dialog =
-    pending === undefined || !interactive ? null : (
+    !enabled || pending === undefined || !interactive ? null : (
       <ConnectionWizard
         key={pending.id}
         target={pending.target}
@@ -94,7 +109,7 @@ export function useConnectionGate() {
     run,
     checkAndRun,
     dialog,
-    pending: pending !== undefined,
+    pending: enabled && pending !== undefined,
     error,
     clearError: () => setError(undefined),
   };

@@ -149,6 +149,20 @@ fn sink_label(sink: &Sink) -> String {
 fn source_view(source: &Source) -> SourceView {
     let id = source.source_id();
     match source {
+        Source::Discord {
+            bot_id, admission, ..
+        } => SourceView {
+            id,
+            kind: "discord",
+            platform: Some("discord"),
+            route_count: None,
+            bot_username: None,
+            bot_id: Some(bot_id.clone()),
+            admission: Some(admission_label(admission)),
+            auth: "Discord bot token".into(),
+            key_ids: Vec::new(),
+            settings: vec!["Gateway intake not activated".into()],
+        },
         Source::Telegram {
             bot_id,
             bot_username,
@@ -173,6 +187,7 @@ fn source_view(source: &Source) -> SourceView {
             bot_username,
             bot_id,
             trust_normalized,
+            verify_raw_event,
             admission,
             ..
         } => SourceView {
@@ -188,6 +203,7 @@ fn source_view(source: &Source) -> SourceView {
             settings: trust_normalized
                 .then(|| "trusts normalized events".to_owned())
                 .into_iter()
+                .chain(verify_raw_event.then(|| "verifies raw platform events".to_owned()))
                 .collect(),
         },
         Source::Custom {
@@ -244,6 +260,7 @@ fn admission_label(admission: &AdmissionPolicy) -> String {
             senders,
             chats,
             groups,
+            ..
         } => format!(
             "senders {}; chats {}; groups {}",
             identity_label(senders),

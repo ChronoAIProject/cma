@@ -1,6 +1,102 @@
 use super::*;
 
 #[test]
+fn native_prepared_target_is_explicit_bounded_and_requires_full_native_home() {
+    assert_eq!(configured(&[]).unwrap().runtime.native_prepared_target, 0);
+    for value in ["", "-1", "3", "01", "true"] {
+        assert!(configured(&[("CHRONO_NATIVE_PREPARED_TARGET", value)])
+            .unwrap_err()
+            .contains("CHRONO_NATIVE_PREPARED_TARGET"));
+    }
+    assert!(configured(&[("CHRONO_NATIVE_PREPARED_TARGET", "1")])
+        .unwrap_err()
+        .contains("requires agent-sandbox"));
+    let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
+    let fields = [
+        ("CHRONO_SANDBOX_PROVIDER", "agent-sandbox"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+        ("CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS", "remote-disk"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "32"),
+        ("CHRONO_AGENT_SANDBOX_HOME_MODE", "native_vct_full_home_v2"),
+    ];
+    for target in ["1", "2"] {
+        let mut enabled = fields.to_vec();
+        enabled.push(("CHRONO_NATIVE_PREPARED_TARGET", target));
+        assert_eq!(
+            configured(&enabled)
+                .unwrap()
+                .runtime
+                .native_prepared_target
+                .to_string(),
+            target
+        );
+    }
+    let mut legacy = fields.to_vec();
+    legacy.retain(|(key, _)| *key != "CHRONO_AGENT_SANDBOX_HOME_MODE");
+    legacy.extend([
+        ("CHRONO_NATIVE_PREPARED_TARGET", "1"),
+        ("CHRONO_AGENT_SANDBOX_HOME_MODE", "native_vct_empty_v1"),
+    ]);
+    assert!(configured(&legacy)
+        .unwrap_err()
+        .contains("full native home"));
+}
+
+#[test]
+fn native_warm_pool_target_defaults_for_native_and_is_bounded() {
+    assert_eq!(configured(&[]).unwrap().runtime.native_warm_pool_target, 0);
+    let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
+    let native = [
+        ("CHRONO_SANDBOX_PROVIDER", "agent-sandbox"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+        ("CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS", "remote-disk"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "32"),
+        ("CHRONO_AGENT_SANDBOX_HOME_MODE", "native_vct_full_home_v2"),
+    ];
+    assert_eq!(
+        configured(&native).unwrap().runtime.native_warm_pool_target,
+        1
+    );
+    assert_eq!(
+        configured(
+            &[
+                native.to_vec(),
+                vec![("CHRONO_NATIVE_WARM_POOL_TARGET", "3")]
+            ]
+            .concat()
+        )
+        .unwrap()
+        .runtime
+        .native_warm_pool_target,
+        3
+    );
+    for value in ["", "-1", "1001", "true", "1.0"] {
+        assert!(configured(
+            &[
+                native.to_vec(),
+                vec![("CHRONO_NATIVE_WARM_POOL_TARGET", value)]
+            ]
+            .concat()
+        )
+        .unwrap_err()
+        .contains("CHRONO_NATIVE_WARM_POOL_TARGET"));
+    }
+    let mut legacy_home = native.to_vec();
+    legacy_home.retain(|(name, _)| !name.starts_with("CHRONO_AGENT_SANDBOX_HOME_"));
+    legacy_home.extend([
+        ("CHRONO_AGENT_SANDBOX_HOME_MODE", "legacy_snapshot"),
+        ("CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS", "remote-disk"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "32"),
+        ("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE", "seed"),
+        ("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID", "seed-uid"),
+        ("CHRONO_NATIVE_WARM_POOL_TARGET", "1"),
+    ]);
+    assert!(configured(&legacy_home)
+        .unwrap_err()
+        .contains("requires agent-sandbox allocation and a native VCT home"));
+}
+
+#[test]
 fn native_runtime_transport_requires_explicit_valid_selection() {
     use layer3_adapter::hosted::NativeRuntimeTransport;
     assert_eq!(
@@ -59,6 +155,15 @@ fn native_namespace_and_connection_do_not_replace_legacy_configuration() {
     ])
     .unwrap();
     assert_eq!(config.runtime.sandbox_namespace, "chrono-bot");
+    assert_eq!(
+        config
+            .runtime
+            .agent_sandbox
+            .as_ref()
+            .unwrap()
+            .template_fs_group_change_policy,
+        Some(layer3_adapter::agent_sandbox::NativeFsGroupChangePolicy::OnRootMismatch),
+    );
     assert_eq!(
         config.runtime.agent_sandbox.as_ref().unwrap().namespace,
         "remote-cma"

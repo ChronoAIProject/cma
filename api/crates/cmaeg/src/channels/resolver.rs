@@ -27,7 +27,7 @@ use tracing::{instrument::WithSubscriber, Instrument};
 
 pub use crate::telemetry::names::RESTORE_DURATION as RESTORE_DURATION_METRIC;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResolvedChannel {
     pub id: ChannelId,
     pub pointer: ChannelPointer,

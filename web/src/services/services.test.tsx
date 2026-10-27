@@ -4,7 +4,7 @@ import { App } from '../App';
 import { AuthContextProvider } from '../auth/context';
 import { createMockAuthProvider } from '../auth/mock';
 import { ServicePage } from './ServicePage';
-import { ServiceTabs } from './ServiceTabs';
+import { ServiceMenu } from './ServiceMenu';
 import { WriteForm } from './data';
 import { parseRoute, routePath } from '../routing/routes';
 afterEach(() => {
@@ -13,7 +13,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('independent CMA service navigation', () => {
-  it.each(['refresh', 'logout'] as const)(
+  it.each(['refresh'] as const)(
     'preserves an in-flight and uncertain write across a failed %s',
     async (operation) => {
       const session = {
@@ -60,13 +60,8 @@ describe('independent CMA service navigation', () => {
       fireEvent.change(input, { target: { value: 'retained image' } });
       fireEvent.click(screen.getByRole('button', { name: 'Create image' }));
       await waitFor(() => expect(writes).toHaveLength(1));
-      if (operation === 'refresh') fireEvent.focus(window);
-      else fireEvent.click(screen.getByRole('button', { name: 'Sign out of Image Manager' }));
-      await screen.findByText(
-        operation === 'refresh'
-          ? 'Session refresh interrupted'
-          : 'Sign-out could not be completed. Try again.',
-      );
+      fireEvent.focus(window);
+      await screen.findByText('Session refresh interrupted');
       expect(screen.getByLabelText('Image name')).toBe(input);
       expect(input).toHaveValue('retained image');
       expect(screen.getByRole('button', { name: 'Submitting…' })).toBeDisabled();
@@ -102,7 +97,7 @@ describe('independent CMA service navigation', () => {
     vi.stubGlobal('fetch', fetcher);
     render(
       <ServicePage service="image-manager">
-        {(_, denied) => <button onClick={denied}>Simulate denied write</button>}
+        {(_, denied) => <button onClick={() => denied()}>Simulate denied write</button>}
       </ServicePage>,
     );
     await screen.findByRole('button', { name: 'Simulate denied write' });
@@ -116,67 +111,66 @@ describe('independent CMA service navigation', () => {
     expect(screen.queryByRole('button', { name: 'Simulate denied write' })).toBeNull();
   });
 
-  it('retains the original uncertain write when switching service tabs', async () => {
+  it('keeps Image Manager unavailable through direct navigation without opening its service', async () => {
     window.history.replaceState({}, '', '/image-manager');
-    const writes: RequestInit[] = [];
-    const fetcher = vi.fn(async (url: string, init: RequestInit = {}) => {
-      if (init.method === 'POST') {
-        writes.push(init);
-        if (writes.length === 1) throw new TypeError('Network failure');
-        return new Response('{}', { status: 201 });
-      }
-      if (url.startsWith('/api/event-gateway/')) return new Response('{}', { status: 401 });
-      return new Response(
-        JSON.stringify(
-          url.endsWith('/auth/session')
-            ? {
-                authenticated: true,
-                subject: 'owner',
-                permissions: ['cma-im:admin'],
-                expires_at: Math.floor(Date.now() / 1000) + 3600,
-              }
-            : { items: [], next_cursor: null },
-        ),
-        { status: 200 },
-      );
-    });
+    const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
     render(
-      <AuthContextProvider provider={createMockAuthProvider()}>
+      <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
         <App />
       </AuthContextProvider>,
     );
-    fireEvent.click(await screen.findByText('Create an image'));
-    fireEvent.change(screen.getByLabelText('Image name'), { target: { value: 'retained-image' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create image' }));
-    await screen.findByRole('button', { name: 'Retry same request' });
-    fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
-    await screen.findByRole('link', { name: 'Sign in with NyxID' });
-    fireEvent.click(screen.getByRole('link', { name: 'Image Manager' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
-    await waitFor(() => expect(writes).toHaveLength(2));
-    expect(writes[1]?.body).toBe(writes[0]?.body);
-    expect(writes[1]?.headers).toEqual(writes[0]?.headers);
+    await screen.findByRole('button', { name: /account menu/i });
+    fireEvent.click(screen.getByRole('button', { name: /^Service: / }));
+    expect(screen.getByRole('menuitemradio', { name: /^Image Manager/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    expect(screen.queryByText('Create an image')).not.toBeInTheDocument();
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('uses stable URLs and leaves modified clicks to the browser', () => {
+  it('uses enabled service URLs, preserves modified clicks and exposes a disabled Image Manager', () => {
     const navigate = vi.fn();
-    render(<ServiceTabs route={{ kind: 'image_manager' }} onNavigate={navigate} />);
-    expect(screen.getByRole('link', { name: 'Image Manager' }).getAttribute('aria-current')).toBe(
-      'page',
+    render(<ServiceMenu route={{ kind: 'event_gateway' }} onNavigate={navigate} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Service: Event Gateway' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Event Gateway' })).toHaveAttribute(
+      'aria-checked',
+      'true',
     );
-    fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
-    expect(navigate).toHaveBeenCalledWith({ kind: 'event_gateway' });
-    for (const kind of ['image_manager', 'event_gateway'] as const)
+    expect(screen.getByRole('menuitemradio', { name: 'Event Gateway' })).toHaveAttribute(
+      'href',
+      '/event-gateway',
+    );
+    const image = screen.getByRole('menuitemradio', { name: /^Image Manager/ });
+    expect(image).toHaveAttribute('aria-disabled', 'true');
+    expect(image).not.toHaveAttribute('href');
+    expect(image).toHaveTextContent('Coming soon. Image Manager is not available yet.');
+    fireEvent.click(image);
+    expect(navigate).not.toHaveBeenCalled();
+    const agent = screen.getByRole('menuitemradio', { name: 'Agent Manager' });
+    expect(agent).toHaveAttribute('href', '/agent-manager');
+    fireEvent.click(agent, { ctrlKey: true });
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.click(agent);
+    expect(navigate).toHaveBeenCalledWith({ kind: 'agent_manager' });
+    for (const kind of ['agent_manager', 'event_gateway'] as const)
       expect(parseRoute(routePath({ kind }))).toEqual({ kind });
+    expect(parseRoute('/image-manager')).toEqual({ kind: 'not_found', pathname: '/image-manager' });
   });
+
+  it('names a consumer route as Event Gateway in the service menu', () => {
+    render(<ServiceMenu route={{ kind: 'bots' }} onNavigate={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Service: Event Gateway' })).toBeInTheDocument();
+  });
+
   it('a gateway authorization failure remains local to the gateway', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
     vi.stubGlobal('fetch', fetcher);
     render(<ServicePage service="event-gateway">{() => <p>private channels</p>}</ServicePage>);
     expect(await screen.findByRole('link', { name: 'Sign in with NyxID' })).toHaveAttribute(
       'href',
-      '/api/event-gateway/auth/login',
+      '/auth/login?return_to=%2Fevent-gateway',
     );
     expect(screen.queryByText('private channels')).toBeNull();
     expect(fetcher.mock.calls[0]?.[0]).toBe('/api/event-gateway/auth/session');

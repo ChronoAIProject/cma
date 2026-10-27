@@ -75,6 +75,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
     WARM_SANDBOXES,
+    super::native_prepared::COLLECTION,
 ];
 const PROFILE_COLLECTIONS: &[&str] = &[
     AGENT_PROFILES,
@@ -122,15 +123,25 @@ pub struct MongoSandboxStore {
     #[cfg(test)]
     pub(super) warm_agent_revisions: Collection<Document>,
     pub(super) warm_sandboxes: Collection<Document>,
+    pub(super) native_prepared: Collection<Document>,
     pub(super) warm_runtime_version: Option<String>,
+    pub(super) managed_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
     // Coalesced process-local hints; durable discovery owns recovery and authority.
     pub(crate) sandbox_admitted: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) access_admitted: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) agent_admitted: std::sync::Arc<tokio::sync::Notify>,
+    // Broadcast to already leased parent waiters without consuming scheduler hints.
+    pub(crate) agent_parent_ready: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl MongoSandboxStore {
+    pub(crate) fn with_managed_runtime_version(mut self, version: String) -> Self {
+        self.managed_runtime_version = Some(version);
+        self
+    }
+
     #[cfg(test)]
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
@@ -189,11 +200,15 @@ impl MongoSandboxStore {
             #[cfg(test)]
             warm_agent_revisions: majority_collection(&database, AGENT_PROFILE_REVISIONS),
             warm_sandboxes: majority_collection(&database, WARM_SANDBOXES),
+            native_prepared: majority_collection(&database, super::native_prepared::COLLECTION),
             warm_runtime_version: None,
+            managed_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
+            access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
+            agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
@@ -220,6 +235,7 @@ impl MongoSandboxStore {
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;
         super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;
+        super::native_prepared::ensure_indexes(&store.native_prepared).await?;
         tracing::info!(database = name, "sandbox-model Mongo store ready");
         Ok(store)
     }

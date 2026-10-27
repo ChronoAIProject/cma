@@ -5,10 +5,12 @@ mod adapter;
 mod bindings;
 mod bots;
 mod credentials;
+mod documents;
 mod event_routing;
 mod profiles;
 mod routes;
-use adapter::production_adapter;
+mod runtime;
+use crate::auth::service_portal;
 use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
@@ -22,7 +24,7 @@ use layer2_core::{
 
 use crate::{
     activity::ActivityRecorder,
-    auth::{AuthMode, AuthState, SignInRecords},
+    auth::{AuthMode, AuthState},
     config::Config,
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
@@ -48,6 +50,7 @@ pub(crate) struct ControlPlaneComposition {
     pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
     pub native_warm_pools: Arc<crate::warm_pools::NativeWarmPools>,
+    pub native_prepared: crate::sandbox::native_prepared::NativePreparedWorker,
     pub agent_access_worker: crate::agent_access_worker::AgentAccessWorker,
 }
 
@@ -70,9 +73,14 @@ impl ControlPlaneComposition {
             .map_err(|error| format!("durable stores are not usable: {error}"))?,
         );
         let activity = ActivityService::new(stores.activity.clone());
+        let documents = documents::compose(config, &stores)?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
+        let default_capacity = layer3_adapter::SandboxCapacity {
+            cpu_millis: config.default_profiles.cpu_millis,
+            memory_mib: config.default_profiles.memory_mib,
+        };
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
 
@@ -98,33 +106,15 @@ impl ControlPlaneComposition {
             &config.public_url,
             &config.auth_encryption_key,
         )?;
-        let adapter = production_adapter(
+        let adapters = adapter::production_adapter(
             config,
-            crate::connections::RuntimeSubscriptions::new(
-                stores.sandbox_model.clone(),
-                subscriptions.clone(),
-            ),
-            crate::store::MongoProviderToolSource::new(stores.sandbox_model.clone()),
+            stores.sandbox_model.clone(),
+            subscriptions.clone(),
             access_tools.clone(),
         )
         .await?;
-        let auth = AuthState::with_store_and_nyxid_public_url(
-            config.auth_mode.clone(),
-            Some(SignInRecords {
-                users: Arc::clone(&users),
-                activity: Arc::clone(&activity),
-            }),
-            stores.auth.clone(),
-            config.nyxid_public_url.clone(),
-        )
-        .with_agent_key_service(config.nyxid_service_id.clone())
-        .with_binding_store(stores.sandbox_model.clone())
-        .with_bot_father_username(
-            config
-                .bot_father
-                .as_ref()
-                .map(|father| father.username.clone()),
-        )?;
+        let adapter = adapters.owned;
+        let auth = credentials::authentication(config, &stores, &users, &activity)?;
         let broker = Arc::new(
             CmaServiceConnectionBroker::from_auth_config_with_callback(
                 &config.auth_mode,
@@ -167,6 +157,7 @@ impl ControlPlaneComposition {
             runtime_capabilities(adapter.capabilities()),
         )
         .with_connections(connection_prerequisite.clone())
+        .with_message_feedback(stores.message_feedback.clone())
         .with_skill_support(Arc::new(crate::projections::AdapterAgentSkillSupport(
             adapter.clone(),
         )))
@@ -185,12 +176,10 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             image_resolver.clone(),
             authoring_bounds,
-            layer3_adapter::SandboxCapacity {
-                cpu_millis: config.default_profiles.cpu_millis,
-                memory_mib: config.default_profiles.memory_mib,
-            },
+            config.agent_manager_sandbox_capacity,
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
+            Some(stores.sandbox_model.clone()),
         );
         inline_lifecycle.resume_pending();
         let projections = projections
@@ -208,22 +197,15 @@ impl ControlPlaneComposition {
         );
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
             .with_resource_access(resource_access.clone());
-        let native_warm_pools = crate::warm_pools::NativeWarmPools::new(
-            stores.native_warm_pools.clone(),
-            adapter.clone(),
-            config.runtime.sandbox_image.clone(),
-            config.runtime.agent_sandbox_home_policy.clone(),
-            layer3_adapter::SandboxCapacity {
-                cpu_millis: config.default_profiles.cpu_millis,
-                memory_mib: config.default_profiles.memory_mib,
-            },
-        );
+        let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
+        let native_warm_pools = runtime.warm_pools;
         let admin = layer1_public::rest::admin::AdminState::new(
             Arc::clone(&settings),
             sandbox_operators,
             Arc::clone(&activity),
         )
         .with_user_directory(Arc::clone(&users))
+        .with_runtime_updates(runtime.updates.clone())
         .with_warm_pools(native_warm_pools.clone());
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
@@ -238,6 +220,7 @@ impl ControlPlaneComposition {
             hierarchy,
             Arc::clone(&operations),
         )
+        .with_runtime_updates(runtime.updates)
         .with_user_directory(Arc::clone(&users));
         let recorder = ActivityRecorder::new(Arc::clone(&activity));
         let profile_authoring = ProfileAuthoringService::new(
@@ -289,6 +272,7 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
             },
             SandboxLifecycleConfig {
+                managed_documents_enabled: config.document_storage.is_some(),
                 home_policy: config
                     .runtime
                     .home_policy
@@ -317,10 +301,7 @@ impl ControlPlaneComposition {
             public_origin: config.public_url.clone(),
             worker_holder: worker_holder.clone(),
             profile_bounds: authoring_bounds,
-            capacity: layer3_adapter::SandboxCapacity {
-                cpu_millis: config.default_profiles.cpu_millis,
-                memory_mib: config.default_profiles.memory_mib,
-            },
+            capacity: default_capacity,
             profile_scanner: profile_scanner.clone(),
             image_resolver: image_resolver.clone(),
         })?;
@@ -367,7 +348,11 @@ impl ControlPlaneComposition {
             broker,
             resource_access.clone(),
             worker_holder,
-            access_tools,
+            access::ToolServices {
+                source: access_tools,
+                documents: config.document_storage.as_ref().map(|_| documents.clone()),
+                public_origin: config.public_url.clone(),
+            },
         );
         let command_service = agent_access.commands;
         let projections = projections.with_commands(command_service.clone());
@@ -392,14 +377,14 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
+            .merge(rest::documents_router(documents.clone()))
             .merge(model_routes)
             .merge(agent_access.owner_routes)
             .merge(rest::event_workers::router(event_workers.clone()))
-            .merge(layer1_public::rest::agent_artifacts_router(
-                layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
-                    stores.sandbox_model.clone(),
-                    resource_access.clone(),
-                ),
+            .merge(routes::agent_files(
+                stores.sandbox_model.clone(),
+                resource_access.clone(),
+                adapter.clone(),
             ))
             .merge(layer1_public::rest::sandbox_commands_router(
                 sandbox_control_service,
@@ -479,7 +464,10 @@ impl ControlPlaneComposition {
             recorder,
             limits,
             stores,
-            agent_access.tool_routes,
+            agent_access.tool_routes.merge(service_portal::router(
+                auth.clone(),
+                config.gateway.as_ref(),
+            )?),
         );
 
         Ok(Self {
@@ -494,6 +482,7 @@ impl ControlPlaneComposition {
             sandbox_control_scheduler,
             sandbox_lifecycle,
             native_warm_pools,
+            native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
         })
     }

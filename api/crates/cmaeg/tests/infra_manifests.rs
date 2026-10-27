@@ -29,6 +29,14 @@ const MIN_MEDIA_MEMORY_MIB: u64 = 1536;
 const MIN_TRANSFORMER_MEMORY_MIB: u64 = 2048;
 const MIB: u64 = 1024 * 1024;
 
+#[test]
+fn lark_resource_writes_allow_source_opt_in_after_compatible_reader_rollout() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_LARK_RESOURCE_WRITES_ENABLED"),
+        Some("true")
+    );
+}
+
 struct Line<'a> {
     indent: usize,
     text: &'a str,
@@ -442,4 +450,20 @@ fn staged_preview_enables_media_and_console_with_reserved_memory() {
             Ok(2048 * MIB)
         );
     }
+}
+
+#[test]
+fn native_thread_history_allows_source_opt_in_while_complete_replies_stay_off() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_DISCORD_MULTISELECT_ENABLED"),
+        Some("false")
+    );
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED"),
+        Some("true")
+    );
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_NYXID_COMPLETE_REPLIES"),
+        Some("false")
+    );
 }

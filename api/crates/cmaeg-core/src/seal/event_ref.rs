@@ -16,6 +16,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EventRefPayload {
+    /// Authenticated native Telegram admission evidence; absent before the reader rollout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_admission: Option<super::TelegramAdmissionProof>,
     pub v: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_sha256: Option<String>,
@@ -38,6 +41,12 @@ pub struct EventRefPayload {
 
 #[derive(Clone, PartialEq, Eq, ToSchema)]
 pub enum ReplyAddress {
+    Discord {
+        bot_id: String,
+        channel_id: String,
+        message_id: String,
+        thread_id: Option<String>,
+    },
     Telegram {
         bot_id: String,
         chat_id: String,
@@ -46,6 +55,7 @@ pub enum ReplyAddress {
     },
 
     NyxidRelay {
+        thread_reply: bool,
         message_id: String,
         route_id: String,
         platform: Platform,
@@ -65,6 +75,18 @@ pub enum ReplyAddress {
 impl fmt::Debug for ReplyAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+                thread_id,
+            } => formatter
+                .debug_struct("Discord")
+                .field("bot_id", bot_id)
+                .field("channel_id", channel_id)
+                .field("message_id", message_id)
+                .field("thread_id", thread_id)
+                .finish(),
             Self::NyxidRelay {
                 message_id,
                 route_id,
@@ -108,6 +130,13 @@ impl fmt::Debug for ReplyAddress {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 enum ReplyAddressWire {
+    Discord {
+        bot_id: String,
+        channel_id: String,
+        message_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_id: Option<String>,
+    },
     Telegram {
         bot_id: String,
         chat_id: String,
@@ -117,6 +146,8 @@ enum ReplyAddressWire {
     },
 
     NyxidRelay {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_reply: bool,
         message_id: String,
         route_id: String,
         platform: Platform,
@@ -139,13 +170,26 @@ impl Serialize for ReplyAddress {
         S: Serializer,
     {
         let wire = match self {
+            Self::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+                thread_id,
+            } => ReplyAddressWire::Discord {
+                bot_id: bot_id.clone(),
+                channel_id: channel_id.clone(),
+                message_id: message_id.clone(),
+                thread_id: thread_id.clone(),
+            },
             Self::NyxidRelay {
                 message_id,
                 route_id,
                 platform,
                 reply_token,
                 reply_token_expires_at,
+                thread_reply,
             } => ReplyAddressWire::NyxidRelay {
+                thread_reply: *thread_reply,
                 message_id: message_id.clone(),
                 route_id: route_id.clone(),
                 platform: *platform,
@@ -182,13 +226,26 @@ impl<'de> Deserialize<'de> for ReplyAddress {
         D: Deserializer<'de>,
     {
         Ok(match ReplyAddressWire::deserialize(deserializer)? {
+            ReplyAddressWire::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+                thread_id,
+            } => Self::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+                thread_id,
+            },
             ReplyAddressWire::NyxidRelay {
                 message_id,
                 route_id,
                 platform,
                 reply_token,
                 reply_token_expires_at,
+                thread_reply,
             } => Self::NyxidRelay {
+                thread_reply,
                 message_id,
                 route_id,
                 platform,
@@ -317,6 +374,18 @@ impl EventRefPayload {
     }
 
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(proof) = &self.telegram_admission {
+            proof.validate()?;
+            if self.activity_sha256.is_none()
+                || !matches!(self.reply, ReplyAddress::Telegram { .. })
+                || self.lineage.is_some()
+            {
+                return Err(ValidationError::new(
+                    "/telegram_admission",
+                    "native event required",
+                ));
+            }
+        }
         if self.activity_sha256.as_ref().is_some_and(|d| {
             d.len() != 64
                 || !d
@@ -339,12 +408,45 @@ impl EventRefPayload {
             })?;
         }
         match &self.reply {
+            ReplyAddress::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+                thread_id,
+            } => {
+                if thread_id.as_ref().is_some_and(|id| id != channel_id) {
+                    return Err(ValidationError::new(
+                        "/reply/thread_id",
+                        "Discord thread must be the original channel",
+                    ));
+                }
+                for (field, id) in [
+                    ("bot_id", bot_id),
+                    ("channel_id", channel_id),
+                    ("message_id", message_id),
+                ] {
+                    if !crate::channel::discord::valid_id(id) {
+                        return Err(ValidationError::new(
+                            format!("/reply/{field}"),
+                            "invalid Discord identity",
+                        ));
+                    }
+                }
+            }
             ReplyAddress::NyxidRelay {
                 message_id,
                 route_id,
                 reply_token_expires_at,
+                platform,
+                thread_reply,
                 ..
             } => {
+                if *thread_reply && !matches!(platform, Platform::Lark | Platform::Feishu) {
+                    return Err(ValidationError::new(
+                        "/reply/thread_reply",
+                        "native thread reply unavailable",
+                    ));
+                }
                 require_string(message_id, "/reply/message_id", 1, 512)?;
                 require_string(route_id, "/reply/route_id", 1, 512)?;
                 if *reply_token_expires_at <= 0 {

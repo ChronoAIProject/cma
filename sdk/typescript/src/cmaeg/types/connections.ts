@@ -1,4 +1,14 @@
-import { array, enumeration, nullable, object, optional, text, type Output } from '../../schema.js';
+import {
+  array,
+  boolean,
+  enumeration,
+  integer,
+  nullable,
+  object,
+  optional,
+  text,
+  type Output,
+} from '../../schema.js';
 
 export const StatusSchema = enumeration(
   'draft',
@@ -17,7 +27,39 @@ export const PlatformCapabilitySchema = object({
 });
 export type PlatformCapability = Output<typeof PlatformCapabilitySchema>;
 
-export const CapabilityViewSchema = object({ platforms: array(PlatformCapabilitySchema) });
+export const RelayVerificationCapabilitySchema = object({
+  id: text,
+  writes_enabled: boolean,
+});
+export type RelayVerificationCapability = Output<typeof RelayVerificationCapabilitySchema>;
+export const RelayPlatformCapabilitySchema = object({
+  id: text,
+  label: text,
+  verification_modes: array(RelayVerificationCapabilitySchema),
+});
+export type RelayPlatformCapability = Output<typeof RelayPlatformCapabilitySchema>;
+export const RelayAuthoringCapabilitiesSchema = object({
+  native_discord_thread_history_enabled: optional(nullable(boolean)),
+  native_discord_writes_enabled: optional(nullable(boolean)),
+  native_discord_auto_activation_enabled: optional(nullable(boolean)),
+  native_discord_capacity: optional(nullable(integer)),
+  dynamic_sources_writes_enabled: boolean,
+  relay_raw_verification_writes_enabled: boolean,
+  lark_resource_writes_enabled: optional(nullable(boolean)),
+  outbound_messages_writes_enabled: optional(nullable(boolean)),
+  native_media_writes_enabled: optional(nullable(boolean)),
+  multi_consumer_writes_enabled: boolean,
+  native_bot_mentions_writes_enabled: boolean,
+  thread_contract_writes_enabled: boolean,
+  platforms: array(RelayPlatformCapabilitySchema),
+});
+export type RelayAuthoringCapabilities = Output<typeof RelayAuthoringCapabilitiesSchema>;
+
+export const CapabilityViewSchema = object({
+  platforms: array(PlatformCapabilitySchema),
+  source_features: optional(array(text)),
+  relay_authoring: optional(nullable(RelayAuthoringCapabilitiesSchema)),
+});
 export type CapabilityView = Output<typeof CapabilityViewSchema>;
 
 export const ConnectionViewSchema = object({

@@ -52,6 +52,7 @@ pub(super) fn message_mutation(
     );
     next.conversation.last_seq += 4;
     AgentConversationMutation {
+        settings_fence: None,
         command_claim: Some(claim.clone()),
         execution_fence: None,
         trigger_execution_fence: None,
@@ -68,6 +69,7 @@ pub(super) fn message_mutation(
                 state: AgentOperationDelivery::DispatchFenced,
             },
             AgentLogKind::TurnStarted {
+                model: Some(agent.settings().model),
                 turn_sequence: turn,
                 origin_key: Some(format!("command:{}", claim.command_id.as_str())),
             },
@@ -319,6 +321,7 @@ async fn identical_control_logs_do_not_prove_a_different_command_committed() {
         .unwrap(),
     );
     let mutation = AgentConversationMutation {
+        settings_fence: None,
         command_claim: Some(claim.clone()),
         execution_fence: None,
         trigger_execution_fence: None,

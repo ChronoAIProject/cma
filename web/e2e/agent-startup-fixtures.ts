@@ -157,6 +157,8 @@ export class LocalStartup {
       switch (url.pathname) {
         case '/api/agent-manager/v1/agents/agt_contract/access-requests':
           return reply({ items: [] });
+        case '/api/v1/agents/agt_contract/message-feedback':
+          return reply({ items: [], next: null });
         case '/api/v1/agents/agt_contract/models':
           return reply({ models: [{ id: 'gpt-6', label: 'GPT-6' }] });
         case '/api/v1/agents/agt_contract/skills':

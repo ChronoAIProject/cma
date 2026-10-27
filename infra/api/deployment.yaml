@@ -6,6 +6,19 @@ metadata:
   labels:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
+  annotations:
+    cma.chronoai.dev/api-image-digest: "sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683"
+    cma.chronoai.dev/build-mode: "github-ci-artifact"
+    cma.chronoai.dev/candidate: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
+    cma.chronoai.dev/ci-artifact: "12710250368"
+    cma.chronoai.dev/ci-attempt: "1"
+    cma.chronoai.dev/ci-head: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7"
+    cma.chronoai.dev/ci-run: "40445812082"
+    cma.chronoai.dev/image-digest: "sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683"
+    cma.chronoai.dev/image-source: "32ac7cf32a2edadd1fb632c7b44e0867492520c7"
+    cma.chronoai.dev/source-tree: "a28acd8a66ee111d602e5be031902a71b5bd6c59"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:84bc6c74fcf885421bc2b0c3b933e7d1c6ff237acf9d147eb0e28343e699041a"
 spec:
   replicas: 1
   # Quota reservations and rate counters are process-local. Keep one replica
@@ -19,13 +32,21 @@ spec:
   template:
     metadata:
       annotations:
-        # Reload the environment-bound runtime pin when its ConfigMap changes.
-        cma.chronoai.dev/runtime-image: "sha256:1c44be8aaa7b88c0190d17ca44f4f6e0f9a8aec880038c5d4da9cb2bc8c68e8b"
-        cma.chronoai.dev/candidate: "fb3a652fdc93658f138096a704f0d162b6c6c483"
-        cma.chronoai.dev/api-image-digest: "sha256:2059395d539a916d45c178774d4e85cb04a5699724fe9854019388a63423c44c"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/image-source: "4fee2eb2562c26c58d1d61361ac1c43469673ba6"
-        cma.chronoai.dev/ci-run: "38513020577"
+        cma.chronoai.dev/api-image-digest: "sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683"
+        cma.chronoai.dev/runtime-ci-artifact: "12331617434"
+        cma.chronoai.dev/build-mode: "github-ci-artifact"
+        cma.chronoai.dev/candidate: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
+        cma.chronoai.dev/ci-artifact: "12710250368"
+        cma.chronoai.dev/ci-attempt: "1"
+        cma.chronoai.dev/ci-head: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7"
+        cma.chronoai.dev/ci-run: "40445812082"
+        cma.chronoai.dev/image-digest: "sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683"
+        cma.chronoai.dev/image-source: "32ac7cf32a2edadd1fb632c7b44e0867492520c7"
+        cma.chronoai.dev/runtime-image: "sha256:2634b16afd512281de38961f481909df2c7d186788c918dfe39896178e4cf52e"
+        cma.chronoai.dev/source-tree: "a28acd8a66ee111d602e5be031902a71b5bd6c59"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:84bc6c74fcf885421bc2b0c3b933e7d1c6ff237acf9d147eb0e28343e699041a"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -60,7 +81,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:2059395d539a916d45c178774d4e85cb04a5699724fe9854019388a63423c44c
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -72,6 +93,11 @@ spec:
             - secretRef:
                 name: cma-agent-manager
           env:
+            # Production opts into one prepared default hierarchy at the
+            # Deployment layer while the shared ConfigMap keeps its safe
+            # default of zero for environments that do not opt in.
+            - name: CHRONO_NATIVE_PREPARED_TARGET
+              value: "1"
             - name: CHRONO_AGENT_SANDBOX_API_SERVER
               valueFrom:
                 configMapKeyRef:

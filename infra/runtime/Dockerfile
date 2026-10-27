@@ -19,16 +19,17 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 
-# Build the upstream GitHub release with its one vulnerable indirect module
-# refreshed. No CLI source or transport code is patched.
+# Build the upstream GitHub release with patched Go and indirect modules.
+# The toolchain includes the CVE-2026-111943 crypto/x509 fix.
+# No CLI source or transport code is patched.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS github-build
 ARG TARGETARCH
 ARG GH_VERSION=2.100.0
 ARG GH_SOURCE_COMMIT=45437bc7eeeb3359bbfddd1742f79de7652fd3e2
 ARG GH_SOURCE_SHA256=e16749bc0d99dc0633a3d5ebadf48ffff1c24beb1ce83e8f6a71bb64ce477e9a
-ARG GH_GO_VERSION=1.26.9
-ARG GH_GO_SHA256_AMD64=42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d
-ARG GH_GO_SHA256_ARM64=4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052
+ARG GH_GO_VERSION=1.26.10
+ARG GH_GO_SHA256_AMD64=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
+ARG GH_GO_SHA256_ARM64=3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797
 ARG GH_X_MOD_VERSION=0.41.0
 ARG GH_X_NET_VERSION=0.60.0
 RUN apt-get update \
@@ -137,7 +138,7 @@ ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=af393f07cda5fcea0c89b2659440094ebe31ca1c65b1920457b4126de4b7d602
+ARG CODEX_ACP_SHA256=4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888
 
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
@@ -198,7 +199,7 @@ ARG NPM_VERSION=12.0.2
 ARG BRACE_EXPANSION_VERSION=5.0.12
 ARG IP_ADDRESS_VERSION=10.3.1
 ARG TAR_VERSION=7.5.21
-ARG UNDICI_VERSION=6.28.1
+ARG UNDICI_VERSION=6.29.1
 RUN set -eux; \
     npm install -g "npm@${NPM_VERSION}"; \
     bundled=/usr/local/lib/node_modules/npm/node_modules; \
@@ -256,8 +257,9 @@ RUN set -eux; \
     nyxid --version
 
 # Use the genuine upstream CLI. The supervisor supplies an inert GH_TOKEN and
-# its local Unix-socket transport only when api-github is in the Sandbox grant;
-# the scoped NyxID credential remains in the supervisor, outside the home.
+# its local Unix-socket transport to managed runtimes for live scope changes.
+# Requests require the current api-github grant; the scoped NyxID credential
+# remains in the supervisor, outside the home.
 COPY --from=github-build /out/gh /usr/local/bin/gh
 RUN gh --version
 
@@ -325,8 +327,12 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     node /tmp/cma-codex-source/persist_conversations.cjs \
     && node /tmp/cma-codex-source/subscription_auth.cjs \
     && node /tmp/cma-codex-source/managed_model_catalog.cjs \
+    && node /tmp/cma-codex-source/runtime_observations.cjs \
+    && node /tmp/cma-codex-source/required_access_tool.cjs \
+    && node /tmp/cma-codex-source/session_commands.cjs \
+    && node /tmp/cma-codex-source/agent_instructions.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
-    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs \
+    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs \
     && test ! -e /tmp/cma-checkpoints
 
 # Refresh the final filesystem after expensive dependency layers are cached.
@@ -370,6 +376,10 @@ const fallback = [
 ].join('\n');
 fs.writeFileSync('/etc/profile', profile.replace(defaults, fallback));
 NODE
+
+# Owner attachment uploads are admitted only when the supervisor proves the
+# complete /home mount. Files and immutable upload receipts live beneath
+# /home/attachments; retained runtimes advertise this capability explicitly.
 
 # Optional CHRONO_TOOL_PROXY_URL selects one external HTTP tool endpoint.
 # When absent no tool proxy binds. When present it listens only at 127.0.0.1:9093,

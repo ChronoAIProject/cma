@@ -6,8 +6,13 @@ import type {
   AgentUsage,
 } from '../api/types';
 import { orderEntries } from './chronology';
+import { durableUsage } from './usage';
 import { consumeLiveMessage, liveMessage } from './liveMessage';
 import { liveTool, updateTool } from './toolCalls';
+import { setPlan } from './plans';
+import { descriptionSource, durableRuntimeMetadata, mergeRuntimeMetadata } from './runtimeMetadata';
+import { sessionCommands } from './slashCommands';
+import { number, object, text } from './conversationValues';
 import type {
   ApprovalRequest,
   ConversationMessage,
@@ -20,20 +25,6 @@ export type {
   ConversationState,
   RecoveryNotice,
 } from './model';
-
-function object(value: unknown): Readonly<Record<string, unknown>> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>)
-    : undefined;
-}
-
-function text(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function number(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
 
 function messageStatus(outcome: Readonly<Record<string, unknown>>) {
   return outcome.type === 'failed' ? 'error' : 'complete';
@@ -80,6 +71,7 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
     toolCalls: [],
     reasoning: [],
     approvals: [],
+    plans: [],
     recovery,
     activeRunId: activeTurn === undefined ? undefined : String(activeTurn.turnSequence),
     activeRunStartedAt: activeTurn?.startedAt,
@@ -97,26 +89,6 @@ function recover(state: ConversationState, notice: RecoveryNotice): Conversation
   return { ...state, recovery: upsert(state.recovery, notice) };
 }
 
-function durableUsage(state: ConversationState, kind: Readonly<Record<string, unknown>>) {
-  const inputTokens = number(kind.input_tokens);
-  const outputTokens = number(kind.output_tokens);
-  const contextUsed = number(kind.context_used);
-  if (inputTokens === undefined || outputTokens === undefined || contextUsed === undefined) {
-    return state;
-  }
-  return {
-    ...state,
-    usage: {
-      agentId: state.usage?.agentId ?? '',
-      throughSeq: state.cursor,
-      inputTokens,
-      outputTokens,
-      contextUsed,
-      contextWindow: number(kind.context_window),
-    },
-  };
-}
-
 export function foldAgentEvent(state: ConversationState, event: AgentEvent): ConversationState {
   return orderEntries(state, foldDurableEvent(state, event), event.seq);
 }
@@ -126,6 +98,10 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
   const kind = event.kind;
   const next = { ...state, cursor: event.seq };
   switch (kind.type) {
+    case 'available_commands_set':
+      return { ...next, availableCommands: sessionCommands(kind.commands) };
+    case 'runtime_generation_retired':
+      return { ...next, availableCommands: undefined };
     case 'conversation_opened':
     case 'turn_started':
       return {
@@ -210,8 +186,28 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         }),
       };
     }
+    case 'plan_set':
+      return setPlan(next, next.activeRunId, kind.entries);
     case 'usage':
+      return durableUsage(next, {
+        ...kind,
+        input_tokens: Math.max(next.usage?.inputTokens ?? 0, number(kind.input_tokens) ?? 0),
+        output_tokens: Math.max(next.usage?.outputTokens ?? 0, number(kind.output_tokens) ?? 0),
+      });
+    case 'usage_updated':
       return durableUsage(next, kind);
+    case 'title_set':
+      return kind.source === 'owner_override' && text(kind.title) !== undefined
+        ? { ...next, ownerTitle: text(kind.title) }
+        : next;
+    case 'runtime_metadata_changed':
+      return {
+        ...next,
+        runtimeMetadata: mergeRuntimeMetadata(
+          next.runtimeMetadata,
+          durableRuntimeMetadata(kind.metadata),
+        ),
+      };
     case 'conversation_gap':
       return recover(next, {
         id: `gap:${String(event.seq)}`,
@@ -307,12 +303,19 @@ function patchState(
   state: ConversationState,
   patch: unknown,
   timestamp?: string,
+  runId?: string,
 ): ConversationState {
   const item = object(patch);
   if (item === undefined) return state;
   const path = text(item.path);
   const operation = text(item.op);
   if (path === undefined || operation === undefined) return state;
+  if (path === '/availableCommands')
+    return {
+      ...state,
+      availableCommands: operation === 'remove' ? undefined : sessionCommands(item.value),
+    };
+  if (path === '/plan') return setPlan(state, runId, operation === 'remove' ? [] : item.value);
   if (path.startsWith('/pendingApprovals/')) {
     const id = path.slice('/pendingApprovals/'.length).replaceAll('~1', '/').replaceAll('~0', '~');
     if (operation === 'remove') {
@@ -325,6 +328,39 @@ function patchState(
     return approval === undefined
       ? state
       : { ...state, approvals: upsert(state.approvals, approval) };
+  }
+  if (path === '/ownerTitle') return { ...state, ownerTitle: text(item.value) };
+  if (path === '/runtimeMetadata') {
+    const metadata = object(item.value);
+    return metadata === undefined
+      ? state
+      : {
+          ...state,
+          runtimeMetadata: mergeRuntimeMetadata(state.runtimeMetadata, {
+            workingDirectory: text(metadata.workingDirectory),
+            description: text(metadata.description),
+            descriptionSource: descriptionSource(metadata.descriptionSource),
+            descriptionIsSetupPreview:
+              typeof metadata.descriptionIsSetupPreview === 'boolean'
+                ? metadata.descriptionIsSetupPreview
+                : undefined,
+          }),
+        };
+  }
+  if (path === '/usage') {
+    const usage = object(item.value);
+    const turn = object(usage?.currentTurn);
+    return usage === undefined
+      ? state
+      : durableUsage(state, {
+          input_tokens: usage.inputTokens,
+          output_tokens: usage.outputTokens,
+          context_used: usage.contextUsed,
+          context_window: usage.contextWindow,
+          turn_sequence: turn?.turnSequence,
+          turn_input_tokens: turn?.inputTokens,
+          turn_output_tokens: turn?.outputTokens,
+        });
   }
   if (path.startsWith('/usage/')) {
     const field = path.slice('/usage/'.length);
@@ -390,7 +426,7 @@ function patchState(
 function liveState(state: ConversationState, event: AgentLiveEvent): ConversationState {
   const delta = Array.isArray(event.delta) ? event.delta : [];
   return delta.reduce<ConversationState>(
-    (current, patch) => patchState(current, patch, event.timestamp),
+    (current, patch) => patchState(current, patch, event.timestamp, event.runId),
     state,
   );
 }

@@ -86,6 +86,7 @@ array preserves owner steering interleaved with Agent answers. `owner_message`
 is only the initial owner-message summary; `agent_messages` contains only
 assistant-message summaries. Concatenating those summaries loses the actual
 conversation order and later owner guidance.
+
 # Organization share management
 
 `client.resource_access()` provides `effective`, `list_shares`, `read_share`,
@@ -258,7 +259,6 @@ WebP are supported. At most 256 immutable artifacts are retained per Agent;
 pages contain at most 50. Revoked authority prevents future reads but cannot
 recall a file already downloaded.
 
-
 ## Channel usage
 
 `agents().channel_usage(agent_id)` returns explicit channel facts independently
@@ -294,7 +294,6 @@ async fn inspect_channel_use(client: &Client, agent_id: &str) -> Result<()> {
 These methods only observe facts. Binding history never grants authority, and
 these routes cannot write or clear channel usage. Every request rechecks current
 resource authority after membership or sharing changes.
-
 
 `AgentProvenanceInventoryOptions` combines `channel_active` and `channel_history`
 with `creation_origin` and existing personal, organization or shared scope.
@@ -388,3 +387,98 @@ Read the list again after connecting services. `Denied` and `Failed` are termina
 with an optional safe `error` detail. The SDK rejects crossed Agent/request
 identities, inconsistent connection targets and duplicate list IDs. Listing never
 approves services or resumes an Agent.
+
+An explicit retry after a failed access request is a new pending consent attempt.
+Its optional `retry_of` names the preserved failed request. The Agent tool returns
+new attempt parameters after failure; old-key replay continues to return the old
+outcome. New attempts require fresh owner approval and never inherit an earlier
+approval or runtime update.
+
+To add or revoke services directly, call `agents().update_service_access(agent_id, &body, &key)` with `UpdateAgentServiceAccessRequest { services, expected_services }`.
+`services` is the exact desired shared Sandbox scope; `expected_services` is the
+last observed effective scope. Both must include `chrono-llm-public` and
+`ornn-api`. Save is explicit owner consent. The service returns HTTP 202 and the
+durable access request, and rejects stale selections with HTTP 409 before
+changing access. Preserve the same body and key after an uncertain reply.
+Prepare any external service connections before final approval. An active
+Sandbox receives its replacement credential without restarting Agents;
+`succeeded` confirms runtime acknowledgement, old-key revocation and callback
+delivery to the originating Agent. An already paused Sandbox waits for resume.
+
+## Runtime observations
+
+Owned Agent detail and hierarchy entries optionally expose `runtime_metadata`
+with the provider's canonical `working_directory` and session `description`.
+The `runtime_metadata_changed` event updates the same snapshot. These fields
+do not rewrite the immutable Workspace/Worktree paths or infer changes from
+shell commands. Shared readers do not receive private directory metadata.
+
+`description_source` optionally identifies `provider_title` or `prompt_preview`;
+absence means unknown. `description_is_setup_preview: true` is positive evidence
+that this provider preview came from the exact recorded automatic setup input.
+Only a `prompt_preview` with that flag should be excluded from the display title.
+An explicit `provider_title` remains authoritative even if its text equals setup
+text. Use the configured Agent title when a setup preview is excluded; no semantic
+title generator or first actual user-task inference is implied. Keep these fields
+with `description` as one snapshot when replaying metadata updates.
+
+Owned Agent detail also exposes optional `first_message.purpose` (`setup` or
+`task`) and `first_message.turn_sequence`. Missing purpose is legacy unknown;
+Agent creation origin and user-role message position are not substitutes for it.
+A Trigger task attached to a reused lifecycle Agent retains `task` purpose.
+
+`usage_updated` contains absolute lifetime input/output consumption and
+`turn_sequence`, `turn_input_tokens`, `turn_output_tokens` for the most recent
+observed turn. The usage read also exposes optional `current_turn`. Match that
+sequence to the running turn before displaying a current-turn counter. Context
+compaction can reduce context size while lifetime counts remain unchanged.
+Counts include cached input and advance only on provider reports; absent
+historical usage is never inferred from message length. Retained older runtimes
+continue emitting the compatible `usage` vocabulary.
+
+## File attachments
+
+`client.agents().upload_attachment(agent_id, name, media_type, content, &key).await` uploads one binary file of at most 20 MiB to an owner-authorized active Agent. Empty files are supported. Use `application/octet-stream` for an unknown media type. The returned `AgentAttachment` includes the verified persisted `path`, sanitized `name`, exact `size_bytes`, `media_type`, and `sha256`.
+
+Uploading never sends a message or executes content. Refer to the returned path in the next Agent input. Retry an uncertain result with the same key and unchanged filename, type and bytes. Conflicting reuse is refused. Attachments require a supported runtime with full persistent home storage and are stored under `/home/attachments/<agent-id>/<attachment-id>/`; retained unsupported images and inactive Agents return typed errors. The existing approved-artifact APIs retain their separate publication contract.
+
+## Message feedback
+
+`agents().message_feedback(agent_id, EventOptions { after, limit })` reads private
+owner votes as a `ResourcePage<MessageFeedback, u64>`. Pass each non-null `next`
+as `after`; page size is 1–200. `set_message_feedback(agent_id, "event:42",
+Some(MessageVote::Up))` sets a positive vote; use `MessageVote::Down` to switch or
+`None` to remove it. The ID uses the transcript's durable message sequence.
+These idempotent metadata writes need no command key and never create turns.
+Serialize changes to one message and avoid replaying an old write after a newer
+choice. Current owner authority is required; shared readers cannot inspect or
+change these votes.
+
+### Agent session share links
+
+`resource_access().create_agent_share_link(agent_id, &CreateAgentShareLinkRequest,
+&key)` creates an Agent-only view or view-write link. Supply a cryptographically
+random 32-byte token encoded as lowercase hex, and retain it in the share URL
+fragment. The server stores only its digest. `AgentShareAudience` selects public,
+organization, or canonical user subjects resolved with `share_recipients`.
+`agent_share_links` returns metadata without secrets; `redeem_agent_share_link`
+binds possession to the current signed-in recipient. `revoke_agent_share_link`
+uses the current revision to invalidate this link while retaining independent
+links. `EffectiveAccess.shared_by` carries public owner attribution.
+
+### Persistent-home files
+
+`client.agent_files().list(agent_id, "")` lists `/home/`, including hidden
+entries. Pass a relative path to expand a directory. `read(agent_id, path,
+max_bytes)` returns base64 content and its digest; `download(agent_id, path)`
+returns raw bytes, with a dedicated 32 MiB transfer limit.
+
+`write(agent_id, &AgentFileWrite)` uses the last-read `expected_sha256` for
+compare-and-swap saves. Omission means create-only; `directory: Some(true)` with
+empty content creates a folder. `remove(agent_id, path, recursive)` deletes one
+target, recursively only when explicitly requested. File writes and
+`redeem_agent_share_link(share_id, token)` need no idempotency key. No mutation
+is automatically retried. Retain local edits after a conflict and reread before
+an explicit retry. View links may browse/download; only owners and current
+view-write links may change files. Older runtimes return
+`file_runtime_unsupported` until updated while idle.

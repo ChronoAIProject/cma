@@ -177,6 +177,28 @@ pub enum AgentEventKind {
         #[serde(deserialize_with = "super::types::required_nullable")]
         context_window: Option<u64>,
     },
+    /// Updated canonical provider metadata, available to personal owners.
+    RuntimeMetadataChanged {
+        /// Current metadata snapshot.
+        metadata: crate::agents::AgentRuntimeMetadata,
+    },
+    /// Actual lifetime and per-turn consumed usage, independent of context size.
+    UsageUpdated {
+        /// Lifetime input, including cached input.
+        input_tokens: u64,
+        /// Lifetime output.
+        output_tokens: u64,
+        /// Current context observation.
+        context_used: u64,
+        /// Known context limit.
+        context_window: Option<u64>,
+        /// Most recently observed durable turn.
+        turn_sequence: Option<u64>,
+        /// Consumed input in that turn.
+        turn_input_tokens: u64,
+        /// Consumed output in that turn.
+        turn_output_tokens: u64,
+    },
     /// Safe durable mode changed record.
     ModeChanged {
         /// The public `mode` observation from this record.

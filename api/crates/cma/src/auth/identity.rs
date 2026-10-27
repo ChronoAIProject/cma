@@ -94,6 +94,63 @@ pub(super) async fn verify_subject(
             "credential is restricted to its dedicated channel interface".into(),
         ));
     }
+    // Both requests inspect the same immutable credential. Bind the completed
+    // introspection evidence to userinfo only after both have returned; retained
+    // callers still recheck durable custody before accepting either result.
+    let ((body, subject), introspection) = tokio::try_join!(
+        async {
+            let started = std::time::Instant::now();
+            let result = userinfo(auth, metadata, access_token).await;
+            tracing::info!(
+                phase = "userinfo",
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                success = result.is_ok(),
+                "Identity provider verification phase completed"
+            );
+            result
+        },
+        async {
+            let started = std::time::Instant::now();
+            let result = permissions::fetch_introspection(auth, metadata, access_token).await;
+            tracing::info!(
+                phase = "introspection",
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                success = result.is_ok(),
+                "Identity provider verification phase completed"
+            );
+            // Only userinfo can fail the join: a prompt rejection must cancel
+            // pending introspection, and introspection failure cannot preempt
+            // userinfo's existing refusal precedence.
+            Ok::<_, ProviderVerificationError>(result)
+        }
+    )?;
+    let (permissions, api_expires_at) = match introspection?
+        .map(|response| response.verify(&subject))
+        .transpose()?
+    {
+        Some(evidence) => (evidence.permissions, evidence.api_expires_at),
+        None => (
+            permissions::PermissionEvidence::Active(
+                permissions::permissions_claim(&body).map_err(Unavailable)?,
+            ),
+            None,
+        ),
+    };
+    Ok(VerifiedSubject {
+        subject: layer2_core::SubjectId::new(subject),
+        permissions,
+        profile: Profile::from_userinfo(&body),
+        independent_commands: api_expires_at.is_some(),
+        api_expires_at,
+    })
+}
+
+async fn userinfo(
+    auth: &AuthState,
+    metadata: &ProviderMetadata,
+    access_token: &str,
+) -> Result<(serde_json::Value, String), ProviderVerificationError> {
+    use ProviderVerificationError::{Rejected, Unavailable};
     let endpoint = metadata
         .userinfo_endpoint
         .as_ref()
@@ -128,22 +185,7 @@ pub(super) async fn verify_subject(
         .get("sub")
         .and_then(serde_json::Value::as_str)
         .filter(|subject| !subject.trim().is_empty())
-        .ok_or_else(|| Unavailable("userinfo response has no subject".into()))?;
-    let (permissions, api_expires_at) =
-        match permissions::introspect_permissions(auth, metadata, access_token, subject).await? {
-            Some(evidence) => (evidence.permissions, evidence.api_expires_at),
-            None => (
-                permissions::PermissionEvidence::Active(
-                    permissions::permissions_claim(&body).map_err(Unavailable)?,
-                ),
-                None,
-            ),
-        };
-    Ok(VerifiedSubject {
-        subject: layer2_core::SubjectId::new(subject),
-        permissions,
-        profile: Profile::from_userinfo(&body),
-        independent_commands: api_expires_at.is_some(),
-        api_expires_at,
-    })
+        .ok_or_else(|| Unavailable("userinfo response has no subject".into()))?
+        .to_owned();
+    Ok((body, subject))
 }

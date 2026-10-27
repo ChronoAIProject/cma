@@ -21,6 +21,8 @@ pub struct AgentAccessRequest {
     pub services: Vec<String>,
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -56,6 +58,17 @@ pub trait AgentAccessRequests: Send + Sync {
         services: Vec<String>,
         key: &str,
     ) -> Result<AgentAccessRequest, AgentAccessError>;
+    async fn replace_services(
+        &self,
+        _context: &CallerContext,
+        _credential: &str,
+        _agent: &AgentId,
+        _services: Vec<String>,
+        _expected_services: Vec<String>,
+        _key: &str,
+    ) -> Result<AgentAccessRequest, AgentAccessError> {
+        Err(AgentAccessError::Unavailable)
+    }
     async fn deny(
         &self,
         caller: &Caller,

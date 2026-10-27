@@ -31,6 +31,9 @@ use std::sync::{
 };
 use tokio::task::JoinHandle;
 
+#[path = "activity_records.rs"]
+mod activity_records;
+
 pub const ISSUER: &str = "https://nyx.example";
 #[derive(Default)]
 pub struct Recorder {
@@ -169,7 +172,8 @@ impl Fixture {
                 .route("/jwks", get(jwks))
                 .route("/trap", get(jwks))
                 .route("/api/v1/gateway/channel-records/{id}", get(record))
-                .with_state(backend.clone()),
+                .with_state(backend.clone())
+                .merge(activity_records::router()),
         )
         .await;
         let keys =
@@ -262,7 +266,11 @@ pub fn now_rfc3339() -> String {
         .unwrap()
 }
 pub fn claims(aud: &str, kind: &str, ttl: i64) -> Value {
-    json!({"iss":ISSUER,"aud":aud,"token_type":kind,"iat":now(),"exp":now()+ttl,"jti":"correlation-1"})
+    claims_with_clock(aud, kind, ttl, now)
+}
+pub fn claims_with_clock(aud: &str, kind: &str, ttl: i64, mut clock: impl FnMut() -> i64) -> Value {
+    let issued_at = clock();
+    json!({"iss":ISSUER,"aud":aud,"token_type":kind,"iat":issued_at,"exp":issued_at+ttl,"jti":"correlation-1"})
 }
 pub struct Envelope {
     pub payload: Value,

@@ -5,6 +5,44 @@ use crate::{AdapterError, CommandReceipt, WriterState};
 
 pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crate::Result<()> {
     let correlated = match (request, response) {
+        (
+            RequestFrame::UploadAgentAttachment(upload),
+            ResponseFrame::UploadAgentAttachment(receipt),
+        ) => receipt.validate_for(&upload.request).is_ok(),
+        (RequestFrame::ListAgentFiles(request), ResponseFrame::ListAgentFiles(receipt)) => {
+            receipt.path == request.path
+                && receipt.entries.len() <= crate::MAX_AGENT_FILE_ENTRIES
+                && receipt.entries.iter().all(|entry| {
+                    crate::valid_agent_file_path(&entry.path)
+                        && !entry.name.is_empty()
+                        && !entry.name.contains('/')
+                        && entry.name != "."
+                        && entry.name != ".."
+                        && entry.path
+                            == if request.path.is_empty() {
+                                entry.name.clone()
+                            } else {
+                                format!("{}/{}", request.path, entry.name)
+                            }
+                })
+        }
+        (RequestFrame::ReadAgentFile(request), ResponseFrame::ReadAgentFile(receipt)) => {
+            receipt.path == request.path
+                && receipt.size_bytes <= request.max_bytes
+                && receipt.content().is_ok()
+        }
+        (RequestFrame::WriteAgentFile(request), ResponseFrame::WriteAgentFile(receipt)) => {
+            receipt.path == request.path
+                && receipt.size_bytes <= crate::MAX_AGENT_FILE_BYTES
+                && valid_sha256(&receipt.sha256)
+                && request.content().is_ok_and(|bytes| {
+                    receipt.size_bytes == bytes.len() as u64
+                        && receipt.sha256 == format!("{:x}", Sha256::digest(bytes))
+                })
+        }
+        (RequestFrame::DeleteAgentFile(request), ResponseFrame::DeleteAgentFile(receipt)) => {
+            receipt.path == request.path
+        }
         (RequestFrame::InstallAgentSkill(request), ResponseFrame::InstallAgentSkill(receipt)) => {
             receipt.authority_fence == request.authority_fence
                 && receipt.receipt.matches(&request.request)

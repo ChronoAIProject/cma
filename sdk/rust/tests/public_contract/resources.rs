@@ -31,12 +31,97 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/agents/{id}/files/tree" => c.check(
+            client
+                .agent_files()
+                .list(c.param("id"), &c.q("path").unwrap_or_default())
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/files/content" => c.check(
+            client
+                .agent_files()
+                .read(
+                    c.param("id"),
+                    &c.q("path").unwrap_or_default(),
+                    c.number("max_bytes")?,
+                )
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/files/download" => c.check(
+            client
+                .agent_files()
+                .download(c.param("id"), &c.q("path").unwrap_or_default())
+                .await
+                .map(|v| String::from_utf8(v).unwrap()),
+        ),
+        "POST /api/v1/agents/{id}/files" => {
+            c.check(client.agent_files().write(c.param("id"), &c.body()?).await)
+        }
+        "DELETE /api/v1/agents/{id}/files" => c.check(
+            client
+                .agent_files()
+                .remove(
+                    c.param("id"),
+                    &c.q("path").unwrap_or_default(),
+                    c.number("recursive")?.unwrap_or(false),
+                )
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/share-links" => c.check(
+            client
+                .resource_access()
+                .agent_share_links(c.param("id"))
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/share-links" => c.check(
+            client
+                .resource_access()
+                .create_agent_share_link(
+                    c.param("id"),
+                    &cma_sdk::resource_access::CreateAgentShareLinkRequest {
+                        audience: c.field("audience")?,
+                        mode: c.field("mode")?,
+                        token: c.field("token")?,
+                    },
+                    &c.key()?,
+                )
+                .await,
+        ),
+        "DELETE /api/v1/agents/{id}/share-links/{share_id}" => c.check(
+            client
+                .resource_access()
+                .revoke_agent_share_link(
+                    c.param("id"),
+                    c.param("share_id"),
+                    c.number("expected_revision")?.unwrap_or_default(),
+                    &c.key()?,
+                )
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/share-recipients" => c.check(
+            client
+                .resource_access()
+                .share_recipients(c.param("id"), &c.q("q").unwrap_or_default())
+                .await,
+        ),
+        "POST /api/v1/agent-share-links/{share_id}/redeem" => c.check(
+            client
+                .resource_access()
+                .redeem_agent_share_link(c.param("share_id"), &c.field::<String>("token")?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/models" => c.check(client.agents().models(c.param("id")).await),
         "GET /api/v1/agents/{id}/skills" => c.check(client.agents().skills(c.param("id")).await),
         "POST /api/v1/agents/{id}/skills" => c.check(
             client
                 .agents()
                 .install_skill(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "PUT /api/v1/agents/{id}/service-access" => c.check(
+            client
+                .agents()
+                .update_service_access(c.param("id"), &c.body()?, &c.key()?)
                 .await,
         ),
         "GET /api/v1/agents/{id}/access-requests" => {
@@ -52,6 +137,34 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
             client
                 .agents()
                 .deny_access_request(c.param("id"), c.param("request_id"), &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/message-feedback" => c.check(
+            client
+                .agents()
+                .message_feedback(c.param("id"), c.events()?)
+                .await,
+        ),
+        "PUT /api/v1/agents/{id}/messages/{message_id}/feedback" => {
+            #[derive(serde::Deserialize)]
+            struct FeedbackBody {
+                vote: Option<cma_sdk::agents::MessageVote>,
+            }
+            let body: FeedbackBody = c.body()?;
+            c.check(
+                client
+                    .agents()
+                    .set_message_feedback(c.param("id"), c.param("message_id"), body.vote)
+                    .await,
+            )
+        }
+        "GET /api/v1/agents/{id}/preferences" => {
+            c.check(client.agents().preferences(c.param("id")).await)
+        }
+        "PATCH /api/v1/agents/{id}/preferences" => c.check(
+            client
+                .agents()
+                .update_preferences(c.param("id"), &c.body()?, &c.key()?)
                 .await,
         ),
         "GET /api/v1/agents/{id}/settings" => {
@@ -152,6 +265,27 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .read_artifact(c.param("id"), c.param("artifact_id"))
                 .await,
         ),
+        "POST /api/v1/agents/{id}/attachments" => c.check(
+            client
+                .agents()
+                .upload_attachment(
+                    c.param("id"),
+                    c.query.get("name").map(String::as_str).unwrap_or(""),
+                    c.case
+                        .request
+                        .headers
+                        .get("content-type")
+                        .map(String::as_str)
+                        .unwrap_or("application/octet-stream"),
+                    c.case
+                        .request
+                        .expanded_raw_body()
+                        .unwrap_or_default()
+                        .into_bytes(),
+                    &c.key()?,
+                )
+                .await,
+        ),
         "POST /api/v1/agents/{id}/artifacts" => c.check(
             client
                 .agents()
@@ -164,6 +298,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .download_artifact(c.param("id"), c.param("artifact_id"))
                 .await
                 .map(|bytes| String::from_utf8(bytes).unwrap()),
+        ),
+        "POST /api/v1/sandboxes/{id}/runtime-update" => c.check(
+            client
+                .sandboxes()
+                .update_runtime(c.param("id"), &c.body()?, &c.key()?)
+                .await,
         ),
         "POST /api/v1/sandboxes/{id}/commands" => c.check(
             client

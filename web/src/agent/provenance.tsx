@@ -1,5 +1,7 @@
 import type { AgentCreationCategory, AgentProvenance } from '@chronoai/cma-sdk';
+import { useEffect } from 'react';
 import { useCmaClient } from '../api/context';
+import { useOwnerViews } from '../resources/retainedOwnerViews';
 import { useAgentFact, type AgentFactState } from './useAgentFact';
 
 export type ProvenanceState = AgentFactState<AgentProvenance>;
@@ -20,4 +22,26 @@ export function creationLabel(provenance: ProvenanceState): string {
 
 export function useAgentProvenance(agentId: string, enabled: boolean): ProvenanceState {
   return useAgentFact(agentId, enabled, useCmaClient().readAgentProvenance);
+}
+
+/** Retain only the immutable category; privileged provenance/source facts still revalidate. */
+export function useOwnerCreationLabel(
+  provenance: ProvenanceState,
+  owner: string | undefined,
+  visible: boolean,
+): string {
+  const views = useOwnerViews();
+  const { agentId } = provenance;
+  const differentOwner = owner !== undefined && owner !== views?.viewerId;
+  useEffect(() => {
+    if (!visible || differentOwner || provenance.status === 'unavailable')
+      views?.origins.delete(agentId);
+    else if (provenance.status === 'ready' && owner === views?.viewerId)
+      views?.origins.put(agentId, provenance.value.creation_origin);
+  }, [views, provenance, agentId, owner, visible, differentOwner]);
+  const retained =
+    visible && !differentOwner && provenance.status === 'loading'
+      ? views?.origins.get(agentId)
+      : undefined;
+  return retained === undefined ? creationLabel(provenance) : creationLabels[retained];
 }

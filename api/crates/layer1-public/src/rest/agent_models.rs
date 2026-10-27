@@ -15,7 +15,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::instance_problem::InstanceProblem;
-use crate::AuthenticatedCaller;
+use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct AgentModelView {
@@ -75,6 +75,7 @@ pub fn agent_models_router(
 pub(crate) async fn list(
     State(state): State<AgentModelsState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
 ) -> Result<
     (
@@ -83,7 +84,25 @@ pub(crate) async fn list(
     ),
     InstanceProblem,
 > {
-    let lineage = state.reads.lineage(&caller, &AgentId(id)).await?;
+    let id = AgentId(id);
+    let read = if let Some(resource) = &resource {
+        Some(
+            state
+                .reads
+                .configuration_authorized(
+                    &resource.context,
+                    resource.credential.as_ref().map(DelegatedCredential::value),
+                    &id,
+                )
+                .await?,
+        )
+    } else {
+        None
+    };
+    let lineage = match &read {
+        Some(read) => read.lineage.clone(),
+        None => state.reads.lineage(&caller, &id).await?,
+    };
     let mut models = state
         .catalog
         .models(&lineage.sandbox)
@@ -99,6 +118,9 @@ pub(crate) async fn list(
         && state.support.supported(&lineage.sandbox).await;
     for model in &mut models {
         model.available = available;
+    }
+    if let Some(read) = &read {
+        state.reads.validate_configuration_read(read).await?;
     }
     Ok((
         [(header::CACHE_CONTROL, "no-store")],

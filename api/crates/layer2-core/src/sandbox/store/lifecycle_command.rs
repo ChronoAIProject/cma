@@ -20,6 +20,7 @@ pub enum SandboxLifecycleCommandKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxLifecycleCommand {
+    pub managed_runtime_version: Option<String>,
     pub sandbox_id: SandboxId,
     pub owner: SubjectId,
     pub requested_at: String,
@@ -34,6 +35,7 @@ impl SandboxLifecycleCommand {
         notice: Option<String>,
     ) -> Self {
         Self {
+            managed_runtime_version: None,
             sandbox_id,
             owner,
             requested_at,
@@ -48,6 +50,7 @@ impl SandboxLifecycleCommand {
         cause: SandboxReviveCause,
     ) -> Self {
         Self {
+            managed_runtime_version: None,
             sandbox_id,
             owner,
             requested_at,
@@ -93,6 +96,8 @@ where
         &self,
         command: SandboxLifecycleCommand,
     ) -> Result<SandboxLifecycleCommandResult, SandboxStoreError> {
+        let mut command = command;
+        command.managed_runtime_version = self.managed_runtime_version().map(str::to_owned);
         validate_command(&command)?;
         for _ in 0..COMMAND_CAS_ATTEMPTS {
             let current = self
@@ -309,7 +314,11 @@ fn apply_revive(
     let previous = current.status;
     let mut sandbox = current.clone();
     if sandbox
-        .begin_revive(cause, command.requested_at.clone())
+        .begin_revive_with_managed_runtime(
+            cause,
+            command.managed_runtime_version.as_deref(),
+            command.requested_at.clone(),
+        )
         .is_err()
     {
         return Ok(SandboxLifecycleCommandApplication::NotEligible(current));

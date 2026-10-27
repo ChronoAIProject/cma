@@ -37,6 +37,7 @@ pub(super) fn config() -> AgentSandboxConfig {
         service_account: "cma-runtime".into(),
         image_pull_secrets: vec!["registry-pull".into()],
         template_network_policy: None,
+        template_fs_group_change_policy: None,
         control_key: "fixture".repeat(8),
     }
 }

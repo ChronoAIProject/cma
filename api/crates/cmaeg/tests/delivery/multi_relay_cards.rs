@@ -163,11 +163,14 @@ async fn replace_unknown(sources: Value, route: &str) -> DeliveryOutcome {
         false,
     );
     let reference = MessageRefPayload {
+        discord_message: None,
+        telegram_effect: None,
         channel_id: channel.id.clone(),
         event_id: EventId::new("msg-1").unwrap(),
         platform_message_id: "100".into(),
         route_id: route.into(),
         interaction_record_id: Some("card-1".into()),
+        relay_message: None,
         consumer: None,
     };
     let receipt = recording

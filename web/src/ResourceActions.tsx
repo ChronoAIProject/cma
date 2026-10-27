@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Presence } from './ui/Presence';
 import type { CmaWebClient } from './api/client';
 import { CommandKeys } from './api/client';
@@ -24,15 +24,21 @@ export function useResourceActions(
   onCreate?: (action: CreateAction) => void,
   viewerId = 'current',
   onNavigate?: (route: AppRoute) => void,
+  enabled = true,
 ) {
   const [deletion, setDeletion] = useState<
     { request: DeletionRequest; restored: boolean } | undefined
   >(() => {
     const request = restoreDeletion(viewerId);
-    return request === undefined ? undefined : { request, restored: true };
+    return request === undefined || request.accepted ? undefined : { request, restored: true };
   });
   const [stopping, setStopping] = useState<{ agentId: string; key: string }>();
-  const [sandboxRequest, setSandboxRequest] = useState<SandboxActionRequest>();
+  const [sandboxRequests, setSandboxRequests] = useState<readonly SandboxActionRequest[]>([]);
+  const setSandboxRequest = (request: SandboxActionRequest) =>
+    setSandboxRequests((current) => [
+      ...current.filter((item) => item.action.sandboxId !== request.action.sandboxId),
+      request,
+    ]);
   const [deletingSandboxIds, setDeletingSandboxIds] = useState<ReadonlySet<string>>(() => {
     const request = restoreDeletion(viewerId);
     return new Set(
@@ -45,12 +51,14 @@ export function useResourceActions(
   const [error, setError] = useState<string>();
   const keys = useRef(new CommandKeys());
   const inFlight = useRef(false);
-  const connections = useConnectionGate();
+  const connectionScope = useMemo(() => ({ client, viewerId }), [client, viewerId]);
+  const connections = useConnectionGate(enabled, connectionScope);
   const execute = async (action: LifecycleAction) => {
-    if (inFlight.current) return;
+    if (!enabled || inFlight.current) return;
     inFlight.current = true;
     setPending(true);
     setError(undefined);
+    connections.clearError();
     const scope = JSON.stringify(action);
     const options = { idempotencyKey: keys.current.for(scope) };
     const sandboxAction =
@@ -124,6 +132,7 @@ export function useResourceActions(
     });
   };
   const select = (action: TreeAction) => {
+    if (!enabled) return;
     if (action.kind === 'new_agent' || action.kind === 'new_workspace') {
       onCreate?.(action);
     } else if (action.kind === 'stop_agent') {
@@ -136,7 +145,7 @@ export function useResourceActions(
       setError(undefined);
       const retained = restoreDeletion(viewerId);
       setDeletion(
-        retained === undefined
+        retained === undefined || retained.accepted
           ? {
               request: {
                 action: action as DeleteAction,
@@ -148,7 +157,12 @@ export function useResourceActions(
           : { request: retained, restored: true },
       );
     } else if (action.kind === 'revive_sandbox') {
-      connections.run({ type: 'sandbox', id: action.sandboxId }, () => void execute(action));
+      setError(undefined);
+      void connections.checkAndRun(
+        { type: 'sandbox', id: action.sandboxId },
+        viewerId,
+        () => void execute(action),
+      );
     } else {
       void execute(action);
     }
@@ -158,32 +172,44 @@ export function useResourceActions(
     select,
     viewDeletion,
     deletingSandboxIds,
-    pending:
-      pending ||
-      sandboxRequest?.phase === 'accepted' ||
-      deletion !== undefined ||
-      stopping !== undefined ||
-      connections.pending,
-    error,
+    busySandboxIds: new Set(
+      sandboxRequests
+        .filter((request) => request.phase === 'accepted' || request.phase === 'submitting')
+        .map((request) => request.action.sandboxId),
+    ),
+    pending: pending || deletion !== undefined || stopping !== undefined || connections.pending,
+    error: error ?? connections.error,
     notice: (
       <>
-        {sandboxRequest === undefined ? null : (
+        {sandboxRequests.map((sandboxRequest) => (
           <SandboxActionStatus
             key={sandboxRequest.key}
             client={client}
             request={sandboxRequest}
             onSettled={(complete) => {
-              setSandboxRequest((current) =>
-                current?.key === sandboxRequest.key
-                  ? { ...current, phase: complete ? 'complete' : 'failed' }
-                  : current,
+              setSandboxRequests((current) =>
+                current.map((item) =>
+                  item.key === sandboxRequest.key
+                    ? { ...item, phase: complete ? 'complete' : 'failed' }
+                    : item,
+                ),
               );
               onChanged();
             }}
-            onClose={() => setSandboxRequest(undefined)}
+            onClose={() =>
+              setSandboxRequests((current) =>
+                current.flatMap((item) =>
+                  item.key !== sandboxRequest.key
+                    ? [item]
+                    : item.phase === 'accepted'
+                      ? [{ ...item, hidden: true }]
+                      : [],
+                ),
+              )
+            }
             onNavigate={onNavigate}
           />
-        )}
+        ))}
         {deletion === undefined && retained !== undefined ? (
           <Button onClick={() => setDeletion({ request: retained, restored: true })}>
             View deletion status
@@ -219,6 +245,7 @@ export function useResourceActions(
                 if (request.action.kind === 'delete_sandbox') {
                   const sandboxId = request.action.sandboxId;
                   setDeletingSandboxIds((current) => new Set([...current, sandboxId]));
+                  setDeletion(undefined);
                 }
               }}
               onClose={() => setDeletion(undefined)}

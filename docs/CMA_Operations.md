@@ -189,6 +189,13 @@ not confirm whether delivery happened. Confirmed tool replies mark the exact
 reference hash to suppress automatic final delivery. Telegram replies use NyxID's
 relay reply endpoint; edits and typing return `unsupported`.
 
+With the default `CMAEG_NYXID_COMPLETE_REPLIES=false`, relay delivery retains
+the legacy behavior below. After verifying the NyxID dependency, operators can
+select one complete ordinary relay request; see the [complete-reply contract](CMAEG_Protocol.md#10-delivery-semantics)
+and [coordinated rollout](CMAEG_Operations.md#coordinated-complete-reply-rollout).
+Native Telegram chunking and interactive/edit one-part constraints remain in
+effect.
+
 The Telegram renderer preserves escape atoms while splitting at 4,000 UTF-16
 units, preferring paragraph boundaries. It breaks mentions with a zero-width
 space and strips bidi controls. Cards become text, buttons and choices become
@@ -208,8 +215,9 @@ Already-admitted internal turns retain delivery authority through completion eve
 when their event references expire; new tool calls still enforce reference expiry.
 Expired reply tokens are replaced by the channel route key at dispatch time.
 
-The first send uses an unexpired reply token; later parts and sends use the retained
-channel route key. Each route has a three-second minimum interval on this replica.
+In default legacy relay mode, the first send uses an unexpired reply token; later
+parts and sends use the retained channel route key. Each route has a
+three-second minimum interval on this replica.
 A 429 delays one retry (Retry-After capped at ten seconds) using the channel key;
 a second 429 or a malformed/lost response has an unknown outcome and is not retried.
 Chunked sends stop on the first unconfirmed part and report partial delivery as
@@ -840,13 +848,14 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_PUBLIC_URL` | CMA browser origin; default local `http://localhost:8080`, production explicit |
 | `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed origins; default local `http://localhost:5173` |
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
-| `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the separately integrated v2 browser transport; false by default; does not disable existing public v2 API routes or change an accepted request protocol |
+| `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the integrated v2 browser transport; false code default, true in the production ConfigMap for new Agent tabs (including durable Starting input). Existing tabs retain their selected transport. Deploy with the matching API/Web release, ConfigMap compare-and-set, and API rollout; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_IMAGE_MANAGER_BASE_URL` | Image Manager service base URL used for delegated image resolution; defaults to the CMA public origin with `/api/image-manager` when unset |
 | `CHRONO_NYXID_BASE_URL` | Required API/OAuth HTTP(S) origin in provider mode |
 | `CHRONO_CMAEG_BASE_URL` | CMAEG management HTTP(S) origin; production `http://cma-event-gateway`. Set together with its public origin; omitting both disables Bot routes/workers. |
-| `CHRONO_CMAEG_PUBLIC_URL` | CMAEG public HTTP(S) origin used to validate returned callbacks; production `https://bot-gateway.chrono-ai.fun`. |
+| `CHRONO_CMAEG_PUBLIC_URL` | Retained CMAEG public HTTP(S) origin accepted for exact legacy callbacks; production `https://bot-gateway.chrono-ai.fun`. |
+| `CHRONO_CMAEG_PUBLIC_API_URL` | Canonical CMAEG public API base, defaulting to `CHRONO_CMAEG_PUBLIC_URL`; production `https://bot.chrono-ai.fun/event-gateway`. HTTPS with clean optional path segments, no credentials/query/fragment/trailing slash (loopback HTTP allowed for tests). Returned callback and event endpoints must match one exact canonical or legacy base for the same channel. |
 | `CHRONO_NYXID_PUBLIC_URL` | Required exact canonical HTTPS browser origin in provider mode |
 | `CHRONO_NYXID_CLIENT_ID` | Provider-issued OAuth client id, not a chosen display name |
 | `CHRONO_NYXID_CLIENT_SECRET` | Required OAuth client secret reference |
@@ -862,6 +871,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SANDBOX_PROVIDER` | Runtime provider selector: `opensandbox` (default) or `agent-sandbox`; selects the direct agent-sandbox backend for new allocations |
 | `CHRONO_RETAIN_OPENSANDBOX` | Whether to retain the legacy OpenSandbox endpoint configuration; `true` by default, and required while existing OpenSandbox runtimes remain addressable |
 | `CHRONO_AGENT_SANDBOX_ENABLED` | Optional boolean override for the direct agent-sandbox adapter; defaults to the provider selection |
+| `CHRONO_NATIVE_PREPARED_TARGET` | Deployment-owned count of credential-free native Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires native allocation and `native_vct_full_home_v2`. A matching ready native pool must exist first. A separate durable collection bounds all preparing, ready and retiring reservations to two across replicas. Explicit default Agent Manager creation atomically takes one matching reservation; other requests use normal creation. Set to `0` to retire unclaimed prepared capacity while preserving owned Sandboxes. |
+| `CHRONO_NATIVE_WARM_POOL_TARGET` | Number of unclaimed native agent-sandbox members kept ready for SandboxClaim admission (`0`–`1000`). Defaults to `1` when `CHRONO_SANDBOX_PROVIDER=agent-sandbox`, and `0` for legacy OpenSandbox. Requires a native VCT home. Agent Manager persists this deployment-owned target keyed by the exact runtime image, resources and Pod policy before serving, then reconciles `SandboxTemplate`, `SandboxWarmPool` and `SandboxClaim` resources. Existing targets and claimed Sandboxes retain their original policy. |
 | `CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT` | `direct` (default) connects to the owned Pod IP on TCP 9090. `kubernetes-portforward` uses authenticated Kubernetes `pods/portforward` streams to port 9090. `kubernetes-exec` uses `pods/exec` and the runtime image's `/usr/bin/python3` to relay stdio to fixed `127.0.0.1:9090`. Both carry control, history and conversation WebSockets with the same pinned CA and renewable credentials as CRD operations. The selected subresource needs `get`/`create` authorization. No local listening port, local subprocess, router or `pods/proxy` permission is used. |
 | `CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE` | Required readable secret file when the direct agent-sandbox adapter is enabled; never store the control key in a ConfigMap |
 | `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS` | Optional Kubernetes RuntimeClass passed to agent-sandbox Pods |
@@ -885,9 +896,14 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_UPSTREAM_BASE_URL` | Required canonical HTTPS model API base without trailing slash |
 | `CHRONO_UPSTREAM_WIRE_API` | Exactly `responses` |
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
+| `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
+| `CHRONO_STORAGE_CLIENT_ID` | Deployment-owned machine identity for the existing `chrono-storage-service` proxy. Required when the document bucket is configured. Never passed to runtime Agents or browsers. |
+| `CHRONO_STORAGE_CLIENT_SECRET` | Secret reference for the storage machine identity; required with a configured document bucket. Issued tokens are cached in memory and renewed before expiry or once after a 401. |
 | `CHRONO_BASELINE_SERVICES` | Default `chrono-llm-public,ornn-api`; unioned into newly admitted Sandbox scope |
 | `CHRONO_SANDBOX_CPU` | Seed default Sandbox Profile size; default `1`, accepts positive cores or millicores |
 | `CHRONO_SANDBOX_MEMORY` | Seed default size; default `1Gi`, accepts positive whole Mi/Gi |
+| `CHRONO_AGENT_MANAGER_SANDBOX_CPU` | New Agent Manager Sandbox CPU and native default warm/prepared capacity; default `2`, accepts positive cores or millicores. Independent of retained system Profiles. |
+| `CHRONO_AGENT_MANAGER_SANDBOX_MEMORY` | New Agent Manager Sandbox memory and native default warm/prepared capacity; default `8Gi`, accepts positive whole Mi/Gi. Existing Sandbox reservations are unchanged. |
 | `CHRONO_DEFAULT_AGENT_MODEL` | Seed default Agent model; default `gpt-5.6-sol`, nonblank |
 | `CHRONO_DEFAULT_AGENT_EFFORT` | Seed default effort; default `high`, one of `minimal,low,medium,high,x_high` |
 | `CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS` | Per-command bound 1-600; default 600 |
@@ -902,6 +918,31 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_TRUSTED_PROXY_CIDRS` | Exact trusted load-balancer peers; empty by default, production explicit |
 | `CHRONO_SERVER_TRUSTED_PROXY_HOPS` | Trusted rightmost forwarded hops, 1-16; default 1 |
 | `CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS` | Empty or the complete build-pinned set; must not overlap trusted peer ranges |
+
+New Agent Manager Sandbox operations capture their CPU, memory and Always on
+inactivity policy at admission. Their private Sandbox configuration starts with
+`always_keep_alive=true`; manual pause remains available. Recovered operations
+keep their recorded capacity and policy, and operations admitted before the
+Always on default retain their original inactivity behavior. Creating Agents or
+Workspaces inside an existing Sandbox never changes that Sandbox's reservation
+or availability. The deployment-owned system Profile defaults remain independent
+so a new inline default cannot rewrite old Profiles or fail their startup checks.
+
+New Agent admissions, including Agents added to existing Sandboxes, capture the
+versioned GitHub workflow and memory-management guidance together. Prepared
+capacity uses the same instructions under Agent profile revision 3. Only unclaimed
+capacity with older instructions is replenished; admitted operations, owned homes
+and active Agents retain their exact prompt, profile, conversation and runtime.
+Older empty prompts and GitHub-only revision 2 remain valid for replay.
+
+The memory guidance asks the Agent to check effective limits and shared usage
+before expensive tasks, preserve headroom, limit concurrency, stream or batch
+large inputs, and check periodically only during such active work. It may stop
+its own unnecessary jobs or remove its own disposable caches; it must preserve
+other Agents, the runtime and user files. A workload that cannot fit requires a
+smaller method or an explained capacity constraint. This is Agent guidance, not a
+background monitor or a guarantee against OOM. It adds no monitoring service and
+does not alter the Sandbox's existing memory reservation.
 
 CMA no longer reads checkpoint bucket or storage machine credentials. Production
 startup installs a retired archive store that refuses upload, download and delete;
@@ -1567,6 +1608,111 @@ versions cannot consume newly admitted nonexpiring-key commands, so deployments
 with such commands require this version or a compatible successor for rollback.
 Bot creation still requires the actual owner's renewable human login; accepting
 an agent key does not authorize borrowing that owner's stored login.
+
+### NyxID proxy access to the CMA API
+
+`CHRONO_NYXID_PROXY_ENABLED` defaults to `false` in application code. The
+production manifest enables the existing NyxID service identity protocol:
+`X-NyxID-Identity-Token`, RS256, with a maximum 60-second assertion lifetime.
+Configure `CHRONO_NYXID_PROXY_ISSUER` to the exact discovery issuer and
+`CHRONO_NYXID_PROXY_JWKS_URL` to its trusted HTTPS signing-key endpoint. The
+production issuer is `https://nyx-api.chrono-ai.fun`, not the login frontend.
+CMA requires the exact `CHRONO_NYXID_SERVICE_ID` and an audience equal to
+`CHRONO_SERVER_PUBLIC_URL` without its trailing slash. It never follows a
+signing-key URL supplied by a token. Invalid or duplicate identity headers
+cannot fall back to a browser cookie or unrelated bearer token.
+
+In NyxID, set only the CMA catalog connection's `identity_propagation_mode` to
+`jwt` and `identity_jwt_audience` to `https://bot.chrono-ai.fun`, and verify that
+existing user connections inherited both values. Retain access-token forwarding
+for existing CLI consumers. This uses existing NyxID behavior; it requires no
+NyxID code change or deployment. The separate request-bound-read feature below
+remains disabled.
+
+NyxID verifies the Agent Key, service scope and applicable action approval before
+forwarding. CMA verifies the signed identity and maps its permissions through
+the same ownership and resource policies as normal API requests. This includes
+lifecycle mutations and message/queue/interrupt commands, not just reads. The
+existing browser-only consent gates for key-scope approval and Bot provisioning
+remain the same as for independent CLI credentials. Managed runtime provisioning
+still requires the owner's existing renewable CMA credential setup.
+
+Accepted asynchronous commands retain a separate `nyxid-proxy:` admission and
+its permission ceiling in the encrypted `auth_nyxid_proxy_grants` collection.
+They use only the same subject's exact credential incarnation as execution
+custody; they are never converted into personal/browser authorization. Workers
+recheck current owner permissions and custody, intersected with that ceiling.
+Token refresh within the same incarnation is allowed. Loss of token custody or
+a new credential incarnation invalidates earlier admissions. Browser-cookie
+logout alone does not revoke stored renewable credentials. Ending a NyxBot turn
+or expiry of its 60-second assertion does not cancel already accepted work.
+NyxID enforces key revocation on new requests; its identity assertion has no
+original-key revocation handle for cancelling already accepted CMA commands.
+
+Deploy CMA before enabling the connection setting. Roll back connection settings
+before disabling proxy authentication. Retain a compatible CMA worker while
+proxy commands are queued; older workers cannot execute `nyxid-proxy:` authority.
+The collection is additive and contains no raw access tokens or refresh tokens.
+It currently retains admissions for reads as well as writes; do not apply an
+expiry policy that could remove authority for pending commands.
+
+### NyxID request-bound reads
+
+`CHRONO_NYXID_RESOURCE_REQUEST_ENABLED` defaults to `false`. Enable it only after
+the corresponding NyxID proof issuer and authenticated introspection endpoint
+are deployed and verified. It admits a finite set of read-only routes through
+the dedicated `X-NyxID-Resource-Request` header; it does not enable lifecycle,
+interaction, streaming, Bot creation or deferred commands. Ordinary bearer,
+agent-key and browser authentication remain unchanged without that header.
+
+Each proof binds the exact request and expires within 60 seconds. CMA verifies
+the proof with its confidential NyxID client and applies current ownership and
+RBAC checks. An invalid explicit proof fails closed without falling back to
+another credential. The legacy `X-NyxID-Identity-Token` header cannot authenticate
+a request. Keep the NyxID issuer disabled until all CMA readers are compatible;
+disable issuance first when rolling this feature back. See
+`CMA_Resource_Authorization.md` for the admitted routes and protocol limits.
+
+The opt-in test
+`auth::resource_request::tests::paired::real_nyxid_keys_and_egress_authorize_only_current_owner_reads`
+joins CMA's real authentication and public Agent handlers to the NyxID companion
+test `services::resource_request_proof::tests::joined::serve_joined_cma_acceptance_fixture`.
+It uses real issued keys, confidential introspection and MCP/REST egress rather
+than replacing the provider response. CMA resources remain in memory, with no
+runtime and an operation store that refuses any attempted durable work.
+
+Start the NyxID fixture against a fresh, dedicated loopback Mongo replica set;
+its guard requires an explicit `NYXID_TEST_DATABASE_URL` on a non-default port,
+`directConnection=true`, and no pre-existing application databases. Give
+`NYXID_CMA_JOINED_MANIFEST` a new filename inside a private directory (0700).
+The fixture publishes that manifest atomically with mode 0600. In the CMA
+checkout, point `CMA_NYXID_PAIR_MANIFEST` at the same file and run:
+
+```sh
+cd api
+cargo test --locked -p cma --bin cma \
+  auth::resource_request::tests::paired::real_nyxid_keys_and_egress_authorize_only_current_owner_reads \
+  -- --ignored --exact
+```
+
+The joined test checks owner listings and stored transcript reads, cross-owner
+denial, exact request binding, mutation refusal, live role/service/key revocation
+and the active-turn Stop fence. Successful completion shuts down the fixture;
+failed runs must also stop their dedicated Mongo process and remove its private
+data and credential manifest. The NyxID fixture expires after ten minutes as a
+fallback. Record both source revisions and test output. Local acceptance proves
+the two implementations interoperate; production topology, live credentials,
+safe draining and real NyxBot acceptance remain separate release requirements.
+
+This rollout must preserve every existing user's running Sandbox and Agent,
+including the operator's own sessions. Use only isolated fixtures or dedicated
+acceptance resources for test turns. Do not restart, pause, migrate, replace or
+delete existing runtimes, Claims or home volumes to validate authentication.
+Before replacing a control service, verify that its HTTP streams and background
+turns drain or resume without cancelling, duplicating or losing accepted work.
+An unchanged runtime Pod UID and a Ready replacement API are necessary observations,
+but do not establish active-turn continuity. Keep proof issuance disabled if
+the provider's deployment topology or draining behavior cannot be verified.
 
 ## Organization-owned always-live event workers
 

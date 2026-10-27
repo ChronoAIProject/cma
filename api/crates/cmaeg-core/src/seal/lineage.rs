@@ -24,14 +24,18 @@ pub struct Lineage {
     pub root: String,
     /// The hand-off's position in the chain, 1..=4.
     pub hop: u8,
-    /// The consumers that published each hop, in order: one per hop.
+    /// The consumers that published each hop, in order: one per hop. Unlike
+    /// an event_ref's recipient field, this explicitly names `default` when
+    /// that consumer published a hop.
     pub path: Vec<ConsumerId>,
     /// Where the chain's automatic replies go.
     pub reply: ReplyChoice,
 }
 
 impl Lineage {
-    /// Check the chain's shape; pointers are relative to the lineage.
+    /// Check the chain's shape; pointers are relative to the lineage. This
+    /// does not authorize publishing: the executor must check the caller,
+    /// parent reference and current channel policy before issuing a lineage.
     pub fn validate(&self) -> Result<(), ValidationError> {
         if !(1..=MAX_HOPS).contains(&self.hop) {
             return Err(ValidationError::new("/hop", "must be 1 to 4"));
@@ -43,14 +47,10 @@ impl Lineage {
             ));
         }
         let mut seen = BTreeSet::new();
-        if self
-            .path
-            .iter()
-            .any(|publisher| publisher.is_default() || !seen.insert(publisher))
-        {
+        if self.path.iter().any(|publisher| !seen.insert(publisher)) {
             return Err(ValidationError::new(
                 "/path",
-                "must name distinct consumers other than default",
+                "must name distinct consumers",
             ));
         }
         if !is_root_id(&self.root) {

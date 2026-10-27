@@ -1,3 +1,4 @@
+use super::AgentWorkStep;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
@@ -12,9 +13,15 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationState {
+    #[serde(default, skip_serializing_if = "super::AgentObservations::is_empty")]
+    pub observations: super::AgentObservations,
     /// Durable owner overrides; published profiles and open receipt identities stay immutable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<super::AgentSettings>,
+    #[serde(default, skip_serializing_if = "super::AgentPreferences::is_empty")]
+    pub preferences: super::AgentPreferences,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub managed_guidance_revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,6 +121,11 @@ pub struct Agent {
 impl Agent {
     pub fn validate_for_admission(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
         self.validate_lineage(worktree)?;
+        if self.work.step == AgentWorkStep::WaitForWorkspace
+            && (!self.has_no_runtime_effects() || !worktree.base_commit.is_empty())
+        {
+            return Err(SandboxModelError::invalid_value("agent.bootstrap"));
+        }
         if worktree.status != WorktreeStatus::Creating
             || worktree.agent_id.as_ref() != Some(&self.id)
             || self.status != AgentStatus::Starting
@@ -132,6 +144,9 @@ impl Agent {
             || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
             || self.conversation.settings.is_some()
+            || !self.conversation.preferences.is_empty()
+            || self.conversation.managed_guidance_revision != 0
+            || !self.conversation.observations.is_empty()
             || self.conversation.operation.is_some()
             || !self.conversation.queued_messages.is_empty()
             || self.work.next_fence == 0
@@ -203,6 +218,7 @@ impl Agent {
             .settings
             .as_ref()
             .is_some_and(|settings| settings.validate().is_err())
+            || self.conversation.preferences.validate().is_err()
             || !identity_shape
             || (requires_identity && self.conversation.conversation_id.is_none())
             || self
@@ -362,4 +378,8 @@ impl Agent {
         }
         Ok(())
     }
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }

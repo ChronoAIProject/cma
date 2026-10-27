@@ -6,6 +6,18 @@ metadata:
   labels:
     app.kubernetes.io/name: cma-event-gateway
     app.kubernetes.io/part-of: cma
+  annotations:
+    cma.chronoai.dev/build-mode: "github-ci-artifact"
+    cma.chronoai.dev/candidate: "de11ef17d6e85d3c55308de25c2d1377ebab444b"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:19c3f3ea016eb672b09b0d54e7756bb53e20785958e4180b8c9667736df7b04e"
+    cma.chronoai.dev/ci-artifact: "12714708243"
+    cma.chronoai.dev/ci-attempt: "1"
+    cma.chronoai.dev/ci-head: "de11ef17d6e85d3c55308de25c2d1377ebab444b"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:f8a850416692413167926b9e1ace3903a5aedc64e61aaa6315219d1f99c46a8e"
+    cma.chronoai.dev/ci-run: "40460643579"
+    cma.chronoai.dev/image-digest: "sha256:7fa63d396ea43015d8db806dc2ebf44fdba04b25ab40c97ef9326730ba89ccef"
+    cma.chronoai.dev/image-source: "2515993d694a9388109ef5ddfd740fe76126ac34"
+    cma.chronoai.dev/source-tree: "0826ad9bcc7687682aad791240897113cb934370"
 spec:
   replicas: 1
   strategy:
@@ -19,10 +31,21 @@ spec:
   template:
     metadata:
       annotations:
-        cma.chronoai.dev/candidate: "cabfe5c39240b8907e163fda314d029b0461fed5"
-        cma.chronoai.dev/image-source: "21f3401204becb767e462bf5fb4258d996dc923d"
-        cma.chronoai.dev/ci-run: "38496119196"
-        cma.chronoai.dev/provider-config-sha256: "341b06b8260510c975fd3a9feeaf7a5c2042e403ab802847fdbb76021d954d11"
+        cma.chronoai.dev/thread-contract-writes: "v1"
+        cma.chronoai.dev/authoring-activation: "76bcae97d-20261026"
+        cma.chronoai.dev/build-mode: "github-ci-artifact"
+        cma.chronoai.dev/candidate: "de11ef17d6e85d3c55308de25c2d1377ebab444b"
+        cma.chronoai.dev/image-digest: "sha256:7fa63d396ea43015d8db806dc2ebf44fdba04b25ab40c97ef9326730ba89ccef"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:19c3f3ea016eb672b09b0d54e7756bb53e20785958e4180b8c9667736df7b04e"
+        cma.chronoai.dev/image-source: "2515993d694a9388109ef5ddfd740fe76126ac34"
+        cma.chronoai.dev/portal-auth: "agent-manager-shared-login"
+        cma.chronoai.dev/ci-artifact: "12714708243"
+        cma.chronoai.dev/ci-attempt: "1"
+        cma.chronoai.dev/ci-head: "de11ef17d6e85d3c55308de25c2d1377ebab444b"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:f8a850416692413167926b9e1ace3903a5aedc64e61aaa6315219d1f99c46a8e"
+        cma.chronoai.dev/ci-run: "40460643579"
+        cma.chronoai.dev/gateway-domain-phase: "eg-canonical"
+        cma.chronoai.dev/source-tree: "0826ad9bcc7687682aad791240897113cb934370"
       labels:
         app.kubernetes.io/name: cma-event-gateway
         app.kubernetes.io/part-of: cma
@@ -49,7 +72,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:0c3068130eaf618ce88dbe47bd7d111d365a5bba816c49f78b4000e8550ef1e7
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:7fa63d396ea43015d8db806dc2ebf44fdba04b25ab40c97ef9326730ba89ccef
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -64,9 +87,6 @@ spec:
           volumeMounts:
             - name: media-jobs
               mountPath: /var/cmaeg/media
-            - name: cookie-key
-              mountPath: /var/run/cma-event-gateway-auth
-              readOnly: true
           env:
             - name: CMAEG_MONGODB_URI
               valueFrom:
@@ -75,14 +95,14 @@ spec:
                   key: CMAEG_MONGODB_URI
             - name: CMAEG_NYXID_CLIENT_ID
               valueFrom:
-                secretKeyRef:
-                  name: cma-event-gateway-auth
-                  key: CMAEG_NYXID_CLIENT_ID
+                configMapKeyRef:
+                  name: cma-agent-manager
+                  key: CHRONO_NYXID_CLIENT_ID
             - name: CMAEG_NYXID_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: cma-event-gateway-auth
-                  key: CMAEG_NYXID_CLIENT_SECRET
+                  name: cma-agent-manager
+                  key: CHRONO_NYXID_CLIENT_SECRET
             - name: CMAEG_MASTER_KEYS
               valueFrom:
                 secretKeyRef:
@@ -148,12 +168,6 @@ spec:
               exec:
                 command: ["/bin/sleep", "5"]
       volumes:
-        - name: cookie-key
-          secret:
-            secretName: cma-event-gateway-auth
-            items:
-              - key: cookie-key
-                path: cookie-key
         - name: media-jobs
           emptyDir:
             medium: Memory

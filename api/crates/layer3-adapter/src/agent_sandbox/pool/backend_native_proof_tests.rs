@@ -6,6 +6,12 @@ use crate::{
 };
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[path = "backend_policy_read_tests.rs"]
+mod policy_reads;
+
+#[path = "backend_native_status_tests.rs"]
+mod native_status;
+
 struct StatusTransport {
     state: Arc<Mutex<State>>,
     client: AgentSandboxClient,
@@ -34,6 +40,8 @@ impl HostedControlTransport for StatusTransport {
                 json!("replaced-after-status");
         }
         Ok(ResponseFrame::RuntimeStatus(RuntimeStatus {
+            agent_filesystem: false,
+            agent_attachment_upload: false,
             agent_skill_install: true,
             agent_model_catalog: true,
             sandbox_id: request.sandbox_id,
@@ -177,7 +185,7 @@ async fn native_proof_context_with_routed_home_accepts_only_configured_authority
 }
 
 #[tokio::test]
-async fn native_proof_context_reduces_twenty_one_reads_to_nine_without_cross_call_reuse() {
+async fn native_proof_context_reduces_twenty_two_reads_to_nine_without_cross_call_reuse() {
     let fixture = inspection_fixture(false).await;
     fixture
         .adapter
@@ -190,7 +198,9 @@ async fn native_proof_context_reduces_twenty_one_reads_to_nine_without_cross_cal
         .runtime_status(&fixture.bound.runtime)
         .await
         .unwrap();
-    assert_eq!(read_count(&fixture), 21);
+    // Generic adoption must observe persisted upgrade proof even when an explicit
+    // rollback returns to the original pool image. The combined path shares that read.
+    assert_eq!(read_count(&fixture), 22);
     fixture.bound.fixture.state.lock().unwrap().calls.clear();
     let inspected = fixture
         .adapter

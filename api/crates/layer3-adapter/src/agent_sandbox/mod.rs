@@ -5,13 +5,19 @@ mod assignment;
 mod connection;
 mod lifecycle;
 mod model;
+mod native_assignment;
 mod native_runtime_proof;
 mod network_policy;
+mod observation;
 mod pods;
 mod pool;
 mod pool_runtime;
+pub(crate) mod provision_timing;
+pub(crate) mod resume_timing;
 mod runtime_stream;
 mod suspension;
+mod termination;
+mod upgrade;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
 use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod};
@@ -27,11 +33,11 @@ pub use connection::{
 pub(crate) use model::{handle, parse_handle};
 pub use model::{AgentSandboxConfig, PodBinding};
 pub use network_policy::NativeTemplateNetworkPolicy;
-pub use pool::NativePoolPodPolicy;
 pub use pool::{
     AgentSandboxPools, NativePoolBinding, NativePoolClaim, NativePoolClaimRequest, NativePoolSpec,
     NativePoolStatus,
 };
+pub use pool::{NativeFsGroupChangePolicy, NativePoolPodPolicy};
 pub use pool::{NativeHomeVolumes, NativePoolHomeOrigin};
 pub use pool::{NativePoolCleanup, NativePoolMember};
 pub use pool::{NativePoolConfiguration, NativePoolControl};
@@ -55,6 +61,12 @@ pub struct AgentSandboxClient {
 }
 
 impl AgentSandboxClient {
+    pub(crate) fn shares_runtime_authority(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.pools, &other.pools)
+            && self.config == other.config
+            && self.native_home_scope == other.native_home_scope
+    }
+
     pub async fn infer(config: AgentSandboxConfig) -> Result<Self> {
         let connection = resolve_kubernetes_connection(None).await?;
         Self::new(connection.client, config, &connection.authority)
@@ -149,23 +161,29 @@ impl AgentSandboxClient {
     }
 
     pub async fn pod_binding(&self, runtime: &RuntimeHandle) -> Result<PodBinding> {
-        let object = self
-            .get(runtime)
-            .await?
-            .ok_or_else(|| unavailable("Sandbox no longer exists"))?;
+        let (name, _) = parse_handle(runtime)?;
+        let parameters = ListParams::default().labels(&pods::selector(name)).limit(3);
+        // The handle already supplies the selector. Both reads remain fresh;
+        // consume Sandbox authority and readiness before any Pod result.
+        let (object, page) = tokio::join!(self.get(runtime), self.pods.list(&parameters));
+        let object = object?.ok_or_else(|| unavailable("Sandbox no longer exists"))?;
         if object.metadata.deletion_timestamp.is_some() || !model::ready(&object) {
             return Err(unavailable("Sandbox is not ready"));
         }
-        let name = object.name_any();
-        let page = self
-            .pods
-            .list(
-                &ListParams::default()
-                    .labels(&pods::selector(&name))
-                    .limit(3),
-            )
-            .await
-            .map_err(api_error)?;
+        let page = if object.name_any() == name {
+            page
+        } else {
+            // Preserve discovery from the returned object's name even for a
+            // misaddressed API response; a speculative selector is not proof.
+            self.pods
+                .list(
+                    &ListParams::default()
+                        .labels(&pods::selector(&object.name_any()))
+                        .limit(3),
+                )
+                .await
+        }
+        .map_err(api_error)?;
         self.pod_binding_from_page(&object, page)
     }
 

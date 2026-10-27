@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 string_enum! { /// Durable Agent worker step.
     pub enum AgentWorkStep {
+        WaitForWorkspace => "wait_for_workspace",
         AddWorktree => "add_worktree", MaterializeHome => "materialize_home",
         OpenConversation => "open_conversation", PublishReady => "publish_ready",
         PublishConnection => "publish_connection", DispatchFirstMessage => "dispatch_first_message",
@@ -17,7 +18,7 @@ string_enum! { /// Durable Agent worker step.
     }
 }
 string_enum! { /// Semantic kind of an Agent command.
-    pub enum AgentOperationKind { SendMessage => "send_message", Steer => "steer", Interrupt => "interrupt", AnswerApproval => "answer_approval" }
+    pub enum AgentOperationKind { SendMessage => "send_message", Steer => "steer", Interrupt => "interrupt", AnswerApproval => "answer_approval", UpdateSettings => "update_settings", RefreshContext => "refresh_context" }
 }
 string_enum! { /// Durable command-delivery state; write confirmation is not execution.
     pub enum AgentOperationDelivery {
@@ -82,6 +83,8 @@ event_enum! { "type";
         ApprovalResolved => "approval_resolved" { approval_id: String, decision: String },
         OperationDeliveryChanged => "operation_delivery_changed" { operation_sequence: u64, operation: AgentOperationKind, state: AgentOperationDelivery },
         Usage => "usage" { input_tokens: u64, output_tokens: u64, context_used: u64, context_window: Option<u64> },
+        RuntimeMetadataChanged => "runtime_metadata_changed" { metadata: super::AgentRuntimeMetadata },
+        UsageUpdated => "usage_updated" { input_tokens: u64, output_tokens: u64, context_used: u64, context_window: Option<u64>, turn_sequence: Option<u64>, turn_input_tokens: u64, turn_output_tokens: u64 },
         ModeChanged => "mode_changed" { mode: String },
         PlanSet => "plan_set" { entries: Vec<PlanEntry> },
         ConfigOptionsSet => "config_options_set" { options: Vec<ConfigOption> },

@@ -322,6 +322,7 @@ fn sandbox() -> layer2_core::sandbox::Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![ServiceId::new("service-a")],
             key_generation: 0,
             delivered: false,

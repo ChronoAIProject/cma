@@ -27,6 +27,7 @@ fn payload(keys: &MasterKeyRing) -> ReplyTargetPayload {
         issued_at: 100,
         expires_at: 86500,
         event: EventRefPayload {
+            telegram_admission: None,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel_id.clone(),
@@ -41,6 +42,7 @@ fn payload(keys: &MasterKeyRing) -> ReplyTargetPayload {
             ),
             expires_at: 200,
             reply: ReplyAddress::NyxidRelay {
+                thread_reply: false,
                 message_id: "original".into(),
                 route_id: "route-1".into(),
                 platform: cmaeg_core::channel::Platform::Telegram,

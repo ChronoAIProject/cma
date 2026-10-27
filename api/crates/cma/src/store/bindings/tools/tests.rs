@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::bindings::{admission_tests, mongo_tests};
+use base64::Engine as _;
 use layer2_core::profiles::{content_digest, AgentProfileSnapshot};
 use layer2_core::sandbox::binding::{
     BindingAdmissionFence, BindingConversationState, BindingState, BindingWork,
@@ -7,6 +8,7 @@ use layer2_core::sandbox::binding::{
 use layer2_core::sandbox::store::*;
 use layer2_core::sandbox::*;
 use layer2_core::{AgentProfileId, RuntimeCapabilities, RuntimeCapability};
+use layer3_adapter::hosted::HostedAccessToolSource;
 
 async fn setup(
     store: &MongoSandboxStore,
@@ -179,11 +181,43 @@ async fn mongo_provider_tools_retain_successful_open_and_reject_stale_authority(
         fence,
     );
 
+    // The real gateway binding carries an issuer-owned credential with no
+    // locally retained expiry. Its optional CMA scope-revision tool is absent,
+    // while the required cmaeg MCP binding below still opens and is fenced.
+    let encryption = crate::store::AuthEncryptionKey::from_base64(
+        &base64::engine::general_purpose::STANDARD.encode([9_u8; 32]),
+    )
+    .unwrap();
+    let access = crate::store::agent_access_tools::MongoAgentAccessToolSource::new(
+        store.clone(),
+        "https://control.example.test",
+        &encryption,
+    )
+    .unwrap();
+    assert!(access
+        .resolve(&runtime, &request, fence)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store
+            .agent_access_tools
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+
     let mut attachment = source
         .resolve(&runtime, &request, fence)
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(
+        attachment.scope().3.endpoint,
+        binding.tool_endpoint.clone().unwrap()
+    );
+    assert_eq!(attachment.scope().3.sandbox_id, binding.sandbox_id.as_str());
     assert!(source
         .confirm_open(&attachment, "native-conversation")
         .await

@@ -1,8 +1,10 @@
 //! Hosted sandbox implementation shared by agent providers.
 
 mod acp;
+mod acp_context_refresh;
 mod acp_handshake;
 mod acp_inbound;
+mod acp_observations;
 mod acp_settings;
 mod acp_turn;
 mod adapter;
@@ -16,6 +18,7 @@ mod deployment;
 mod home;
 #[cfg(test)]
 mod home_tests;
+mod managed_context;
 mod memory;
 mod provider_backend;
 mod provider_endpoint;
@@ -23,11 +26,14 @@ mod provider_http;
 mod provider_tools;
 mod provider_transport;
 mod reply;
+mod startup_timing;
 mod subscriptions;
 mod update_relay;
 
 pub use adapter::HostedAdapter;
-pub use agent_sandbox_backend::{AgentSandboxBackend, RuntimeBackends, RuntimeRoutingStore};
+pub use agent_sandbox_backend::{
+    AgentSandboxBackend, NativeStatusInspection, RuntimeBackends, RuntimeRoutingStore,
+};
 pub use backend::{HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend};
 pub use channel_tools::{HostedChannelToolBinding, HostedChannelToolSource};
 pub use checkpoint_store::{
@@ -35,11 +41,13 @@ pub use checkpoint_store::{
     CheckpointArchiveStoreFactory, CheckpointArchiveUpload, MAX_CHECKPOINT_ARCHIVE_BYTES,
 };
 pub(crate) use deployment::{
-    provider_request_fingerprint, provider_request_identity, scoped_model_base_url,
+    image_sha256, provider_request_fingerprint, provider_request_identity, scoped_model_base_url,
+    validate_runtime_image,
 };
 pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,
 };
+pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
 pub use provider_tools::{

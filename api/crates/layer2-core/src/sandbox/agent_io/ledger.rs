@@ -39,6 +39,8 @@ pub struct CommandReservation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdmittedAgentCommand {
+    #[serde(skip)]
+    pub queued_input: Option<super::QueuedInputRevision>,
     pub receipt: AdmissionReceipt,
     pub key_sha256: String,
     pub queue_deadline: String,
@@ -60,6 +62,9 @@ impl AdmittedAgentCommand {
             || !ordered_times(&self.receipt.admitted_at, &self.queue_deadline)
         {
             return Err(CommandLedgerError::Corrupt);
+        }
+        if let Some(revision) = &self.queued_input {
+            revision.validate(self)?;
         }
         super::work::validate_work(self)
     }
@@ -118,12 +123,33 @@ impl CommandLedgerError {
 
 #[async_trait]
 pub trait AgentCommandStore: Send + Sync {
+    /// One transaction admits cancellation and its prioritized new response.
+    async fn reserve_interrupting_message(
+        &self,
+        _request: super::InterruptingMessageReservation,
+    ) -> Result<super::AdmittedInterruptingMessage, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     /// Atomically cancel an exact unbound response and retain its effect receipt.
     /// Older stores cannot claim that a cancellation was applied.
     async fn cancel_queued_response(
         &self,
         _request: super::QueuedCancellationReservation,
     ) -> Result<super::QueuedCancellationOutcome, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
+    async fn edit_queued_input(
+        &self,
+        _request: super::QueuedInputReservation,
+    ) -> Result<super::QueuedInputOutcome, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+    async fn list_queued_inputs(
+        &self,
+        _agent_id: &crate::AgentId,
+    ) -> Result<Vec<AdmittedAgentCommand>, CommandLedgerError> {
         Err(CommandLedgerError::Unavailable)
     }
 
@@ -177,6 +203,8 @@ pub trait AgentCommandStore: Send + Sync {
 
     /// Atomically deduplicate, assign a per-Agent order, check the bounded queue
     /// and retain the receipt. No TTL may silently make an old key reusable.
+    /// `Conflict` proves this attempt did not commit; an uncertain commit must
+    /// return `Unavailable` so callers retain the original key for recovery.
     async fn reserve_command(
         &self,
         request: CommandReservation,
@@ -187,6 +215,15 @@ pub trait AgentCommandStore: Send + Sync {
         &self,
         id: &AgentCommandId,
     ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError>;
+
+    /// Persistence-only exact dispatch lookup. Duplicate operation bindings are corrupt.
+    async fn get_operation_command(
+        &self,
+        _agent_id: &crate::AgentId,
+        _operation_sequence: u64,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
 
     /// Resolve the response index only. The service authorizes the associated
     /// resource before exposing any command/response status or receipt.
@@ -249,6 +286,7 @@ impl CommandReservation {
             return Err(CommandLedgerError::Corrupt);
         }
         Ok(AdmittedAgentCommand {
+            queued_input: None,
             receipt: AdmissionReceipt {
                 envelope: self.envelope.clone(),
                 response_id: self.response_id.clone(),
@@ -323,7 +361,7 @@ pub fn validate_command_reservation(
             | AgentStatus::WaitingApproval
             | AgentStatus::Paused
     ) || agent.requested_stop_reason.is_some()
-        || !matches!(
+        || !(matches!(
             parent.status,
             SandboxStatus::Active
                 | SandboxStatus::CredentialRotating
@@ -331,7 +369,11 @@ pub fn validate_command_reservation(
                 | SandboxStatus::Paused
                 | SandboxStatus::Reviving
                 | SandboxStatus::Rotating
-        )
+        ) || (matches!(
+            request.envelope.command,
+            super::AgentCommand::Message { .. }
+        ) && request.binding.is_none()
+            && agent.bootstrap_operation(parent).is_some()))
         || !agent.capabilities.supports(RuntimeCapability::Conversation)
     {
         return Err(CommandLedgerError::NotAdmissible);

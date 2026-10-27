@@ -6,10 +6,9 @@ import { Menu, type MenuEntry } from '../ui/Menu';
 import {
   IconDarkOutline16,
   IconBrowseOutline16,
-  IconCodeOutline16,
   IconFollowsystemOutline16,
-  IconGoalOutline16,
   IconLightOutline16,
+  IconCopyOutline16,
   IconRightUpOutline16,
   IconSettingsOutline16,
 } from '../ui/icons';
@@ -20,21 +19,24 @@ import {
   storedAppearance,
   type Appearance,
 } from '../theme/appearance';
+import { BUILD } from '../shell/build';
 import './ProfileMenu.css';
+import {
+  SYSTEM_TEXT_SIZES,
+  setTextSize,
+  textSizeLabel,
+  useSystemTextSize,
+} from '../theme/textSize';
 
 interface ProfileMenuProps {
   readonly user: User;
   readonly onSignOut: () => void;
   readonly onNavigate?: (route: AppRoute) => void;
   readonly collapsed?: boolean;
-  readonly bots?: boolean;
 }
 
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
-  inventory: { kind: 'inventory' },
-  bots: { kind: 'bots' },
-  triggers: { kind: 'triggers' },
-  developer: { kind: 'developer' },
+  docs: { kind: 'docs' },
   operations: { kind: 'operations' },
 };
 
@@ -54,29 +56,15 @@ function appearanceIcon(appearance: Appearance) {
   return <IconFollowsystemOutline16 />;
 }
 
-export function ProfileMenu({
-  user,
-  onSignOut,
-  onNavigate,
-  collapsed = false,
-  bots = false,
-}: ProfileMenuProps) {
+export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   const [avatarBroken, setAvatarBroken] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const textSize = useSystemTextSize();
   const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
-    ...(user.capabilities.includes('use_own_sandboxes')
-      ? [{ id: 'inventory', icon: <IconBrowseOutline16 />, label: 'Agents' }]
-      : []),
-    ...(bots && !user.visitor
-      ? [{ id: 'bots', icon: <IconCodeOutline16 />, label: 'Event Gateway consumers' }]
-      : []),
-    ...(!user.visitor && user.capabilities.includes('publish_triggers')
-      ? [{ id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' }]
-      : []),
-    { type: 'separator', id: 'before-platform' },
-    { id: 'developer', icon: <IconCodeOutline16 />, label: 'Developer' },
+    { id: 'docs', icon: <IconBrowseOutline16 />, label: 'Docs' },
     ...(canOperate
       ? [{ id: 'operations', icon: <IconSettingsOutline16 />, label: 'Operations' }]
       : []),
@@ -86,11 +74,31 @@ export function ProfileMenu({
       icon: appearanceIcon(appearance),
       label: `Appearance: ${appearanceLabel(appearance)}`,
     },
+    {
+      type: 'choices',
+      id: 'system-text',
+      text: 'System text size',
+      selectedId: `text-${textSize}`,
+      choices: SYSTEM_TEXT_SIZES.map((size) => ({
+        id: `text-${size}`,
+        label: textSizeLabel(size),
+      })),
+    },
     { type: 'separator', id: 'before-sign-out' },
+    {
+      id: 'build',
+      icon: <IconCopyOutline16 />,
+      label: copied ? 'Build revision copied' : `Build ${BUILD}`,
+    },
     { id: 'sign-out', icon: <IconRightUpOutline16 />, label: 'Sign out' },
   ];
 
   const choose = (id: string) => {
+    const size = SYSTEM_TEXT_SIZES.find((value) => id === `text-${value}`);
+    if (size) {
+      setTextSize(size);
+      return;
+    }
     const route = MENU_ROUTES[id];
     if (route !== undefined) {
       setOpen(false);
@@ -102,6 +110,15 @@ export function ProfileMenu({
       const next = APPEARANCE_ORDER[(at + 1) % APPEARANCE_ORDER.length] ?? 'system';
       setLocalAppearance(next);
       setAppearance(next);
+      return;
+    }
+    if (id === 'build') {
+      // The revision is what a bug report needs, so it copies in one step.
+      // A refused clipboard leaves the visible text, which can be read out.
+      void navigator.clipboard?.writeText(BUILD).then(
+        () => setCopied(true),
+        () => setCopied(false),
+      );
       return;
     }
     if (id === 'sign-out') {
@@ -122,6 +139,7 @@ export function ProfileMenu({
       onSelect={choose}
       onClose={() => {
         setOpen(false);
+        setCopied(false);
       }}
       anchor={
         <button
@@ -131,6 +149,7 @@ export function ProfileMenu({
           aria-expanded={open}
           aria-label={`Account menu for ${user.displayName ?? user.handle}`}
           onClick={() => {
+            if (!open) setLocalAppearance(storedAppearance());
             setOpen((wasOpen) => !wasOpen);
           }}
         >

@@ -1,24 +1,61 @@
 import { useState } from 'react';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
-import { segment, ServiceError, serviceRequest } from './client';
+import { segment, ServiceError, serviceRequest, type Denied } from './client';
+import { useRelayCapabilities } from './RelayCapabilities';
+import { validateRelayAuthoring } from './channelForm/relayAuthoring';
+import { NodeFields, nodeCredentials } from './channelForm/NodeFields';
+import {
+  ConsumerPolicyFields,
+  initialRouting,
+  RoutingFields,
+  routingRequest,
+} from './channelForm/RoutingFields';
+import {
+  channelDraft,
+  channelRequest,
+  confirmedDraft,
+  object,
+  records,
+  selectedDraft,
+  type EditorSection,
+  type Fields,
+} from './channelForm/model';
+export type { EditorSection } from './channelForm/model';
 export interface Channel {
+  native_discord_activation?: {
+    state: string;
+    detail: string;
+    capacity: number;
+    selected_records: number;
+  };
+  created_at?: string;
+  owner?: unknown;
   channel_id: string;
   record_id: string;
   version: number;
   provider: { slug: string; level: string };
   definition: {
+    [key: string]: unknown;
     name: string;
     sources: unknown[];
     schema_version?: number;
     profile?: unknown;
     provider?: {
+      [key: string]: unknown;
+      slug?: string;
+      binding_id?: string;
       target?: { type: 'profile' } | { type: 'existing_agent'; agent_id: string };
     };
     partition?: unknown;
     reply?: unknown;
+    routing?: unknown;
+    connection_ref?: string;
   };
-  endpoints: { custom_event_url: string; nyxid_callback_url: string };
+  endpoints: {
+    custom_event_url: string;
+    nyxid_callback_url: string;
+    telegram_webhook_url?: string;
+  };
 }
 export type ChannelListItem = Omit<Channel, 'channel_id' | 'endpoints'> & {
   readonly channel_id?: string | null;
@@ -28,182 +65,286 @@ export function hasChannelAddress(channel: ChannelListItem): channel is Channel 
   return (
     typeof channel.channel_id === 'string' &&
     channel.channel_id.length > 0 &&
-    channel.endpoints != null
+    channel.endpoints != null &&
+    typeof channel.endpoints.custom_event_url === 'string' &&
+    typeof channel.endpoints.nyxid_callback_url === 'string'
   );
 }
-function policy(channel?: Channel): string {
-  if (!channel) return '';
-  const { definition: d } = channel;
-  return JSON.stringify(
-    {
-      schema_version: d.schema_version,
-      name: d.name,
-      profile: d.profile,
-      provider: { slug: channel.provider.slug, target: d.provider?.target },
-      sources: d.sources.map((source) => {
-        if (typeof source !== 'object' || source === null) return source;
-        return Object.fromEntries(Object.entries(source).filter(([key]) => key !== 'jwks_url'));
-      }),
-      partition: d.partition,
-      reply: d.reply,
-    },
-    null,
-    2,
-  );
+interface Pending {
+  key: string;
+  body: string;
+  record: string;
+  path: string;
+  method: 'POST' | 'PUT';
+  section: EditorSection;
+  kind: 'channel' | 'routing';
 }
 export function ChannelEditor({
   channel,
+  section = { kind: 'channel' },
+  ownerSubject = '',
   onDone,
   denied,
 }: {
   readonly channel?: Channel;
-  readonly onDone: () => void;
-  readonly denied: () => void;
+  readonly section?: EditorSection;
+  readonly ownerSubject?: string;
+  readonly onDone: (channel?: Channel) => void;
+  readonly denied: Denied;
 }) {
-  const [pending, setPending] = useState<{ key: string; body: string; record: string }>();
+  const discovery = useRelayCapabilities();
+  const [baseline, setBaseline] = useState(channel);
+  const [draft, setDraft] = useState(() => channelDraft(channel, ownerSubject));
+  const [routing, setRouting] = useState(() =>
+    channel?.definition.routing ? object(channel.definition.routing) : initialRouting(),
+  );
+  const [credentials, setCredentials] = useState<Fields>({});
+  const [pending, setPending] = useState<Pending>();
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
   const [busy, setBusy] = useState(false);
-  async function send(request: { key: string; body: string; record: string }) {
+  const create = !baseline;
+  const additional = section.kind === 'consumer' && section.id !== 'default';
+  async function send(request: Pending) {
     setBusy(true);
     setError(undefined);
+    setNotice(undefined);
     try {
-      await serviceRequest(
-        'event-gateway',
-        channel ? `/v1/channels/${segment(channel.channel_id)}` : '/v1/channels',
-        {
-          method: channel ? 'PUT' : 'POST',
-          body: request.body,
-          headers: { 'Idempotency-Key': request.key },
-        },
-      );
+      const value = await serviceRequest<ChannelListItem>('event-gateway', request.path, {
+        method: request.method,
+        body: request.body,
+        headers: { 'Idempotency-Key': request.key },
+      });
       setPending(undefined);
-      onDone();
+      if (hasChannelAddress(value)) {
+        setBaseline(value);
+        if (request.kind === 'channel') {
+          setDraft((current) => confirmedDraft(current, channelDraft(value), request.section));
+          setCredentials((current) =>
+            request.method === 'POST'
+              ? {}
+              : Object.fromEntries(
+                  Object.entries(current).filter(
+                    ([key]) => !Object.hasOwn(nodeCredentials(current, request.section), key),
+                  ),
+                ),
+          );
+        } else {
+          const confirmed = object(value.definition.routing);
+          setRouting((current) => routingProjection(current, confirmed, request.section));
+        }
+      }
+      setNotice(
+        value.native_discord_activation
+          ? `Changes saved. ${value.native_discord_activation.detail}`
+          : 'Changes saved.',
+      );
+      onDone(hasChannelAddress(value) ? value : undefined);
     } catch (e) {
-      if (e instanceof ServiceError && [401, 403].includes(e.status)) denied();
+      if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
       if (e instanceof ServiceError && e.status === 400) setPending(undefined);
       setError(
         e instanceof Error
           ? e.message
-          : 'The result is unknown. Recover the original request before creating another channel.',
+          : 'The result is unknown. Retry the same request to confirm it.',
       );
     } finally {
       setBusy(false);
     }
   }
+  function submit(kind: 'channel' | 'routing') {
+    if (pending) {
+      void send(pending);
+      return;
+    }
+    try {
+      const record = baseline?.record_id ?? crypto.randomUUID();
+      const projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
+      if (kind === 'channel')
+        validateRelayAuthoring(
+          discovery,
+          projected,
+          baseline ? channelDraft(baseline) : undefined,
+          baseline ? nodeCredentials(credentials, section) : credentials,
+        );
+      const body =
+        kind === 'routing'
+          ? {
+              expected_version: baseline?.version,
+              routing: routingRequest(
+                routingProjection(
+                  baseline?.definition.routing
+                    ? object(baseline.definition.routing)
+                    : initialRouting(),
+                  routing,
+                  section,
+                ),
+              ),
+            }
+          : channelRequest(
+              projected,
+              baseline ? nodeCredentials(credentials, section) : credentials,
+              baseline,
+              record,
+            );
+      const request: Pending = {
+        key: crypto.randomUUID(),
+        body: JSON.stringify(body),
+        record,
+        path: baseline
+          ? `/v1/channels/${segment(baseline.channel_id)}${kind === 'routing' ? '/routing' : ''}`
+          : '/v1/channels',
+        method: baseline ? 'PUT' : 'POST',
+        section,
+        kind,
+      };
+      setPending(request);
+      void send(request);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Review the channel fields.');
+    }
+  }
+  async function recover() {
+    if (!pending) return;
+    setBusy(true);
+    try {
+      const current = await serviceRequest<Channel>(
+        'event-gateway',
+        `/v1/channel-records/${segment(pending.record)}`,
+      );
+      setError(
+        baseline && current.version > baseline.version
+          ? 'The channel has changed. Keep this draft and retry the original request to confirm its result.'
+          : 'The original record was found. Retry the same request to confirm completion.',
+      );
+    } catch (e) {
+      if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
+      setError(
+        e instanceof Error ? e.message : 'Recovery is unavailable. Keep this request for retry.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  const activeConsumer =
+    section.kind === 'consumer'
+      ? section.id === 'default'
+        ? object(routing.default_consumer)
+        : records(routing.consumers).find((v) => v.id === section.id)
+      : undefined;
   return (
-    <form
-      className="service-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (pending) {
-          void send(pending);
-          return;
-        }
-        try {
-          const fields = new FormData(event.currentTarget);
-          const input: unknown = JSON.parse(String(fields.get('policy')));
-          if (!input || typeof input !== 'object' || Array.isArray(input))
-            throw new Error('Enter a channel policy object.');
-          const key = crypto.randomUUID();
-          const record = channel?.record_id ?? crypto.randomUUID();
-          const body = JSON.stringify({
-            ...input,
-            ...(channel
-              ? { expected_version: channel.version }
-              : { record_id: record, credentials: { agent_key: String(fields.get('agent_key')) } }),
-          });
-          const request = { key, record, body };
-          setPending(request);
-          void send(request);
-        } catch {
-          setError('Enter valid JSON using the Event Gateway channel policy schema.');
-        }
-      }}
-    >
-      <label>
-        Channel configuration JSON
-        <textarea
-          name="policy"
-          defaultValue={policy(channel)}
-          rows={12}
-          required
-          disabled={pending !== undefined}
-          maxLength={60000}
-        />
-      </label>
-      <p>
-        Supply name, profile, provider, sources, partition and reply using the{' '}
-        <a
-          className="service-link"
-          href="/api/event-gateway/openapi.json"
-          target="_blank"
-          rel="noreferrer"
+    <div className="channel-node-editor">
+      {!additional ? (
+        <form
+          className="service-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit('channel');
+          }}
         >
-          Event Gateway API schema
-        </a>
-        .{' '}
-        {channel
-          ? 'Existing credentials are retained when omitted.'
-          : 'The agent key authorizes the configured provider.'}
-      </p>
-      {!channel ? (
-        <label>
-          Agent key
-          <Input
-            name="agent_key"
-            type="password"
-            autoComplete="off"
-            required
-            disabled={pending !== undefined}
-          />
-        </label>
+          <fieldset className="channel-form-section" disabled={pending !== undefined || busy}>
+            <NodeFields
+              draft={draft}
+              onChange={setDraft}
+              credentials={credentials}
+              onCredentials={setCredentials}
+              section={section}
+              create={create}
+              sourceCount={baseline?.definition.sources.length ?? 0}
+              denied={denied}
+            />
+          </fieldset>
+          {!pending ? (
+            <Button type="submit" variant="primary" disabled={busy}>
+              {create
+                ? 'Create channel'
+                : section.kind === 'producer'
+                  ? 'Save producer'
+                  : section.kind === 'consumer'
+                    ? 'Save agent settings'
+                    : 'Save channel'}
+            </Button>
+          ) : null}
+        </form>
+      ) : null}
+      {!create && (section.kind === 'channel' || section.kind === 'consumer') ? (
+        <form
+          className="service-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit('routing');
+          }}
+        >
+          <fieldset className="channel-form-section" disabled={pending !== undefined || busy}>
+            {section.kind === 'channel' ? (
+              <RoutingFields value={routing} onChange={setRouting} />
+            ) : activeConsumer ? (
+              <>
+                {additional ? (
+                  <p className="channel-field-hint">
+                    Provider: {String(object(activeConsumer.provider).slug ?? 'unavailable')}. Agent
+                    destination and credentials remain attached to this consumer.
+                  </p>
+                ) : null}
+                <ConsumerPolicyFields
+                  value={activeConsumer}
+                  onChange={(next) =>
+                    setRouting((current) =>
+                      section.id === 'default'
+                        ? { ...current, default_consumer: next }
+                        : {
+                            ...current,
+                            consumers: records(current.consumers).map((v) =>
+                              v.id === section.id ? next : v,
+                            ),
+                          },
+                    )
+                  }
+                />
+              </>
+            ) : (
+              <p>This consumer is no longer attached. Select another node.</p>
+            )}
+          </fieldset>
+          {!pending ? (
+            <Button
+              type="submit"
+              disabled={busy || (section.kind === 'consumer' && !activeConsumer)}
+            >
+              {section.kind === 'channel' ? 'Save routing' : 'Save consumer policy'}
+            </Button>
+          ) : null}
+        </form>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
-      <div className="service-actions">
-        <Button type="submit" variant="primary" disabled={busy}>
-          {busy
-            ? 'Submitting…'
-            : pending
-              ? 'Retry same request'
-              : channel
-                ? 'Save channel'
-                : 'Create channel'}
-        </Button>
-        {pending ? (
-          <Button
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              void serviceRequest<Channel>(
-                'event-gateway',
-                `/v1/channel-records/${segment(pending.record)}`,
-              )
-                .then((current) => {
-                  // Recovery can return a reservation before provider binding
-                  // completes. Only replaying the original create confirms it.
-                  setError(
-                    channel && current.version > channel.version
-                      ? 'The channel has changed. Reload to review its current configuration before making further edits.'
-                      : 'The original record was found. Retry the same request to confirm completion.',
-                  );
-                })
-                .catch((e: unknown) => {
-                  if (e instanceof ServiceError && [401, 403].includes(e.status)) denied();
-                  setError(
-                    e instanceof Error
-                      ? e.message
-                      : 'Recovery is unavailable. Keep this request for retry.',
-                  );
-                })
-                .finally(() => setBusy(false));
-            }}
-          >
+      {notice ? (
+        <p role="status">{notice}</p>
+      ) : baseline?.native_discord_activation ? (
+        <p role="status">{baseline.native_discord_activation.detail}</p>
+      ) : null}
+      {pending ? (
+        <div className="service-actions">
+          <Button variant="primary" disabled={busy} onClick={() => void send(pending)}>
+            {busy ? 'Submitting…' : 'Retry same request'}
+          </Button>
+          <Button disabled={busy} onClick={() => void recover()}>
             Check original channel
           </Button>
-        ) : null}
-      </div>
-    </form>
+        </div>
+      ) : null}
+    </div>
   );
+}
+function routingProjection(base: Fields, draft: Fields, section: EditorSection): Fields {
+  if (section.kind === 'channel')
+    return { ...draft, default_consumer: base.default_consumer, consumers: base.consumers };
+  if (section.kind !== 'consumer') return base;
+  if (section.id === 'default') return { ...base, default_consumer: draft.default_consumer };
+  const next = records(draft.consumers).find((v) => v.id === section.id);
+  return {
+    ...base,
+    consumers: records(base.consumers).map((v) => (v.id === section.id && next ? next : v)),
+  };
 }
 export function DeleteChannel({
   channel,
@@ -212,7 +353,7 @@ export function DeleteChannel({
 }: {
   readonly channel: Channel;
   readonly onDone: () => void;
-  readonly denied: () => void;
+  readonly denied: Denied;
 }) {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -236,7 +377,7 @@ export function DeleteChannel({
               )
                 .then(onDone)
                 .catch((e: unknown) => {
-                  if (e instanceof ServiceError && [401, 403].includes(e.status)) denied();
+                  if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
                   setError(
                     e instanceof Error
                       ? e.message

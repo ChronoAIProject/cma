@@ -1,0 +1,96 @@
+//! Authenticated authoring discovery, independent from native connection setup.
+use crate::channels::management::ManagementState;
+use serde::Serialize;
+use utoipa::ToSchema;
+
+#[derive(Serialize, ToSchema)]
+pub struct RelayAuthoringCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_thread_history_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_writes_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_auto_activation_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_capacity: Option<usize>,
+    pub dynamic_sources_writes_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outbound_messages_writes_enabled: Option<bool>,
+    /// The configured relay accepts new native attachments; platform limits still apply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_media_writes_enabled: Option<bool>,
+    pub relay_raw_verification_writes_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lark_resource_writes_enabled: Option<bool>,
+    pub multi_consumer_writes_enabled: bool,
+    pub native_bot_mentions_writes_enabled: bool,
+    pub thread_contract_writes_enabled: bool,
+    pub platforms: Vec<RelayPlatformCapability>,
+}
+#[derive(Serialize, ToSchema)]
+pub struct RelayPlatformCapability {
+    pub id: String,
+    pub label: String,
+    pub verification_modes: Vec<RelayVerificationCapability>,
+}
+#[derive(Serialize, ToSchema)]
+pub struct RelayVerificationCapability {
+    /// native_event, raw_event or trusted_normalized. Not a delivery-health claim.
+    pub id: String,
+    /// Whether this deployment accepts new writes selecting this mode.
+    /// Existing exact settings may be retained even while this is false.
+    pub writes_enabled: bool,
+}
+
+pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
+    let platforms = [
+        ("telegram", "Telegram"),
+        ("lark", "Lark"),
+        ("feishu", "Feishu"),
+        ("discord", "Discord"),
+        ("whatsapp", "WhatsApp"),
+        ("slack", "Slack"),
+    ]
+    .into_iter()
+    .map(|(id, label)| RelayPlatformCapability {
+        id: id.into(),
+        label: label.into(),
+        verification_modes: match id {
+            "discord" | "whatsapp" => vec![
+                mode("raw_event", state.relay_raw_verification_writes_enabled),
+                mode("trusted_normalized", true),
+            ],
+            "slack" => vec![mode("trusted_normalized", true)],
+            _ => vec![mode("native_event", true)],
+        },
+    })
+    .collect();
+    RelayAuthoringCapabilities {
+        native_discord_thread_history_enabled: Some(state.native_discord_thread_history_enabled),
+        native_discord_writes_enabled: Some(state.native_discord_writes_enabled),
+        native_discord_auto_activation_enabled: Some(
+            state.native_discord.discovery_enabled() && state.native_discord_admission_enabled,
+        ),
+        native_discord_capacity: Some(crate::discord::selection::MAX_RECORDS),
+        dynamic_sources_writes_enabled: state.dynamic_sources_writes_enabled,
+        outbound_messages_writes_enabled: Some(state.outbound_messages_writes_enabled),
+        native_media_writes_enabled: Some(
+            state
+                .outbound_relay
+                .as_ref()
+                .is_some_and(|relay| relay.native_media_enabled()),
+        ),
+        relay_raw_verification_writes_enabled: state.relay_raw_verification_writes_enabled,
+        lark_resource_writes_enabled: Some(state.lark_resource_writes_enabled),
+        multi_consumer_writes_enabled: state.multi_consumer_writes_enabled,
+        native_bot_mentions_writes_enabled: state.native_bot_mentions_writes_enabled,
+        thread_contract_writes_enabled: state.thread_contract_writes_enabled,
+        platforms,
+    }
+}
+fn mode(id: &str, writes_enabled: bool) -> RelayVerificationCapability {
+    RelayVerificationCapability {
+        id: id.into(),
+        writes_enabled,
+    }
+}

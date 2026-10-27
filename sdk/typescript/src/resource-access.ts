@@ -32,7 +32,7 @@ export const organizationChoice = object({
 });
 export type OrganizationChoice = Output<typeof organizationChoice>;
 
-export const shareMode = enumeration('view', 'org_roles');
+export const shareMode = enumeration('view', 'view_write', 'org_roles');
 export const createShareRequest = object({ target_org_id: text, mode: shareMode });
 export const updateShareRequest = object({ expected_revision: positiveInteger, mode: shareMode });
 export type CreateShareRequest = Output<typeof createShareRequest>;
@@ -94,7 +94,41 @@ export const resourceOwnership = tagged(
   'kind',
 );
 export type ResourceOwnership = Output<typeof resourceOwnership>;
+export const shareIdentity = object({
+  subject: text,
+  display_name: nullable(text),
+  avatar_url: nullable(text),
+});
+export const agentShareAudience = tagged(
+  {
+    public: object({ kind: enumeration('public') }),
+    organization: object({ kind: enumeration('organization'), organization_id: text }),
+    users: object({ kind: enumeration('users'), subjects: array(text) }),
+  },
+  'kind',
+);
+export const agentShareLink = object({
+  id: text,
+  agent_id: text,
+  audience: agentShareAudience,
+  mode: enumeration('view', 'view_write'),
+  shared_by: shareIdentity,
+  created_at: text,
+  revoked_at: nullable(text),
+  revision: positiveInteger,
+  accepted_count: integer,
+});
+export const createAgentShareLinkRequest = object({
+  audience: agentShareAudience,
+  mode: enumeration('view', 'view_write'),
+  token: text,
+});
+export type ShareIdentity = Output<typeof shareIdentity>;
+export type AgentShareAudience = Output<typeof agentShareAudience>;
+export type AgentShareLink = Output<typeof agentShareLink>;
+export type CreateAgentShareLinkRequest = Output<typeof createAgentShareLinkRequest>;
 export const effectiveAccess = object({
+  shared_by: optional(shareIdentity),
   owner: optional(resourceOwnership),
   capabilities: array(text),
   revalidate_at: nullable(text),
@@ -168,6 +202,62 @@ export class ResourceAccess {
       query(this.path(kind, id, shareId), { expected_revision: expectedRevision }),
       shareReceipt,
       { ...command(options), method: 'DELETE' },
+    );
+  }
+  /** Active Agent-session links; raw link secrets are never returned. */
+  listAgentShareLinks(agentId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(agentId)}/share-links`,
+      object({ items: array(agentShareLink) }),
+      options,
+    );
+  }
+  /** Generate token using 32 CSPRNG bytes (hex), retain it only in the URL fragment. */
+  createAgentShareLink(
+    agentId: string,
+    body: CreateAgentShareLinkRequest,
+    options: CommandOptions,
+  ) {
+    return read(this.config, `/api/v1/agents/${segment(agentId)}/share-links`, agentShareLink, {
+      ...command(options),
+      method: 'POST',
+      body: input(createAgentShareLinkRequest, body),
+    });
+  }
+  /** Revoke only this link and its recipients; other links remain independent. */
+  revokeAgentShareLink(
+    agentId: string,
+    shareId: string,
+    expectedRevision: number,
+    options: CommandOptions,
+  ) {
+    input(positiveInteger, expectedRevision);
+    return read(
+      this.config,
+      query(`/api/v1/agents/${segment(agentId)}/share-links/${segment(shareId)}`, {
+        expected_revision: expectedRevision,
+      }),
+      agentShareLink,
+      { ...command(options), method: 'DELETE' },
+    );
+  }
+  /** Exchange a link secret for access bound to the current authenticated user. */
+  redeemAgentShareLink(shareId: string, token: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agent-share-links/${segment(shareId)}/redeem`,
+      agentShareLink,
+      { ...options, method: 'POST', body: { token } },
+    );
+  }
+  /** Bounded canonical display-name lookup; only the owning Agent user can search. */
+  shareRecipients(agentId: string, text: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      query(`/api/v1/agents/${segment(agentId)}/share-recipients`, { q: text }),
+      object({ items: array(shareIdentity) }),
+      options,
     );
   }
   private path(kind: string, id: string, shareId?: string) {

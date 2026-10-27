@@ -3,7 +3,12 @@ import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { TriggerDocument } from '@chronoai/cma-sdk';
 import type { AppRoute } from '../routing/routes';
+import { Alert } from '../ui/Alert';
+import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { PageHeader } from '../ui/PageHeader';
+import { SkeletonRows } from '../ui/Skeleton';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import {
   IconPlusOutline16,
   IconRefreshOutline16,
@@ -12,6 +17,7 @@ import {
 } from '../ui/icons';
 import type { TriggerPublisherClient } from './client';
 import { EmbedPanel } from './EmbedPanel';
+import { AVAILABILITY } from './model';
 import { TriggerWizard } from './TriggerWizard';
 import './Publisher.css';
 import '../profiles/Profiles.css';
@@ -128,22 +134,42 @@ export function TriggerPublisherPage({
     }
   };
   const selectedId = document?.id ?? triggerId ?? '';
+  const selected = items.find((item) => item.id === selectedId) ?? document;
+  const currentTitle =
+    selected?.draft.presentation.title ?? (selectedId === '' ? 'New Trigger' : 'Trigger');
+  useDocumentTitle(selectedId === '' ? 'Triggers' : currentTitle);
   return (
     <section className="trigger-publisher" aria-labelledby="trigger-publisher-title">
-      <header className="trigger-publisher__header">
-        <h1 id="trigger-publisher-title">CMA Trigger</h1>
-        <Button
-          icon={<IconPlusOutline16 />}
-          disabled={locked}
-          onClick={() => {
-            setReadResult(undefined);
-            setNewVersion((value) => value + 1);
-            navigate('');
-          }}
-        >
-          New Trigger
-        </Button>
-      </header>
+      <div className="trigger-publisher__header">
+        <PageHeader
+          breadcrumb={[
+            {
+              label: 'Triggers',
+              href: '/triggers/manage',
+              onSelect: locked ? undefined : () => navigate(''),
+            },
+            { label: currentTitle },
+          ]}
+          title="Triggers"
+          headingId="trigger-publisher-title"
+          badge={selected === undefined ? undefined : <TriggerBadge document={selected} live />}
+          description="A Trigger is a button that brings each visitor to an Agent of their own."
+          actions={
+            <Button
+              variant="primary"
+              icon={<IconPlusOutline16 />}
+              disabled={locked}
+              onClick={() => {
+                setReadResult(undefined);
+                setNewVersion((value) => value + 1);
+                navigate('');
+              }}
+            >
+              New Trigger
+            </Button>
+          }
+        />
+      </div>
       <div className="trigger-publisher__body">
         <nav className="trigger-rail" aria-label="Your Triggers">
           <label className="trigger-rail__mobile">
@@ -157,7 +183,7 @@ export function TriggerPublisherPage({
                 { value: '', label: 'New Trigger' },
                 ...items.map((item) => ({
                   value: item.id,
-                  label: `${item.draft.presentation.title} / ${item.availability}`,
+                  label: `${item.draft.presentation.title} / ${AVAILABILITY[item.availability].label}`,
                 })),
               ]}
             />
@@ -187,29 +213,35 @@ export function TriggerPublisherPage({
                   }}
                 >
                   <strong>{item.draft.presentation.title}</strong>
-                  <span>{item.availability}</span>
-                  <code>{item.public_id?.slice(0, 12) ?? 'Not published'}</code>
+                  <span className="trigger-rail__meta">
+                    <TriggerBadge document={item} />
+                    <code>{item.public_id?.slice(0, 12) ?? 'Not published'}</code>
+                  </span>
                 </a>
               </li>
             ))}
           </ul>
-          {listLoading ? <p role="status">Loading Triggers</p> : null}
+          {listLoading ? <SkeletonRows label="Loading Triggers" /> : null}
           <Presence>
             {listFailure ? (
-              <div role="alert">
-                <p>Triggers could not be loaded.</p>
-                <Button
-                  icon={<IconRefreshOutline16 />}
-                  disabled={listLoading}
-                  onClick={() => {
-                    setListLoading(true);
-                    setListFailure(false);
-                    setListReload((value) => value + 1);
-                  }}
-                >
-                  Try again
-                </Button>
-              </div>
+              <Alert
+                tone="error"
+                actions={
+                  <Button
+                    icon={<IconRefreshOutline16 />}
+                    disabled={listLoading}
+                    onClick={() => {
+                      setListLoading(true);
+                      setListFailure(false);
+                      setListReload((value) => value + 1);
+                    }}
+                  >
+                    Try again
+                  </Button>
+                }
+              >
+                Triggers could not be loaded.
+              </Alert>
             ) : null}
           </Presence>
           {next === undefined ? null : (
@@ -232,7 +264,7 @@ export function TriggerPublisherPage({
           ) : null}
           <>
             {loading ? (
-              <p role="status">Loading Trigger</p>
+              <SkeletonRows label="Loading Trigger" />
             ) : failure ? null : view === 'embed' && document !== undefined ? (
               <>
                 <EmbedPanel
@@ -275,20 +307,39 @@ export function TriggerPublisherPage({
             )}
             <Presence>
               {loading ? null : failure ? (
-                <div role="alert">
-                  <p>This Trigger could not be loaded.</p>
-                  <Button
-                    icon={<IconRefreshOutline16 />}
-                    onClick={() => setReload((value) => value + 1)}
-                  >
-                    Try again
-                  </Button>
-                </div>
+                <Alert
+                  tone="error"
+                  actions={
+                    <Button
+                      icon={<IconRefreshOutline16 />}
+                      onClick={() => setReload((value) => value + 1)}
+                    >
+                      Try again
+                    </Button>
+                  }
+                >
+                  This Trigger could not be loaded.
+                </Alert>
               ) : null}
             </Presence>
           </>
         </div>
       </div>
     </section>
+  );
+}
+
+function TriggerBadge({
+  document,
+  live = false,
+}: {
+  readonly document: TriggerDocument;
+  readonly live?: boolean;
+}) {
+  const { label, tone } = AVAILABILITY[document.availability];
+  return (
+    <Badge tone={tone} live={live}>
+      {label}
+    </Badge>
   );
 }
