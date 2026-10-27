@@ -88,6 +88,7 @@ impl Sender {
         let Some(store) = &self.relay.interactions else {
             return (unsupported(), effects);
         };
+        let mut native_form = false;
         let lark = if let Some(Source::NyxidRelay { platform, .. }) = channel
             .definition
             .relay_source_for_route(&reference.route_id)
@@ -106,6 +107,11 @@ impl Sender {
                 {
                     return (unsupported(), effects);
                 }
+                native_form = crate::interactions::lark_form::requested(message)
+                    && card
+                        .lark
+                        .as_ref()
+                        .is_some_and(|identity| identity.form.is_some());
                 true
             } else {
                 false
@@ -118,6 +124,12 @@ impl Sender {
         {
             return (unsupported(), effects);
         }
+        if native_form
+            && reference.consumer.is_some()
+            && !self.relay.consumer_interactions_enabled()
+        {
+            return (unsupported(), effects);
+        }
         let capabilities = if lark {
             crate::interactions::lark::capabilities()
         } else {
@@ -125,9 +137,12 @@ impl Sender {
         };
         let (parts, mut rendering) = RelayText.render(message, &capabilities);
         if lark {
-            let Ok((_, report)) =
-                crate::interactions::lark::render(message, "00000000000000000000000000000000", 1)
-            else {
+            let render = if native_form {
+                crate::interactions::lark::render_form
+            } else {
+                crate::interactions::lark::render
+            };
+            let Ok((_, report)) = render(message, "00000000000000000000000000000000", 1) else {
                 return (unsupported(), effects);
             };
             rendering = report;
@@ -156,7 +171,14 @@ impl Sender {
         if !ctx.gate.commit() {
             return (refused(rendering, expired()), effects);
         }
-        let mut prepared = match store.replacement(channel, reference, message).await {
+        let preparation = if native_form {
+            store
+                .replacement_lark_form(channel, reference, message)
+                .await
+        } else {
+            store.replacement(channel, reference, message).await
+        };
+        let mut prepared = match preparation {
             Ok(p) => p,
             Err(_) => {
                 return (

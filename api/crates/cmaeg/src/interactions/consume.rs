@@ -20,6 +20,7 @@ impl InteractionStore {
         callback_id: &str,
         data: &str,
         platform_message_id: &str,
+        submitted: Option<&serde_json::Map<String, serde_json::Value>>,
         admit: &Admit,
     ) -> Result<(InteractionResult, String, Card), Error> {
         let (id, index, revision) = decode(data)?;
@@ -40,7 +41,7 @@ impl InteractionStore {
             } else {
                 match &card.lark {
                     Some(lark) => {
-                        data.starts_with("cl1:")
+                        data.starts_with(if lark.form.is_some() { "clf1:" } else { "cl1:" })
                             && revision == Some(card.revision)
                             && matches!(activity.source, cmaeg_core::activity::SourceKind::NyxidRelay { platform, .. } if platform == lark.platform)
                             && activity.conversation.kind == lark.conversation
@@ -73,14 +74,45 @@ impl InteractionStore {
                 tracing::info!(card = %id, "card click not admitted for its consumer");
                 return Err(Error::Denied);
             }
-            let action = actions(&card.message)
-                .get(index)
-                .cloned()
-                .ok_or(Error::Denied)?;
+            let form = card
+                .lark
+                .as_ref()
+                .and_then(|identity| identity.form.as_ref());
+            let (action, submitted) = if let Some(form) = form {
+                if !form.current(&card, channel, activity) {
+                    return Err(Error::Denied);
+                }
+                let values = super::lark_form::submitted(
+                    &card.message,
+                    index,
+                    submitted.ok_or(Error::Denied)?,
+                )?;
+                let (_, id, _) = super::lark_form::schema(&card.message)?;
+                (
+                    Action {
+                        block: id.into(),
+                        id: id.into(),
+                        selected: vec![],
+                    },
+                    Some(values),
+                )
+            } else {
+                if submitted.is_some() {
+                    return Err(Error::Denied);
+                }
+                (
+                    actions(&card.message)
+                        .get(index)
+                        .cloned()
+                        .ok_or(Error::Denied)?,
+                    None,
+                )
+            };
             if let Some(click) = &card.consumed {
                 if click.event_id != activity.event_id.as_str()
                     || click.callback_id != callback_id
                     || click.action != index
+                    || click.submitted != submitted
                 {
                     return Err(Error::Denied);
                 }
@@ -90,6 +122,7 @@ impl InteractionStore {
                     callback_id: callback_id.into(),
                     action: index,
                     selection: None,
+                    submitted,
                     occurred_at: activity.occurred_at.clone(),
                 });
                 match self.save(&card, Some(version)).await {
@@ -100,7 +133,16 @@ impl InteractionStore {
             }
             // Reference sealing is randomized. Retrying the same click must carry identical context.
             let destination = card.destination.as_ref().ok_or(Error::Denied)?;
-            let values = json!({"selected":action.selected,"message_ref":card.reference,"interaction_record_id":card.id,"revision":card.revision,"platform_message_id":destination.platform_id});
+            let mut values = json!({"message_ref":card.reference,"interaction_record_id":card.id,"revision":card.revision,"platform_message_id":destination.platform_id});
+            if let Some(submitted) = card
+                .consumed
+                .as_ref()
+                .and_then(|click| click.submitted.as_ref())
+            {
+                values["fields"] = serde_json::to_value(submitted).map_err(|_| Error::Denied)?;
+            } else {
+                values["selected"] = json!(action.selected);
+            }
             return Ok((
                 InteractionResult {
                     block_id: action.block,
@@ -114,7 +156,11 @@ impl InteractionStore {
         // Repeated CAS contention has not established refusal. Let the relay
         // retry a Lark or WhatsApp click instead of acknowledging and dropping it.
         Err(
-            if data.starts_with("cl1:") || data.starts_with("cw1b:") || data.starts_with("cw1l:") {
+            if data.starts_with("cl1:")
+                || data.starts_with("clf1:")
+                || data.starts_with("cw1b:")
+                || data.starts_with("cw1l:")
+            {
                 Error::Unavailable
             } else {
                 Error::Denied
@@ -140,6 +186,7 @@ impl InteractionStore {
             callback_id,
             data,
             platform_message_id,
+            None,
             admit,
         )
         .await
@@ -155,11 +202,12 @@ impl InteractionStore {
         callback_id: &str,
         data: &str,
         platform_message_id: &str,
+        submitted: Option<&serde_json::Map<String, serde_json::Value>>,
     ) -> Result<
         (
             InteractionResult,
             String,
-            Option<super::owner::CallbackOwner>,
+            Option<super::owner::DispatchOwner>,
         ),
         Error,
     > {
@@ -170,9 +218,18 @@ impl InteractionStore {
             callback_id,
             data,
             platform_message_id,
+            submitted,
             &|_| true,
         )
         .await
-        .map(|(result, time, card)| (result, time, card.callback_owner))
+        .map(|(result, time, card)| {
+            let owner = card
+                .lark
+                .as_ref()
+                .and_then(|identity| identity.form.as_ref())
+                .map(|form| form.owner.clone())
+                .or_else(|| card.callback_owner.map(Into::into));
+            (result, time, owner)
+        })
     }
 }
