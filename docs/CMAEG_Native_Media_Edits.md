@@ -29,3 +29,12 @@ Timeouts, malformed success bodies, wrong response identities, post-write storag
 `capabilities.native_media_edits` advertises eligibility for new single-upload references. Per-reference `readMessageCapabilities` returns optional `media_edit` only for a valid current media revision. Neither field changes legacy `edit` semantics or grants delete/reaction permission.
 
 Telegram provides no generic Bot API message-read endpoint. Discord performs an exact message/channel pre-read. Neither reviewed edit API offers a conditional revision or If-Match contract; local fences coordinate CMA replicas, not independent applications using the same credentials. Provider metadata and transformed media are not a server byte-digest proof. The official contracts are [Telegram Bot API](https://core.telegram.org/bots/api#editmessagemedia) and [Discord Edit Message](https://docs.discord.com/developers/resources/message#edit-message).
+
+
+Edit authority requires a plain supported single-media response. Telegram auto
+caption entities and Discord automatic embeds can make an otherwise successful
+upload ineligible for edits. Failure to store optional edit-enrichment records
+also omits edit authority. These cases preserve confirmed ordinary delivery and
+any separately valid effects-only reference; they never resend the upload.
+Wrong message/destination/bot identity and ambiguous provider writes remain
+unknown. Exact-reference `media_edit` capability absence is authoritative.

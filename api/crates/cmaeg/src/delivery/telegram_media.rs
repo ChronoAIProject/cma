@@ -171,6 +171,15 @@ impl Sender {
                                 .telegram
                                 .send_media_result(credential, bot_id, upload)
                                 .await?;
+                            if value["from"]["id"]
+                                .as_i64()
+                                .map(|id| id.to_string())
+                                .as_deref()
+                                != Some(bot_id.as_str())
+                                || value["from"]["is_bot"] != true
+                            {
+                                return Err(Error::Unconfirmed);
+                            }
                             let id = value["message_id"]
                                 .as_i64()
                                 .ok_or(Error::Unconfirmed)?
@@ -302,14 +311,10 @@ impl Sender {
                 }
                 _ => Err(()),
             };
-            match confirmed {
-                Ok(reference) => receipt.message_ref = Some(reference),
-                Err(()) => {
-                    receipt.message_ref = None;
-                    receipt.delivery = DeliveryOutcome::Unknown {
-                        reason: "native_media_receipt_unconfirmed".into(),
-                    };
-                }
+            // Edit enrichment is optional: a confirmed ordinary upload keeps its
+            // existing effects reference when this narrower receipt cannot be issued.
+            if let Ok(reference) = confirmed {
+                receipt.message_ref = Some(reference);
             }
         }
         (receipt, effects)
