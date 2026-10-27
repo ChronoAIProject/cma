@@ -400,8 +400,17 @@ it('preserves legacy native media capability omissions and exact native WhatsApp
   expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);
   const native = {
     ...legacy,
-    kinds: ['image', 'file'],
-    mime_types: ['image/jpeg', 'image/png', 'application/pdf'],
+    kinds: ['image', 'file', 'audio'],
+    mime_types: [
+      'image/jpeg',
+      'image/png',
+      'application/pdf',
+      'audio/aac',
+      'audio/amr',
+      'audio/mpeg',
+      'audio/mp4',
+      'audio/ogg',
+    ],
     max_total_bytes: 8388608,
     max_image_bytes: 5000000,
     max_caption_chars: 1024,
