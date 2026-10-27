@@ -14,6 +14,12 @@ async fn media_app() -> (App, MessageRef) {
     let mut app = App::new().await;
     app.activity.conversation.kind = cmaeg_core::activity::ConversationKind::Group;
     app.event.activity_sha256 = Some(activity_digest(&app.activity));
+    app.event.conversation_id = cmaeg_core::ids::ConversationId::derive(
+        &app.state.keys,
+        &app.event.channel_id,
+        app.definition.partition.version,
+        &app.event.partition_key,
+    );
     app.state.native_media_edits = Some(Arc::new(crate::native_media::Client::new(
         Arc::new(
             crate::telegram::TelegramClient::new("http://127.0.0.1:1", Duration::from_secs(1))
@@ -338,6 +344,9 @@ async fn telegram_app() -> (App, MessageRef, crate::telegram::media_fixture::Fix
         "77:{}",
         uuid::Uuid::new_v4().simple()
     )));
+    app.definition.secrets.telegram_webhook_secret = Some(cmaeg_core::channel::Secret::new(
+        uuid::Uuid::new_v4().simple().to_string(),
+    ));
     app.activity.source = SourceKind::Telegram {
         platform: cmaeg_core::channel::Platform::Telegram,
         bot_id: "77".into(),
@@ -361,6 +370,12 @@ async fn telegram_app() -> (App, MessageRef, crate::telegram::media_fixture::Fix
         replied_to_bot: Some(false),
     });
     app.event.activity_sha256 = Some(activity_digest(&app.activity));
+    app.event.conversation_id = cmaeg_core::ids::ConversationId::derive(
+        &app.state.keys,
+        &app.event.channel_id,
+        app.definition.partition.version,
+        &app.event.partition_key,
+    );
     app.state.native_media_edits = Some(Arc::new(crate::native_media::Client::new(
         Arc::new(platform.api.clone()),
         app.platform.api.clone(),
