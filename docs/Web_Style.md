@@ -3610,3 +3610,38 @@ metadata. Each newly reported event uses the shared Presence arrival transition
 and reduced-motion behavior; updates to the same event do not restart it.
 
 | 2026-10-27 | Start one Activity stream on explicit channel selection; share its authoritative latest receipt with the map and retained dialog, close inactive streams and preserve native recoverable reconnects without an arbitrary error cap. |
+
+### Event Gateway configuration clarity and toolsets (2026-10-27)
+
+Node configuration retains the shared centered 60vw × 60dvh Modal. Inside, a
+160px section navigation column uses layer 2, 16px vertical/12px horizontal
+padding, 32px minimum section buttons and the existing accent selected state.
+The independently scrolling content uses 24px padding. The navigation lists
+actual top-level settings (connection, admission, grouping, replies, routing,
+model, permissions and credentials), in document order; conditional fields
+update this list without polling. Selecting a section scrolls and focuses it.
+Scrolling updates the highlighted section. At 720px it becomes one horizontal
+scrolling row of 44px touch targets and the content padding becomes 16px.
+
+Forms use one vertical reading rhythm: 8px label/control gaps, 16px field gaps,
+24px section spacing and thin border-l2 section divisions. Short explanatory
+copy uses 13px/20px; hints use 12px/18px secondary ink. Two-column groups collapse
+below a 560px content container. Repeated field/remove rows align at their lower
+edge. Checkboxes align with the first text line and can carry a subordinate
+explanation. Ownership, model/behavior, services/instructions, skills and extra
+MCP servers have distinct section destinations. Unknown wire values remain
+visible and retained. UI labels may explain enum values without changing them.
+
+An Agent toolsets node describes the gateway's existing event tools and connects
+to consumers with a static dashed association. Its inspector separates core
+event tools, optional media/message effects, and the connected consumers. Tool
+rows show a plain-language action, exact tool name and its restrictions. It does
+not imply that a tool is installed in an existing Agent, that a platform supports
+every action, or that an optional server gate is enabled. No discovery requests,
+permission changes or installations are triggered by inspecting it. Opening
+Toolsets preserves the existing node editor and unsaved drafts. Section movement
+uses existing smooth motion and honors reduced motion.
+
+| Date | Change |
+| --- | --- |
+| 2026-10-27 | Organize node configuration by actual settings with aligned fields, contextual explanations and active section navigation; expose a truthful Agent toolsets catalog while preserving node drafts. |

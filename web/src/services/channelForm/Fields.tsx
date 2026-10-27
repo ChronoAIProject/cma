@@ -3,11 +3,31 @@ import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Picker } from '../../ui/Picker';
 import { text } from './model';
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+import '../NodeInspector.css';
+import { ConfigurationDepth, useConfigurationSection } from '../ConfigurationSections';
+export function Section({
+  title,
+  description,
+  children,
+  navigation,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+  navigation?: boolean;
+}) {
+  const { id, ref, navigable, depth } = useConfigurationSection(title, navigation);
   return (
-    <fieldset className="channel-form-section">
+    <fieldset
+      className="channel-form-section"
+      id={id}
+      ref={ref}
+      tabIndex={navigable ? -1 : undefined}
+      data-config-section={navigable || undefined}
+    >
       <legend>{title}</legend>
-      {children}
+      {description ? <p className="channel-section-description">{description}</p> : null}
+      <ConfigurationDepth value={depth}>{children}</ConfigurationDepth>
     </fieldset>
   );
 }
@@ -35,6 +55,7 @@ export function TextField({
       {multiline ? (
         <textarea
           id={id}
+          aria-describedby={hint ? `${id}-hint` : undefined}
           value={text(value)}
           onChange={(e) => onChange(e.target.value)}
           rows={3}
@@ -44,6 +65,7 @@ export function TextField({
       ) : (
         <Input
           id={id}
+          aria-describedby={hint ? `${id}-hint` : undefined}
           value={text(value)}
           onChange={(e) => onChange(e.target.value)}
           type={secret ? 'password' : 'text'}
@@ -51,7 +73,11 @@ export function TextField({
           required={required}
         />
       )}
-      {hint ? <p className="channel-field-hint">{hint}</p> : null}
+      {hint ? (
+        <p id={`${id}-hint`} className="channel-field-hint">
+          {hint}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -117,21 +143,26 @@ export function Toggle({
   value,
   onChange,
   disabled,
+  hint,
 }: {
   label: string;
   value: unknown;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  hint?: string;
 }) {
   return (
-    <label className="channel-form-row">
+    <label className="channel-toggle-field">
       <input
         type="checkbox"
         checked={value === true}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
       />
-      {label}
+      <span>
+        <span>{label}</span>
+        {hint ? <small>{hint}</small> : null}
+      </span>
     </label>
   );
 }

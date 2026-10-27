@@ -291,6 +291,9 @@ function AddressedChannel({
   const [inspecting, setInspecting] = useState(false);
   const [inspectorSection, setInspectorSection] = useState<'overview' | 'activity'>('overview');
   const [selection, setSelection] = useState<ChannelSelection>({ kind: 'channel' });
+  const [editorSelection, setEditorSelection] = useState<
+    Exclude<ChannelSelection, { kind: 'toolsets' }>
+  >({ kind: 'channel' });
   const [confirmed, setConfirmed] = useState<Channel>();
   const current = confirmed && confirmed.version >= channel.version ? confirmed : channel;
   const activity = useChannelActivity(current.channel_id, session.subject, active);
@@ -300,6 +303,7 @@ function AddressedChannel({
     editable && selection.kind === 'producer' && selection.index === nodes.producers.length;
   const exists =
     selection.kind === 'channel' ||
+    selection.kind === 'toolsets' ||
     newProducer ||
     [...nodes.producers, ...nodes.consumers].some((node) => node.key === selectionKey(selection));
   const selected: ChannelSelection = exists ? selection : { kind: 'channel' };
@@ -307,16 +311,19 @@ function AddressedChannel({
     <div className="channel-workspace">
       <ChannelMap
         channel={current}
+        toolsets={nodes.toolsets}
         selection={selected}
         activityPreview={<ChannelActivityPreview feed={activity} />}
         onActivity={() => {
           setSelection({ kind: 'channel' });
+          setEditorSelection({ kind: 'channel' });
           setInspectorSection('activity');
           setInspecting(true);
         }}
         onSelect={(next) => {
           setInspectorSection('overview');
           setSelection(next);
+          if (next.kind !== 'toolsets') setEditorSelection(next);
           setInspecting(true);
         }}
         inspectorId={inspectorId}
@@ -361,7 +368,7 @@ function AddressedChannel({
         {editable ? (
           <ChannelEditor
             channel={current}
-            section={selected}
+            section={selected.kind === 'toolsets' ? editorSelection : selected}
             denied={denied}
             onDone={(updated) => {
               if (updated) setConfirmed(updated);
