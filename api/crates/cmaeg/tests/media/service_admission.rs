@@ -238,6 +238,7 @@ fn config(media: MediaConfig) -> Config {
         dynamic_sources_writes_enabled: false,
         relay_raw_verification_writes_enabled: false,
         lark_resource_writes_enabled: false,
+        lark_message_effects_writes_enabled: false,
         native_discord_writes_enabled: false,
         native_telegram_message_events_writes_enabled: false,
         native_discord_thread_history_enabled: false,

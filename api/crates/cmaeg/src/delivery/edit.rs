@@ -177,6 +177,15 @@ impl Sender {
         if !ctx.gate.commit() {
             return (refused(rendering, expired()), effects);
         }
+        let lark_lock = match self.lark_edit_lock(channel, reference).await {
+            Ok(lock) => lock,
+            Err(()) => {
+                return (
+                    refused(rendering, unknown("lark_mutation_unavailable")),
+                    effects,
+                )
+            }
+        };
         let preparation = if native_form {
             store
                 .replacement_lark_form(channel, reference, message)
@@ -187,6 +196,11 @@ impl Sender {
         let mut prepared = match preparation {
             Ok(p) => p,
             Err(_) => {
+                // No provider mutation was dispatched; an invalid edit must not
+                // prevent a later delete/reaction on the still-current card.
+                if let Some((store, held)) = lark_lock {
+                    let _ = store.release(held).await;
+                }
                 return (
                     IntentReceipt {
                         message_ref: None,
@@ -196,7 +210,7 @@ impl Sender {
                         },
                     },
                     effects,
-                )
+                );
             }
         };
         let Some(destination) = prepared.card.destination.clone() else {
@@ -209,6 +223,17 @@ impl Sender {
             Ok(permit) => permit,
             Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
         };
+        if reference.lark_effect.is_some()
+            && store
+                .refresh_lark_message(channel, reference)
+                .await
+                .is_err()
+        {
+            return (
+                refused(rendering, unknown("lark_mutation_unavailable")),
+                effects,
+            );
+        }
         let delivery = if lark {
             self.relay
                 .edit_lark_card(key, &destination, &prepared.markup)
@@ -225,8 +250,40 @@ impl Sender {
         };
         if matches!(result.delivery, DeliveryOutcome::Confirmed { .. }) {
             match store.bind(&mut prepared, destination).await {
-                Ok(reference) => result.message_ref = Some(reference),
+                Ok(updated) => {
+                    result.message_ref = Some(if let Some(authority) = &reference.lark_effect {
+                        updated
+                            .open(&self.keys)
+                            .ok()
+                            .and_then(|mut opened| {
+                                opened.payload.lark_effect = Some(authority.clone());
+                                MessageRef::seal(&opened.payload, &self.keys).ok()
+                            })
+                            .unwrap_or(updated)
+                    } else {
+                        updated
+                    });
+                }
                 Err(_) => result.delivery = unknown("interaction_receipt_unconfirmed"),
+            }
+        }
+        if let Some(updated) = result
+            .message_ref
+            .as_ref()
+            .filter(|_| reference.lark_effect.is_some())
+        {
+            if store
+                .retain_lark_reference(&mut prepared, updated)
+                .await
+                .is_err()
+            {
+                result.message_ref = None;
+                result.delivery = unknown("interaction_receipt_unconfirmed");
+            }
+        }
+        if !matches!(result.delivery, DeliveryOutcome::Unknown { .. }) {
+            if let Some((store, held)) = lark_lock {
+                let _ = store.release(held).await;
             }
         }
         (result, effects)
@@ -287,6 +344,10 @@ impl Sender {
         if !ctx.gate.commit() {
             return refused(rendering, expired());
         }
+        let lark_lock = match self.lark_edit_lock(ctx.channel, reference).await {
+            Ok(lock) => lock,
+            Err(()) => return refused(rendering, unknown("lark_mutation_unavailable")),
+        };
         let delivery = self
             .relay
             .edit_text(
@@ -300,6 +361,11 @@ impl Sender {
             slot.cooldown(retry_after);
         }
         ctx.gate.progress();
+        if !matches!(delivery, DeliveryOutcome::Unknown { .. }) {
+            if let Some((store, held)) = lark_lock {
+                let _ = store.release(held).await;
+            }
+        }
         let message_ref = matches!(delivery, DeliveryOutcome::Confirmed { .. })
             .then(|| MessageRef::seal(reference, &self.keys).ok())
             .flatten();

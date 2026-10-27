@@ -892,6 +892,15 @@
             "user_service_id": "connection-fixture",
             "catalog_service_id": "catalog-fixture",
             "app_id": "cli_source"
+          },
+          "lark_message_effects": {
+            "connection": {
+              "user_service_id": "connection-fixture",
+              "catalog_service_id": "catalog-fixture",
+              "app_id": "cli_source"
+            },
+            "delete": true,
+            "reaction": true
           }
         }
       ],
@@ -1134,6 +1143,15 @@
               "user_service_id": "connection-fixture",
               "catalog_service_id": "catalog-fixture",
               "app_id": "cli_source"
+            },
+            "lark_message_effects": {
+              "connection": {
+                "user_service_id": "connection-fixture",
+                "catalog_service_id": "catalog-fixture",
+                "app_id": "cli_source"
+              },
+              "delete": true,
+              "reaction": true
             }
           }
         ],
@@ -1429,6 +1447,15 @@
               "user_service_id": "connection-fixture",
               "catalog_service_id": "catalog-fixture",
               "app_id": "cli_source"
+            },
+            "lark_message_effects": {
+              "connection": {
+                "user_service_id": "connection-fixture",
+                "catalog_service_id": "catalog-fixture",
+                "app_id": "cli_source"
+              },
+              "delete": true,
+              "reaction": true
             }
           }
         ],
@@ -1725,6 +1752,15 @@
                   "user_service_id": "connection-fixture",
                   "catalog_service_id": "catalog-fixture",
                   "app_id": "cli_source"
+                },
+                "lark_message_effects": {
+                  "connection": {
+                    "user_service_id": "connection-fixture",
+                    "catalog_service_id": "catalog-fixture",
+                    "app_id": "cli_source"
+                  },
+                  "delete": true,
+                  "reaction": true
                 }
               }
             ],
@@ -2020,6 +2056,15 @@
                   "user_service_id": "connection-fixture",
                   "catalog_service_id": "catalog-fixture",
                   "app_id": "cli_source"
+                },
+                "lark_message_effects": {
+                  "connection": {
+                    "user_service_id": "connection-fixture",
+                    "catalog_service_id": "catalog-fixture",
+                    "app_id": "cli_source"
+                  },
+                  "delete": true,
+                  "reaction": true
                 }
               }
             ],
@@ -2317,6 +2362,15 @@
               "user_service_id": "connection-fixture",
               "catalog_service_id": "catalog-fixture",
               "app_id": "cli_source"
+            },
+            "lark_message_effects": {
+              "connection": {
+                "user_service_id": "connection-fixture",
+                "catalog_service_id": "catalog-fixture",
+                "app_id": "cli_source"
+              },
+              "delete": true,
+              "reaction": true
             }
           }
         ],
@@ -2615,6 +2669,15 @@
               "user_service_id": "connection-fixture",
               "catalog_service_id": "catalog-fixture",
               "app_id": "cli_source"
+            },
+            "lark_message_effects": {
+              "connection": {
+                "user_service_id": "connection-fixture",
+                "catalog_service_id": "catalog-fixture",
+                "app_id": "cli_source"
+              },
+              "delete": true,
+              "reaction": true
             }
           }
         ],
@@ -2911,6 +2974,15 @@
             "user_service_id": "connection-fixture",
             "catalog_service_id": "catalog-fixture",
             "app_id": "cli_source"
+          },
+          "lark_message_effects": {
+            "connection": {
+              "user_service_id": "connection-fixture",
+              "catalog_service_id": "catalog-fixture",
+              "app_id": "cli_source"
+            },
+            "delete": true,
+            "reaction": true
           }
         }
       ],
@@ -3990,6 +4062,15 @@
             "user_service_id": "connection-fixture",
             "catalog_service_id": "catalog-fixture",
             "app_id": "cli_source"
+          },
+          "lark_message_effects": {
+            "connection": {
+              "user_service_id": "connection-fixture",
+              "catalog_service_id": "catalog-fixture",
+              "app_id": "cli_source"
+            },
+            "delete": true,
+            "reaction": true
           }
         }
       ],
@@ -4315,6 +4396,15 @@
         "user_service_id": "connection-fixture",
         "catalog_service_id": "catalog-fixture",
         "app_id": "cli_source"
+      },
+      "lark_message_effects": {
+        "connection": {
+          "user_service_id": "connection-one",
+          "catalog_service_id": "catalog-one",
+          "app_id": "cli_source"
+        },
+        "delete": true,
+        "reaction": false
       }
     },
     {
@@ -4337,6 +4427,15 @@
         "user_service_id": "connection-fixture",
         "catalog_service_id": "catalog-fixture",
         "app_id": "cli_source"
+      },
+      "lark_message_effects": {
+        "connection": {
+          "user_service_id": "connection-fixture",
+          "catalog_service_id": "catalog-fixture",
+          "app_id": "cli_source"
+        },
+        "delete": true,
+        "reaction": true
       }
     },
     {
@@ -4359,6 +4458,15 @@
         "user_service_id": "connection-fixture",
         "catalog_service_id": "catalog-fixture",
         "app_id": "cli_source"
+      },
+      "lark_message_effects": {
+        "connection": {
+          "user_service_id": "connection-fixture",
+          "catalog_service_id": "catalog-fixture",
+          "app_id": "cli_source"
+        },
+        "delete": true,
+        "reaction": true
       }
     },
     {
@@ -4454,6 +4562,15 @@
         "user_service_id": "connection-fixture",
         "catalog_service_id": "catalog-fixture",
         "app_id": "cli_source"
+      },
+      "lark_message_effects": {
+        "connection": {
+          "user_service_id": "connection-one",
+          "catalog_service_id": "catalog-one",
+          "app_id": "cli_source"
+        },
+        "delete": true,
+        "reaction": false
       }
     },
     {
@@ -4475,6 +4592,15 @@
         "user_service_id": "connection-fixture",
         "catalog_service_id": "catalog-fixture",
         "app_id": "cli_source"
+      },
+      "lark_message_effects": {
+        "connection": {
+          "user_service_id": "connection-fixture",
+          "catalog_service_id": "catalog-fixture",
+          "app_id": "cli_source"
+        },
+        "delete": true,
+        "reaction": true
       }
     },
     {
@@ -4496,6 +4622,15 @@
         "user_service_id": "connection-fixture",
         "catalog_service_id": "catalog-fixture",
         "app_id": "cli_source"
+      },
+      "lark_message_effects": {
+        "connection": {
+          "user_service_id": "connection-fixture",
+          "catalog_service_id": "catalog-fixture",
+          "app_id": "cli_source"
+        },
+        "delete": true,
+        "reaction": true
       }
     },
     {
@@ -4665,7 +4800,8 @@
         "native_discord_capacity": 64,
         "lark_resource_writes_enabled": false,
         "native_discord_thread_history_enabled": false,
-        "native_telegram_message_events_enabled": false
+        "native_telegram_message_events_enabled": false,
+        "lark_message_effects_writes_enabled": false
       }
     },
     {
@@ -4702,7 +4838,8 @@
         "native_discord_capacity": 64,
         "lark_resource_writes_enabled": false,
         "native_discord_thread_history_enabled": false,
-        "native_telegram_message_events_enabled": false
+        "native_telegram_message_events_enabled": false,
+        "lark_message_effects_writes_enabled": false
       }
     },
     {
@@ -4748,7 +4885,8 @@
         "native_discord_capacity": 64,
         "lark_resource_writes_enabled": false,
         "native_discord_thread_history_enabled": false,
-        "native_telegram_message_events_enabled": false
+        "native_telegram_message_events_enabled": false,
+        "lark_message_effects_writes_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -6029,7 +6167,8 @@
       "native_discord_capacity": 64,
       "lark_resource_writes_enabled": false,
       "native_discord_thread_history_enabled": false,
-      "native_telegram_message_events_enabled": false
+      "native_telegram_message_events_enabled": false,
+      "lark_message_effects_writes_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6061,7 +6200,8 @@
       "lark_resource_writes_enabled": false,
       "native_discord_thread_history_enabled": false,
       "native_whatsapp_writes_enabled": false,
-      "native_whatsapp_auto_activation_enabled": false
+      "native_whatsapp_auto_activation_enabled": false,
+      "lark_message_effects_writes_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6093,7 +6233,8 @@
       "lark_resource_writes_enabled": false,
       "native_discord_thread_history_enabled": false,
       "native_whatsapp_writes_enabled": true,
-      "native_whatsapp_auto_activation_enabled": false
+      "native_whatsapp_auto_activation_enabled": false,
+      "lark_message_effects_writes_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6125,7 +6266,8 @@
       "lark_resource_writes_enabled": false,
       "native_discord_thread_history_enabled": false,
       "native_whatsapp_writes_enabled": true,
-      "native_whatsapp_auto_activation_enabled": true
+      "native_whatsapp_auto_activation_enabled": true,
+      "lark_message_effects_writes_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
@@ -6260,7 +6402,7 @@
       "is_big": false,
       "reaction": [
         {
-          "emoji": "👍",
+          "emoji": "\ud83d\udc4d",
           "type": "emoji"
         }
       ]
@@ -6272,7 +6414,7 @@
   ],
   "TelegramReaction": [
     {
-      "emoji": "👍",
+      "emoji": "\ud83d\udc4d",
       "type": "emoji"
     },
     {
@@ -6375,6 +6517,17 @@
     {
       "accepted": 2,
       "refused": 1
+    }
+  ],
+  "LarkMessageEffectsBinding": [
+    {
+      "connection": {
+        "user_service_id": "connection-one",
+        "catalog_service_id": "catalog-one",
+        "app_id": "cli_source"
+      },
+      "delete": true,
+      "reaction": false
     }
   ]
 }

@@ -3318,6 +3318,25 @@
         ],
         "type": "object"
       },
+      "LarkMessageEffectsBinding": {
+        "additionalProperties": false,
+        "description": "Separate owner opt-in for effects on exact confirmed CMA outbound messages.",
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/LarkResourceBinding"
+          },
+          "delete": {
+            "type": "boolean"
+          },
+          "reaction": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connection"
+        ],
+        "type": "object"
+      },
       "LarkResourceBinding": {
         "additionalProperties": false,
         "properties": {
@@ -3497,7 +3516,7 @@
         "additionalProperties": false,
         "properties": {
           "is_big": {
-            "description": "Telegram-only presentation hint; Discord refuses true.",
+            "description": "Telegram-only presentation hint; Discord and Lark/Feishu refuse true.",
             "type": "boolean"
           },
           "reaction": {
@@ -4435,6 +4454,12 @@
           "dynamic_sources_writes_enabled": {
             "type": "boolean"
           },
+          "lark_message_effects_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "lark_resource_writes_enabled": {
             "type": [
               "boolean",
@@ -5232,6 +5257,17 @@
               "key_id": {
                 "type": "string"
               },
+              "lark_message_effects": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LarkMessageEffectsBinding",
+                    "description": "Explicit write authority; independent of resource reads."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "lark_resources": {
                 "oneOf": [
                   {
@@ -5605,6 +5641,17 @@
               },
               "key_id": {
                 "type": "string"
+              },
+              "lark_message_effects": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LarkMessageEffectsBinding",
+                    "description": "Explicit write authority; independent of resource reads."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "lark_resources": {
                 "oneOf": [

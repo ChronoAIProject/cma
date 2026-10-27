@@ -107,6 +107,9 @@ pub enum SourceRequest {
         verify_raw_event: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<cmaeg_core::channel::LarkResourceBinding>,
+        /// Explicit write authority; independent of resource reads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_message_effects: Option<Box<cmaeg_core::channel::LarkMessageEffectsBinding>>,
         admission: AdmissionPolicy,
     },
     Custom {

@@ -186,6 +186,7 @@ impl App {
             whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            lark_effects: None,
             telegram_effects: None,
             native_media_enabled: false,
             native_discord_edits_enabled: false,
