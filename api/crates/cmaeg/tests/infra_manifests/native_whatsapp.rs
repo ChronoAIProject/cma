@@ -22,6 +22,13 @@ fn native_whatsapp_authoring_allows_owner_setup_while_new_media_stays_off() {
         configmap_value(CONFIGMAP, "CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED"),
         Some("false")
     );
+    for gate in [
+        "CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED",
+        "CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED",
+        "CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED",
+    ] {
+        assert_eq!(configmap_value(CONFIGMAP, gate), Some("false"), "{gate}");
+    }
 }
 
 #[test]
