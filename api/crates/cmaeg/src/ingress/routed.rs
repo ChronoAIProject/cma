@@ -33,6 +33,7 @@ pub struct RoutedIngress {
     schedule: ScheduleHandle,
     keys: Arc<MasterKeyRing>,
     records: BTreeSet<String>,
+    native_discovery: crate::discord::selection::Selection,
     non_human_providers: BTreeSet<String>,
     replay_providers: BTreeSet<String>,
     admission_enabled: bool,
@@ -54,6 +55,7 @@ impl RoutedIngress {
             schedule,
             keys,
             records,
+            native_discovery: Default::default(),
             non_human_providers,
             replay_providers,
             admission_enabled: true,
@@ -64,6 +66,28 @@ impl RoutedIngress {
 
     pub fn selected(&self, record: &RecordId) -> bool {
         self.records.contains(record.as_str())
+    }
+
+    pub fn with_native_discovery(
+        mut self,
+        selection: crate::discord::selection::Selection,
+    ) -> Self {
+        self.native_discovery = selection;
+        self
+    }
+
+    pub(crate) fn native_eligible(
+        &self,
+        definition: &cmaeg_core::channel::ChannelDefinition,
+    ) -> bool {
+        definition.routing.is_some()
+            && definition
+                .consumers()
+                .filter(|consumer| !consumer.pending)
+                .all(|consumer| {
+                    self.replay_providers
+                        .contains(consumer.provider.slug.as_str())
+                })
     }
 
     #[cfg(test)]
@@ -88,6 +112,7 @@ impl RoutedIngress {
         request: &LaunchRequest,
         source: VerifiedIngress,
         observer: &dyn ActivityObserver,
+        native_interaction: bool,
     ) -> Result<Option<LaunchOutcome>, Problem> {
         if source.oversized {
             return Err(admission_problem(AdmissionError::TooLarge));
@@ -113,19 +138,31 @@ impl RoutedIngress {
             )
         })?;
         // Restore committed selection before looking at mutable routing policy.
-        let committed = match self.plans.replay(request, &source.body).await {
+        let replay = if native_interaction {
+            self.plans
+                .replay_native_interaction(request, &source.body)
+                .await
+        } else {
+            self.plans.replay(request, &source.body).await
+        };
+        let committed = match replay {
             Ok(Some(plan)) => plan,
             Ok(None) => {
-                let decision = routing_plan::plan(
-                    request,
-                    &self.keys,
-                    (self.clock)(),
-                    RoutingOptions {
-                        enabled: true,
-                        attributes_signed: source.attributes_signed,
-                        non_human_providers: &self.non_human_providers,
-                    },
-                )
+                let decision = if native_interaction {
+                    super::native_interaction::plan(request, &self.keys, (self.clock)())
+                        .map(|plan| OrdinaryPlan::Routed(Box::new(plan)))
+                } else {
+                    routing_plan::plan(
+                        request,
+                        &self.keys,
+                        (self.clock)(),
+                        RoutingOptions {
+                            enabled: true,
+                            attributes_signed: source.attributes_signed,
+                            non_human_providers: &self.non_human_providers,
+                        },
+                    )
+                }
                 .map_err(|_| {
                     Problem::new(
                         ProblemCode::AdmissionRefused,
@@ -166,9 +203,18 @@ impl RoutedIngress {
                         "routed_delivery_unsupported",
                     )
                 })?;
-                let candidate =
+                let candidate = if native_interaction {
+                    Candidate::prepare_native_interaction(
+                        request,
+                        &plan,
+                        &source.body,
+                        &self.keys,
+                        (self.clock)(),
+                    )
+                } else {
                     Candidate::prepare(request, &plan, &source.body, &self.keys, (self.clock)())
-                        .map_err(admission_problem)?;
+                }
+                .map_err(admission_problem)?;
                 let committed = self
                     .plans
                     .admit(&candidate)
@@ -241,6 +287,7 @@ impl IngressState {
         _hold: OwnedSemaphorePermit,
     ) -> LaunchOutcome {
         let request = verified.request;
+        let native_interaction = super::native_interaction::shape(&request.activity);
         if !matches!(
             request.activity.source,
             cmaeg_core::activity::SourceKind::Discord { .. }
@@ -252,7 +299,12 @@ impl IngressState {
             ));
         }
         let Some(routing) = self.routed.as_ref().filter(|routing| {
-            routing.selected(&request.channel.definition.record_id) && ordinary(&request)
+            (routing.selected(&request.channel.definition.record_id)
+                || (routing.native_discovery.discovery_enabled()
+                    && routing
+                        .native_discovery
+                        .contains(request.channel.definition.record_id.as_str())))
+                && (ordinary(&request) || native_interaction)
         }) else {
             return LaunchOutcome::Refused(Problem::new(
                 ProblemCode::ProviderUnavailable,
@@ -267,7 +319,7 @@ impl IngressState {
             received_at: Some(verified.received_at),
         };
         match routing
-            .admit(&request, source, self.activity.as_ref())
+            .admit(&request, source, self.activity.as_ref(), native_interaction)
             .await
         {
             Ok(Some(outcome @ LaunchOutcome::Admitted { .. })) => outcome,
@@ -321,7 +373,7 @@ impl IngressState {
                 ));
             };
             match routing
-                .admit(&request, source, self.activity.as_ref())
+                .admit(&request, source, self.activity.as_ref(), false)
                 .await
             {
                 Ok(Some(outcome)) => return outcome,

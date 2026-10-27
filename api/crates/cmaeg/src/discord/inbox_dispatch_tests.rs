@@ -157,3 +157,67 @@ async fn native_admission_refusals_and_empty_selection_never_touch_a_provider() 
     assert_eq!(empty.page(None, f.now()).await.unwrap().acknowledged, 0);
     assert_eq!(f.direct_calls(), 0);
 }
+
+#[tokio::test]
+async fn discovered_native_selection_admits_only_verified_inbox_and_receipt_precedes_execution() {
+    let mut f = Setup::discovered().await;
+    let activity = f.observe();
+    let id = f.message(|_| {}).await;
+    let current = super::runtime_source::resolve(
+        &f.fixture.store.channels,
+        &f.fixture.store.keys,
+        &f.state.resolver,
+        &f.fixture.record,
+    )
+    .await
+    .unwrap();
+    let super::InboxLaunch::Launch(verified) = super::InboxReader::new(
+        f.fixture.store.channels.clone(),
+        f.fixture.store.keys.clone(),
+    )
+    .load(&id, current.channel, f.now())
+    .await
+    .unwrap() else {
+        panic!("expected admitted native message")
+    };
+    assert!(!f
+        .state
+        .routed
+        .as_ref()
+        .unwrap()
+        .selected(&f.channel.record_id));
+    assert!(f
+        .state
+        .capture_routed(&verified.request, b"arbitrary HTTP bytes", true)
+        .is_none());
+    assert_eq!(
+        activity
+            .latest(&f.channel.owner.subject, &f.fixture.record)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    f.selection.remove(&f.fixture.record);
+    assert_eq!(f.sweep(f.now()).await.acknowledged, 0);
+    assert!(f
+        .plans
+        .recover_all_page(None, 32)
+        .await
+        .unwrap()
+        .plans
+        .is_empty());
+    assert!(f.selection.insert(f.fixture.record.clone()));
+    assert_eq!(f.sweep(f.now()).await.acknowledged, 1);
+    assert_eq!(
+        f.plans
+            .recover_all_page(None, 32)
+            .await
+            .unwrap()
+            .plans
+            .len(),
+        1
+    );
+    assert_eq!(f.direct_calls(), 0);
+}

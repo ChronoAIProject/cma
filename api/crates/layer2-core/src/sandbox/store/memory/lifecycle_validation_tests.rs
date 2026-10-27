@@ -868,3 +868,6 @@ fn work_completed() -> SandboxEventKind {
         step: SandboxWorkStep::RunLifecycleOperation,
     }
 }
+
+#[path = "reopen_output_tests.rs"]
+mod reopen_output_tests;

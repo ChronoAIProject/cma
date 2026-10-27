@@ -15,6 +15,7 @@ fn payload(keys: &MasterKeyRing) -> MessageRefPayload {
     .seal_id(keys)
     .unwrap();
     MessageRefPayload {
+        discord_message: None,
         telegram_effect: None,
         channel_id,
         event_id: "event-1".parse().unwrap(),
@@ -79,4 +80,96 @@ fn message_refs_enforce_tamper_rotation_payload_and_length_bounds() {
     assert!(MessageRef::new("plain".repeat(103)).is_err());
     assert!(MessageRef::new(format!("cmaeg1.mr.1.{}", "x".repeat(4096))).is_err());
     assert_eq!(format!("{reference:?}"), "[redacted message ref]");
+}
+
+#[test]
+fn discord_edit_destination_is_additive_and_cannot_mix_native_or_relay_authority() {
+    use cmaeg_core::{
+        channel::Platform,
+        seal::{DiscordMessageDestination, RelayMessageDestination},
+    };
+    let keys = keys(1);
+    let mut reference = payload(&keys);
+    let old = serde_json::to_value(&reference).unwrap();
+    assert!(old.get("discord_message").is_none());
+    assert_eq!(
+        serde_json::from_value::<MessageRefPayload>(old).unwrap(),
+        reference
+    );
+    reference.platform_message_id = "800".into();
+    reference.route_id = "discord:77:99".into();
+    reference.discord_message = Some(Box::new(DiscordMessageDestination {
+        effects: None,
+        bot_id: "77".into(),
+        channel_id: "99".into(),
+        authority_sha256: [3; 32],
+    }));
+    assert_eq!(
+        MessageRef::seal(&reference, &keys)
+            .unwrap()
+            .open(&keys)
+            .unwrap()
+            .payload,
+        reference
+    );
+    for variant in 0..6 {
+        let mut invalid = reference.clone();
+        match variant {
+            0 => invalid.route_id = "discord:77:100".into(),
+            1 => invalid.platform_message_id = "0800".into(),
+            2 => invalid.discord_message.as_mut().unwrap().bot_id = "../me".into(),
+            3 => invalid.discord_message.as_mut().unwrap().channel_id = "0".into(),
+            4 => invalid.interaction_record_id = Some("card".into()),
+            _ => {
+                invalid.relay_message = Some(RelayMessageDestination {
+                    platform: Platform::Discord,
+                    outbound_message_id: "outbound".into(),
+                })
+            }
+        }
+        assert!(MessageRef::seal(&invalid, &keys)
+            .unwrap()
+            .open(&keys)
+            .is_err());
+    }
+}
+
+#[test]
+fn discord_effect_windows_are_additive_bounded_and_preserved_by_sealing() {
+    use cmaeg_core::seal::{DiscordEffectWindow, DiscordMessageDestination};
+    let keys = keys(1);
+    let mut message = payload(&keys);
+    message.platform_message_id = "800".into();
+    message.route_id = "discord:77:99".into();
+    message.discord_message = Some(Box::new(DiscordMessageDestination {
+        bot_id: "77".into(),
+        channel_id: "99".into(),
+        authority_sha256: [4; 32],
+        effects: None,
+    }));
+    let legacy = serde_json::to_value(&message).unwrap();
+    assert!(legacy["discord_message"].get("effects").is_none());
+    assert_eq!(
+        serde_json::from_value::<MessageRefPayload>(legacy).unwrap(),
+        message
+    );
+    for (issued_at, expires_at, valid) in [
+        (1, 86401, true),
+        (1, 2, true),
+        (0, 20, false),
+        (-1, 20, false),
+        (10, 10, false),
+        (10, 9, false),
+        (1, 86402, false),
+    ] {
+        message.discord_message.as_mut().unwrap().effects = Some(DiscordEffectWindow {
+            issued_at,
+            expires_at,
+        });
+        let reopened = MessageRef::seal(&message, &keys).unwrap().open(&keys);
+        assert_eq!(reopened.is_ok(), valid, "{issued_at}..{expires_at}");
+        if valid {
+            assert_eq!(reopened.unwrap().payload, message);
+        }
+    }
 }

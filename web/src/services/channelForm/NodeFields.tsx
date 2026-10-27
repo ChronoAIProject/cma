@@ -1,4 +1,5 @@
 import type { Denied } from '../client';
+import { nativeDiscordUnavailable, useRelayCapabilities } from '../RelayCapabilities';
 import { ManagedConnectionFields } from './ManagedConnectionFields';
 import { Button } from '../../ui/Button';
 import { ChannelPolicyFields } from './ChannelPolicyFields';
@@ -26,6 +27,7 @@ export function NodeFields({
   sourceCount: number;
   denied: Denied;
 }) {
+  const discovery = useRelayCapabilities();
   const sources = records(draft.sources);
   if (!create && section.kind === 'producer' && section.index === sources.length)
     sources.push(defaultSource('nyxid_relay'));
@@ -50,6 +52,11 @@ export function NodeFields({
                     options={[
                       { value: 'nyxid_relay', label: 'NyxID messaging connection' },
                       { value: 'telegram', label: 'Direct Telegram bot' },
+                      {
+                        value: 'discord',
+                        label: 'Direct Discord bot',
+                        unavailable: nativeDiscordUnavailable(discovery),
+                      },
                       { value: 'custom', label: 'Custom event' },
                     ]}
                     onChange={(type) =>
@@ -74,11 +81,13 @@ export function NodeFields({
                     value={credentials}
                     onChange={onCredentials}
                     keys={
-                      source.type === 'telegram'
-                        ? ['telegram_bot_token', 'telegram_webhook_secret']
-                        : source.type === 'nyxid_relay'
-                          ? ['channel_key']
-                          : []
+                      source.type === 'discord'
+                        ? ['discord_bot_token']
+                        : source.type === 'telegram'
+                          ? ['telegram_bot_token', 'telegram_webhook_secret']
+                          : source.type === 'nyxid_relay'
+                            ? ['channel_key']
+                            : []
                     }
                     hmac={source.type === 'custom'}
                   />
@@ -112,7 +121,15 @@ export function NodeFields({
             onChange={onCredentials}
             keys={
               create && draft.connection_ref === undefined
-                ? ['agent_key', 'channel_key', 'telegram_bot_token', 'telegram_webhook_secret']
+                ? [
+                    'agent_key',
+                    'channel_key',
+                    'telegram_bot_token',
+                    'telegram_webhook_secret',
+                    ...(sources.some((source) => source.type === 'discord')
+                      ? ['discord_bot_token']
+                      : []),
+                  ]
                 : ['agent_key']
             }
             create={create}
@@ -137,6 +154,7 @@ export function nodeCredentials(values: Fields, section: EditorSection): Fields 
         ? ['replace_hmac', 'hmac_secrets']
         : [
             'channel_key',
+            'discord_bot_token',
             'telegram_bot_token',
             'telegram_webhook_secret',
             'replace_hmac',

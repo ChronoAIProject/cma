@@ -70,6 +70,7 @@ pub(super) async fn commit(
     previous: Option<AgentMessageCheckpoint>,
     next: AgentMessageCheckpoint,
     mutation: Option<AgentConversationMutation>,
+    guard: Option<layer2_core::sandbox::store::AgentReopenGuard>,
 ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
     next.validate()?;
     let reanchor = mutation.is_none()
@@ -107,6 +108,7 @@ pub(super) async fn commit(
             previous.as_ref(),
             &next,
             mutation.as_ref(),
+            guard.as_ref(),
             &mut session,
         )
         .await
@@ -171,6 +173,7 @@ async fn apply(
     previous: Option<&AgentMessageCheckpoint>,
     next: &AgentMessageCheckpoint,
     mutation: Option<&AgentConversationMutation>,
+    guard: Option<&layer2_core::sandbox::store::AgentReopenGuard>,
     session: &mut mongodb::ClientSession,
 ) -> Result<AgentUpdateOutcome, ApplyError> {
     let row = store
@@ -182,6 +185,20 @@ async fn apply(
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let actual_agent = read_agent(&row).map_err(ApplyError::Domain)?;
     let actual = read(&row).map_err(ApplyError::Domain)?;
+    if let Some(guard) = guard {
+        if actual_agent != *current {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        super::reopen::validate_and_fence(store, &actual_agent, guard, session).await?;
+    } else if actual.as_ref().is_some_and(|checkpoint| {
+        Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
+    }) {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    let project = |agent: &Agent| match guard {
+        Some(guard) => guard.project(agent).map_err(ApplyError::Domain),
+        None => Ok(agent.clone()),
+    };
     if mutation.is_none()
         && previous
             .and_then(|value| value.reanchored(current))
@@ -206,7 +223,7 @@ async fn apply(
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     let updated = if let Some(mutation) = mutation {
-        if mutation.agent.id != current.id || !next.matches(&mutation.agent) {
+        if mutation.agent.id != current.id || !next.matches(&project(&mutation.agent)?) {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
         let receipt = apply_mutation(store, mutation, session).await?;
@@ -215,7 +232,10 @@ async fn apply(
         }
         &mutation.agent
     } else {
-        if !next.matches(current) || !next.outcome.appended.is_empty() || next.outcome.turn_closed {
+        if !next.matches(&project(current)?)
+            || !next.outcome.appended.is_empty()
+            || next.outcome.turn_closed
+        {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
         current

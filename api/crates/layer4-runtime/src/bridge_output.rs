@@ -1,5 +1,8 @@
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
@@ -36,8 +39,10 @@ pub(crate) struct OutputSnapshot {
 }
 
 /// Native output remains owned here until the API confirms durable recording.
-/// Once the bound is exceeded, this stream can never claim lossless delivery.
+/// A full journal backpressures native stdout until a durable ACK frees space.
+/// Actual gaps permanently invalidate the stream.
 pub(crate) struct OutputRetention {
+    legacy: AtomicBool,
     stream_id: Uuid,
     journal: Mutex<Journal>,
     changed: watch::Sender<()>,
@@ -46,6 +51,7 @@ pub(crate) struct OutputRetention {
 impl Default for OutputRetention {
     fn default() -> Self {
         Self {
+            legacy: AtomicBool::new(false),
             stream_id: Uuid::new_v4(),
             journal: Mutex::new(Journal::default()),
             changed: watch::channel(()).0,
@@ -62,8 +68,33 @@ impl OutputRetention {
         self.changed.subscribe()
     }
 
+    pub(crate) fn select_legacy(&self) {
+        self.legacy.store(true, Ordering::SeqCst);
+        self.changed.send_replace(());
+    }
+
     pub(crate) async fn retain(&self, bytes: &[u8]) {
-        let mut journal = self.journal.lock().await;
+        let mut changed = self.subscribe();
+        let mut journal = loop {
+            if self.legacy.load(Ordering::SeqCst) {
+                return;
+            }
+            let journal = self.journal.lock().await;
+            let size = bytes
+                .len()
+                .saturating_add(std::mem::size_of::<RetainedFrame>());
+            if journal.lost > 0
+                || size > BUFFER_BYTES
+                || (journal.held.len() < MAX_RETAINED_FRAMES
+                    && size <= BUFFER_BYTES.saturating_sub(journal.bytes))
+            {
+                break journal;
+            }
+            // Release the lock before waiting so the current attachment can ACK.
+            // Subscribe before checking capacity to avoid a lost wakeup.
+            drop(journal);
+            let _ = changed.changed().await;
+        };
         let Some(cursor) = journal.last_cursor.checked_add(1) else {
             journal.lost = journal.lost.saturating_add(1);
             self.changed.send_replace(());

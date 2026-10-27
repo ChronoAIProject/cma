@@ -63,6 +63,8 @@ pub fn management_router(state: ManagementState) -> Router {
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChannelResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_activation: Option<crate::discord::activation::NativeDiscordActivation>,
     /// Explicit opt-in support; absent/empty means unsupported.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub thread_contract_versions: Vec<u16>,
@@ -403,6 +405,8 @@ pub struct ListQuery {
 /// An owner-visible record whose original channel ID may predate recoverable creation.
 #[derive(Serialize, ToSchema)]
 pub struct ChannelListItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_activation: Option<crate::discord::activation::NativeDiscordActivation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<String>,
     pub record_id: String,

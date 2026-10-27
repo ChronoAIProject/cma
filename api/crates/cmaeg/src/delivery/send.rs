@@ -350,6 +350,7 @@ impl Sender {
                     first_platform_id = Some(id.clone());
                     result.message_ref = MessageRef::seal(
                         &MessageRefPayload {
+                            discord_message: None,
                             telegram_effect: None,
                             channel_id: event.channel_id.clone(),
                             event_id: event.event_id.clone(),

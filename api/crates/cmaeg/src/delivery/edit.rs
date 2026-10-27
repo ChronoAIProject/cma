@@ -54,6 +54,9 @@ impl Sender {
     ) -> (IntentReceipt, SendEffects) {
         // A replacement answers no event, so it never marks a first send.
         let effects = SendEffects::default();
+        if reference.discord_message.is_some() {
+            return (self.discord_update(ctx, reference, message).await, effects);
+        }
         if !message.native_attachments.is_empty()
             || message.thread_reply
             || message.whatsapp_template.is_some()
