@@ -3148,10 +3148,14 @@ complete-reply gates, and neither of those gates enables text edit issuance.
 ## Approved WhatsApp template replies
 
 `OutboundMessage.whatsapp_template` is an optional typed object. It is accepted
-only for a NyxID WhatsApp relay event when
-`CMAEG_WHATSAPP_TEMPLATES_ENABLED=true`; `readEventContext` then includes
-`capabilities.whatsapp_templates: true`. It is absent for other destinations and
-while disabled. The template must already be approved in the destination
+for a NyxID WhatsApp relay event when `CMAEG_WHATSAPP_TEMPLATES_ENABLED=true`,
+or for a verified private native WhatsApp event under the independent
+`CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED=true` gate. Both flags default to false
+in code; the source deployment manifest keeps the native gate false.
+`readEventContext` then includes `capabilities.whatsapp_templates: true`; native
+discovery also requires exact current source custody and a matching sealed
+recipient. The capability is absent for other destinations and while the
+applicable gate is disabled. The template must already be approved in the destination
 WhatsApp Business account. Meta validates approval, the language variant and
 placeholder compatibility; the gateway does not create or approve templates.
 
@@ -3189,13 +3193,33 @@ and template edits return an unsupported receipt without dispatch. Invalid
 shapes return `invalid_request` before admission. Template message references
 never advertise edit authority.
 
-Delivery uses the existing consumer authorization, pacing, route admission,
-commit gate and single-use reply credential path. The gateway serializes the
-exact bounded template into NyxID `reply.metadata.template` before entering the
-gate. One logical reply makes one relay request. A missing platform receipt,
-transport failure or 429 is `unknown` and is never automatically retried: the
-platform may have accepted the message. Ordinary messages that omit the field
-retain their existing serialized form and behavior.
+Both paths use existing consumer authorization, pacing, route admission and
+commit gates. For NyxID, the gateway serializes the exact bounded template into
+`reply.metadata.template` before the gate and uses the single-use relay reply
+credential. One logical reply makes one relay request. A missing platform
+receipt, transport failure or relay 429 is `unknown` and is never automatically
+retried: the platform may have accepted the message.
+
+For native replies, one `POST /v25.0/{phone_number_id}/messages` carries the typed
+`template`, sealed private recipient and original `context.message_id`. Source,
+credential revision and selected consumer authority are rechecked before the
+effect. Confirmation requires the WhatsApp product marker, exactly one matching
+recipient and one valid message ID, followed by an encrypted durable receipt
+bound to the original event, consumer, provider, partition and conversation.
+Transport/server uncertainty, malformed success or lost receipt persistence is
+`unknown`; the durable tool journal replays the result without resending.
+Native definite rejection and rate limiting retain the native adapter's existing
+`rejected` and `rate_limited` outcomes; the adapter does not retry either send.
+Native templates issue no message-edit reference.
+
+Template media remains a Meta ID or public HTTPS reference, checked by the same
+URL policy as relay templates. Meta resolves media and validates its ownership,
+format and approval. This does not use `native_attachments` upload/byte profiles
+or require their independent gate. Text-only templates keep the 8-second native
+transport budget; media templates allow up to 60 seconds for Meta processing.
+Existing routed claim and send windows still bound execution and are not extended.
+The native template flag grants neither owner-initiated delivery nor interactive
+callbacks. Ordinary messages that omit the field retain their existing behavior.
 
 ## Relay authoring discovery and setup
 

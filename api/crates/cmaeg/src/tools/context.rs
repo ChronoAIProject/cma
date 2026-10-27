@@ -310,13 +310,20 @@ pub(super) fn project(
                     None,
                 )
             }),
-        whatsapp_templates: (state.whatsapp_templates_enabled
+        whatsapp_templates: ((state.whatsapp_templates_enabled
             && matches!(
                 event.reply,
                 cmaeg_core::seal::ReplyAddress::NyxidRelay {
                     platform: Platform::Whatsapp,
                     ..
                 }
+            ))
+            || native_whatsapp_templates(
+                state.native_whatsapp_templates_enabled,
+                channel,
+                event,
+                &activity,
+                activity_verified,
             ))
         .then_some(true),
         native_media: if matches!(activity.source, SourceKind::Whatsapp { .. }) {
@@ -452,3 +459,31 @@ pub(super) fn unavailable() -> Problem {
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod tests;
+
+/// Discovery requires the same sealed native destination and current custody as sending.
+fn native_whatsapp_templates(
+    enabled: bool,
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+    activity: &Activity,
+    verified: bool,
+) -> bool {
+    enabled
+        && verified
+        && activity.conversation.kind == cmaeg_core::activity::ConversationKind::Private
+        && activity.conversation.thread_id.is_none()
+        && crate::whatsapp::credentials(&channel.definition, &event.reply)
+            .is_some_and(|credentials| credentials.validate().is_ok())
+        && matches!(
+            (&event.reply, &activity.source),
+            (
+                cmaeg_core::seal::ReplyAddress::Whatsapp {
+                    app_id, waba_id, phone_number_id, recipient_id, ..
+                },
+                SourceKind::Whatsapp {
+                    app_id: app, waba_id: account, phone_number_id: phone
+                }
+            ) if app_id == app && waba_id == account && phone_number_id == phone
+                && recipient_id == &activity.conversation.id
+        )
+}
