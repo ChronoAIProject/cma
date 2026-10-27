@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 aes = "0.8"
 cbc = "0.1"
+cfb = "=0.7.3"
 cma-service-auth = { path = "../cma-service-auth" }
 base64 = { workspace = true }
 bytes = { workspace = true }
@@ -45,6 +46,8 @@ utoipa = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+quick-xml = "=0.41.0"
+zip = { workspace = true }
 
 # A stand-in for ffmpeg and ffprobe that the media sandbox tests execute. The
 # image builds `--bin cmaeg` only, so it never ships.

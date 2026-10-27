@@ -39,8 +39,9 @@ pub struct ToolsState {
     pub consumer_interactions_enabled: bool,
     /// Advertise native relay media only after the deployed NyxID contract is verified.
     pub native_media_enabled: bool,
-    /// Bounded native WhatsApp image/PDF/audio/sticker uploads, independently default-off.
+    /// Bounded native Lark image/document/audio/video uploads, independently default-off.
     pub native_lark_outbound_media_enabled: bool,
+    /// Bounded native WhatsApp image/document/audio/sticker/video uploads, independently gated.
     pub native_whatsapp_outbound_media_enabled: bool,
     /// Approved native template replies, independently default-off from relay templates/uploads.
     pub native_whatsapp_templates_enabled: bool,

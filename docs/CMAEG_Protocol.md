@@ -2998,7 +2998,11 @@ for exact limits, remaining format gaps and official regional API evidence.
 
 Native WhatsApp private replies advertise a separate bounded subset only when
 `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio", "sticker", "video"]`,
-`mime_types: ["image/jpeg", "image/png", "application/pdf", "audio/aac", "audio/amr",
+`mime_types: ["image/jpeg", "image/png", "application/pdf", "text/plain",
+"application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+"application/vnd.openxmlformats-officedocument.presentationml.presentation", "audio/aac", "audio/amr",
 "audio/mpeg", "audio/mp4", "audio/ogg", "image/webp", "video/mp4", "video/3gpp"]`,
 `max_total_bytes: 8388608`, `max_image_bytes: 5000000`, and `max_caption_chars: 1024`.
 These four optional capability fields refine the existing limits; they are absent
@@ -3009,6 +3013,12 @@ AMR narrowband, MPEG Layer III, non-fragmented self-contained single-track AAC-L
 and one complete mono Opus Ogg stream. Supplied audio MIME/filename extensions
 must match the validated container. Audio captions are refused before any write;
 text stays separate. Audio sends contain the uploaded ID only, with no voice flag.
+Documents accept full-encoding-checked TXT, header/trailer-checked PDF, bounded
+CFB Word/BIFF8 Excel/PowerPoint, and CRC-checked OOXML DOCX/XLSX/PPTX packages.
+MIME and extension must match the byte-validated format. Office package parsing
+never extracts files or follows relationships; bounded expansion and XML checks
+are detailed in [native WhatsApp outbound media](CMAEG_Native_WhatsApp_Outbound_Media.md).
+The existing 64 KiB inline/8 MiB aggregate limits apply to documents too.
 Structural checks do not prove full payload decodability or Meta acceptance.
 The additive `sticker` kind admits bounded static/animated WebP with no caption.
 Its optional `native_media.sticker` object reports required `width`/`height` 512,
@@ -3177,7 +3187,7 @@ automatic resend. See [native groups](CMAEG_Native_WhatsApp_Groups.md) for curre
 Meta eligibility, bounded membership proof and connected v25 acceptance limits.
 
 Group media requires the existing independent media gates. Discovery omits sticker
-and `image/webp`; the existing image/PDF/audio/video profiles and limits apply.
+and `image/webp`; the existing image/document/audio/video profiles and limits apply.
 Eligible group template discovery includes `whatsapp_templates: true` and optional
 `whatsapp_template_components: ["header", "body"]`; all button components refuse
 before provider calls. Unsupported group controls/reactions/edit/delete remain
