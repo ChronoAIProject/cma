@@ -229,7 +229,10 @@ async fn lark_source_owner_key_route_and_consumer_custody_is_current() {
             "key" => {
                 f.definition.secrets.channel_key = Some(cmaeg_core::channel::Secret::new("rotated"))
             }
-            "provider" => f.definition.provider.binding_id = "changed-binding".parse().unwrap(),
+            "provider" => {
+                let cmaeg_core::channel::ChannelDefinition { provider, .. } = &mut f.definition;
+                provider.binding_id = "changed-binding".parse().unwrap();
+            }
             "source" => {
                 if let Source::NyxidRelay {
                     lark_message_effects,
