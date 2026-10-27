@@ -106,40 +106,42 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
     if (path.endsWith('/v1/channel-capabilities'))
       return route.fulfill({
         json: {
-          agent_tools: [
+          agent_tools: (
             [
-              'replyToEvent',
-              'Send a reply to the event sender with the original destination and confirmed delivery receipt.',
-            ],
-            [
-              'updateMessage',
-              'Update a confirmed message when its transport supports edits and the saved source still authorizes the action.',
-            ],
-            [
-              'sendTyping',
-              'Show a typing indicator when the original platform and conversation support it.',
-            ],
-            [
-              'readEventContext',
-              'Read the incoming event, original sender and conversation, and the capabilities of its source.',
-            ],
-            [
-              'readEventAttachment',
-              'Read an authorized image, document, audio transcript or video attachment from the original event.',
-            ],
-            [
-              'readMessageCapabilities',
-              'Check the deletion and reaction capabilities of a confirmed message before attempting an action.',
-            ],
-            [
-              'deleteMessage',
-              'Delete an authorized confirmed bot message within the platform permission and age limits.',
-            ],
-            [
-              'setMessageReaction',
-              'Set or clear the bot’s own reaction on an authorized confirmed message without changing other reactions.',
-            ],
-          ].map(([name, description]) => ({
+              [
+                'replyToEvent',
+                'Send a reply to the event sender with the original destination and confirmed delivery receipt.',
+              ],
+              [
+                'updateMessage',
+                'Update a confirmed message when its transport supports edits and the saved source still authorizes the action.',
+              ],
+              [
+                'sendTyping',
+                'Show a typing indicator when the original platform and conversation support it.',
+              ],
+              [
+                'readEventContext',
+                'Read the incoming event, original sender and conversation, and the capabilities of its source.',
+              ],
+              [
+                'readEventAttachment',
+                'Read an authorized image, document, audio transcript or video attachment from the original event.',
+              ],
+              [
+                'readMessageCapabilities',
+                'Check the deletion and reaction capabilities of a confirmed message before attempting an action.',
+              ],
+              [
+                'deleteMessage',
+                'Delete an authorized confirmed bot message within the platform permission and age limits.',
+              ],
+              [
+                'setMessageReaction',
+                'Set or clear the bot’s own reaction on an authorized confirmed message without changing other reactions.',
+              ],
+            ] as const
+          ).map(([name, description]) => ({
             name,
             description,
             read_only: name.startsWith('read'),
