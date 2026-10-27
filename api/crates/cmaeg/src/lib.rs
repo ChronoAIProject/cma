@@ -144,6 +144,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let relay_text_edits = config::relay_text_edits_from_env()?;
     let native_discord_edits = config::native_discord_edits_from_env()?;
     let native_discord_effects = config::native_discord_effects_from_env()?;
+    let native_discord_media_effects = config::native_discord_media_effects_from_env()?;
     let native_discord_threads = config::native_discord_thread_metadata_from_env()?;
     let lark_cards = config::lark_cards_from_env()?;
     let lark_forms = config::lark_forms_from_env()?;
@@ -164,6 +165,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         relay_text_edits,
         native_discord_edits,
         native_discord_effects,
+        native_discord_media_effects,
         native_discord_threads,
         lark_cards,
         lark_forms,

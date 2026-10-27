@@ -7,6 +7,8 @@ pub const CMAEG_RELAY_TEXT_EDITS_ENABLED: &str = "CMAEG_RELAY_TEXT_EDITS_ENABLED
 pub const CMAEG_NATIVE_DISCORD_EDITS_ENABLED: &str = "CMAEG_NATIVE_DISCORD_EDITS_ENABLED";
 pub const CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED: &str =
     "CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED";
+pub const CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED: &str =
+    "CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED";
 pub const CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED: &str =
     "CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED";
 pub const CMAEG_CONSUMER_INTERACTIONS_ENABLED: &str = "CMAEG_CONSUMER_INTERACTIONS_ENABLED";
@@ -69,6 +71,9 @@ pub(crate) fn native_discord_edits_from_env() -> Result<bool, ConfigError> {
 }
 pub(crate) fn native_discord_effects_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED)
+}
+pub(crate) fn native_discord_media_effects_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag(CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED)
 }
 pub(crate) fn native_discord_thread_metadata_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED)
