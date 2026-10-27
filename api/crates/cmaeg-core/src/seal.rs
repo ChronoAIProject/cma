@@ -20,6 +20,7 @@ pub mod message_ref;
 pub mod pointer;
 pub mod reply_target;
 pub mod telegram_effect;
+pub mod whatsapp_reaction;
 
 pub use console_login::{open_console_login, seal_console_login, ConsoleLogin, CONSOLE_LOGIN_TTL};
 pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};

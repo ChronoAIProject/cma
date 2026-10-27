@@ -38,6 +38,8 @@ pub(crate) mod owner;
 mod prepare;
 mod replacement;
 pub(crate) mod whatsapp;
+pub(crate) mod whatsapp_authority;
+mod whatsapp_binding;
 
 pub use card::*;
 pub use keyboard::has_controls;
@@ -163,6 +165,7 @@ impl InteractionStore {
         MessageRef::seal(
             &MessageRefPayload {
                 discord_message: None,
+                whatsapp_reaction: None,
                 lark_effect: None,
                 telegram_effect: None,
                 channel_id: card.channel_id.clone(),
@@ -214,3 +217,8 @@ fn markup(card: &Card) -> Result<serde_json::Value, Error> {
         keyboard(card)
     }
 }
+
+#[cfg(test)]
+pub(crate) mod whatsapp_native_fixture;
+#[cfg(test)]
+mod whatsapp_native_tests;

@@ -32,6 +32,17 @@ pub(super) fn channel_response(
         version,
         provider,
         endpoints: EndpointResponse {
+            native_lark_webhook_url: definition
+                .sources
+                .iter()
+                .any(|s| matches!(s, cmaeg_core::channel::Source::NativeLark(_)))
+                .then(|| {
+                    format!(
+                        "{}/v1/native-lark/{}",
+                        state.advertised_api_url(),
+                        channel_id
+                    )
+                }),
             whatsapp_webhook_url: definition
                 .sources
                 .iter()

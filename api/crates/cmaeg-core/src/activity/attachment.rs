@@ -59,7 +59,7 @@ pub struct Attachment {
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
-    /// A preview image; only a Telegram locator on a native Telegram activity.
+    /// A platform preview from the same native Telegram or Lark message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<AttachmentSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,6 +85,13 @@ pub enum AttachmentKind {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum AttachmentSource {
+    /// Exact resource of an authenticated native Lark/Feishu message.
+    NativeLark {
+        message_id: String,
+        resource_key: String,
+        resource_kind: crate::channel::LarkResourceKind,
+        source_revision: String,
+    },
     /// Signed native WhatsApp media; temporary download URLs are never retained.
     Whatsapp {
         message_id: String,
@@ -125,6 +132,7 @@ pub enum AttachmentSource {
 impl fmt::Debug for AttachmentSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NativeLark { .. } => formatter.write_str("NativeLark([REDACTED])"),
             Self::Whatsapp { .. } => formatter.write_str("Whatsapp([REDACTED])"),
             Self::LarkResource { .. } => formatter.write_str("LarkResource([REDACTED])"),
             Self::Discord { .. } => formatter.write_str("Discord([REDACTED])"),
@@ -289,11 +297,17 @@ impl Attachment {
                 (
                     AttachmentSource::Telegram { .. },
                     SourceKind::Telegram { .. }
+                ) | (
+                    AttachmentSource::NativeLark {
+                        resource_kind: crate::channel::LarkResourceKind::Image,
+                        ..
+                    },
+                    SourceKind::NativeLark(_)
                 )
             ) {
                 return Err(ValidationError::new(
                     at("thumbnail"),
-                    "must be a Telegram locator on a native Telegram activity",
+                    "must be a matching native Telegram or Lark image locator",
                 ));
             }
             validate_locator(thumbnail, source)
@@ -329,105 +343,9 @@ fn require_dimension(value: u32, pointer: &str) -> Result<(), ValidationError> {
 
 /// Each locator type is accepted only from the source able to resolve it, so a
 /// relay activity can never direct a fetch at a URL or a Telegram file.
-fn validate_locator(locator: &AttachmentSource, source: &SourceKind) -> Result<(), String> {
-    match (locator, source) {
-        (
-            AttachmentSource::Whatsapp {
-                message_id,
-                media_id,
-                sha256,
-            },
-            SourceKind::Whatsapp { .. },
-        ) => {
-            if !crate::channel::whatsapp::valid_message_id(message_id)
-                || !crate::channel::whatsapp::valid_meta_id(media_id)
-                || sha256.len() != 64
-                || !sha256
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            {
-                return Err("invalid native WhatsApp media identity".into());
-            }
-        }
-        (
-            AttachmentSource::LarkResource {
-                message_id,
-                resource_key,
-                resource_kind,
-                binding,
-                bot_id,
-                source_revision,
-                ..
-            },
-            SourceKind::NyxidRelay { platform, .. },
-        ) => {
-            use crate::channel::lark_resources::{lark_resource_service, safe_id};
-            if lark_resource_service(*platform).is_none()
-                || !message_id.starts_with("om_")
-                || !safe_id(message_id, 128)
-                || !safe_id(resource_key, 1024)
-                || !match resource_kind {
-                    crate::channel::LarkResourceKind::Image => resource_key.starts_with("img_"),
-                    crate::channel::LarkResourceKind::File => resource_key.starts_with("file_"),
-                }
-                || !bot_id.starts_with("ou_")
-                || !safe_id(bot_id, 128)
-                || binding.validate("/binding").is_err()
-                || source_revision.len() != 64
-                || !source_revision.bytes().all(|b| b.is_ascii_hexdigit())
-            {
-                return Err("invalid Lark resource identity".into());
-            }
-        }
-        (AttachmentSource::NyxidRelay { index }, SourceKind::NyxidRelay { .. }) => {
-            if *index > MAX_NYXID_INDEX {
-                return Err(format!("relay index must be at most {MAX_NYXID_INDEX}"));
-            }
-        }
-        (
-            AttachmentSource::Telegram {
-                file_id,
-                file_unique_id,
-            },
-            SourceKind::Telegram { .. },
-        ) => {
-            if !telegram_ids_valid(file_id, file_unique_id) {
-                return Err("Telegram file identifiers must match [A-Za-z0-9_-]".into());
-            }
-        }
-        (
-            AttachmentSource::Discord {
-                channel_id,
-                message_id,
-                attachment_id,
-            },
-            SourceKind::Discord { .. },
-        ) => {
-            if ![channel_id, message_id, attachment_id]
-                .into_iter()
-                .all(|id| crate::channel::discord::valid_id(id))
-            {
-                return Err("invalid Discord attachment identity".into());
-            }
-        }
-        (AttachmentSource::Url { url }, SourceKind::Custom) => {
-            if !https_locator(url) {
-                return Err(format!(
-                    "must be an absolute https URL of at most {MAX_ATTACHMENT_URL_BYTES} bytes with a host and no userinfo or fragment"
-                ));
-            }
-        }
-        (AttachmentSource::Inline { pointer }, SourceKind::Custom) => {
-            if !json_pointer(pointer) {
-                return Err(format!(
-                    "must be an RFC 6901 JSON pointer of 1 to {MAX_INLINE_POINTER_BYTES} bytes"
-                ));
-            }
-        }
-        _ => return Err("locator type does not match the activity source".into()),
-    }
-    Ok(())
-}
+#[path = "attachment_locator.rs"]
+mod locator;
+use locator::validate_locator;
 
 /// Whether `value` is a URL locator this domain accepts: an absolute https
 /// URL of at most 2048 bytes with a host and no userinfo, fragment, whitespace
@@ -466,3 +384,7 @@ mod tests;
 #[cfg(test)]
 #[path = "attachment_whatsapp_tests.rs"]
 mod whatsapp_tests;
+
+#[cfg(test)]
+#[path = "attachment_native_lark_tests.rs"]
+mod native_lark_tests;

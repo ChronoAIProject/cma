@@ -16,6 +16,7 @@ fn payload(keys: &MasterKeyRing) -> MessageRefPayload {
     .unwrap();
     MessageRefPayload {
         discord_message: None,
+        whatsapp_reaction: None,
         lark_effect: None,
         telegram_effect: None,
         channel_id,
@@ -250,4 +251,71 @@ fn telegram_media_scope_preserves_legacy_serialization_and_cannot_mix_card_autho
         .unwrap()
         .open(&keys)
         .is_err());
+}
+
+#[test]
+fn whatsapp_received_reaction_authority_preserves_legacy_bytes_and_bounds_exact_custody() {
+    use cmaeg_core::{
+        channel::Platform,
+        seal::{
+            whatsapp_reaction::{WhatsappReactionAuthority, MAX_REACTION_AGE},
+            RelayMessageDestination,
+        },
+    };
+    let keys = keys(1);
+    let mut message = payload(&keys);
+    let legacy = serde_json::to_value(&message).unwrap();
+    assert!(legacy.get("whatsapp_reaction").is_none());
+    assert_eq!(
+        serde_json::from_value::<MessageRefPayload>(legacy).unwrap(),
+        message
+    );
+    let authority = WhatsappReactionAuthority {
+        app_id: "12345".into(),
+        waba_id: "23456".into(),
+        phone_number_id: "34567".into(),
+        recipient_id: "447700900123".into(),
+        authority_sha256: "a".repeat(64),
+        received_at: 100,
+        expires_at: 100 + MAX_REACTION_AGE,
+    };
+    message.route_id = authority.route();
+    message.platform_message_id = "wamid.original".into();
+    message.whatsapp_reaction = Some(Box::new(authority));
+    assert_eq!(
+        MessageRef::seal(&message, &keys)
+            .unwrap()
+            .open(&keys)
+            .unwrap()
+            .payload,
+        message
+    );
+    for defect in 0..9 {
+        let mut invalid = message.clone();
+        let authority = invalid.whatsapp_reaction.as_mut().unwrap();
+        match defect {
+            0 => invalid.route_id.push_str(":different"),
+            1 => invalid.platform_message_id = "arbitrary-id".into(),
+            2 => authority.recipient_id = "../recipient".into(),
+            3 => authority.expires_at += 1,
+            4 => authority.expires_at = authority.received_at,
+            5 => authority.received_at = 0,
+            6 => authority.authority_sha256 = "invalid".into(),
+            7 => invalid.interaction_record_id = Some("card".into()),
+            8 => {
+                invalid.relay_message = Some(RelayMessageDestination {
+                    platform: Platform::Telegram,
+                    outbound_message_id: "relay-id".into(),
+                })
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            MessageRef::seal(&invalid, &keys)
+                .unwrap()
+                .open(&keys)
+                .is_err(),
+            "defect {defect}"
+        );
+    }
 }

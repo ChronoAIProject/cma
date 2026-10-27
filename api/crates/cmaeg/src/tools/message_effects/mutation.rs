@@ -29,6 +29,14 @@ pub(crate) struct Lock {
     version: u64,
 }
 impl Store {
+    pub fn whatsapp_reaction(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
+        Self {
+            records: records.interactions(),
+            keys,
+            domain: "cmaeg.whatsapp-received-mutation.v1",
+            kind: "whatsapp_received_mutation_v1",
+        }
+    }
     pub fn discord(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
             records: records.interactions(),

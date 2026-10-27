@@ -171,6 +171,31 @@ fn reply_matches(event: &EventRefPayload, activity: &Activity) -> bool {
                 && chat_id == &activity.conversation.id
                 && thread_id == &activity.conversation.thread_id
         }
+        (
+            ReplyAddress::Whatsapp {
+                app_id,
+                waba_id,
+                phone_number_id,
+                recipient_id,
+                ..
+            },
+            SourceKind::Whatsapp {
+                app_id: app,
+                waba_id: account,
+                phone_number_id: phone,
+            },
+        ) => {
+            app_id == app
+                && waba_id == account
+                && phone_number_id == phone
+                && recipient_id == &activity.actor.id
+                && recipient_id == &activity.conversation.id
+                && super::whatsapp::numeric(recipient_id)
+                && activity.actor.kind == cmaeg_core::activity::ActorKind::Unknown
+                && activity.conversation.kind == cmaeg_core::activity::ConversationKind::Private
+                && activity.conversation.thread_id.is_none()
+                && activity.thread.is_none()
+        }
         _ => false,
     }
 }

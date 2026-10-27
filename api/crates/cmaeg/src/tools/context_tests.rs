@@ -164,7 +164,10 @@ fn a_removed_consumer_is_answered_as_an_expired_reference() {
 fn native_whatsapp_media_discovery_is_independent_and_reports_exact_subset() {
     assert!(NativeMediaCapabilities::native_whatsapp(false).is_none());
     let capability = NativeMediaCapabilities::native_whatsapp(true).unwrap();
-    assert_eq!(capability.kinds, ["image", "file", "audio", "sticker"]);
+    assert_eq!(
+        capability.kinds,
+        ["image", "file", "audio", "sticker", "video"]
+    );
     assert_eq!(
         capability.mime_types.unwrap(),
         [
@@ -176,12 +179,18 @@ fn native_whatsapp_media_discovery_is_independent_and_reports_exact_subset() {
             "audio/mpeg",
             "audio/mp4",
             "audio/ogg",
-            "image/webp"
+            "image/webp",
+            "video/mp4",
+            "video/3gpp"
         ]
     );
     assert_eq!(capability.max_image_bytes, Some(5_000_000));
     assert_eq!(capability.max_total_bytes, Some(8 * 1024 * 1024));
     assert_eq!(capability.max_caption_chars, Some(1024));
+    assert_eq!(
+        serde_json::to_value(capability.video.unwrap()).unwrap(),
+        serde_json::json!({"video_codec": "h264", "video_profile": "baseline", "audio_codec": "aac_lc", "max_audio_tracks": 1, "max_width": 1920, "max_height": 1080, "max_frame_rate": 60, "max_duration_ms": 600000, "max_samples": 65536, "progressive_only": true, "max_slices_per_frame": 1, "fast_start_required": true})
+    );
     let sticker = capability.sticker.unwrap();
     assert_eq!((sticker.width, sticker.height), (512, 512));
     assert_eq!(
@@ -198,4 +207,133 @@ fn native_whatsapp_media_discovery_is_independent_and_reports_exact_subset() {
     );
     assert_eq!(capability.max_attachments, 4);
     assert_eq!(capability.max_inline_bytes, 65536);
+}
+
+#[test]
+fn native_whatsapp_template_discovery_requires_verified_private_destination_and_current_custody() {
+    use crate::{
+        ingress::routing_plan::fixture,
+        whatsapp::tests::{credentials, source},
+    };
+    use cmaeg_core::{activity::ConversationKind, channel::Secret, seal::ReplyAddress};
+    for defect in 0..11 {
+        let mut request = fixture::request(|_| {}, fixture::message("invoice please"));
+        let channel = std::sync::Arc::make_mut(&mut request.channel);
+        channel.definition.sources = vec![source()];
+        channel.definition.secrets.whatsapp = Some(credentials());
+        request.activity.source = SourceKind::Whatsapp {
+            app_id: "12345".into(),
+            waba_id: "23456".into(),
+            phone_number_id: "34567".into(),
+        };
+        request.activity.conversation.id = "447700900123".into();
+        let mut event = request
+            .event_ref
+            .open(&fixture::keys(), fixture::NOW)
+            .unwrap()
+            .payload;
+        event.reply = ReplyAddress::Whatsapp {
+            app_id: "12345".into(),
+            waba_id: "23456".into(),
+            phone_number_id: "34567".into(),
+            recipient_id: "447700900123".into(),
+            message_id: "wamid.original".into(),
+        };
+        match defect {
+            0..=2 => {}
+            3 => channel.definition.sources.clear(),
+            4 => channel.definition.secrets.whatsapp = None,
+            5 => {
+                channel
+                    .definition
+                    .secrets
+                    .whatsapp
+                    .as_mut()
+                    .unwrap()
+                    .access_token = Secret::new("invalid")
+            }
+            6 => request.activity.source = SourceKind::Custom,
+            7 => {
+                if let SourceKind::Whatsapp {
+                    phone_number_id, ..
+                } = &mut request.activity.source
+                {
+                    *phone_number_id = "99999".into();
+                }
+            }
+            8 => request.activity.conversation.id = "99999".into(),
+            9 => request.activity.conversation.kind = ConversationKind::Group,
+            10 => request.activity.conversation.thread_id = Some("thread".into()),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            native_whatsapp_templates(defect != 1, channel, &event, &request.activity, defect != 2),
+            defect == 0,
+            "{defect}"
+        );
+    }
+}
+
+#[test]
+fn native_whatsapp_group_discovery_retains_exact_participant_and_supported_subset() {
+    use crate::{
+        ingress::routing_plan::fixture,
+        whatsapp::{
+            groups::tests::{reply, source_group, GROUP},
+            tests::credentials,
+        },
+    };
+    use cmaeg_core::{activity::ConversationKind, seal::ReplyAddress};
+    let mut request = fixture::request(|_| {}, fixture::message("hello"));
+    let channel = std::sync::Arc::make_mut(&mut request.channel);
+    channel.definition.sources = vec![source_group()];
+    channel.definition.secrets.whatsapp = Some(credentials());
+    request.activity.source = SourceKind::Whatsapp {
+        app_id: "12345".into(),
+        waba_id: "23456".into(),
+        phone_number_id: "34567".into(),
+    };
+    request.activity.actor.id = "447700900123".into();
+    request.activity.conversation.id = GROUP.into();
+    request.activity.conversation.kind = ConversationKind::Group;
+    let mut event = request
+        .event_ref
+        .open(&fixture::keys(), fixture::NOW)
+        .unwrap()
+        .payload;
+    event.reply = ReplyAddress::WhatsappGroup(reply());
+    assert!(native_whatsapp_templates(
+        true,
+        channel,
+        &event,
+        &request.activity,
+        true
+    ));
+    assert!(!native_whatsapp_templates(
+        false,
+        channel,
+        &event,
+        &request.activity,
+        true
+    ));
+    assert!(!native_whatsapp_templates(
+        true,
+        channel,
+        &event,
+        &request.activity,
+        false
+    ));
+    request.activity.actor.id = "447700900999".into();
+    assert!(!native_whatsapp_templates(
+        true,
+        channel,
+        &event,
+        &request.activity,
+        true
+    ));
+    let media = NativeMediaCapabilities::native_whatsapp_group(true).unwrap();
+    assert_eq!(media.kinds, vec!["image", "file", "audio", "video"]);
+    assert!(media.sticker.is_none());
+    assert!(media.video.is_some());
+    assert!(!media.mime_types.unwrap().contains(&"image/webp".to_owned()));
 }

@@ -149,10 +149,29 @@ fn sink_label(sink: &Sink) -> String {
 fn source_view(source: &Source) -> SourceView {
     let id = source.source_id();
     match source {
+        Source::NativeLark(source) => SourceView {
+            id,
+            kind: "Native Lark / Feishu",
+            platform: Some(source.identity.region.as_str()),
+            route_count: None,
+            bot_username: None,
+            bot_id: Some(source.identity.bot_open_id.clone()),
+            admission: Some(admission_label(&source.admission)),
+            auth: "Encrypted and signed native app callback".into(),
+            key_ids: Vec::new(),
+            settings: vec![
+                format!(
+                    "Separate app {}; tenant {}. Do not replace an existing NyxID app webhook.",
+                    source.identity.app_id, source.identity.tenant_key
+                ),
+                "Text, recall and human reaction deltas for retained messages; incoming edits unavailable.".into(),
+            ],
+        },
         Source::Whatsapp {
             app_id,
             waba_id,
             phone_number_id,
+            group_ids,
             admission,
         } => SourceView {
             id,
@@ -166,7 +185,7 @@ fn source_view(source: &Source) -> SourceView {
             key_ids: Vec::new(),
             settings: vec![
                 format!("App {app_id}; account {waba_id}; dedicated callback required"),
-                "Text, reactions and text replies; media and templates unavailable".into(),
+                format!("Private messages and reactions; {} explicitly allowed existing groups. Media and templates require separate gateway capabilities.",group_ids.len()),
             ],
         },
         Source::Discord {
