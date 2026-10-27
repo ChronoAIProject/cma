@@ -2,6 +2,7 @@
 pub(crate) mod catalog;
 mod message_effects;
 pub mod results;
+mod threads;
 pub mod tools;
 use crate::{
     auth::AgentCaller,

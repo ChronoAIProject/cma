@@ -14,6 +14,7 @@ use utoipa::OpenApi;
         crate::providers::EventContextSnapshot,
         cmaeg_core::channel::ProviderTarget,
         crate::tools::AttachmentViewKind,
+        cmaeg_core::thread_lifecycle::ThreadListView,
     )),
     paths(
         http::activity::latest,
@@ -48,6 +49,9 @@ use utoipa::OpenApi;
         http::events::receive_event,
         http::tools::reply_to_event,
         http::tools::update_message,
+        http::threads::list_event_threads,
+        http::threads::create_event_thread,
+        http::threads::manage_thread,
         http::message_effects::read_message_capabilities,
         http::message_effects::delete_message,
         http::message_effects::set_message_reaction,

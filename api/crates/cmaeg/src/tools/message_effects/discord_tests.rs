@@ -72,6 +72,7 @@ impl App {
         definition.record_id = uuid::Uuid::new_v4().to_string().parse().unwrap();
         definition.sources = vec![Source::Discord {
             thread_history: false,
+            thread_lifecycle: false,
             bot_id: "77".into(),
             intents: 37377,
             admission: AdmissionPolicy::All {},
@@ -128,6 +129,7 @@ impl App {
         let (sender, _) = mpsc::channel(16);
         let state = ToolsState {
             discord_thread_history: None,
+            discord_threads: None,
             complete_replies_enabled: false,
             discord_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
