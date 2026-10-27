@@ -30,8 +30,12 @@ pub struct AgentAccessRequest {
 pub enum AgentAccessError {
     #[error("this access request is not available to the caller")]
     NotFound,
-    #[error("sign in as the Agent owner to approve service access")]
+    #[error("the caller cannot manage this Agent's service access")]
     Forbidden,
+    #[error("use a direct owner access token or owner sign-in; runtime and delegated credentials cannot manage service access")]
+    OwnerAuthorityRequired,
+    #[error("connect the requested services and authorize their backing resources in the identity provider, then retry with an owner access token")]
+    ServiceConnectionRequired,
     #[error("the access request is invalid")]
     Invalid,
     #[error("this access request has already changed")]

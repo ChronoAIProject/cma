@@ -286,6 +286,8 @@ async fn domain_refusals_keep_safe_http_semantics_and_private_cache_headers() {
     for (error, status) in [
         (AgentAccessError::Invalid, 400),
         (AgentAccessError::Forbidden, 403),
+        (AgentAccessError::OwnerAuthorityRequired, 403),
+        (AgentAccessError::ServiceConnectionRequired, 409),
         (AgentAccessError::NotFound, 404),
         (AgentAccessError::Conflict, 409),
         (AgentAccessError::Unavailable, 503),
