@@ -46,6 +46,7 @@ for (const theme of ['light', 'dark']) {
       { seq: 4, appended_at: finished, kind: { type: 'turn_completed', turn_sequence: 1 } },
     ];
     await boundary.route(page, baseURL!);
+    await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
     await page.emulateMedia({ colorScheme: theme === 'dark' ? 'dark' : 'light' });
     const reads: string[] = [];
     let retry = true;
@@ -82,6 +83,7 @@ for (const theme of ['light', 'dark']) {
       }),
     );
     await page.goto('/agents/agt_contract');
+    await expect(page.locator('html')).toHaveCSS('color-scheme', theme);
     await expect(page.getByText('Results are ready.')).toBeVisible();
     await page.locator('.agent-content__media').nth(0).scrollIntoViewIfNeeded();
     await expect(page.getByRole('img', { name: 'Plot', exact: true })).toBeVisible();
