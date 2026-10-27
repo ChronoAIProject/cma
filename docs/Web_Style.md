@@ -3691,3 +3691,13 @@ direction remains legible in both themes. Arrowheads use the same ink. The
 built-page style check verifies these values on the actual rendered paths.
 
 | 2026-10-27 | Record the delivery map's directional edge weight and paint, and align built-page verification with shared sidebar rows. |
+
+Configuration section navigation keeps the explicitly selected destination
+highlighted during smooth movement and when the final destination cannot align
+with the content's top edge. Wheel, touch, scrollbar or keyboard scrolling
+returns highlighting to the visible section; the last section is current at the
+bottom only when the content actually overflows. A panel that fits opens on its
+first section and retains explicit section selections without requiring scroll.
+The existing smooth and reduced-motion navigation behaviors remain unchanged.
+
+| 2026-10-27 | Keep configuration navigation highlights on the requested section through bottom-clamped scrolling, resume position tracking on user scroll, and preserve first/explicit selections when all content fits. |
