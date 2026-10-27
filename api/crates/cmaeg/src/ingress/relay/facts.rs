@@ -15,12 +15,13 @@ pub struct CallbackFacts {
     pub id: String,
     pub data: String,
     pub message_id: String,
+    pub form: Option<serde_json::Map<String, serde_json::Value>>,
 }
 /// Facts a platform observer vouches for. `None` means the platform supplied no
 /// evidence, which admission treats differently from a verified `Some(false)`.
 pub struct RelayFacts {
     pub thread: Option<Box<cmaeg_core::thread::ThreadFacts>>,
-    pub callback: Option<CallbackFacts>,
+    pub callback: Option<Box<CallbackFacts>>,
     pub event: Option<Box<CloudEvent>>,
     pub conversation: ConversationKind,
     pub thread_id: Option<String>,

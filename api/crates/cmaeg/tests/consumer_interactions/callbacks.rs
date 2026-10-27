@@ -1,4 +1,6 @@
 //! A callback has one original owner, even after restart, rename or credential rotation.
+#[path = "lark_forms.rs"]
+mod lark_forms;
 #[path = "support.rs"]
 mod support;
 use self::support::Cards;

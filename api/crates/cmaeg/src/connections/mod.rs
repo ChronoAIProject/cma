@@ -10,6 +10,7 @@ mod platform;
 #[cfg(test)]
 mod platform_tests;
 mod recovery;
+pub mod relay_resources;
 mod retry;
 pub(crate) mod service;
 pub mod store;

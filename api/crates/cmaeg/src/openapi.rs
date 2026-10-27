@@ -25,6 +25,7 @@ use utoipa::OpenApi;
         http::connections::capabilities,
         http::connections::create,
         http::connections::list,
+        http::relay_resource_connections::list,
         http::connections::read,
         http::connections::cancel,
         http::management::create_channel,

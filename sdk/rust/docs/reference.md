@@ -153,6 +153,15 @@ one page; follow `next_after` even when `items` is empty. Channel creation/updat
 includes optional `connection_ref` and `connection_admission`. Native Telegram
 source, credential and webhook endpoint fields are available in the wire types.
 
+`list_relay_resource_connections(ResourcePlatform::Lark | ResourcePlatform::Feishu)`
+reads optional existing personal and eligible shared organization bot API
+connections for the current credential subject. `ResourceConnectionList.items` contains `user_service_id`,
+`catalog_service_id`, `name`, `platform` and `source` (`personal` or
+`organization`). There is no owner override or grant mutation; saved/manual bindings remain independent. Keep
+receiving app/bot identity explicit and authorize the channel key separately.
+Older gateways may return 404; unavailable inventory is an error, not an empty
+successful list.
+
 Native bot mentions are an explicit source opt-in. Read
 `CapabilityView.source_features` and require `native_bot_mentions_v1` before
 selecting `BotMessageAdmission::NativeMentions`; the receiving identity and

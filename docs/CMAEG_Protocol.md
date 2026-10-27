@@ -1001,7 +1001,8 @@ trusted platforms still refuse attachments.
 `buttons`, single/multi `choice`, `card` and `link` blocks. Eligible verified human
 contexts advertise `buttons:"native_card"`, `cards:"native_card"`, `edit:true`.
 The default is off, preserving numbered-text delivery. This does not enable
-threaded contexts, native forms, or cards mixed with native attachments.
+threaded contexts or cards mixed with native attachments. Native forms require
+the additional default-off form gate described below.
 Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED=true`. Controls use the documented [JSON 2.0 button](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/button)
 `behaviors` callback/open_url
 objects; display text uses `plain_text` and cannot inject mentions or card JSON.
@@ -1010,7 +1011,8 @@ providers update the card after each accepted toggle, as for Telegram controls.
 
 The callback verifier checks the signed raw header/event, operator open ID, chat,
 source platform and original message against NyxID's envelope. Only button values
-containing a CMA-issued `cl1:<record>:<revision>:<action>` locator are candidates;
+containing a CMA-issued `cl1:<record>:<revision>:<action>` locator are candidates
+for buttons and choices;
 no agent-supplied callback string, option value or form input becomes authority.
 The encrypted record binds actor, chat, platform, originating event, consumer,
 message receipt and current revision. Missing/unbound, expired, superseded,
@@ -1039,10 +1041,55 @@ serialized default-card records are unchanged.
 
 Cards allow at most 4,000 displayed text characters, 100 elements/actions and
 28 KiB serialized card JSON, with a 32 KiB relay request bound. Over-limit cards
-are refused without truncation. Native forms degrade to text; URL card images
-become links, with explicit `plain_text_form`/`image_link` rendering outcomes.
+are refused without truncation. With native forms disabled, form fields degrade
+to text; URL card images become links, with explicit
+`plain_text_form`/`image_link` rendering outcomes.
 This is a verified code/adapter contract; real platform sends require separate
 production acceptance evidence.
+
+#### Native Lark and Feishu forms
+
+`CMAEG_LARK_FORMS_ENABLED=true`, together with the native-card gate, enables one
+neutral `Form` with 1–12 fields: text, number, date and single-choice. Named
+consumers also require the consumer-interaction gate. The flag defaults to false.
+Enabling it selects native forms only after structural preflight and existing
+context eligibility checks succeed. Otherwise, valid replies retain their prior
+rendering and destination: Form-only replies use ordinary text, and forms mixed
+with eligible native Buttons/Choice retain those controls and `plain_text_form`.
+Threaded, published and nonhuman contexts retain the prior text path. These
+fallbacks grant no form callback authority. Invalid authorization, unavailable or
+mismatched provider context, and storage failures remain fail-closed; uncertain
+writes or sends never trigger fallback or another send. Existing media and
+unavailable-thread refusals still apply. Existing Telegram and plain relay
+form-text edits keep their historical behavior. No neutral schema change is required.
+
+Native forms contain opaque field names and choice indices. Their distinct
+`clf1:<record>:<revision>:<block>` submit locator resolves only a saved native
+form. The signed raw callback and normalized envelope must agree on the submitted
+object, actor, chat, message and action. Text remains text; number strings become
+JSON numbers, dates become `YYYY-MM-DD`, and choices resolve to saved option IDs.
+Unknown callback names/options, invalid submitted types and missing required
+fields fail closed. Optional empty/null/omitted values are absent from the
+canonical result. Native form issuance cannot mix independent Buttons/Choice
+blocks, native media, threads or published-agent audiences; new replies retain
+the legacy rendering behavior described above when native issuance is ineligible.
+
+The provider receives `InteractionResult` with both `block_id` and `action_id`
+equal to the authored Form ID, and `values.fields` keyed by authored field IDs:
+`{"fields":{"reason":"Ready","amount":12.5,"day":"2024-02-29","scope":"private-write"}}`.
+Existing result context metadata remains present. Buttons and choices retain
+`values.selected`. The complete canonical form result is persisted before
+provider dispatch. Exact retry retains that result, timestamp, original provider,
+consumer, conversation and partition across restart. A changed result or callback
+cannot consume the same revision; repeated CAS conflicts return retryable 503.
+Current actor, source-policy and provider authority still apply.
+
+Disabling new issuance leaves existing native callbacks and edits active using
+the saved authority. Historical plain form cards remain plain on edit and cannot
+accept a native form locator. Native replacements preserve the original expiry
+and fence the previous revision before the external edit. See
+[native form limits and callback recovery](CMAEG_Native_Lark_Forms.md) for exact
+bounds and the separately required Lark/Feishu platform acceptance checks.
 
 #### Lark and Feishu media
 
@@ -2632,6 +2679,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/messages/{message_ref}/delete` | `deleteMessage` |
 | `POST /v1/messages/{message_ref}/reaction` | `setMessageReaction` |
 | `GET /v1/permissions` | `getPermissions` |
+| `GET /v1/relay-resource-connections` | `listRelayResourceConnections` |
 | `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
 | `GET /v1/channel-capabilities` | Discover platform setup methods and optional capabilities. |
 | `POST /v1/channel-connections` | Begin a durable owner-authorized gateway connection setup. |
@@ -3715,3 +3763,121 @@ Historical buttons and single-selects retain their existing serialized bytes
 and result shapes. Deploy compatible serving and rollback readers before enabling
 issuance; disabling it preserves retained callbacks. See the
 [native Discord control contract](CMAEG_Native_Discord_Interactions.md).
+
+### Native Discord interactive-card edits
+
+The existing `updateMessage` request accepts native interaction-card references
+when `CMAEG_DISCORD_CARD_EDITS_ENABLED` is enabled. Historical native card records
+and plain native text-edit references keep their existing shapes. The default is
+off. See [native card edits](CMAEG_Native_Discord_Card_Edits.md) for exact bounds.
+
+The reference selects one original bot message. Replacement controls retain the
+actor, source/provider/consumer authority, conversation, partition, verified
+thread, revision chain and original expiry. Text/link-only replacements send an
+empty components array and retain a successor reference for later edits. No
+attachment, new destination, thread lifecycle or message-effect authority is
+created. Current channel authority and authenticated native metadata are checked
+before claiming a new edit.
+
+A durable compare-and-swap fences the previous revision and records a canonical
+request hash and successor identity before one component PATCH. The returned
+Message must match the original bot/channel/message and requested content and
+components before the successor is bound. The final receipt is persisted. Exact
+retries return the same receipt and reference; another body on the old reference
+is refused, and an unfinished or ambiguous write is never resent. A previously
+consumed exact callback can still finish inbox recovery after replacement; new
+old-revision clicks are fenced.
+
+Turning the card-edit gate off stops new chains on original cards while retained
+successor edits and saved-operation reads/replays remain supported. Compatible
+readers and keys are required through original card expiry. The optional stored
+edit state is absent from old records; text-only successors require the new
+reader. Public SDK and OpenAPI request/response schemas are unchanged. Local
+contract coverage does not claim live Discord acceptance.
+
+### Existing Lark/Feishu resource connection discovery
+
+`GET /v1/relay-resource-connections?platform=lark|feishu` is an optional
+creator-authenticated, current-subject-only read. It requires the existing
+channel-read permission and returns `{ "items": [...] }`; each item contains
+only `user_service_id`, `catalog_service_id`, `name`, `platform` and `source`
+(`personal` or `organization`).
+There is no owner override: `X-CMAEG-Owner` or an unknown query parameter is
+rejected on this new route. Other organization/channel routes are unchanged.
+
+Discovery borrows the incoming bearer for existing NyxID metadata GETs. It never
+mints, refreshes, persists or grants a credential. Eligible connections are
+active, non-node token-exchange services with the exact regional catalog identity
+and official endpoint. Personal connections and current-subject-visible organization
+connections with `allowed=true` and member/admin role are included. Viewer or
+otherwise disallowed organization rows are excluded.
+
+NyxID's endpoint inventory is personal by default. For eligible organization rows
+whose exact endpoint is absent, discovery reads the existing
+`GET /api/v1/endpoints/{endpoint_id}/authorization` with the same incoming bearer.
+It never selects an organization owner or calls an administrator-only inventory.
+Only matching ID/catalog evidence with `auto_connected=true` is accepted from
+that projection; custom endpoints remain manual. Missing/denied exact evidence
+omits that option without modifying any saved binding. This does not prove the
+channel key has a grant.
+
+Responses are bounded to 1 MiB and 1000 rows per inventory. Shared endpoint reads
+are capped at 32 with concurrency four, within an eight-second overall discovery
+deadline, with no redirects or automatic retries. Duplicate identities or
+malformed/oversized upstream data fail discovery. Inventory 401/403 remain 401/403;
+provider errors remain 503, never a successful empty inventory.
+
+Selection is convenience only. The caller must still pin the independently
+confirmed receiving `app_id` and bot `open_id`, and the existing channel key must
+have access to the exact selected connection. Resource reads retain all current
+binding, official-origin, app/bot and key-revision checks. When an authorized shared
+endpoint is absent from the channel key's personal endpoint inventory, media reads
+use the same exact endpoint-authorization fallback under that channel key and the
+existing media deadline. Allowed shared membership, exact catalog-managed endpoint
+evidence and the independent bot proof are all required; a selector result cannot
+substitute for them. Saved/manual bindings remain intact when discovery is absent,
+unavailable, or does not list them.
+
+
+### Retained native Discord card effects
+
+`messageEffectCapabilities`, `deleteMessage` and `setMessageReaction` also use
+retained native card references after `CMAEG_DISCORD_CARD_EFFECTS_ENABLED` permits
+first adoption. Public wire shapes remain unchanged. The private saved card
+retains capability through successor edits and gate-off, without extending its
+original expiry. Current owner/key/source/bot/provider/consumer authority must
+still match before receipt replay and immediately before new dispatch.
+
+Delete and reaction share an immutable card/revision receipt scope. Exact old
+requests replay after replacement/deletion; a new old-reference request is
+refused and same-key/different-body conflicts. Card PATCH and both effects use
+one durable bot/channel/message mutation lock. Unknown writes and lost final
+storage acknowledgements remain fenced across keys, revisions and restarts.
+
+A pending-delete CAS supersedes controls and competes with fresh callbacks and
+edits. An exact already-consumed callback can recover its original inbox after
+pending, confirmed or uncertain deletion and after the ACK deadline. Other
+callbacks cannot. Confirmed deletion is terminal; definite no-write outcomes
+restore controls only with a successful final CAS. Reactions affect only this
+bot's zero/one ordinary reaction and do not consume controls. See
+[native card effects](CMAEG_Native_Discord_Card_Effects.md) for authority, reader
+rollout and platform limits. Disabling admission never permits rollback below
+the compatible-reader version while adopted authority remains live.
+
+
+### Native Discord modal Form delivery
+
+The existing neutral `Form` may be collected by the native Discord transport when
+`CMAEG_DISCORD_FORMS_ENABLED` and native interactions are enabled. The bounded
+subset is one form with 1–5 Text, Choice, Number or Date fields. Text/Choice use
+native modal controls; Number/Date use strict validated text and report
+`discord_modal_number_date_validated_text` degradation. A type-3 launch opens a
+type-9 modal without consuming or invoking a provider. A valid type-5 submission
+persists the complete canonical `InteractionResult.values.fields` before a
+single type-6 ACK and executes only the original consumer/conversation. Invalid
+fields do not consume the form; the fixed ephemeral response requests a new
+launch. Existing text/mixed-control degradation remains unchanged for disabled
+or ineligible native forms, with no fallback after authority or write failures.
+Retained callbacks, edits and exact lost-inbox recovery remain supported when
+issuance is disabled. See [native Discord forms](CMAEG_Native_Discord_Forms.md)
+for limits, rollback rules, official reference pin and local/live evidence bounds.

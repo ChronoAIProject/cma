@@ -83,3 +83,19 @@ export const CreateConnectionSchema = object({
   suggested_name: optional(nullable(text)),
 });
 export type CreateConnection = Output<typeof CreateConnectionSchema>;
+
+export const ResourcePlatformSchema = enumeration('lark', 'feishu');
+export type ResourcePlatform = Output<typeof ResourcePlatformSchema>;
+export const ResourceConnectionSourceSchema = enumeration('personal', 'organization');
+export type ResourceConnectionSource = Output<typeof ResourceConnectionSourceSchema>;
+/** Nonsecret metadata; selection never grants a channel credential access. */
+export const ResourceConnectionSchema = object({
+  user_service_id: text,
+  catalog_service_id: text,
+  name: text,
+  platform: ResourcePlatformSchema,
+  source: ResourceConnectionSourceSchema,
+});
+export type ResourceConnection = Output<typeof ResourceConnectionSchema>;
+export const ResourceConnectionListSchema = object({ items: array(ResourceConnectionSchema) });
+export type ResourceConnectionList = Output<typeof ResourceConnectionListSchema>;

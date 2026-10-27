@@ -15,6 +15,19 @@ use cmaeg_core::{
 };
 
 impl Sender {
+    /// Unsupported native form shapes keep their legacy text rendering, including
+    /// forms alongside independent native buttons. This grants no form authority.
+    pub(super) fn native_lark_form(&self, message: &OutboundMessage) -> bool {
+        self.relay.lark_forms_enabled()
+            && crate::interactions::lark_form::requested(message)
+            && crate::interactions::lark::render_form(
+                message,
+                "00000000000000000000000000000000",
+                1,
+            )
+            .is_ok()
+    }
+
     /// Native controls are an optional rendering of legacy structured replies.
     /// Check eligibility before the send commit point; a valid but ineligible
     /// context keeps its prior text rendering and exact reply destination.
@@ -99,6 +112,7 @@ impl Sender {
                 ..
             }
         );
+        let native_form = lark && self.native_lark_form(message);
         let capabilities = if lark {
             crate::interactions::lark::capabilities()
         } else {
@@ -106,9 +120,12 @@ impl Sender {
         };
         let (parts, mut rendering) = RelayText.render(message, &capabilities);
         if lark {
-            let Ok((_, report)) =
-                crate::interactions::lark::render(message, "00000000000000000000000000000000", 1)
-            else {
+            let render = if native_form {
+                crate::interactions::lark::render_form
+            } else {
+                crate::interactions::lark::render
+            };
+            let Ok((_, report)) = render(message, "00000000000000000000000000000000", 1) else {
                 return (unsupported(), effects);
             };
             rendering = report;
@@ -151,13 +168,19 @@ impl Sender {
         if !ctx.gate.commit() {
             return (refused(rendering, expired()), effects);
         }
-        let preparation = match context {
-            Some(context) => {
+        let preparation = match (native_form, context) {
+            (true, Some(context)) => {
+                store
+                    .prepare_lark_form_with_context(ctx.channel, event, message, context)
+                    .await
+            }
+            (true, None) => store.prepare_lark_form(ctx.channel, event, message).await,
+            (false, Some(context)) => {
                 store
                     .prepare_with_context(ctx.channel, event, message, context)
                     .await
             }
-            None => store.prepare(ctx.channel, event, message).await,
+            (false, None) => store.prepare(ctx.channel, event, message).await,
         };
         let mut prepared = match preparation {
             Ok(p) => p,

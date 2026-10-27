@@ -108,3 +108,14 @@ it('gates changed source bindings at submission while preserving saved records a
   ).not.toThrow();
   expect(() => validateRelayAuthoring(available, changed, saved)).not.toThrow();
 });
+
+it('requires a concrete connection pair before saving a new or changed binding', () => {
+  for (const field of ['user_service_id', 'catalog_service_id', 'app_id']) {
+    const next = { sources: [{ ...source, lark_resources: { ...binding, [field]: '' } }] };
+    expect(() => validateRelayAuthoring(available, next)).toThrow('Choose a bot API connection');
+    // Discovery does not reinterpret or rewrite a retained source on an unrelated edit.
+    expect(() =>
+      validateRelayAuthoring(available, { ...next, name: 'Renamed' }, next),
+    ).not.toThrow();
+  }
+});
