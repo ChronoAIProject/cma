@@ -1,4 +1,6 @@
-//! Bounded native JPEG/PNG and PDF uploads; media IDs are produced only by upload.
+//! Bounded native image, PDF and audio uploads; media IDs are produced only by upload.
+#[path = "outbound_audio.rs"]
+pub(crate) mod audio;
 use super::{Client, Error};
 use crate::media::{outbound::PreparedFile, sniff::sniff};
 use cmaeg_core::{
@@ -18,7 +20,16 @@ use serde_json::{json, Value};
 
 /// Meta documents 5 MB; use decimal bytes conservatively.
 pub(crate) const MAX_IMAGE_BYTES: usize = 5_000_000;
-pub(crate) const MIME_TYPES: [&str; 3] = ["image/jpeg", "image/png", "application/pdf"];
+pub(crate) const MIME_TYPES: [&str; 8] = [
+    "image/jpeg",
+    "image/png",
+    "application/pdf",
+    "audio/aac",
+    "audio/amr",
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/ogg",
+];
 
 pub(crate) struct MediaUpload {
     headers: HeaderMap,
@@ -39,7 +50,18 @@ impl Client {
         item: &NativeAttachment,
         mut file: PreparedFile,
     ) -> Result<MediaUpload, Error> {
-        let mime = sniff(&file.bytes[..file.bytes.len().min(64)]).mime;
+        let audio = if item.kind == NativeMediaKind::Audio {
+            if file.caption.is_some() {
+                return Err(Error::Invalid);
+            }
+            Some(audio::inspect(&file.bytes).ok_or(Error::Invalid)?)
+        } else {
+            None
+        };
+        let mime = audio.map_or_else(
+            || sniff(&file.bytes[..file.bytes.len().min(64)]).mime,
+            audio::Format::mime,
+        );
         if item
             .mime_type
             .as_deref()
@@ -57,6 +79,7 @@ impl Client {
             (NativeMediaKind::Image, "image/jpeg") => ("image", &["jpg", "jpeg"][..]),
             (NativeMediaKind::Image, "image/png") => ("image", &["png"][..]),
             (NativeMediaKind::File, "application/pdf") => ("document", &["pdf"][..]),
+            (NativeMediaKind::Audio, _) => ("audio", audio.ok_or(Error::Invalid)?.extensions()),
             _ => return Err(Error::Invalid),
         };
         if kind == "image"
