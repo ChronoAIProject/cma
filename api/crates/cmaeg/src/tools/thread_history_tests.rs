@@ -189,6 +189,7 @@ impl App {
         let registry = ProviderRegistry::parse(&json!([{"slug":provider_slug,"base_url":platform_base,"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/provider/{binding_id}","conversation":"/provider/{binding_id}/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":4}]).to_string()).unwrap();
         let (sender, _) = mpsc::channel(1);
         let state = ToolsState {
+            complete_replies_enabled: false,
             discord_thread_history: Some(Arc::new(DiscordThreadHistory::new(
                 crate::discord::DiscordRest::fixture(&format!("{platform_base}/api/v10/")),
             ))),
