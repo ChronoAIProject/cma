@@ -865,7 +865,6 @@ gates and format limits still apply. No group management, message edit/delete,
 reaction or controls authority is added. Connected Meta v25/OBA acceptance is
 still outstanding; source capability presence does not prove delivery.
 
-
 ### Confirmed Telegram and Discord media edits
 
 Use `updateMessage(ref, { native_media_update: patch }, { idempotencyKey })` with an explicit
