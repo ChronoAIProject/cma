@@ -164,10 +164,19 @@ fn a_removed_consumer_is_answered_as_an_expired_reference() {
 fn native_whatsapp_media_discovery_is_independent_and_reports_exact_subset() {
     assert!(NativeMediaCapabilities::native_whatsapp(false).is_none());
     let capability = NativeMediaCapabilities::native_whatsapp(true).unwrap();
-    assert_eq!(capability.kinds, ["image", "file"]);
+    assert_eq!(capability.kinds, ["image", "file", "audio"]);
     assert_eq!(
         capability.mime_types.unwrap(),
-        ["image/jpeg", "image/png", "application/pdf"]
+        [
+            "image/jpeg",
+            "image/png",
+            "application/pdf",
+            "audio/aac",
+            "audio/amr",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/ogg"
+        ]
     );
     assert_eq!(capability.max_image_bytes, Some(5_000_000));
     assert_eq!(capability.max_total_bytes, Some(8 * 1024 * 1024));

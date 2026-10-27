@@ -80,12 +80,18 @@ pub(crate) fn attachment(mime: &str) -> NativeAttachment {
                 .unwrap();
             bytes
         }
-        _ => b"%PDF-1.7\nfixture\n%%EOF".to_vec(),
+        "application/pdf" => b"%PDF-1.7\nfixture\n%%EOF".to_vec(),
+        _ => audio::tests::fixtures()
+            .into_iter()
+            .find(|(kind, _)| *kind == mime)
+            .unwrap()
+            .1
+            .to_vec(),
     };
     serde_json::from_value(
-        json!({"kind":if mime.starts_with("image/") {"image"} else {"file"},
+        json!({"kind":if mime.starts_with("image/") {"image"} else if mime.starts_with("audio/") {"audio"} else {"file"},
         "source":{"type":"base64","data":STANDARD.encode(bytes)},"mime_type":mime,
-        "caption":"A caption"}),
+        "caption":if mime.starts_with("audio/") {None} else {Some("A caption")}}),
     )
     .unwrap()
 }
@@ -143,6 +149,8 @@ async fn native_whatsapp_uploads_exact_bytes_then_sends_only_returned_id_to_boun
         let body: Value = serde_json::from_slice(&calls[1].2).unwrap();
         let kind = if mime == "application/pdf" {
             "document"
+        } else if mime.starts_with("audio/") {
+            "audio"
         } else {
             "image"
         };
@@ -150,9 +158,28 @@ async fn native_whatsapp_uploads_exact_bytes_then_sends_only_returned_id_to_boun
         assert_eq!(body["context"]["message_id"], "wamid.original");
         assert_eq!(body["type"], kind);
         assert_eq!(body[kind]["id"], "45678");
-        assert_eq!(body[kind]["caption"], "A caption");
+        if kind == "audio" {
+            assert_eq!(body[kind], json!({"id":"45678"}));
+        } else {
+            assert_eq!(body[kind]["caption"], "A caption");
+        }
         assert!(body[kind].get("link").is_none());
         assert_eq!(body[kind].get("filename").is_some(), kind == "document");
+    }
+}
+
+#[tokio::test]
+async fn native_whatsapp_audio_derives_mime_and_upload_extension_from_unlabeled_bytes() {
+    for (mime, bytes) in audio::tests::fixtures() {
+        let mut item = attachment(mime);
+        item.mime_type = None;
+        let upload = prepared(&item).await.unwrap();
+        let multipart = String::from_utf8_lossy(&upload.body);
+        assert!(multipart.contains(&format!("Content-Type: {mime}")));
+        let extension = audio::inspect(bytes).unwrap().extensions()[0];
+        assert!(multipart.contains(&format!(".{extension}\"\r\n")));
+        assert_eq!(upload.kind, "audio");
+        assert_eq!(upload.metadata, json!({}));
     }
 }
 
