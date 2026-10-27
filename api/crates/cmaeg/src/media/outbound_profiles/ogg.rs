@@ -1,6 +1,6 @@
 //! One complete Ogg logical stream with mono Opus, no chaining or multiplexing.
 //! Pages are checked in place; only the two bounded header packets are copied.
-pub(super) fn mono_opus(bytes: &[u8]) -> bool {
+pub(crate) fn mono_opus(bytes: &[u8]) -> bool {
     validate(bytes).is_some()
 }
 fn validate(mut bytes: &[u8]) -> Option<()> {
@@ -121,7 +121,7 @@ fn crc(page: &[u8]) -> u32 {
 }
 
 #[cfg(test)]
-pub(super) fn repair_checksums(mut bytes: &mut [u8]) {
+pub(crate) fn repair_checksums(mut bytes: &mut [u8]) {
     while !bytes.is_empty() {
         let count = usize::from(bytes[26]);
         let size = 27

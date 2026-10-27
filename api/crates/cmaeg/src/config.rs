@@ -157,11 +157,16 @@ pub struct Config {
     pub native_lark_media_enabled: bool,
     pub native_whatsapp_groups_writes_enabled: bool,
     pub native_whatsapp_groups_enabled: bool,
+    pub native_lark_message_effects_enabled: bool,
+    pub native_lark_received_reactions_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
     pub native_whatsapp_media_enabled: bool,
+    pub native_lark_outbound_media_enabled: bool,
     pub native_whatsapp_outbound_media_enabled: bool,
     pub native_whatsapp_interactions_enabled: bool,
     pub native_whatsapp_reactions_enabled: bool,
+    pub native_telegram_received_reactions_enabled: bool,
+    pub native_discord_received_reactions_enabled: bool,
     pub native_whatsapp_templates_enabled: bool,
     pub lark_message_effects_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
@@ -290,8 +295,17 @@ impl Config {
             native_whatsapp_groups_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED",
             )?,
+            native_lark_message_effects_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED",
+            )?,
+            native_lark_received_reactions_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED",
+            )?,
             native_whatsapp_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED",
+            )?,
+            native_lark_outbound_media_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED",
             )?,
             native_whatsapp_outbound_media_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED",
@@ -302,6 +316,8 @@ impl Config {
             native_whatsapp_reactions_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED",
             )?,
+            native_telegram_received_reactions_enabled: routing::telegram_received_reactions()?,
+            native_discord_received_reactions_enabled: routing::discord_received_reactions()?,
             native_whatsapp_templates_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED",
             )?,

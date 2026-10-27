@@ -78,11 +78,13 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
             },
             SourceRequest::Telegram {
                 message_events,
+                channel_posts,
                 bot_id,
                 bot_username,
                 admission,
             } => Source::Telegram {
                 message_events: *message_events,
+                channel_posts: *channel_posts,
                 bot_id: bot_id.clone(),
                 bot_username: bot_username.clone(),
                 admission: admission.clone(),

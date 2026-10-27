@@ -53,6 +53,7 @@ fn source(
 ) -> Result<SourceRequest, ManagementError> {
     Ok(SourceRequest::Telegram {
         message_events: false,
+        channel_posts: false,
         bot_id: material.bot_id.clone(),
         bot_username: Some(material.username.clone()),
         admission: admission.ok_or_else(|| invalid("connection_admission is required"))?,

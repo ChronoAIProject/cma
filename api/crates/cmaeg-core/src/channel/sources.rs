@@ -216,8 +216,17 @@ fn validate_source(
             bot_id,
             bot_username,
             admission,
-            ..
-        } => telegram::validate(bot_id, bot_username.as_deref(), admission, secrets, pointer),
+            message_events,
+            channel_posts,
+        } => {
+            if *channel_posts && !message_events {
+                return Err(ValidationError::new(
+                    format!("{pointer}/channel_posts"),
+                    "native channel posts require retained message_events routing",
+                ));
+            }
+            telegram::validate(bot_id, bot_username.as_deref(), admission, secrets, pointer)
+        }
         Source::NyxidRelay {
             issuer,
             jwks_url,

@@ -4,6 +4,8 @@ use axum::{
     http::{Request, StatusCode},
 };
 use cmaeg_core::seal::seal_blob;
+#[path = "whatsapp_status_tests.rs"]
+mod status_tests;
 
 impl Setup {
     fn http(&mut self) -> axum::Router {

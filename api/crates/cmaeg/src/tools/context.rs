@@ -11,10 +11,12 @@ use cmaeg_core::{
     seal::EventRefPayload,
 };
 use serde::Serialize;
+#[path = "context_native.rs"]
+mod native;
 use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ContextResponse {
-    /// Reaction-only reference to the exact received native WhatsApp message.
+    /// Reaction-only reference to an exact retained native user message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub received_message: Option<super::ReceivedMessageContext>,
     /// Explicitly requested current text context of the original native thread.
@@ -109,24 +111,6 @@ impl Capabilities {
             whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
-        }
-    }
-    pub fn native_discord() -> Self {
-        Self {
-            max_text_chars: 2000,
-            ..Self::plain_text()
-        }
-    }
-    pub fn native_lark() -> Self {
-        Self {
-            max_text_chars: 6000,
-            ..Self::plain_text()
-        }
-    }
-    pub fn native_whatsapp() -> Self {
-        Self {
-            max_text_chars: 4096,
-            ..Self::plain_text()
         }
     }
     pub fn native_telegram() -> Self {
@@ -341,26 +325,13 @@ pub(super) fn project(
                 activity_verified,
             ))
         .then_some(true),
-        native_media: if matches!(
-            event.reply,
-            cmaeg_core::seal::ReplyAddress::WhatsappGroup(_)
-        ) {
-            NativeMediaCapabilities::native_whatsapp_group(
-                state.native_whatsapp_outbound_media_enabled
-                    && state.native_whatsapp_groups_enabled
-                    && native_whatsapp_templates(
-                        true,
-                        channel,
-                        event,
-                        &activity,
-                        activity_verified,
-                    ),
-            )
-        } else if matches!(activity.source, SourceKind::Whatsapp { .. }) {
-            NativeMediaCapabilities::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
-        } else {
-            NativeMediaCapabilities::for_source(&activity.source, state.native_media_enabled)
-        },
+        native_media: NativeMediaCapabilities::for_event(
+            state,
+            channel,
+            event,
+            &activity,
+            activity_verified,
+        ),
         inbound_media,
         ..match activity.source {
             SourceKind::NativeLark(_) => Capabilities::native_lark(),
@@ -396,6 +367,14 @@ pub(super) fn project(
             }
         }
     }
+    super::message_effects::native_lark_context::project(
+        state,
+        channel,
+        event,
+        &activity,
+        activity_verified,
+        &mut capabilities,
+    );
     let consumer_controls = event.consumer.is_none()
         || (state.consumer_interactions_enabled
             && activity_verified

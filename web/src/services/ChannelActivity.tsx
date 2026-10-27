@@ -1,6 +1,7 @@
 import { Presence } from '../ui/Presence';
 import './ChannelActivity.css';
 import { useChannelActivity, type ChannelActivityFeed } from './useChannelActivity';
+import { deliveryLabel, deliveryTime } from './activityDelivery';
 import { activityActor, activityLabel } from './channelActivityLabels';
 import {
   ActivityConnection,
@@ -120,22 +121,8 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                                     .join(', ')
                                 : 'Recipient not reported'}
                             </span>
-                            <strong>
-                              {delivery.outcome === 'confirmed'
-                                ? 'Delivery confirmed'
-                                : delivery.outcome === 'buffered'
-                                  ? 'Buffered locally'
-                                  : delivery.outcome === 'unavailable'
-                                    ? 'Delivery unavailable'
-                                    : delivery.outcome.replaceAll('_', ' ')}
-                            </strong>
-                            <ActivityTimestamp
-                              value={
-                                delivery.outcome === 'confirmed'
-                                  ? delivery.confirmed_at
-                                  : delivery.observed_at
-                              }
-                            />
+                            <strong>{deliveryLabel(delivery)}</strong>
+                            <ActivityTimestamp value={deliveryTime(delivery)} />
                           </li>
                         ))}
                       </ul>

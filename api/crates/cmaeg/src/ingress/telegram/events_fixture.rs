@@ -137,12 +137,21 @@ impl Fixture {
         );
     }
     pub fn request(&self) -> LaunchRequest {
-        let Outcome::Admitted(observed) = crate::ingress::telegram::observe(
+        let Source::Telegram {
+            admission,
+            channel_posts,
+            ..
+        } = &self.channel.definition.sources[0]
+        else {
+            panic!()
+        };
+        let Outcome::Admitted(observed) = crate::ingress::telegram::observe_source(
             self.raw.clone(),
             "77",
             Some("golden_bot"),
-            false,
-            false,
+            self.state.media_enabled,
+            admission,
+            *channel_posts,
         )
         .unwrap() else {
             panic!()
