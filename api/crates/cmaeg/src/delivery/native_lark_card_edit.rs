@@ -183,7 +183,7 @@ impl Sender {
         if cards.refresh_native_lark(&prepared.card).await.is_err() {
             return rejected();
         }
-        let _permit = match ctx.gate.attempt().await {
+        let permit = match ctx.gate.attempt().await {
             Ok(p) => p,
             Err(e) => return refused(rendering, e.outcome()),
         };
@@ -195,6 +195,7 @@ impl Sender {
         {
             return refused(rendering, outcome(error));
         }
+        drop(permit);
         ctx.gate.progress();
         if cards
             .native_lark_patch_confirmed(&mut prepared)
