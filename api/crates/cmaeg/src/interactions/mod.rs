@@ -176,7 +176,26 @@ impl InteractionStore {
         message: &OutboundMessage,
         context: EventContextSnapshot,
     ) -> Result<PreparedCard, Error> {
-        if context.channel_id != channel.id || !event.verifies_activity(&context.activity) {
+        self.prepare_with_discord_thread(channel, event, message, context, None)
+            .await
+    }
+    /// Thread controls require fresh authenticated channel evidence in addition
+    /// to the sealed event's retained existing-thread destination.
+    pub(crate) async fn prepare_with_discord_thread(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+        context: EventContextSnapshot,
+        thread: Option<crate::discord::component_thread::ThreadIdentity>,
+    ) -> Result<PreparedCard, Error> {
+        if context.channel_id != channel.id
+            || !event.verifies_activity(&context.activity)
+            || (message.thread_reply
+                && matches!(event.reply, ReplyAddress::Discord { .. })
+                && thread.is_none())
+            || (thread.is_some() && !matches!(event.reply, ReplyAddress::Discord { .. }))
+        {
             return Err(Error::Denied);
         }
         let route_id = match &event.reply {
@@ -225,7 +244,12 @@ impl InteractionStore {
         };
         let card = Card {
             discord: if matches!(event.reply, ReplyAddress::Discord { .. }) {
-                Some(discord::identity(channel, event, &context.activity)?)
+                Some(discord::identity(
+                    channel,
+                    event,
+                    &context.activity,
+                    thread,
+                )?)
             } else {
                 None
             },

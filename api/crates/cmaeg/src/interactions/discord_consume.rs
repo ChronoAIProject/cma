@@ -15,8 +15,25 @@ pub(crate) struct DiscordClick<'a> {
     pub component_type: u64,
     pub values: &'a [String],
     pub message: &'a str,
+    pub thread: Option<&'a crate::discord::component_thread::ThreadIdentity>,
 }
 impl InteractionStore {
+    pub(crate) async fn discord_thread(
+        &self,
+        custom: &str,
+    ) -> Result<
+        (
+            Option<crate::discord::component_thread::ThreadIdentity>,
+            bool,
+        ),
+        Error,
+    > {
+        let (id, _, _) = super::card::decode(custom)?;
+        let (card, _) = self.load(&id).await?;
+        let identity = card.discord.ok_or(Error::Denied)?;
+        Ok((identity.thread, card.consumed.is_some()))
+    }
+
     pub(crate) async fn consume_discord(
         &self,
         channel: &ResolvedChannel,
@@ -35,6 +52,7 @@ impl InteractionStore {
                 || card.actor != activity.actor.id
                 || card.chat != activity.conversation.id
                 || card.thread != activity.conversation.thread_id
+                || identity.thread.as_ref() != click.thread
                 || activity.thread.is_some()
                 || identity.conversation_kind != activity.conversation.kind
                 || activity.source

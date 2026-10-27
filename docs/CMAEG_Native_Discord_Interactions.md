@@ -19,12 +19,22 @@ or recovery.
 Controls require a verified human native Discord event, a ready source, durable
 routing, and an executable provider binding. A provider's event-context response
 must match the sealed event digest before a card can be prepared. Published agent
-events and thread contexts are ineligible in this initial implementation.
-Before creating a card, delivery verifies the exact channel through one
-authenticated Discord channel read with a two-second budget. Only ordinary DM
-or server channels matching the verified conversation kind qualify. Missing,
-unavailable or thread metadata refuses issuance even when the original event
-has no thread marker; this check is independent of the thread metadata gate.
+events remain ineligible. Ordinary DM/server channels and existing verified
+threads support controls. Before creating a card, delivery verifies the exact
+channel through one authenticated Discord channel read with a two-second budget.
+Ordinary channels must match the verified conversation kind. A thread additionally
+requires the original Activity and sealed reply address to identify that exact
+existing thread, plus current authenticated type 10, 11 or 12, canonical guild
+and non-self parent IDs. Missing or unavailable metadata refuses issuance. A
+thread discovered only during delivery cannot upgrade an event without retained
+thread proof; the original metadata gate must have admitted that proof.
+
+Thread cards retain their authenticated channel ID, type, guild and parent as an
+optional native identity field. Deploy compatible serving and rollback readers
+before issuing them. Existing ordinary card serialization is unchanged. Both
+ordinary and explicit `thread_reply=true` control messages go to the same thread
+channel, and the parent is never an outbound destination. Disabling new thread
+metadata intake does not revoke proof already retained by events or cards.
 
 There are at most five action rows, with at most five buttons per row or one
 single-select menu per row. Neutral message validation currently bounds a select
@@ -49,11 +59,21 @@ callback endpoint and requires no relay changes.
 A callback must match all retained identities before it can consume a card:
 
 - The authenticated native source, application/bot ID and current source revision.
-- The original human actor, conversation and delivered bot message ID/author.
+- The original human actor, conversation, exact existing thread when present, and delivered bot message ID/author.
 - The card revision, button or single-select component type, and an exact option.
 - The original consumer and provider binding, including the default consumer.
 - The card's expiry, confirmed delivery reference and unconsumed state, or the
   exact already-consumed callback during recovery.
+
+A fresh thread click also makes one authenticated `GET /channels/{thread_id}`
+within the original acknowledgement budget. Its channel ID, type, guild and
+parent must equal the retained card proof. The callback's guild and any supplied
+channel facts must agree; a Gateway channel object alone cannot grant thread
+authority. The read uses the existing 64 KiB cap, no redirects, conservative
+rate-limit cooldown and no automatic retry. Failed or changed metadata cannot
+consume a fresh card. An exact already-consumed click can finish a lost inbox
+write using its retained proof after the deadline; final authorization still
+requires that same callback, actor, option, source and consumer.
 
 Current source admission is applied to the callback's authenticated actor and
 conversation. A button click supplies explicit addressing evidence. Credential
@@ -90,5 +110,13 @@ is reported as unknown and its card cannot authorize a callback. No automatic
 resend follows an uncertain message write or acknowledgement.
 
 To pause new controls, turn off `CMAEG_DISCORD_INTERACTIONS_ENABLED`; retain readers
-until existing cards and callback work have expired or settled. Production
-activation and live platform proof are separate from the local loopback tests.
+until existing cards and callback work have expired or settled. Thread controls
+support existing threads only: there is no thread creation, join, reopen, archive,
+follow, listing or history fetch. Local authenticated HTTP and routed provider
+fixtures cover buttons and single-selects, all three thread types, metadata
+refusals, retained replay, and replies to the same thread. Production activation
+and live platform proof are separate from those local tests.
+
+Discord API references: [channel types and channel reads](https://discord.com/developers/docs/resources/channel#get-channel),
+[message components](https://discord.com/developers/docs/components/reference),
+and [interaction receipt and acknowledgement](https://discord.com/developers/docs/interactions/receiving-and-responding).

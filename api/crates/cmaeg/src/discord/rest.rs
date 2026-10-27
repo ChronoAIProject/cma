@@ -1,4 +1,5 @@
 //! Native Discord REST. Bot credentials go only to the fixed official API origin.
+mod component_channel;
 mod effects;
 #[cfg(test)]
 pub(crate) mod effects_tests;
@@ -129,46 +130,6 @@ impl DiscordRest {
             return Err(RestError::Rejected);
         }
         Ok(body)
-    }
-    /// Missing thread metadata in an event is not proof of an ordinary channel.
-    /// Resolve the exact destination before creating an interactive card; failed
-    /// or unknown evidence must never produce controls whose clicks we refuse.
-    pub(crate) async fn verify_component_channel(
-        &self,
-        token: &Secret,
-        channel: &str,
-        kind: cmaeg_core::activity::ConversationKind,
-    ) -> Result<(), RestError> {
-        if !valid_id(channel) {
-            return Err(RestError::Rejected);
-        }
-        self.ready(token)?;
-        let body = tokio::time::timeout(Duration::from_secs(2), async {
-            let response = self
-                .client
-                .get(self.url(&format!("channels/{channel}"))?)
-                .header("Authorization", format!("Bot {}", token.as_str()))
-                .send()
-                .await
-                .map_err(|_| RestError::Unavailable)?;
-            self.decode(response, token, false).await
-        })
-        .await
-        .map_err(|_| RestError::Unavailable)??;
-        let ordinary = match kind {
-            cmaeg_core::activity::ConversationKind::Private => {
-                body["type"].as_u64() == Some(1) && body["guild_id"].is_null()
-            }
-            cmaeg_core::activity::ConversationKind::Group => {
-                matches!(body["type"].as_u64(), Some(0 | 2 | 5 | 13))
-                    && body["guild_id"].as_str().is_some_and(valid_id)
-            }
-            _ => false,
-        };
-        if body["id"].as_str() != Some(channel) || !ordinary {
-            return Err(RestError::Rejected);
-        }
-        Ok(())
     }
     /// Never retry ambiguous writes: an error after dispatch can mean Discord accepted it.
     pub async fn send(

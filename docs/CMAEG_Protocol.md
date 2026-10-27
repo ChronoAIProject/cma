@@ -3443,6 +3443,22 @@ is never an outbound destination. Single-part editable text/link replies retain
 their normal exact-channel edit authority. Updates cannot add routing fields.
 Old reply references serialize identically when thread evidence is absent.
 
+Native buttons and single-select controls can use that same retained existing
+thread when native interaction issuance is enabled (and named consumer issuance
+is enabled when applicable). A fresh authenticated channel preflight must match
+the sealed event's exact thread before a card is persisted. The card retains an
+optional thread identity with channel ID, type, guild and parent. Each fresh
+component click verifies those exact facts through an authenticated channel read
+within its original 2.5-second acknowledgement budget; raw callback channel facts
+cannot grant thread authority. The callback keeps the original actor, delivered
+bot message, consumer/provider, conversation and partition, and its reply address
+still targets the same thread. Accepted replay retains that proof without a new
+read; an exact consumed click can finish a lost inbox write after the deadline.
+Old ordinary cards serialize identically when the optional proof is absent.
+Deploy compatible card and callback readers before issuing thread controls. See
+[Native Discord interactions](CMAEG_Native_Discord_Interactions.md) for gates,
+acknowledgement, revocation and rollback requirements.
+
 This supports replying inside an existing verified thread and isolating its
 conversation. It does not create, archive, reopen, join, follow or list threads,
 or fetch their message history. Those operations are not advertised as available.
