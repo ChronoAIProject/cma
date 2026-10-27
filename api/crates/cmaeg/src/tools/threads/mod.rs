@@ -67,6 +67,9 @@ impl ToolsState {
             .await
             .map_err(|error| error.problem())?;
         super::state::owner(caller, &channel, event.consumer.as_ref(), "threadLifecycle")?;
+        if !self.resolver.record_client().thread_fences_ready().await {
+            return Err(unavailable());
+        }
         let authority = thread_authority::load(
             self.resolver.record_client(),
             self.keys.clone(),

@@ -181,7 +181,9 @@ impl App {
     pub async fn with_origin(origin_type: u8, named: bool) -> Self {
         let thread_kind = matches!(origin_type, 10..=12).then_some(origin_type);
         let backend = Arc::new(fake_cma::FakeCma::start(false).await);
-        let records = RecordClient::new(&backend.base_url, "cma-service").unwrap();
+        let records = RecordClient::new(&backend.base_url, "cma-service")
+            .unwrap()
+            .with_thread_fences_fixture();
         let keys =
             Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([3; 32]))).unwrap());
         let mut value = routing_fixture::routed_with_key(DEFAULT_KEY);
