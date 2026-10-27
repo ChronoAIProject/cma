@@ -1,6 +1,8 @@
 use super::*;
 use base64::Engine as _;
 
+#[path = "owner_service_access_tests.rs"]
+mod owner_service_access;
 #[path = "api_bearer_refusal_tests.rs"]
 mod refusals;
 
