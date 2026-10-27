@@ -84,14 +84,16 @@ impl IngressState {
             Ok(p) => p,
             Err(e) => return storage_refusal(e),
         };
-        // A crashed local consumer may leave its lock held. Only a lock explicitly
-        // marked for this card's local CAS can be recovered; platform locks cannot.
+        // A winning card CAS blocks supersession until admission is saved. Recovery
+        // therefore needs no external fence: even a crashed writer that acquired its
+        // lock after consumption cannot strand the click. Clean up abandoned local
+        // locks best-effort; never recover or release an external mutation lock.
         let cmaeg_core::seal::ReplyAddress::NativeLark(reply) = &pending.event.reply else {
             return refusal(403, "native_lark_control_invalid");
         };
         let serial =
             lark_ledger::Store::new(self.resolver.record_client(), self.master_keys.clone());
-        let held = match serial
+        if let Ok(Some(held)) = serial
             .acquire_control(
                 lark_ledger::native_destination(reply),
                 &channel.definition.owner.subject,
@@ -100,14 +102,9 @@ impl IngressState {
             )
             .await
         {
-            Ok(Some(h)) => h,
-            _ => return refusal(503, "native_lark_control_mutation_pending"),
-        };
-        let rechecked = cards.native_lark_pending(id, &channel).await;
-        if serial.release(held).await.is_err() {
-            return refusal(503, "native_lark_control_fence_unconfirmed");
+            let _ = serial.release(held).await;
         }
-        let pending = match rechecked {
+        let pending = match cards.native_lark_pending(id, &channel).await {
             Ok(p) => p,
             Err(e) => return storage_refusal(e),
         };

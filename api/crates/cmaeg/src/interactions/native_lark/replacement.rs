@@ -35,6 +35,7 @@ impl InteractionStore {
     ) -> Result<PreparedCard, Error> {
         let (mut old, version) = self.native_lark_reference(channel, reference).await?;
         if old.superseded
+            || !super::mutation_ready(&old)
             || message.validate().is_err()
             || (message.thread_reply && old.thread.is_none())
         {
