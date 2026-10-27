@@ -530,6 +530,19 @@ every platform can edit every message. For Discord and WhatsApp sources,
 `verify_raw_event: true` opts into signed raw-event correlation and requires the
 deployment's extended-source writer support; omission preserves existing trust.
 
+An enabled native Discord upload can return an opaque `message_ref` for delete
+and own-reaction effects when the complete upload fits one confirmed Discord
+message. This reference does not authorize text or attachment updates. Query its
+message-effect capabilities and inspect effect receipts. Several native messages
+or uncertain delivery produce no upload reference; several files in one message
+can share one reference. The SDK types and method signatures are unchanged.
+
+Native Telegram can likewise return an effects-only reference for one confirmed
+individual upload when its separate media-effects gate is enabled. A caption on
+that upload is allowed, but top-level text plus an upload or several attachments
+produce several native messages and no aggregate media reference. Caption/media
+editing and album effects remain unsupported.
+
 `postEvent` and `streamEvent` accept a structured `cmaeg.CloudEvent` plus optional
 `{webhook:{secret,id,timestamp}}`. The timestamp is decimal Unix seconds; the
 configured base64 secret string is used as UTF-8 without decoding it. The client
