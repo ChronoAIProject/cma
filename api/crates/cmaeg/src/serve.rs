@@ -26,6 +26,7 @@ pub(crate) async fn serve(
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
     discord_interactions: bool,
+    discord_multiselect: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -107,6 +108,7 @@ pub(crate) async fn serve(
         .with_whatsapp_templates(whatsapp_templates)
         .with_whatsapp_interactions(whatsapp_interactions)
         .with_discord_interactions(discord_interactions)
+        .with_discord_multiselect(discord_multiselect)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
         .with_interactions(interactions.clone()),

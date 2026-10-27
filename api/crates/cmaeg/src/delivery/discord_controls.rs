@@ -22,6 +22,11 @@ impl Sender {
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
         let effects = SendEffects::default();
+        if interactions::discord::multiselect_requested(message)
+            && !self.relay.discord_multiselect_enabled()
+        {
+            return (unsupported(), effects);
+        }
         let ReplyAddress::Discord {
             bot_id,
             channel_id,

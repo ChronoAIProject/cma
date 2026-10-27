@@ -19,6 +19,8 @@ pub mod inbox_dispatch;
 mod inbox_reader;
 mod inbox_scan;
 pub(crate) mod lifecycle;
+#[cfg(test)]
+mod multiselect_tests;
 mod normalize;
 mod runtime_source;
 pub mod selection;

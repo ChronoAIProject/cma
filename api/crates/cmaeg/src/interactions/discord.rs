@@ -32,6 +32,12 @@ pub(crate) fn requested(message: &OutboundMessage) -> bool {
         .iter()
         .any(|block| matches!(block, Block::Buttons { .. } | Block::Choice { .. }))
 }
+pub(crate) fn multiselect_requested(message: &OutboundMessage) -> bool {
+    message
+        .blocks
+        .iter()
+        .any(|block| matches!(block, Block::Choice { multi: true, .. }))
+}
 pub(crate) fn eligible(
     channel: &ResolvedChannel,
     event: &EventRefPayload,
@@ -98,7 +104,10 @@ pub(crate) fn source_revision(
 }
 pub(crate) fn valid(card: &Card) -> bool {
     let Some(identity) = &card.discord else {
-        return true;
+        return card
+            .consumed
+            .as_ref()
+            .is_none_or(|click| click.selection.is_none());
     };
     card.lark.is_none()
         && card.whatsapp.is_none()
@@ -129,6 +138,7 @@ pub(crate) fn valid(card: &Card) -> bool {
         && cmaeg_core::channel::valid_discord_id(&identity.bot_id)
         && card.route_id == route(&identity.bot_id, &card.chat)
         && render(&card.message, &card.id, card.revision).is_ok()
+        && selection_valid(card)
 }
 pub(crate) fn route(bot: &str, channel: &str) -> String {
     format!("discord:{bot}:{channel}")
@@ -136,7 +146,7 @@ pub(crate) fn route(bot: &str, channel: &str) -> String {
 fn locator(id: &str, revision: u64, action: usize) -> String {
     format!("cd1:{}:{revision}:{action}", id.replace('-', ""))
 }
-/// At most five action rows; buttons are split into rows of five. A single-select
+/// At most five action rows; buttons are split into rows of five. A select
 /// occupies one row. Neutral message bounds further limit selects to 20 options.
 pub(crate) fn render(message: &OutboundMessage, id: &str, revision: u64) -> Result<Value, Error> {
     message.validate().map_err(|_| Error::Denied)?;
@@ -172,17 +182,19 @@ pub(crate) fn render(message: &OutboundMessage, id: &str, revision: u64) -> Resu
                 multi,
                 ..
             } => {
-                if *multi || options.len() > 25 || options.iter().filter(|o| o.selected).count() > 1
+                if options.len() > 25
+                    || (!multi && options.iter().filter(|o| o.selected).count() > 1)
                 {
                     return Err(Error::Denied);
                 }
                 let start = action;
+                let maximum = if *multi { options.len() } else { 1 };
                 let options: Vec<_> = options.iter().map(|option| {
                     let value = json!({"label":option.label,"value":action.to_string(),"default":option.selected});
                     action += 1; value
                 }).collect();
                 let placeholder: String = prompt.chars().take(100).collect();
-                rows.push(json!({"type":1,"components":[{"type":3,"custom_id":locator(id,revision,start),"placeholder":placeholder,"min_values":1,"max_values":1,"options":options}]}));
+                rows.push(json!({"type":1,"components":[{"type":3,"custom_id":locator(id,revision,start),"placeholder":placeholder,"min_values":if *multi { 0 } else { 1 },"max_values":maximum,"options":options}]}));
             }
             // These retain the ordinary text renderer's semantics; only controls
             // become components, so links do not introduce another callback kind.
@@ -194,14 +206,30 @@ pub(crate) fn render(message: &OutboundMessage, id: &str, revision: u64) -> Resu
     }
     Ok(Value::Array(rows))
 }
-/// Convert a selected opaque index to the matching immutable card action. Client
-/// labels and business values never contribute callback authority.
+pub(super) struct CallbackAction {
+    pub index: usize,
+    pub selection: Option<Vec<usize>>,
+    pub action: super::card::Action,
+}
+impl CallbackAction {
+    fn single(card: &Card, index: usize) -> Result<Self, Error> {
+        Ok(Self {
+            index,
+            selection: None,
+            action: super::keyboard::actions(&card.message)
+                .get(index)
+                .cloned()
+                .ok_or(Error::Denied)?,
+        })
+    }
+}
+/// Resolve opaque indices against one immutable block, never client business values.
 pub(super) fn action(
     card: &Card,
     custom: &str,
     kind: u64,
     values: &[String],
-) -> Result<usize, Error> {
+) -> Result<CallbackAction, Error> {
     let (id, index, revision) = super::card::decode(custom)?;
     if !custom.starts_with("cd1:") || id != card.id || revision != Some(card.revision) {
         return Err(Error::Denied);
@@ -212,18 +240,47 @@ pub(super) fn action(
             Block::Buttons { options, .. } => {
                 if kind == 2 && values.is_empty() && (start..start + options.len()).contains(&index)
                 {
-                    return Ok(index);
+                    return CallbackAction::single(card, index);
                 }
                 start += options.len();
             }
-            Block::Choice { options, multi, .. } => {
-                if kind == 3 && !multi && index == start && values.len() == 1 {
-                    let selected = values[0].parse::<usize>().map_err(|_| Error::Denied)?;
-                    if selected.to_string() == values[0]
-                        && (start..start + options.len()).contains(&selected)
-                    {
-                        return Ok(selected);
+            Block::Choice {
+                id, options, multi, ..
+            } => {
+                if kind == 3
+                    && index == start
+                    && (*multi || values.len() == 1)
+                    && values.len() <= options.len()
+                {
+                    let mut selected = values
+                        .iter()
+                        .map(|value| {
+                            let selected = value.parse::<usize>().map_err(|_| Error::Denied)?;
+                            (selected.to_string() == value.as_str()
+                                && (start..start + options.len()).contains(&selected))
+                            .then_some(selected)
+                            .ok_or(Error::Denied)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    selected.sort_unstable();
+                    if selected.windows(2).any(|pair| pair[0] == pair[1]) {
+                        return Err(Error::Denied);
                     }
+                    if !multi {
+                        return CallbackAction::single(card, selected[0]);
+                    }
+                    return Ok(CallbackAction {
+                        index: start,
+                        action: super::card::Action {
+                            block: id.clone(),
+                            id: id.clone(),
+                            selected: selected
+                                .iter()
+                                .map(|index| options[*index - start].id.clone())
+                                .collect(),
+                        },
+                        selection: Some(selected),
+                    });
                 }
                 start += options.len();
             }
@@ -231,4 +288,36 @@ pub(super) fn action(
         }
     }
     Err(Error::Denied)
+}
+
+/// A stored multi click must preserve its complete set, including an empty set.
+/// A single action index alone must never restore a different selection.
+fn selection_valid(card: &Card) -> bool {
+    let Some(click) = &card.consumed else {
+        return true;
+    };
+    let mut start = 0;
+    for block in &card.message.blocks {
+        match block {
+            Block::Buttons { options, .. } | Block::Choice { options, .. } => {
+                let range = start..start + options.len();
+                if range.contains(&click.action) {
+                    return match block {
+                        Block::Choice { multi: true, .. } => {
+                            click.action == start
+                                && click.selection.as_ref().is_some_and(|selection| {
+                                    selection.len() <= options.len()
+                                        && selection.iter().all(|index| range.contains(index))
+                                        && selection.windows(2).all(|pair| pair[0] < pair[1])
+                                })
+                        }
+                        _ => click.selection.is_none(),
+                    };
+                }
+                start += options.len();
+            }
+            _ => {}
+        }
+    }
+    false
 }

@@ -1,4 +1,7 @@
 //! Signed callbacks traverse the real verifier, current ACL and durable CAS.
+#[path = "retry.rs"]
+mod retry;
+
 use super::{
     fake_cma::FakeCma,
     relay_support::{now, Envelope},
