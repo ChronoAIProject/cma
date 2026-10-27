@@ -11,6 +11,7 @@ use tokio::sync::Semaphore;
 #[derive(Clone)]
 pub struct IngressState {
     pub native_lark_intake_enabled: bool,
+    pub native_lark_media_enabled: bool,
     pub resolver: ChannelResolver,
     pub master_keys: Arc<MasterKeyRing>,
     pub jwks: Arc<JwksCache>,
@@ -32,6 +33,10 @@ pub struct IngressState {
     pub activity: Arc<dyn ActivityObserver>,
 }
 impl IngressState {
+    pub fn with_native_lark_media(mut self, enabled: bool) -> Self {
+        self.native_lark_media_enabled = enabled;
+        self
+    }
     pub fn with_native_lark_intake(mut self, enabled: bool) -> Self {
         self.native_lark_intake_enabled = enabled;
         self
@@ -83,6 +88,7 @@ impl IngressState {
     ) -> Result<Self, reqwest::Error> {
         Ok(Self {
             native_lark_intake_enabled: false,
+            native_lark_media_enabled: false,
             routed: None,
             interactions: None,
             telegram: None,

@@ -11,7 +11,7 @@ use crate::{
     turns::render_media,
 };
 use cmaeg_core::{
-    activity::{Activity, Attachment},
+    activity::{Activity, Attachment, AttachmentSource},
     channel::ConsumerView,
     problem::{Problem, ProblemCode},
     seal::{media_link, EventRefPayload, MediaLinkPayload, MediaLinkRef, OpenError},
@@ -145,13 +145,34 @@ impl ToolsState {
             })?;
         let channel = if matches!(
             attachment.source,
-            Some(cmaeg_core::activity::AttachmentSource::LarkResource { .. })
+            Some(AttachmentSource::LarkResource { .. } | AttachmentSource::NativeLark { .. })
         ) {
-            let current = self
-                .resolver
-                .resolve_current(channel.id.as_str())
+            let current = if matches!(attachment.source, Some(AttachmentSource::NativeLark { .. }))
+            {
+                let caller = crate::auth::AgentCaller {
+                    key_hash: hex_bytes::<32>(&link.agent_key_hash).ok_or_else(Refusal::revoked)?,
+                };
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    crate::turns::routed::current_received_message(
+                        self.resolver.record_client(),
+                        self.keys.clone(),
+                        &self.resolver,
+                        caller,
+                        &link.event,
+                        &activity,
+                    ),
+                )
                 .await
-                .map_err(|_| Refusal::revoked())?;
+                .ok()
+                .and_then(Result::ok)
+                .ok_or_else(Refusal::revoked)?
+            } else {
+                self.resolver
+                    .resolve_current(channel.id.as_str())
+                    .await
+                    .map_err(|_| Refusal::revoked())?
+            };
             let consumer = current
                 .consumer(link.event.consumer.as_ref())
                 .ok_or_else(Refusal::revoked)?;

@@ -28,6 +28,8 @@ pub(crate) enum Message {
         chat_id: String,
         sender: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resources: Vec<super::content::Resource>,
         group: bool,
         thread_id: Option<String>,
         mentioned: bool,
@@ -76,7 +78,7 @@ pub(crate) fn extract(
         Some("im.message.receive_v1") => {
             let m = &event["message"];
             let sender = &event["sender"];
-            if sender["sender_type"] != "user" || m["message_type"] != "text" {
+            if sender["sender_type"] != "user" {
                 return Ok(None);
             }
             // A cross-tenant sender is outside this initial single-tenant source.
@@ -112,11 +114,11 @@ pub(crate) fn extract(
                     .ok_or(())?,
             )
             .map_err(|_| ())?;
-            let text = content["text"]
-                .as_str()
-                .filter(|s| !s.is_empty() && s.len() <= 32 * 1024)
-                .ok_or(())?
-                .to_owned();
+            let Some((text, resources)) =
+                super::content::parse(m["message_type"].as_str().ok_or(())?, &content)?
+            else {
+                return Ok(None);
+            };
             let mentions = match m.get("mentions") {
                 Some(v) => v
                     .as_array()
@@ -137,6 +139,7 @@ pub(crate) fn extract(
                 chat_id,
                 sender,
                 text,
+                resources,
                 group,
                 thread_id,
                 mentioned,
@@ -197,6 +200,9 @@ impl Message {
             Self::Text { created_ms, .. } => *created_ms,
             Self::Recall { occurred_ms, .. } | Self::Reaction { occurred_ms, .. } => *occurred_ms,
         }
+    }
+    pub(crate) fn has_resources(&self) -> bool {
+        matches!(self, Self::Text { resources, .. } if !resources.is_empty())
     }
     pub(crate) fn ordinary(&self) -> bool {
         matches!(self, Self::Text { .. })
@@ -266,6 +272,7 @@ pub(crate) fn launch(
             chat_id,
             sender,
             text,
+            resources,
             group,
             thread_id,
             mentioned,
@@ -284,7 +291,7 @@ pub(crate) fn launch(
             (
                 ActivityKind::Message {
                     text: text.clone(),
-                    attachments: vec![],
+                    attachments: super::content::attachments(resources, message_id, &revision),
                     mentions_bot: *mentioned,
                     reply_to: None,
                     album_id: None,

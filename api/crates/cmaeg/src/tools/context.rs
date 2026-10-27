@@ -234,7 +234,9 @@ pub(super) fn inbound_media(
     let capabilities = media.capabilities();
     let visuals = match (capabilities.visuals, source) {
         (VisualKind::Keyframes, _) => VisualSupport::Keyframes,
-        (VisualKind::Thumbnail, SourceKind::Telegram { .. }) => VisualSupport::PlatformThumbnail,
+        (VisualKind::Thumbnail, SourceKind::Telegram { .. } | SourceKind::NativeLark(_)) => {
+            VisualSupport::PlatformThumbnail
+        }
         (VisualKind::Thumbnail, _) => VisualSupport::None,
     };
     let audience = media.audience(consumer);

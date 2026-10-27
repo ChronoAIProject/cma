@@ -305,3 +305,6 @@ async fn native_lark_confirmed_receipt_selects_only_sending_consumer_and_retains
     let stale = reaction("missing_event", "om_unseen", true, fixture::NOW - 121);
     assert!(matches!(setup.launch(stale).await,LaunchOutcome::Refused(p) if p.status==422));
 }
+
+#[path = "native_lark_media_tests.rs"]
+mod media_tests;
