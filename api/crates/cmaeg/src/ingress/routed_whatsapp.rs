@@ -17,6 +17,9 @@ impl IngressState {
         verified: VerifiedWhatsappMessage,
         _hold: OwnedSemaphorePermit,
     ) -> LaunchOutcome {
+        if matches!(verified.message.content, Content::Flow { .. }) {
+            return self.launch_whatsapp_flow(&verified).await;
+        }
         let Some(routing) = self
             .routed
             .as_ref()

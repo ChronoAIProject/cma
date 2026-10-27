@@ -36,7 +36,17 @@ pub(crate) async fn verify(
             .map_err(|_| invalid("native WhatsApp credential verification unavailable"))?,
     };
     let result = async {
-        client.verify_custody(source, credentials).await?;
+        if matches!(
+            source,
+            Source::Whatsapp {
+                forms_enabled: true,
+                ..
+            }
+        ) {
+            client.verify_flow_custody(source, credentials).await?;
+        } else {
+            client.verify_custody(source, credentials).await?;
+        }
         client.verify_source_groups(source, credentials).await
     }
     .await;

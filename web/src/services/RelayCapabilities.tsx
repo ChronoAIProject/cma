@@ -7,6 +7,8 @@ export interface RelayAuthoringCapabilities {
   readonly native_lark_intake_enabled?: boolean | null;
   readonly native_lark_controls_enabled?: boolean | null;
   readonly native_lark_forms_enabled?: boolean | null;
+  readonly native_whatsapp_forms_enabled?: boolean | null;
+  readonly native_whatsapp_flow_writes_enabled?: boolean | null;
   readonly native_whatsapp_writes_enabled?: boolean | null;
   readonly native_whatsapp_groups_writes_enabled?: boolean | null;
   readonly native_whatsapp_auto_activation_enabled?: boolean | null;

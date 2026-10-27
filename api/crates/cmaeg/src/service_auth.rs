@@ -50,7 +50,7 @@ impl ServiceAuth {
         }
     }
 
-    fn account(
+    pub(crate) fn account(
         origin: &str,
         credentials: crate::config::ServiceAccountConfig,
     ) -> Result<Self, ServiceAuthUnavailable> {

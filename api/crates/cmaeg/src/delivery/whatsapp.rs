@@ -39,6 +39,9 @@ impl Sender {
     ) -> (IntentReceipt, SendEffects) {
         // Native sends do not consume or change a relay acknowledgement token.
         let effects = SendEffects::default();
+        if crate::whatsapp::forms::compile::requested(message) {
+            return (rejected("whatsapp_form_preparation_required"), effects);
+        }
         let (app_id, waba_id, phone_number_id, recipient_id, message_id, group) = match &event.reply
         {
             ReplyAddress::Whatsapp {

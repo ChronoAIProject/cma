@@ -50,6 +50,8 @@ use utoipa::OpenApi;
         http::whatsapp::callback,
         http::events::receive_event,
         http::tools::reply_to_event,
+        http::form_preparation::prepare_form_reply,
+        http::form_preparation::read_form_preparation,
         http::tools::update_message,
         http::message_effects::read_message_capabilities,
         http::message_effects::delete_message,

@@ -40,7 +40,9 @@ impl Candidate {
             keys,
             now,
             Some(
-                if matches!(
+                if crate::interactions::whatsapp_flow::shape(&request.activity) {
+                    NATIVE_WHATSAPP_FLOW_INTERACTION_KIND
+                } else if matches!(
                     request.activity.source,
                     cmaeg_core::activity::SourceKind::Whatsapp { .. }
                 ) {
@@ -211,7 +213,8 @@ impl AdmittedPlan {
         let discord_native = self.kind == NATIVE_INTERACTION_KIND;
         let whatsapp_native = self.kind == NATIVE_WHATSAPP_INTERACTION_KIND;
         let lark_native = self.kind == NATIVE_LARK_INTERACTION_KIND;
-        let native = discord_native || whatsapp_native || lark_native;
+        let flow_native = self.kind == NATIVE_WHATSAPP_FLOW_INTERACTION_KIND;
+        let native = discord_native || whatsapp_native || lark_native || flow_native;
         let message_event = self.kind == MESSAGE_EVENT_KIND;
         if (self.kind != PAYLOAD_KIND && !native && !message_event)
             || self.admission_id != self.identity.admission_id()
@@ -221,6 +224,9 @@ impl AdmittedPlan {
                     || !(discord_native
                         && matches!(self.source, cmaeg_core::channel::Source::Discord { .. })
                         || whatsapp_native
+                            && matches!(self.source, cmaeg_core::channel::Source::Whatsapp { .. })
+                        || flow_native
+                            && crate::interactions::whatsapp_flow::shape(&self.activity)
                             && matches!(self.source, cmaeg_core::channel::Source::Whatsapp { .. })
                         || lark_native
                             && matches!(self.source, cmaeg_core::channel::Source::NativeLark(_)))
