@@ -469,14 +469,14 @@ fn staged_preview_enables_media_and_console_with_reserved_memory() {
 }
 
 #[test]
-fn shipped_discord_controls_and_history_keep_unreleased_delivery_modes_off() {
+fn shipped_controls_and_history_match_verified_activation_policy() {
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED"),
         Some("false")
     );
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_DISCORD_FORMS_ENABLED"),
-        Some("false")
+        Some("true")
     );
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_DISCORD_CARD_EDITS_ENABLED"),
@@ -484,11 +484,11 @@ fn shipped_discord_controls_and_history_keep_unreleased_delivery_modes_off() {
     );
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_DISCORD_CARD_EFFECTS_ENABLED"),
-        Some("false")
+        Some("true")
     );
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_LARK_FORMS_ENABLED"),
-        Some("false")
+        Some("true")
     );
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_DISCORD_MULTISELECT_ENABLED"),
