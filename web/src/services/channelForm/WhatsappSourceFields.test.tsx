@@ -103,6 +103,7 @@ it('drops stale native credentials after switching producer type and excludes th
     nodeCredentials(
       { whatsapp: bundle, agent_key: 'provider-private' },
       { kind: 'consumer', id: 'default' },
+      { sources: [source] },
     ),
   ).toEqual({ agent_key: 'provider-private' });
   expect(
