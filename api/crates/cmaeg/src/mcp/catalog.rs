@@ -43,9 +43,13 @@ impl SelectedTool {
 fn selected(state: &ToolsState) -> Vec<SelectedTool> {
     let mut selected = tools::selected(state.media.is_some());
     let effects = state
-        .whatsapp_reactions
+        .native_media_edits
         .as_ref()
-        .is_some_and(|client| client.issuance_enabled)
+        .is_some_and(|c| c.telegram_issuance || c.discord_issuance)
+        || state
+            .whatsapp_reactions
+            .as_ref()
+            .is_some_and(|client| client.issuance_enabled)
         || state
             .native_lark_effects
             .as_ref()

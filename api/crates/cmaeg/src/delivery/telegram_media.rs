@@ -63,13 +63,34 @@ impl Sender {
             };
             return (receipt, effects);
         }
+        let seed = match self
+            .prepare_media_reference(ctx, event, message, parts.is_empty())
+            .await
+        {
+            Ok(seed) => seed,
+            Err(()) => {
+                receipt.delivery = DeliveryOutcome::Rejected {
+                    reason: "native_media_custody_unavailable".into(),
+                };
+                return (receipt, effects);
+            }
+        };
+        let mut media_result = None;
         let deadline = Instant::now() + Duration::from_secs(60);
         let effect_issued_at = time::OffsetDateTime::now_utc().unix_timestamp();
         let route = crate::telegram::route(bot_id, chat_id);
+        let mut expected_file = None;
         let prepared = async {
             let files = outbound::prepare(&message.native_attachments).await.ok()?;
             let mut uploads = Vec::with_capacity(files.len());
             for (item, file) in message.native_attachments.iter().zip(files) {
+                if seed.is_some() {
+                    expected_file = Some((
+                        file.filename.clone(),
+                        file.mime.clone(),
+                        file.bytes.len() as u64,
+                    ));
+                }
                 uploads.push(
                     self.relay
                         .telegram
@@ -144,10 +165,24 @@ impl Sender {
                             .await
                     }
                     NativePart::Media(upload) => {
-                        self.relay
-                            .telegram
-                            .send_media(credential, bot_id, upload)
-                            .await
+                        if seed.is_some() {
+                            let value = self
+                                .relay
+                                .telegram
+                                .send_media_result(credential, bot_id, upload)
+                                .await?;
+                            let id = value["message_id"]
+                                .as_i64()
+                                .ok_or(Error::Unconfirmed)?
+                                .to_string();
+                            media_result = Some(value);
+                            Ok(id)
+                        } else {
+                            self.relay
+                                .telegram
+                                .send_media(credential, bot_id, upload)
+                                .await
+                        }
                     }
                 }
             };
@@ -193,6 +228,7 @@ impl Sender {
                 if let Ok(reference) = MessageRef::seal(
                     &MessageRefPayload {
                         discord_message: None,
+                        native_media_edit: None,
                         received_reaction: None,
                         native_lark_effect: None,
                         whatsapp_reaction: None,
@@ -201,7 +237,7 @@ impl Sender {
                         channel_id: event.channel_id.clone(),
                         event_id: event.event_id.clone(),
                         platform_message_id: id.clone(),
-                        route_id: route,
+                        route_id: route.clone(),
                         interaction_record_id: None,
                         relay_message: None,
                         consumer: event.consumer.clone(),
@@ -216,6 +252,63 @@ impl Sender {
                         effect_issued_at,
                         true,
                     );
+                }
+            }
+        }
+        if let (
+            Some(seed),
+            Some(body),
+            DeliveryOutcome::Confirmed {
+                platform_message_id: Some(id),
+            },
+        ) = (seed, media_result, &receipt.delivery)
+        {
+            let parsed = crate::telegram::media_edit::snapshot(
+                &body,
+                bot_id,
+                chat_id,
+                thread_id.as_deref(),
+                id,
+                message.native_attachments[0].kind,
+            );
+            let confirmed = match parsed {
+                Ok(snapshot)
+                    if snapshot.caption
+                        == message.native_attachments[0]
+                            .caption
+                            .as_deref()
+                            .unwrap_or("")
+                        && expected_file
+                            .as_ref()
+                            .is_some_and(|(filename, mime, size)| {
+                                snapshot.files.iter().all(|f| {
+                                    f.filename.as_ref().is_none_or(|v| v == filename)
+                                        && f.mime.as_ref().is_none_or(|v| v == mime)
+                                        && (snapshot.kind
+                                            != cmaeg_core::message::NativeMediaKind::File
+                                            || f.size.is_none_or(|v| v == *size))
+                                })
+                            }) =>
+                {
+                    self.confirm_media_reference(
+                        ctx,
+                        event,
+                        seed,
+                        snapshot,
+                        id,
+                        receipt.message_ref.as_ref(),
+                    )
+                    .await
+                }
+                _ => Err(()),
+            };
+            match confirmed {
+                Ok(reference) => receipt.message_ref = Some(reference),
+                Err(()) => {
+                    receipt.message_ref = None;
+                    receipt.delivery = DeliveryOutcome::Unknown {
+                        reason: "native_media_receipt_unconfirmed".into(),
+                    };
                 }
             }
         }
