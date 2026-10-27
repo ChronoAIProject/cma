@@ -51,6 +51,13 @@ impl ProviderClient {
                 Ok(response) => response,
                 Err(_) => return FrozenSubmission::Unknown,
             };
+            if observed.response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                return if conversation_not_ready(observed.response).await {
+                    FrozenSubmission::NotAccepted
+                } else {
+                    FrozenSubmission::Unknown
+                };
+            }
             let response = match super::recovery::checked(observed.response).await {
                 Ok(response) => response,
                 Err(ProviderError::Busy { .. }) => return FrozenSubmission::Unknown,
@@ -122,4 +129,31 @@ impl ProviderClient {
         .await
         .unwrap_or(FrozenSubmission::Unknown)
     }
+}
+
+/// CMA v2 resolves a provisioning conversation before commands.admit. Only its
+/// complete, precise refusal proves that this POST did not admit a turn. The
+/// dispatcher retains the frozen body/key and schedules a bounded retry; this
+/// transport boundary must never retry a POST itself.
+async fn conversation_not_ready(response: reqwest::Response) -> bool {
+    if response.headers().contains_key("x-cma-response-id")
+        || response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .map(str::trim)
+            != Some("application/json")
+    {
+        return false;
+    }
+    let Ok(body) = super::recovery::bounded_body(response, 64 * 1024).await else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&body) else {
+        return false;
+    };
+    value.as_object().is_some_and(|object| object.len() == 1)
+        && value["error"]["type"] == "invalid_request_error"
+        && value["error"]["code"] == "conversation_not_ready"
 }
