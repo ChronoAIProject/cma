@@ -10,6 +10,13 @@ pub(crate) struct ReplaceAgentServiceAccess {
     pub expected_services: Vec<String>,
 }
 
+/// Replace the exact shared Sandbox service scope as its direct owner.
+/// A verified owner access token is accepted without browser sign-in. Runtime,
+/// relay, service-account and delegated credentials cannot grant service access.
+/// Independent clients must already have the selected service and backing-node
+/// authority. Refusals identify `agent_access_owner_authority_required` (403) or
+/// `agent_access_service_connection_required` (409). Token custody is finite and
+/// revalidated before deferred effects; use the unchanged body and key on retry.
 #[utoipa::path(put, operation_id = "put_api_v1_agents_by_id_service_access", path = "/api/v1/agents/{id}/service-access", tag = "agents",
     params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
     request_body = ReplaceAgentServiceAccess,

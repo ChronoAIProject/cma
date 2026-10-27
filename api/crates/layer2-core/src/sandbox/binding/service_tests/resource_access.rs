@@ -306,7 +306,7 @@ async fn binding_access_rejects_owner_kind_mismatch_even_when_subject_and_lineag
 }
 
 #[tokio::test]
-async fn binding_resource_proofs_expire_on_key_rotation_or_generation_change() {
+async fn binding_resource_proofs_preserve_refused_updates_and_reject_stale_keys_or_generations() {
     for rotate_key in [true, false] {
         let f = fixture();
         let binding = f.ready().await;
@@ -324,7 +324,7 @@ async fn binding_resource_proofs_expire_on_key_rotation_or_generation_change() {
         let target = ResourceTarget::Agent {
             agent_id: conversation.agent_id,
         };
-        let held = access
+        let mut held = access
             .authorize(
                 &context,
                 None,
@@ -343,21 +343,50 @@ async fn binding_resource_proofs_expire_on_key_rotation_or_generation_change() {
                 .await
                 .unwrap();
         } else {
-            f.put(&binding.binding_id, "Changed instruction").await;
+            let changed = profile("Changed instruction");
+            let digest = format!("sha256:{}", content_digest(&changed).unwrap());
+            assert!(matches!(
+                f.service
+                    .put(&f.caller, &binding.binding_id, changed, &digest, &f.key)
+                    .await,
+                Err(BindingError::ReconfigurationUnsupported)
+            ));
+            assert_eq!(f.binding().await, binding);
+            access
+                .validate_read_result(&held, &target, ResourceCapability::ViewHistory)
+                .await
+                .unwrap();
+            access
+                .authorize(
+                    &context,
+                    None,
+                    &target,
+                    ResourceCapability::ViewHistory,
+                    AccessPurpose::Read,
+                )
+                .await
+                .unwrap();
+            // Persisted proofs from another generation must still fail even
+            // though new reconfiguration can no longer replace an Agent.
+            let proof = held.binding.as_mut().unwrap();
+            proof.binding.generation += 1;
+            proof.conversation.generation = proof.binding.generation;
         }
         assert!(access
             .validate_read_result(&held, &target, ResourceCapability::ViewHistory)
             .await
             .is_err());
-        assert!(access
-            .authorize(
-                &context,
-                None,
-                &target,
-                ResourceCapability::ViewHistory,
-                AccessPurpose::Read
-            )
-            .await
-            .is_err());
+        if rotate_key {
+            assert!(access
+                .authorize(
+                    &context,
+                    None,
+                    &target,
+                    ResourceCapability::ViewHistory,
+                    AccessPurpose::Read
+                )
+                .await
+                .is_err());
+        }
     }
 }

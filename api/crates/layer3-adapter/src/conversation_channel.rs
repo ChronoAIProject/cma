@@ -120,12 +120,14 @@ impl ConversationInputSender {
                 }
                 let configuring = matches!(
                     input,
-                    ConversationInput::Configure { .. } | ConversationInput::RefreshContext { .. }
+                    ConversationInput::Configure { .. }
+                        | ConversationInput::RefreshContext { .. }
+                        | ConversationInput::Steer(_)
                 );
                 let refreshing = matches!(input, ConversationInput::RefreshContext { .. });
                 let result = handler(input).await;
-                // Configure handlers reserve Unsupported for a definitive
-                // refusal before any setting changes; later failures are ambiguous.
+                // These handlers reserve Unsupported for a definitive refusal
+                // before any runtime mutation; later failures are ambiguous.
                 let refused = configuring && matches!(result, Err(AdapterError::Unsupported(_)))
                     || refreshing
                         && matches!(result, Err(AdapterError::OperationIdentityConflict(_)));
@@ -181,7 +183,9 @@ impl ConversationInputSender {
     pub async fn send_classified(&self, input: ConversationInput) -> ConversationSendOutcome {
         let deadline = if matches!(
             input,
-            ConversationInput::Configure { .. } | ConversationInput::RefreshContext { .. }
+            ConversationInput::Configure { .. }
+                | ConversationInput::RefreshContext { .. }
+                | ConversationInput::Steer(_)
         ) {
             Duration::from_secs(15)
         } else {
@@ -197,7 +201,9 @@ impl ConversationInputSender {
     ) -> ConversationSendOutcome {
         let deadline = if matches!(
             input,
-            ConversationInput::Configure { .. } | ConversationInput::RefreshContext { .. }
+            ConversationInput::Configure { .. }
+                | ConversationInput::RefreshContext { .. }
+                | ConversationInput::Steer(_)
         ) {
             Duration::from_secs(15)
         } else {

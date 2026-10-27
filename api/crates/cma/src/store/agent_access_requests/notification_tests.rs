@@ -357,3 +357,45 @@ async fn mongo_notification_turn_reselection_fences_an_inflight_old_admission_sn
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_owner_api_notification_recovers_the_exact_normal_command_custody() {
+    let (client, name, store, mut record) = notifying_fixture().await;
+    let Some(AgentAccessDecision::Approved { authorization, .. }) = &mut record.decision else {
+        panic!()
+    };
+    authorization.authority_id = format!("owner-api:{}:2000000000", "a".repeat(64));
+    store
+        .agent_access_requests
+        .replace_one(doc! {"_id":&record.id}, document(&record).unwrap())
+        .await
+        .unwrap();
+    let lease = record.lease.as_ref().unwrap();
+    set_turn(&store, &record, Some(9)).await;
+    let selected = store.prepare_access_notification(lease).await.unwrap();
+    let mut callback = command(&selected);
+    callback.receipt.envelope.authorization.authority_id =
+        format!("api:{}:2000000000", "a".repeat(64));
+    callback.receipt.envelope.actor = layer2_core::sandbox::agent_io::AgentActor::Api {
+        subject: record.requester.owner.clone(),
+        delegation_id: None,
+    };
+    callback.validate().unwrap();
+    store
+        .agent_commands
+        .insert_one(crate::store::agent_commands::command_document(&callback).unwrap())
+        .await
+        .unwrap();
+    set_turn(&store, &record, None).await;
+    let recovered = store.prepare_access_notification(lease).await.unwrap();
+    assert_eq!(
+        recovered.progress.notification_command_id,
+        Some(callback.receipt.envelope.command_id)
+    );
+    assert_eq!(
+        recovered.progress.notification_intent,
+        selected.progress.notification_intent
+    );
+    client.database(&name).drop().await.unwrap();
+}
