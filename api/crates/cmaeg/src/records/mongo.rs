@@ -100,18 +100,37 @@ impl MongoRecords {
         expected: Option<u64>,
         expires_at: Option<i64>,
     ) -> Result<u64, RecordError> {
+        self.put_with_retention(id, owner, blob, expected, expires_at, Default::default())
+            .await
+    }
+    pub(super) async fn put_with_retention(
+        &self,
+        id: &str,
+        owner: &str,
+        blob: &[u8],
+        expected: Option<u64>,
+        expires_at: Option<i64>,
+        retention: super::retention::InteractionRetention,
+    ) -> Result<u64, RecordError> {
         if owner.is_empty() || owner.len() > 512 || blob.is_empty() || blob.len() > 65536 {
             return Err(RecordError::Rejected("invalid record".into()));
+        }
+        if retention == super::retention::InteractionRetention::WhatsappReaction
+            && self.kind != RecordKind::Interaction
+        {
+            return Err(RecordError::Rejected(
+                "WhatsApp reaction retention requires Interaction records".into(),
+            ));
         }
         let expiry = match (self.kind, expires_at) {
             (RecordKind::Interaction, Some(seconds))
                 if seconds > DateTime::now().timestamp_millis() / 1000
-                    && seconds <= DateTime::now().timestamp_millis() / 1000 + 7 * 24 * 60 * 60 =>
+                    && seconds <= DateTime::now().timestamp_millis() / 1000 + retention.maximum_age() =>
             {
                 Some(DateTime::from_millis(seconds.checked_mul(1000).ok_or_else(|| RecordError::Rejected("invalid interaction expiry".into()))?))
             }
             (RecordKind::Channel | RecordKind::Connection | RecordKind::ThreadFence | RecordKind::WhatsappFlow, None) => None,
-            _ => return Err(RecordError::Rejected("interaction expiry must be in the next seven days and only interactions may expire".into())),
+            _ => return Err(RecordError::Rejected("expiry exceeds the selected interaction retention class or the record may not expire".into())),
         };
         let binary = Binary {
             subtype: BinarySubtype::Generic,
