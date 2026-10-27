@@ -139,7 +139,7 @@ pub(crate) fn payload(
 ) -> Result<Value, RestError> {
     let mut payload = json!({});
     if let Some(text) = &patch.text {
-        payload["content"] = text.into();
+        payload["content"] = text.as_str().into();
         payload["allowed_mentions"] = json!({"parse":[],"replied_user":false});
     }
     let caption = patch.caption.as_deref().unwrap_or(&current.caption);
