@@ -12,7 +12,15 @@ import { CredentialsFields } from './CredentialsFields';
 import { Choice, Section } from './Fields';
 import { ProfileFields, ProviderFields } from './ProfileFields';
 import { SourceFields } from './SourceFields';
-import { defaultSource, object, records, type EditorSection, type Fields } from './model';
+import {
+  defaultSource,
+  object,
+  records,
+  producerCredentialKeys,
+  usesHmacCredentials,
+  type EditorSection,
+  type Fields,
+} from './model';
 export function NodeFields({
   draft,
   onChange,
@@ -153,7 +161,7 @@ export function NodeFields({
                 : ['agent_key']
             }
             create={create}
-            hmac={create && sources.some((source) => source.type === 'custom')}
+            hmac={create && usesHmacCredentials(draft)}
           />
         </>
       ) : null}
@@ -166,20 +174,12 @@ export function NodeFields({
     </>
   );
 }
-export function nodeCredentials(values: Fields, section: EditorSection): Fields {
+export function nodeCredentials(values: Fields, section: EditorSection, draft: Fields): Fields {
   const keys =
     section.kind === 'consumer'
       ? ['agent_key']
       : section.kind === 'channel'
         ? ['replace_hmac', 'hmac_secrets']
-        : [
-            'channel_key',
-            'whatsapp',
-            'discord_bot_token',
-            'telegram_bot_token',
-            'telegram_webhook_secret',
-            'replace_hmac',
-            'hmac_secrets',
-          ];
+        : producerCredentialKeys(records(draft.sources)[section.index]?.type);
   return Object.fromEntries(Object.entries(values).filter(([key]) => keys.includes(key)));
 }
