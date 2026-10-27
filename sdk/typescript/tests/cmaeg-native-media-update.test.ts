@@ -43,14 +43,12 @@ it('sends the exact update key once and retains the returned next reference', as
     rendering: { outcome: 'rendered' },
     message_ref: 'next/revision',
   };
-  const fetch = vi
-    .fn<typeof globalThis.fetch>()
-    .mockResolvedValue(
-      new Response(JSON.stringify(response), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+    new Response(JSON.stringify(response), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  );
   const client = new Cmaeg({
     baseUrl: 'https://gateway.example',
     credential: () => 'fixture-custody',
