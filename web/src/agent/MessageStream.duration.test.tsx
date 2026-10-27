@@ -109,6 +109,34 @@ it('preserves completed timing when transcript hydration has no terminal timesta
   );
 });
 
+it('uses the recorded terminal timestamp when hydrating a completed transcript', () => {
+  const snapshot = conversationFromTranscript({
+    agentId: 'agent',
+    throughSeq: 4,
+    turns: [
+      {
+        turnSequence: 1,
+        startedAt: start,
+        ownerMessage: '',
+        agentMessages: ['Finished.'],
+        messages: [
+          {
+            sequence: 3,
+            role: 'assistant',
+            content: 'Finished.',
+            appendedAt: '2026-10-28T00:00:01Z',
+          },
+        ],
+        outcome: { type: 'completed', at: end },
+      },
+    ],
+  });
+  render(draw(snapshot));
+  expect(screen.getByLabelText('Turn duration')).toHaveTextContent(
+    'Worked for 2 hours 3 minutes 4 seconds.',
+  );
+});
+
 it.each([
   [undefined, undefined],
   [{ startedAt: start }, undefined],

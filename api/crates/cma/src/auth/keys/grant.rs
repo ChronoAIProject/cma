@@ -68,5 +68,17 @@ pub(super) fn minted_key_from_response(
         expires_at,
         state_version: response.state_version,
         grant_fingerprint,
+        allowed_service_ids: response.allowed_service_ids,
+        allowed_node_ids: response.allowed_node_ids,
     })
+}
+
+impl MintedKey {
+    pub(crate) fn matches_grant(&self, services: &[String], nodes: &[String]) -> bool {
+        normalized_identifiers(services).is_some_and(|observed| {
+            Some(observed) == normalized_identifiers(&self.allowed_service_ids)
+        }) && normalized_identifiers(nodes).is_some_and(|observed| {
+            Some(observed) == normalized_identifiers(&self.allowed_node_ids)
+        })
+    }
 }
