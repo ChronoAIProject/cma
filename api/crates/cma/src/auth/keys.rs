@@ -71,6 +71,8 @@ pub struct MintedKey {
     pub expires_at: SystemTime,
     pub state_version: i64,
     pub grant_fingerprint: String,
+    allowed_service_ids: Vec<String>,
+    allowed_node_ids: Vec<String>,
 }
 
 /// A key name recognized as belonging to this deployment.
