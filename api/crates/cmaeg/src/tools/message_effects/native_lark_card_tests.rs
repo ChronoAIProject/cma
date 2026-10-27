@@ -123,6 +123,75 @@ async fn native_card_reaction_and_recall_share_identity_without_exposing_effect_
     }
 }
 #[tokio::test]
+async fn consumed_unadmitted_cards_refuse_reaction_and_recall_without_platform_io() {
+    let f = Fixture::new(LarkRegion::Lark, false, true).await;
+    let (cards, card) = card(&f).await;
+    let reference = card.card.reference.as_ref().unwrap().clone();
+    let channel = f
+        .app
+        .state
+        .resolver
+        .resolve_current(f.app.event.channel_id.as_str())
+        .await
+        .unwrap();
+    let a = card.card.native_lark.as_ref().unwrap();
+    cards
+        .consume_native_lark(
+            &channel,
+            &Callback {
+                event_id: "winning_click".into(),
+                identity: a.reply().identity.clone(),
+                actor: f.app.activity.actor.id.clone(),
+                chat: f.app.activity.conversation.id.clone(),
+                message: "om_sent".into(),
+                locator: format!(
+                    "cnl1:{}:1:0",
+                    uuid::Uuid::parse_str(&card.card.id).unwrap().simple()
+                ),
+                form: None,
+                occurred_at: now(),
+            },
+        )
+        .await
+        .unwrap();
+    let before = f.api.calls.lock().unwrap().len();
+    assert!(f
+        .react(&reference, "pending_reaction", Some("SMILE"))
+        .await
+        .is_err());
+    assert!(f
+        .app
+        .state
+        .delete_message(f.app.caller(), &reference, "pending_recall")
+        .await
+        .is_err());
+    let capabilities = f
+        .app
+        .state
+        .message_effect_capabilities(f.app.caller(), &reference)
+        .await
+        .unwrap();
+    assert!(!capabilities.delete && !capabilities.reaction);
+    assert_eq!(f.api.calls.lock().unwrap().len(), before);
+    assert!(
+        !cards
+            .native_lark_pending(&card.card.id, &channel)
+            .await
+            .unwrap()
+            .admitted
+    );
+    cards.native_lark_admitted(&card.card.id).await.unwrap();
+    assert_eq!(
+        f.react(&reference, "admitted_reaction", Some("SMILE"))
+            .await
+            .unwrap()
+            .delivery
+            .kind(),
+        "confirmed"
+    );
+}
+
+#[tokio::test]
 async fn native_recall_fences_callback_before_remote_write_and_uncertainty_never_reopens_it() {
     let f = Fixture::new(LarkRegion::Lark, false, true).await;
     let (cards, card) = card(&f).await;
@@ -207,3 +276,4 @@ async fn native_controls_discovery_is_separate_for_named_consumers_and_forms() {
     }
     assert!(f.writes().is_empty());
 }
+use crate::tools::NativeLarkEffectsClient;

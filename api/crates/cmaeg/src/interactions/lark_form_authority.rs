@@ -85,7 +85,7 @@ impl FormAuthority {
 }
 pub(super) fn valid(card: &Card) -> bool {
     if card.native_lark.is_some() {
-        return super::native_lark::valid(card);
+        return super::native_lark::valid_shape(card);
     }
     let form = card
         .lark
