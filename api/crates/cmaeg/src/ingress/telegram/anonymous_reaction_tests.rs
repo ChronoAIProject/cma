@@ -158,3 +158,84 @@ async fn anonymous_reactions_reject_mixed_actors_duplicate_counts_and_unbounded_
     )
     .is_err());
 }
+
+#[tokio::test]
+async fn channel_reactions_keep_unknown_original_author_and_require_both_opt_ins() {
+    let mut f = super::channel_post_tests::channel_fixture().await;
+    let original = f.admit_original().await;
+    let definition = &mut Arc::make_mut(&mut f.channel).definition;
+    definition.partition.key = cmaeg_core::channel::PartitionKey::Fixed;
+    definition.routing.as_mut().unwrap().default_targets =
+        vec![crate::ingress::routing_plan::fixture::id(
+            crate::channels::routing_fixture::NYX,
+        )];
+    let mut human = f.reaction();
+    human["update_id"] = 303.into();
+    let mut updates = [aggregate(&f), anonymous(&f), human];
+    for raw in &mut updates {
+        let name = if raw.get("message_reaction_count").is_some() {
+            "message_reaction_count"
+        } else {
+            "message_reaction"
+        };
+        raw[name]["chat"] = f.raw["channel_post"]["chat"].clone();
+        assert!(matches!(
+            f.launch(raw).await,
+            LaunchOutcome::Admitted { .. }
+        ));
+        let plan = f
+            .plan(&format!("telegram:77:{}", raw["update_id"]))
+            .await
+            .unwrap();
+        assert_eq!(plan.activity.conversation, original.activity.conversation);
+        assert_eq!(plan.targets.len(), original.targets.len());
+        for (actual, expected) in plan.targets.iter().zip(&original.targets) {
+            assert_eq!(actual.launch.consumer, expected.launch.consumer);
+            assert_eq!(actual.launch.provider, expected.launch.provider);
+            assert_eq!(
+                actual.launch.event.partition_key,
+                expected.launch.event.partition_key
+            );
+            assert_eq!(
+                actual.launch.event.conversation_id,
+                expected.launch.event.conversation_id
+            );
+            assert!(actual.launch.event.telegram_admission.is_none());
+        }
+        let ActivityKind::Event { ce, .. } = &plan.activity.kind else {
+            panic!()
+        };
+        assert_eq!(
+            ce.data.as_ref().unwrap()["original_author"]["kind"],
+            "unknown"
+        );
+        assert_eq!(
+            ce.data.as_ref().unwrap()["original_author"]["id"],
+            "telegram:chat:-100"
+        );
+        assert_eq!(
+            plan.activity.actor.kind,
+            if raw[name].get("user").is_some() {
+                ActorKind::Human
+            } else {
+                ActorKind::Unknown
+            }
+        );
+    }
+    for disable_channels in [true, false] {
+        let Source::Telegram {
+            channel_posts,
+            message_events,
+            ..
+        } = &mut Arc::make_mut(&mut f.channel).definition.sources[0]
+        else {
+            panic!()
+        };
+        *channel_posts = !disable_channels;
+        *message_events = disable_channels;
+        for raw in &updates {
+            assert!(matches!(f.verified(raw).await, Err(Error::Context)));
+        }
+    }
+    assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
+}

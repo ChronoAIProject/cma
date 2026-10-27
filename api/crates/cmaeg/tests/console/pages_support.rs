@@ -82,6 +82,7 @@ pub fn definition(record: &RecordId, owner: &str, name: &str) -> ChannelDefiniti
     definition.sources = vec![
         Source::Telegram {
             message_events: false,
+            channel_posts: false,
             bot_id: "7000000001".into(),
             bot_username: Some("fixture_bot".into()),
             admission: AdmissionPolicy::All {},

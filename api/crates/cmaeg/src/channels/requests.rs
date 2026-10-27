@@ -82,6 +82,9 @@ pub enum SourceRequest {
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         message_events: bool,
+        /// Admit native channel posts as non-human channel identities; requires message_events.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        channel_posts: bool,
         bot_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,

@@ -204,6 +204,7 @@ fn source_view(source: &Source) -> SourceView {
         },
         Source::Telegram {
             message_events: _,
+            channel_posts: _,
             bot_id,
             bot_username,
             admission,
