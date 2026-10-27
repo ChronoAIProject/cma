@@ -8,7 +8,7 @@ use crate::{
 };
 use cmaeg_core::{
     channel::{Platform, Secret},
-    message::{NativeMediaSource, OutboundMessage, RenderingReport},
+    message::{NativeMediaKind, NativeMediaSource, OutboundMessage, RenderingReport},
     problem::{Problem, ProblemCode},
 };
 use reqwest::StatusCode;
@@ -41,7 +41,13 @@ impl RelayClient {
         capabilities.buttons = "numbered_text".into();
         let (part, rendering) = RelayText.whole(message, &capabilities);
         if !message.native_attachments.is_empty() {
-            if !self.native_media || !super::media::supported(platform) {
+            if !self.native_media
+                || !super::media::supported(platform)
+                || message
+                    .native_attachments
+                    .iter()
+                    .any(|item| item.kind == NativeMediaKind::Sticker)
+            {
                 return Err(invalid("native_media_unsupported"));
             }
             for attachment in &message.native_attachments {
