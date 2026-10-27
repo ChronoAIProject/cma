@@ -10,6 +10,7 @@ pub(crate) mod connections_ui;
 pub mod creation;
 pub(crate) mod docs;
 pub mod events;
+pub mod history;
 pub(crate) mod html;
 pub mod management;
 mod management_responses;

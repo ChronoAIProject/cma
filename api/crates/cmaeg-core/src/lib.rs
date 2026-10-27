@@ -11,6 +11,8 @@ pub mod channel;
 /// Neutral inbound activity produced by an event source.
 pub mod activity;
 
+/// Paginated reference-only native conversation history.
+pub mod conversation_history;
 /// Verified opt-in native thread contract.
 pub mod thread;
 /// Bounded native thread lifecycle wire contract.

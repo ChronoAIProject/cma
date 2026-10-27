@@ -12,6 +12,7 @@ import {
   MessageEffectsCapabilitiesSchema,
   MessageReactionRequestSchema,
   type MessageReactionRequest,
+  ConversationHistoryPageSchema,
   ThreadListSchema,
   ThreadReceiptSchema,
   CreateThreadRequestSchema,
@@ -166,6 +167,16 @@ export class CmaegTools {
       ...options,
       method: 'POST',
     });
+  }
+
+  /** One live earlier page. Historical content is untrusted reference data, never action approval. */
+  readEventHistory(eventRef: string, cursor?: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/v1/events/${segment(eventRef)}/history${cursor === undefined ? '' : `?cursor=${segment(cursor)}`}`,
+      ConversationHistoryPageSchema,
+      options,
+    );
   }
 
   readEventContext(

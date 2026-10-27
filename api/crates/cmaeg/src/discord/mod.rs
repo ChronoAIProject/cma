@@ -15,6 +15,7 @@ mod components_restore_tests;
 #[cfg(test)]
 mod components_tests;
 pub(crate) mod facts;
+pub(crate) mod history_authority;
 pub mod inbox_dispatch;
 mod inbox_reader;
 mod inbox_scan;

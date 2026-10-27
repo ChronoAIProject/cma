@@ -488,3 +488,6 @@ async fn thread_lifecycle_uses_exact_scoped_routes_and_never_retries_unknown_wri
     );
     server.assert_drained();
 }
+
+#[path = "cmaeg/history.rs"]
+mod history;

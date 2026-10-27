@@ -70,6 +70,9 @@ fn selected(state: &ToolsState) -> Vec<SelectedTool> {
             .is_some_and(|client| client.card_effects_enabled());
     selected.extend(message_effects::selected(effects));
     selected.extend(super::threads::selected(state.discord_threads.is_some()));
+    selected.extend(super::history::selected(
+        state.discord_conversation_history.is_some(),
+    ));
     selected
 }
 
