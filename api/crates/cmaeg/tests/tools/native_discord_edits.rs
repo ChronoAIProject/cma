@@ -76,6 +76,7 @@ async fn native_edit_authorization_rechecks_current_record_after_cached_key_revo
     let reference = MessageRef::seal(
         &MessageRefPayload {
             discord_message: Some(Box::new(DiscordMessageDestination {
+                effects_only: false,
                 effects: None,
                 bot_id: "77".into(),
                 channel_id: "99".into(),
