@@ -290,8 +290,10 @@ async fn source_key_provider_credential_owner_and_routing_changes_revoke_pending
                         c.definition.secrets.consumer_keys[0].1 =
                             Secret::new("fixture-rotated-provider");
                     } else {
-                        c.definition.secrets.provider_credential =
-                            Some(Secret::new("fixture-rotated-provider"));
+                        crate::channels::definition::fixture::replace_default_credential(
+                            &mut c.definition,
+                            Some(Secret::new("fixture-rotated-provider")),
+                        );
                     }
                 }
             }
