@@ -283,6 +283,16 @@ async fn native_whatsapp_confirmed_outbound_reaction_is_limited_to_receipt_consu
         .put(&receipt)
         .await
         .unwrap();
+    // Receipt evidence exists, but a temporary read failure for its exact
+    // originating plan must preserve Meta's retry opportunity.
+    *setup.server.memory.unavailable_read_id.lock().unwrap() =
+        Some(original.identity.admission_id());
+    assert!(matches!(
+        setup.launch(setup.verified(raced, Vec::new())).await,
+        LaunchOutcome::Refused(problem) if problem.status == 503
+            && problem.detail.as_deref() == Some("native_whatsapp_original_unavailable")
+    ));
+    *setup.server.memory.unavailable_read_id.lock().unwrap() = None;
     admitted(
         setup
             .launch(setup.verified(
