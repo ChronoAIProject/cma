@@ -18,15 +18,28 @@ plain rendering even if the native form gate is later enabled.
 ## Supported form contract
 
 A native form has one to twelve fields and one generated **Submit** button. Field
-IDs must be unique. Only one Form block is supported per card, and a form cannot
+IDs must be unique. Only one native Form block is supported per card, and it cannot
 be combined with independent Buttons or Choice blocks. Text, summary cards and
 links retain their existing Lark rendering. Native attachments, WhatsApp
-templates, threaded cards and published-agent callback audiences are unsupported.
-Ineligible form contexts and unsupported schemas are refused before issuing a
-card when native form issuance is enabled. With the form flag off, a Form-only
-reply retains its prior text rendering without an interaction record or provider
-context read. A Form mixed into an existing native card retains the historical
-`plain_text_form` degradation; the form itself receives no callback authority.
+templates, threaded cards and published-agent callback audiences are unsupported
+for native form issuance. Enabling the flag selects a native form only when both
+structural preflight and the existing native-control context checks succeed.
+Unsupported native form shapes and valid but ineligible contexts retain their
+previous delivery behavior and rendering report. Form-only replies fall back to
+ordinary text; a Form mixed with Buttons or Choice retains the existing native
+controls and `plain_text_form` degradation when those controls are eligible.
+Threaded, published and nonhuman contexts keep their prior text reply destination.
+Fallback forms receive no native form callback authority. Form-only replies with
+unsupported native shapes do not fetch provider context. Contexts known to be
+ineligible without a provider read also avoid that read.
+With the form flag off, Form-only replies likewise need no provider context read
+or interaction record. Existing media and unavailable-thread refusals still apply.
+
+Invalid authorization, mismatched or unavailable provider context, and durable
+storage failures remain fail-closed. They never select a fallback delivery path.
+After a durable write or send begins, an uncertain outcome cannot cause a text
+fallback or a second send. This fallback policy applies to new replies; retained
+native forms keep their exact saved schema and authority for edits and replay.
 Telegram and plain relay form-text updates keep their existing behavior, including
 named-consumer edits while the consumer-interaction gate is off.
 
@@ -38,7 +51,8 @@ named-consumer edits while the consumer-interaction gate is off.
 | `choice` | Single-choice menu with 1–20 options | Stored business option ID as a JSON string |
 
 Choice IDs must be unique and nonempty, with at most one selected default.
-Non-default choice styles are refused because the menu cannot represent them.
+Non-default choice styles are ineligible for native issuance because the menu
+cannot represent them; new replies retain their prior text rendering.
 Choice IDs are bounded to 512 bytes and labels to 200 bytes. The existing card
 limits still apply: 4,000 display characters, 28 KiB card JSON, and bounded
 components. A submitted field object and its canonical result are each limited
