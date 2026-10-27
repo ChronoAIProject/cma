@@ -4460,6 +4460,12 @@
               "null"
             ]
           },
+          "native_discord_reactions_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_discord_thread_history_enabled": {
             "type": [
               "boolean",
