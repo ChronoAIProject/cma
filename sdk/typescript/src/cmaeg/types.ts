@@ -11,3 +11,4 @@ export * from './types/media.js';
 export * from './types/nodes.js';
 export * from './types/whatsapp-template.js';
 export * from './types/outbound.js';
+export * from './types/form-preparation.js';

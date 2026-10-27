@@ -2729,6 +2729,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
 | `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
+| `POST /v1/events/{event_ref}/form-preparation` | `prepareFormReply` |
+| `GET /v1/events/{event_ref}/form-preparation` | `readFormPreparation` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |
 | `GET /v1/messages/{message_ref}/capabilities` | `readMessageCapabilities` |
@@ -4146,3 +4148,7 @@ The existing updateMessage endpoint/tool additionally accepts the exclusive `nat
 Native Lark/Feishu interactive replies use distinct encrypted card authority, native receipts and `cnl1`/`cnlf1` locators. `CMAEG_NATIVE_LARK_CONTROLS_ENABLED` and `CMAEG_NATIVE_LARK_FORMS_ENABLED` default false; the latter also requires controls. Verified native event context reports `buttons`/`cards: native_card` and optional `forms` capability. The original human, exact conversation and retained existing group thread, default/named consumer, provider/key/credential/routing custody, schema and original 24-hour lifetime remain immutable. A single confirmed receipt and bound card are required before a usable reference is issued.
 
 Only encrypted signed v2 `card.action.trigger` callbacks can consume these cards. Both `header.token` and `event.token` are redacted. The canonical click and recoverable admission are one durable card CAS, and local recovery runs without platform retries. HTTP `{}` acknowledgement follows durable routed admission. Dispatch reopens stored card custody. Card PATCH, delete, own-reaction changes and initial callback consumption use one exact-message fence. A consumed click blocks mutations until its durable admission marker is saved, and recovery of that exact click does not depend on any later external fence. Uncertain external writes cannot be retried through a new key or restarted process. Replacement keeps the original lifetime and activates only after durable success. See [native control contract](CMAEG_Native_Lark_Controls.md) for limits and callback configuration.
+
+### Native WhatsApp Form preparation
+
+`prepareFormReply` (`POST /v1/events/{event_ref}/form-preparation`) and `readFormPreparation` (`GET /v1/events/{event_ref}/form-preparation`) return the additive `FormPreparationReceipt`. Preparation requires one stable `Idempotency-Key` and never sends. Ready supplies an opaque selector; explicit `replyToEvent` commits the unchanged message with required stable key and `Form-Preparation-Ref` (MCP `form_preparation_ref`). Each preparation/status request has a total two-second deadline; commit remains eight seconds. Unknown sends never permit a new key. Duplicate keys/selectors are refused. Existing `IntentReceipt` and delivery variants are unchanged. [Full contract and limits](CMAEG_Native_WhatsApp_Forms.md).

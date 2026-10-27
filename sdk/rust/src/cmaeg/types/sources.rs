@@ -29,6 +29,9 @@ pub enum Source {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
+        /// Explicit owner consent to create and publish managed static WhatsApp Flows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        forms_enabled: Option<bool>,
         /// Explicit existing-group opt-in for an Official Business Account phone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group_ids: Option<Vec<String>>,
@@ -132,6 +135,9 @@ pub enum SourceRequest {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
+        /// Explicit owner consent to create and publish managed static WhatsApp Flows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        forms_enabled: Option<bool>,
         /// Explicit existing-group opt-in for an Official Business Account phone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group_ids: Option<Vec<String>>,
@@ -233,6 +239,9 @@ pub enum SourceKind {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
+        /// Explicit owner consent to create and publish managed static WhatsApp Flows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        forms_enabled: Option<bool>,
     },
     /// Native Discord ingress.
     #[serde(rename = "discord")]

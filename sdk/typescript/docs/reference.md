@@ -885,3 +885,15 @@ with the same key; an unknown outcome retains its mutation fence and never
 causes an automatic provider retry. Neither provider offers conditional revision
 writes, so external applications sharing bot credentials remain outside CMA's
 fence. Issuance remains disabled pending connected acceptance.
+
+Native WhatsApp Forms use `prepareFormReply(eventRef, message, stablePreparationKey)`,
+then `readFormPreparation(eventRef)`. Poll Pending after `retry_after_ms`. Ready has
+not sent a customer message. Commit the exact message with
+`replyToEvent(eventRef, message, { idempotencyKey: stableCommitKey, formPreparationRef })`.
+The returned `FormPreparationReceipt` explicitly distinguishes asset uncertainty
+(`customer_message:not_sent`) from Delivery (`attempted`, with the existing receipt).
+Keep keys/content on retry; never resend Unknown under another key. Both preparation
+and status have a two-second total gateway deadline; explicit commit remains eight
+seconds. Source `forms_enabled` is separate owner consent; operator discovery uses
+`native_whatsapp_forms_enabled` and `native_whatsapp_flow_writes_enabled`.
+See `docs/CMAEG_Native_WhatsApp_Forms.md` for the supported subset and retained gaps.

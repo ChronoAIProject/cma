@@ -32,6 +32,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 pub fn router(state: ToolsState) -> Router {
     crate::telemetry::http::instrument(
         Router::new()
+            .merge(super::form_preparation::routes())
             .merge(super::reply_targets::routes())
             .merge(super::message_effects::routes())
             .route("/v1/events/{event_ref}/replies", post(reply_to_event))
@@ -51,7 +52,7 @@ pub fn router(state: ToolsState) -> Router {
     )
 }
 #[utoipa::path(post,path="/v1/events/{event_ref}/replies",operation_id="replyToEvent",tag="tools",
-    security(("agentBearer"=[])),params(("event_ref"=String,Path),("Idempotency-Key"=Option<String>,Header,min_length=1,max_length=128,pattern="^[!-~]+$",description="Optional stable operation ID of 1–128 visible ASCII bytes for durable routed replies. Keep the same key and message on retries; a different key permits a new send, even with identical content. Changed content under the same key conflicts. Never change keys to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior.")),request_body=OutboundMessage,
+    security(("agentBearer"=[])),params(("event_ref"=String,Path),("Idempotency-Key"=Option<String>,Header,min_length=1,max_length=128,pattern="^[!-~]+$",description="Optional stable operation ID of 1–128 visible ASCII bytes for durable routed replies. Keep the same key and message on retries; a different key permits a new send, even with identical content. Changed content under the same key conflicts. Never change keys to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior. Native Form commits always require this key."),("Form-Preparation-Ref"=Option<String>,Header,description="Opaque Ready selector for a native WhatsApp Form. Use the exact prepared message and a stable commit key; one event/consumer slot cannot be reset with another key.")),request_body=OutboundMessage,
     responses((status=200,body=IntentReceipt),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn reply_to_event(
     State(state): State<ToolsState>,
@@ -72,9 +73,13 @@ pub async fn reply_to_event(
         Ok(key) => key,
         Err(error) => return result::<IntentReceipt>(Err(error)),
     };
+    let selector = match super::form_preparation::selector(&headers) {
+        Ok(value) => value,
+        Err(error) => return result::<IntentReceipt>(Err(error)),
+    };
     result(
         state
-            .reply_with_idempotency(caller, &reference, message, key)
+            .reply_with_preparation(caller, &reference, message, key, selector)
             .await,
     )
 }
@@ -88,6 +93,13 @@ pub async fn update_message(
     headers: HeaderMap,
     body: Result<Json<OutboundMessage>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    if headers.contains_key("form-preparation-ref") {
+        return result::<IntentReceipt>(Err(Problem::new(
+            ProblemCode::InvalidRequest,
+            400,
+            "form_preparation_ref_requires_replyToEvent",
+        )));
+    }
     let message = match json(body) {
         Ok(value) => value,
         Err(error) => return result::<IntentReceipt>(Err(error)),
@@ -323,7 +335,7 @@ pub(crate) fn result<T: Serialize>(value: Result<T, Problem>) -> Response {
     }
 }
 
-fn reply_key(headers: &HeaderMap) -> Result<Option<&str>, Problem> {
+pub(crate) fn reply_key(headers: &HeaderMap) -> Result<Option<&str>, Problem> {
     let mut values = headers.get_all("idempotency-key").iter();
     let Some(value) = values.next() else {
         return Ok(None);

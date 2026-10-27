@@ -202,6 +202,7 @@ impl InteractionStore {
             None
         };
         let mut card = Card {
+            native_whatsapp_flow: None,
             native_whatsapp,
             native_lark: None,
             lark_delete: None,

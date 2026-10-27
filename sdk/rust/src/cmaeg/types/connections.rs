@@ -160,6 +160,12 @@ pub struct RelayAuthoringCapabilities {
     /// Native Lark form issuance is available and requires native controls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_lark_forms_enabled: Option<bool>,
+    /// Native WhatsApp Form issuance is enabled by the operator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_forms_enabled: Option<bool>,
+    /// Managed static Flow creation/publication is enabled by the operator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_flow_writes_enabled: Option<bool>,
     /// Native Telegram owners may enable durable edit and reaction notifications.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_telegram_message_events_enabled: Option<bool>,

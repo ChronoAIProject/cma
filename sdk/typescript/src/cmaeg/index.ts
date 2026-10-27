@@ -144,8 +144,23 @@ export class Cmaeg {
   streamEvent(id: string, event: CloudEvent, options?: EventOptions) {
     return this.#events.streamEvent(id, event, options);
   }
-  replyToEvent(ref: string, message: OutboundMessage, options?: OperationOptions) {
+  replyToEvent(
+    ref: string,
+    message: OutboundMessage,
+    options?: OperationOptions & { idempotencyKey?: string; formPreparationRef?: string },
+  ) {
     return this.#tools.replyToEvent(ref, message, options);
+  }
+  prepareFormReply(
+    ref: string,
+    message: OutboundMessage,
+    idempotencyKey: string,
+    options?: OperationOptions,
+  ) {
+    return this.#tools.prepareFormReply(ref, message, idempotencyKey, options);
+  }
+  readFormPreparation(ref: string, options?: OperationOptions) {
+    return this.#tools.readFormPreparation(ref, options);
   }
   createReplyTarget(ref: string, options?: OperationOptions) {
     return this.#tools.createReplyTarget(ref, options);

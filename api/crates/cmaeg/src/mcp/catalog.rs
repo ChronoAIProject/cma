@@ -42,6 +42,7 @@ impl SelectedTool {
 
 fn selected(state: &ToolsState) -> Vec<SelectedTool> {
     let mut selected = tools::selected(state.media.is_some());
+    selected.extend(super::form_preparation::selected(state));
     let effects = state
         .native_media_edits
         .as_ref()

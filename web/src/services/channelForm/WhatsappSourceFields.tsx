@@ -1,6 +1,6 @@
 import { nativeWhatsappUnavailable, useRelayCapabilities } from '../RelayCapabilities';
 import { AdmissionFields } from './AdmissionFields';
-import { Section, StringList, TextField } from './Fields';
+import { Section, StringList, TextField, Toggle } from './Fields';
 import { object, strings, type Fields } from './model';
 
 export function WhatsappSourceFields({
@@ -14,6 +14,9 @@ export function WhatsappSourceFields({
   const unavailable = nativeWhatsappUnavailable(discovery, false);
   const groups = strings(value.group_ids);
   const groupsEnabled = discovery.authoring?.native_whatsapp_groups_writes_enabled === true;
+  const formsEnabled =
+    discovery.authoring?.native_whatsapp_forms_enabled === true &&
+    discovery.authoring?.native_whatsapp_flow_writes_enabled === true;
   return (
     <>
       <Section
@@ -77,6 +80,23 @@ export function WhatsappSourceFields({
           ) : null}
         </Section>
       ) : null}
+      <Section
+        title="Native forms"
+        description="Allow CMA to create and publish managed static WhatsApp Flows with your app credentials for private conversations."
+      >
+        <Toggle
+          label="Allow managed WhatsApp forms"
+          value={value.forms_enabled}
+          disabled={!formsEnabled && value.forms_enabled !== true}
+          onChange={(forms_enabled) => onChange({ ...value, forms_enabled })}
+          hint="Forms require a separate preparation step, then an explicit reply within WhatsApp’s 24-hour service window. Disabling consent revokes pending forms and their callbacks."
+        />
+        {!formsEnabled ? (
+          <p className="channel-field-hint">
+            New forms are disabled on this gateway. Existing consent can be withdrawn.
+          </p>
+        ) : null}
+      </Section>
       <AdmissionFields
         value={value.admission}
         onChange={(admission) => onChange({ ...value, admission })}

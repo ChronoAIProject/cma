@@ -443,3 +443,21 @@ impl ChannelResolver {
         .await
     }
 }
+
+impl ChannelResolver {
+    pub(crate) async fn whatsapp_flow_current(
+        &self,
+        channel: &ResolvedChannel,
+        activity: &cmaeg_core::activity::Activity,
+        event: &cmaeg_core::seal::EventRefPayload,
+    ) -> Result<(), crate::interactions::Error> {
+        crate::interactions::whatsapp_flow::current_dispatch(
+            &self.inner.records,
+            &self.inner.keys,
+            channel,
+            activity,
+            event,
+        )
+        .await
+    }
+}

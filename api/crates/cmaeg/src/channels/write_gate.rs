@@ -46,6 +46,7 @@ pub struct WriteFlags {
     /// Admits new existing-group opt-ins after compatible group readers deploy.
     pub native_whatsapp_groups: bool,
     pub native_whatsapp: bool,
+    pub native_whatsapp_forms: bool,
     /// Admits native Discord sources and credential revisions after reader rollout.
     pub native_discord: bool,
     pub telegram_message_events: bool,
@@ -204,6 +205,29 @@ pub(crate) fn check(
             "/sources/native_lark",
             "native_lark_writes_disabled",
         ));
+    }
+    if !flags.native_whatsapp_forms {
+        for source in &next.sources {
+            if let Source::Whatsapp {
+                forms_enabled: true,
+                app_id,
+                waba_id,
+                phone_number_id,
+                ..
+            } = source
+            {
+                let retained = current.is_some_and(|old| old.sources.iter().any(|source| {
+                    matches!(source, Source::Whatsapp { forms_enabled: true, app_id: a, waba_id: w, phone_number_id: p, .. }
+                        if a == app_id && w == waba_id && p == phone_number_id)
+                }));
+                if !retained {
+                    return Err(ValidationError::new(
+                        "/sources/whatsapp/forms_enabled",
+                        "native_whatsapp_forms_writes_disabled",
+                    ));
+                }
+            }
+        }
     }
     if !flags.native_whatsapp_groups {
         for source in &next.sources {

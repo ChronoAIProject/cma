@@ -112,7 +112,8 @@ pub(crate) fn valid(card: &Card) -> bool {
             .as_ref()
             .is_none_or(|click| click.selection.is_none());
     };
-    card.lark.is_none()
+    card.native_whatsapp_flow.is_none()
+        && card.lark.is_none()
         && card.whatsapp.is_none()
         && ThreadIdentity::optional_matches(
             identity.thread.as_ref(),
