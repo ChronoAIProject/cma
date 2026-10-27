@@ -128,6 +128,9 @@ pub(crate) fn discord_card_effects_from_env() -> Result<bool, ConfigError> {
 pub(crate) fn discord_card_edits_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_DISCORD_CARD_EDITS_ENABLED)
 }
+pub(crate) fn discord_reactions_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag("CMAEG_DISCORD_REACTIONS_ENABLED")
+}
 pub(crate) fn discord_message_events_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED)
 }

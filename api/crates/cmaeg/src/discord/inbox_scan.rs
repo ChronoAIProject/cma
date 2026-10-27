@@ -117,7 +117,11 @@ impl InboxStore {
             serde_json::from_slice(&opened.payload).map_err(|_| GatewayError::Protocol)?;
         if !matches!(
             value["kind"].as_str(),
-            Some("discord_inbox_v1" | "discord_message_event_inbox_v1")
+            Some(
+                "discord_inbox_v1"
+                    | "discord_message_event_inbox_v1"
+                    | "discord_reaction_pending_v1"
+            )
         ) {
             return Ok(None);
         }

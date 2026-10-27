@@ -20,10 +20,14 @@ pub(super) fn validate(
             "must be a canonical Discord ID",
         ));
     }
-    const ALLOWED: u64 = 1 | (1 << 9) | (1 << 12) | (1 << 15);
-    if intents & (1 << 15) == 0 || intents & ((1 << 9) | (1 << 12)) == 0 || intents & !ALLOWED != 0
+    const ALLOWED: u64 = 1 | (1 << 9) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 15);
+    if intents & (1 << 15) == 0
+        || intents & ((1 << 9) | (1 << 12)) == 0
+        || intents & !ALLOWED != 0
+        || (intents & (1 << 10) != 0 && intents & (1 << 9) == 0)
+        || (intents & (1 << 13) != 0 && intents & (1 << 12) == 0)
     {
-        return Err(ValidationError::new(format!("{pointer}/intents"), "requires MESSAGE_CONTENT and guild or direct messages; only message intents are supported"));
+        return Err(ValidationError::new(format!("{pointer}/intents"), "requires MESSAGE_CONTENT and guild or direct messages; reaction intents require the corresponding message intent"));
     }
     if secrets.discord_bot_token.as_ref().is_none_or(|token| {
         token.as_str().is_empty()

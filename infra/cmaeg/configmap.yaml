@@ -30,6 +30,8 @@ data:
   CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED: "true"
   CMAEG_DISCORD_INTERACTIONS_ENABLED: "true"
   # Retained message-event readers must be deployed before enabling issuance.
+  # Owner-selected reaction intents and durable confirmed outbound target receipts.
+  CMAEG_DISCORD_REACTIONS_ENABLED: "false"
   CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED: "false"
   CMAEG_DISCORD_FORMS_ENABLED: "false"
   # Upgrade all card-edit readers before starting native replacement chains.

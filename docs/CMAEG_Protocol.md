@@ -3420,6 +3420,20 @@ native source metadata or its credential; unchanged retained settings and remova
 remain possible while the flag is off. All serving and rollback readers must
 support the shape before enabling new writes.
 
+Owners may separately opt in to incoming reaction changes by adding
+`GUILD_MESSAGE_REACTIONS` (`1024`) and/or `DIRECT_MESSAGE_REACTIONS` (`8192`) to
+the corresponding enabled message scope. The default intent mask remains 37377.
+`CMAEG_DISCORD_REACTIONS_ENABLED=false` gates new or changed reaction settings,
+confirmed outbound receipts and new reaction intake; authenticated authoring
+discovery exposes optional `native_discord_reactions_enabled` in `/v1`.
+Reaction add/remove/all/emoji-clear notifications use
+`cma.message.reaction.updated.v1` with delta semantics, verified actors where
+available and no invented native time. They retain original consumer/thread
+routing. A reaction arriving before an exact confirmed outbound receipt waits in
+durable custody with bounded retries; it cannot adopt an arbitrary bot message.
+See [native Discord message events](CMAEG_Discord_Incoming_Message_Events.md) for
+actor rules, retained shapes, deadlines and reader-first rollout requirements.
+
 Read-only connection acquisition calls Discord `GET /users/@me` and
 `GET /gateway/bot` using the sealed credential at the fixed Discord API origin.
 The bot must match the configured ID and `bot=true`; responses, redirects and

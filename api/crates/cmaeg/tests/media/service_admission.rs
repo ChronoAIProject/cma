@@ -241,6 +241,7 @@ fn config(media: MediaConfig) -> Config {
         native_discord_writes_enabled: false,
         native_telegram_message_events_writes_enabled: false,
         native_discord_thread_history_enabled: false,
+        native_discord_reactions_enabled: false,
         native_discord: Default::default(),
         outbound_messages_writes_enabled: false,
         listen: "127.0.0.1:0".parse().unwrap(),

@@ -35,6 +35,7 @@ pub struct Memory {
     pub channel: Mutex<Vec<u8>>,
     pub now: Arc<AtomicI64>,
     pub user: Mutex<Value>,
+    pub reaction_users: Mutex<BTreeMap<String, Value>>,
     pub user_rate_limited: AtomicBool,
     pub user_calls: AtomicUsize,
     pub gateway: Mutex<Value>,
@@ -57,6 +58,12 @@ impl Drop for Fixture {
     }
 }
 impl Fixture {
+    pub fn records(&self) -> RecordClient {
+        self.store.channels.clone()
+    }
+    pub fn keys(&self) -> Arc<MasterKeyRing> {
+        self.store.keys.clone()
+    }
     pub async fn new() -> Self {
         let keys =
             Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([7; 32]))).unwrap());
@@ -75,6 +82,7 @@ impl Fixture {
             ),
             now: now.clone(),
             user: Mutex::new(json!({"id":"77","bot":true})),
+            reaction_users: Mutex::default(),
             user_rate_limited: AtomicBool::new(false),
             user_calls: AtomicUsize::new(0),
             gateway: Mutex::new(
@@ -98,6 +106,7 @@ impl Fixture {
             )
             .route("/api/v1/gateway/interaction-records", get(list))
             .route("/api/v10/users/@me", get(user))
+            .route("/api/v10/users/{id}", get(reaction_user))
             .route("/api/v10/gateway/bot", get(gateway))
             .route("/api/v10/channels/{id}", get(discord_channel))
             .with_state(memory.clone());
@@ -294,5 +303,19 @@ async fn save(
         StatusCode::SERVICE_UNAVAILABLE.into_response()
     } else {
         Json(json!({"version":version})).into_response()
+    }
+}
+
+async fn reaction_user(
+    State(state): State<Arc<Memory>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some(&format!("Bot {TOKEN}")) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match state.reaction_users.lock().unwrap().get(&id).cloned() {
+        Some(user) => Json(user).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
