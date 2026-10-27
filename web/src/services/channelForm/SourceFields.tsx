@@ -1,6 +1,7 @@
 import { LarkMessageEffectsFields } from './LarkMessageEffectsFields';
 import { LarkResourceFields } from './LarkResourceFields';
 import { DiscordSourceFields } from './DiscordSourceFields';
+import { NativeLarkSourceFields } from './NativeLarkSourceFields';
 import { WhatsappSourceFields } from './WhatsappSourceFields';
 import { Button } from '../../ui/Button';
 import { modeUnavailable, RelayDiscoveryNotice, useRelayCapabilities } from '../RelayCapabilities';
@@ -25,6 +26,8 @@ export function SourceFields({
     'trusted_normalized',
   );
   const set = (key: string, next: unknown) => onChange({ ...value, [key]: next });
+  if (value.type === 'native_lark')
+    return <NativeLarkSourceFields value={value} onChange={onChange} />;
   if (value.type === 'discord') return <DiscordSourceFields value={value} onChange={onChange} />;
   if (value.type === 'whatsapp') return <WhatsappSourceFields value={value} onChange={onChange} />;
   if (value.type === 'custom') return <CustomSource value={value} onChange={onChange} />;

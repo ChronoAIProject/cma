@@ -9,6 +9,11 @@ const ENDPOINTS: readonly (readonly [Endpoint, string, string])[] = [
   ['custom_event_url', 'Event endpoint', 'Post custom events from your source here.'],
   ['nyxid_callback_url', 'Callback endpoint', 'NyxID relays channel messages here.'],
   ['telegram_webhook_url', 'Telegram webhook', 'Telegram posts your bot’s updates here.'],
+  [
+    'native_lark_webhook_url',
+    'Lark / Feishu webhook',
+    'Use this callback URL only in your separate Lark / Feishu app.',
+  ],
   ['whatsapp_webhook_url', 'WhatsApp webhook', 'Use this callback URL in your dedicated Meta app.'],
 ];
 
