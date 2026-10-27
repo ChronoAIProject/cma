@@ -1,5 +1,7 @@
 import { CredentialsRequestSchema, CredentialPatchSchema } from './credentials.js';
 export * from './credentials.js';
+import { LarkResourceBindingSchema, LarkMessageEffectsBindingSchema } from './lark.js';
+export * from './lark.js';
 import { EventWorkerProfileSchema, NyxIdIdentitySchema } from './profile.js';
 import {
   BindingIdSchema,
@@ -24,7 +26,6 @@ import {
   type Output,
 } from '../../schema.js';
 import { anything } from './helpers.js';
-
 export const IdentityAdmissionSchema = tagged(
   {
     deny: object({ type: enumeration('deny') }),
@@ -34,10 +35,8 @@ export const IdentityAdmissionSchema = tagged(
   'type',
 );
 export type IdentityAdmission = Output<typeof IdentityAdmissionSchema>;
-
 export const BotMessageAdmissionSchema = enumeration('deny', 'native_mentions');
 export type BotMessageAdmission = Output<typeof BotMessageAdmissionSchema>;
-
 export const AdmissionPolicySchema = tagged(
   {
     all: object({ type: enumeration('all') }),
@@ -115,12 +114,6 @@ export const CustomAttachmentsSchema = object({
 });
 export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
 
-export const LarkResourceBindingSchema = object({
-  user_service_id: text,
-  catalog_service_id: text,
-  app_id: text,
-});
-export type LarkResourceBinding = Output<typeof LarkResourceBindingSchema>;
 export const SourceRequestSchema = tagged(
   {
     whatsapp: object({
@@ -155,6 +148,7 @@ export const SourceRequestSchema = tagged(
       trust_normalized: optional(boolean),
       verify_raw_event: optional(boolean),
       lark_resources: optional(nullable(LarkResourceBindingSchema)),
+      lark_message_effects: optional(nullable(LarkMessageEffectsBindingSchema)),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
@@ -373,6 +367,7 @@ export const SourceSchema = tagged(
       trust_normalized: optional(boolean),
       verify_raw_event: optional(boolean),
       lark_resources: optional(nullable(LarkResourceBindingSchema)),
+      lark_message_effects: optional(nullable(LarkMessageEffectsBindingSchema)),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({

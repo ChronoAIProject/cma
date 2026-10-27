@@ -61,7 +61,13 @@ impl InteractionStore {
                 || card.actor != activity.actor.id
                 || card.chat != activity.conversation.id
                 || card.thread != activity.conversation.thread_id
-                || card.superseded
+                || (card.superseded
+                    && !super::lark_effect::recovery(
+                        &card,
+                        activity.event_id.as_str(),
+                        callback_id,
+                        index,
+                    ))
                 || card.reference.is_none()
                 || card
                     .destination

@@ -1,3 +1,4 @@
+import { LarkMessageEffectsFields } from './LarkMessageEffectsFields';
 import { LarkResourceFields } from './LarkResourceFields';
 import { DiscordSourceFields } from './DiscordSourceFields';
 import { WhatsappSourceFields } from './WhatsappSourceFields';
@@ -191,7 +192,10 @@ export function SourceFields({
         />
       </Section>
       {value.type === 'nyxid_relay' && ['lark', 'feishu'].includes(String(value.platform)) ? (
-        <LarkResourceFields value={value} onChange={onChange} />
+        <>
+          <LarkResourceFields value={value} onChange={onChange} />
+          <LarkMessageEffectsFields value={value} onChange={onChange} />
+        </>
       ) : null}
       <AdmissionFields value={value.admission} onChange={(v) => set('admission', v)} />
     </>

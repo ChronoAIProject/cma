@@ -188,6 +188,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         complete_replies_enabled: false,
         routed_replies: None,
         telegram_effects_issuance_enabled: false,
+        lark_effects: None,
         telegram_effects: None,
         native_discord_edits_enabled: false,
         discord_effects_issuance_enabled: false,

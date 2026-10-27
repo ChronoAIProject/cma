@@ -41,6 +41,7 @@ pub struct WriteFlags {
     pub relay_raw_verification: bool,
     /// Exact proxy bindings are admitted only after compatible readers deploy.
     pub lark_resources: bool,
+    pub lark_message_effects: bool,
     /// Admits native Discord sources and credential revisions after reader rollout.
     pub native_whatsapp: bool,
     pub native_discord: bool,
@@ -81,6 +82,21 @@ pub(crate) fn check(
         return Err(ValidationError::new(
             format!("/sources/{index}/message_events"),
             "native_telegram_message_events_writes_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::NyxidRelay {
+                lark_message_effects: Some(_),
+                ..
+            }
+        ) && !flags.lark_message_effects
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/lark_message_effects"),
+            "lark_message_effects_writes_disabled",
         ));
     }
     if let Some(index) = next.sources.iter().position(|source| {

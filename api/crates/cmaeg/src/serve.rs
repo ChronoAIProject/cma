@@ -74,6 +74,7 @@ pub(crate) async fn serve(
     state.native_whatsapp_writes_enabled = config.native_whatsapp_writes_enabled;
     state.native_whatsapp_admission_enabled =
         config.routing.admission_enabled && config.routing.recovery_enabled;
+    state.lark_message_effects_writes_enabled = config.lark_message_effects_writes_enabled;
     state.native_discord_writes_enabled = config.native_discord_writes_enabled;
     state.native_telegram_message_events_writes_enabled =
         config.native_telegram_message_events_writes_enabled;
@@ -227,6 +228,11 @@ pub(crate) async fn serve(
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
         telegram_effects_issuance_enabled: telegram_effects,
+        lark_effects: Some(std::sync::Arc::new(
+            tools::message_effects::lark_transport::LarkEffectsClient::new(
+                &config.management.nyxid_base_url,
+            )?,
+        )),
         telegram_effects: Some(std::sync::Arc::new(tools::MessageEffectsClient::new(
             telegram,
         ))),

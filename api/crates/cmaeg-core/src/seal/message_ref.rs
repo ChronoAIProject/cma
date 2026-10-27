@@ -15,6 +15,8 @@ pub struct MessageRefPayload {
     /// Optional authority for new native Telegram delete/reaction tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_effect: Option<super::TelegramEffectAuthority>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lark_effect: Option<Box<super::lark_effect::LarkEffectAuthority>>,
     pub channel_id: ChannelId,
     pub event_id: EventId,
     pub platform_message_id: String,
@@ -32,6 +34,9 @@ pub struct MessageRefPayload {
 }
 impl MessageRefPayload {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(effect) = &self.lark_effect {
+            effect.validate(self)?;
+        }
         if let Some(destination) = &self.discord_message {
             if let Some(window) = &destination.effects {
                 if window.issued_at <= 0

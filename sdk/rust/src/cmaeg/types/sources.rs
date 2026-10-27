@@ -86,6 +86,9 @@ pub enum Source {
         /// Opt-in exact Lark/Feishu resource proxy binding.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Explicit write authority; independent of resource reads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
@@ -175,6 +178,9 @@ pub enum SourceRequest {
         /// Exact authorized connection for opt-in embedded Lark/Feishu media.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Explicit write authority; independent of resource reads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
@@ -244,4 +250,18 @@ pub struct LarkResourceBinding {
     pub catalog_service_id: String,
     /// Independently configured receiving application ID (`cli_…`).
     pub app_id: String,
+}
+
+/// Independent opt-in to effects on confirmed CMA Lark/Feishu replies.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LarkMessageEffectsBinding {
+    /// Exact authorized regional bot-service connection.
+    pub connection: LarkResourceBinding,
+    /// Permit deletion of exact confirmed outbound messages.
+    #[serde(default)]
+    pub delete: bool,
+    /// Permit adding, replacing and clearing the reaction retained by CMA.
+    #[serde(default)]
+    pub reaction: bool,
 }

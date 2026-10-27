@@ -12,6 +12,7 @@ import {
 } from '../../schema.js';
 import { DeliveryOutcomeSchema } from './messages.js';
 
+/** Retained wire shape; Lark/Feishu use emoji_type names such as THUMBSUP in emoji. */
 export const TelegramReactionSchema = tagged(
   {
     emoji: object({ type: enumeration('emoji'), emoji: text }),

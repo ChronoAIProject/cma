@@ -249,13 +249,33 @@ impl Sender {
                 .bind(
                     &mut prepared,
                     crate::interactions::Destination {
-                        outbound_id,
+                        outbound_id: outbound_id.clone(),
                         platform_id: platform_id.clone(),
                     },
                 )
                 .await
             {
-                Ok(reference) => result.message_ref = Some(reference),
+                Ok(reference) => {
+                    let reference = if lark {
+                        self.lark_effect_reference(ctx.channel, event, reference, &outbound_id)
+                            .await
+                    } else {
+                        reference
+                    };
+                    if lark
+                        && reference
+                            .open(&self.keys)
+                            .is_ok_and(|opened| opened.payload.lark_effect.is_some())
+                        && store
+                            .retain_lark_reference(&mut prepared, &reference)
+                            .await
+                            .is_err()
+                    {
+                        result.delivery = unknown("interaction_receipt_unconfirmed");
+                    } else {
+                        result.message_ref = Some(reference);
+                    }
+                }
                 Err(_) => result.delivery = unknown("interaction_receipt_unconfirmed"),
             }
         }

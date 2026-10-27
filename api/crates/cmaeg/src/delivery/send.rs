@@ -355,6 +355,7 @@ impl Sender {
                     result.message_ref = MessageRef::seal(
                         &MessageRefPayload {
                             discord_message: None,
+                            lark_effect: None,
                             telegram_effect: None,
                             channel_id: event.channel_id.clone(),
                             event_id: event.event_id.clone(),
@@ -376,6 +377,20 @@ impl Sender {
                         &self.keys,
                     )
                     .ok();
+                }
+            }
+            if parts.len() == 1
+                && !message.thread_reply
+                && super::edit::destination(*platform, message, &part.text, outbound.clone())
+                    .is_some()
+            {
+                if let (Some(reference), Some(outbound)) =
+                    (result.message_ref.as_ref(), outbound.as_deref())
+                {
+                    result.message_ref = Some(
+                        self.lark_effect_reference(ctx.channel, event, reference.clone(), outbound)
+                            .await,
+                    );
                 }
             }
             let confirmed = matches!(outcome, DeliveryOutcome::Confirmed { .. });

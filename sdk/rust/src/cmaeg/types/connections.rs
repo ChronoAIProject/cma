@@ -158,6 +158,9 @@ pub struct RelayAuthoringCapabilities {
     /// Enables explicit bindings for embedded Lark/Feishu media reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lark_resource_writes_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Whether owners may enroll new Lark/Feishu message-effect bindings.
+    pub lark_message_effects_writes_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Whether owner-initiated message preparation and commit are enabled.
     pub outbound_messages_writes_enabled: Option<bool>,

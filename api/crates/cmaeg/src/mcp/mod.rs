@@ -165,7 +165,8 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
         "ping" => Ok(ToolOutput::Envelope(json!({}))),
         "tools/list" => Ok(ToolOutput::Envelope(message_effects::list(
             state.media.is_some(),
-            state.telegram_effects_issuance_enabled
+            state.lark_effects.is_some()
+                || state.telegram_effects_issuance_enabled
                 || state.discord_effects_issuance_enabled
                 || state
                     .discord_effects

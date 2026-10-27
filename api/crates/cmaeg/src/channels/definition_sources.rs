@@ -104,6 +104,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_id,
                 trust_normalized,
                 verify_raw_event,
+                lark_message_effects,
                 lark_resources,
                 admission,
             } => Source::NyxidRelay {
@@ -116,6 +117,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_id: bot_id.clone(),
                 trust_normalized: *trust_normalized,
                 verify_raw_event: *verify_raw_event,
+                lark_message_effects: lark_message_effects.clone(),
                 lark_resources: lark_resources.clone(),
                 admission: admission.clone(),
             },
