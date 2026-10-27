@@ -53,9 +53,9 @@ CMA-only ingestion path](CMAEG_WhatsApp_Incoming_Reactions.md).
 The separate default-off [native WhatsApp source](CMAEG_Native_WhatsApp.md) adds
 private text ingress, separately gated inbound media retrieval, retained
 incoming/outbound reaction authority and native text replies without changing
-that relay. A separate default-off gate adds native JPEG/PNG, PDF and bounded
-AAC/AMR/MP3/M4A/mono Opus, static/animated WebP sticker and Baseline H.264
-MP4/3GPP video replies. A separate default-off gate adds native approved-template
+that relay. Its independent outbound gate adds native JPEG/PNG, bounded
+TXT/PDF/DOC/XLS/PPT/DOCX/XLSX/PPTX documents, AAC/AMR/MP3/M4A/mono Opus,
+static/animated WebP sticker and Baseline H.264 MP4/3GPP video replies. A separate default-off gate adds native approved-template
 replies using the full existing typed header/body/URL-button contract, with
 durable receipt replay. Separate default-off [existing-group gates](CMAEG_Native_WhatsApp_Groups.md)
 add exact OBA phone/group membership verification, distinct group/participant
