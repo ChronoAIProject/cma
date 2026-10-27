@@ -62,3 +62,26 @@ impl LarkResourceKind {
         }
     }
 }
+
+/// Separate owner opt-in for effects on exact confirmed CMA outbound messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LarkMessageEffectsBinding {
+    pub connection: LarkResourceBinding,
+    #[serde(default)]
+    pub delete: bool,
+    #[serde(default)]
+    pub reaction: bool,
+}
+impl LarkMessageEffectsBinding {
+    pub fn validate(&self, pointer: &str) -> Result<(), ValidationError> {
+        self.connection.validate(&format!("{pointer}/connection"))?;
+        if !self.delete && !self.reaction {
+            return Err(ValidationError::new(
+                pointer,
+                "enable at least one message effect",
+            ));
+        }
+        Ok(())
+    }
+}

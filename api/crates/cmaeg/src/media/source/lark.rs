@@ -148,7 +148,51 @@ pub(super) async fn response(
         .as_ref()
         .ok_or(FetchError::Unauthorized)?;
     let deadline = request.deadline.min(Instant::now() + DEADLINE);
-    let (slug, origin) = lark_resource_service(*platform).ok_or(FetchError::NotRetrievable)?;
+    authorize_connection(http, base, *platform, binding, bot_id, key, deadline).await?;
+    let url = proxy_url(
+        base,
+        binding,
+        &[
+            "open-apis",
+            "im",
+            "v1",
+            "messages",
+            message_id,
+            "resources",
+            resource_key,
+        ],
+        Some(resource_kind.as_str()),
+    )?;
+    let response = send(http, url, key, deadline).await?;
+    // These embedded resources are images/videos. A provider JSON error is not media.
+    if response.status() != reqwest::StatusCode::OK
+        || response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| {
+                v.split(';')
+                    .next()
+                    .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"))
+            })
+    {
+        return Err(FetchError::Rejected);
+    }
+    Ok((response, deadline))
+}
+
+/// Verify exact caller-visible connection, regional official endpoint and bot identity.
+/// Callers must independently authorize the requested operation.
+pub(crate) async fn authorize_connection(
+    http: &Client,
+    base: &Url,
+    platform: cmaeg_core::channel::Platform,
+    binding: &LarkResourceBinding,
+    bot_id: &str,
+    key: &Secret,
+    deadline: Instant,
+) -> Result<(), FetchError> {
+    let (slug, origin) = lark_resource_service(platform).ok_or(FetchError::NotRetrievable)?;
     // Independent metadata reads; no provider credential is returned or inspected.
     let (services, mut endpoints, catalog) = tokio::try_join!(
         json(
@@ -225,36 +269,7 @@ pub(super) async fn response(
     {
         return Err(FetchError::Unauthorized);
     }
-    let url = proxy_url(
-        base,
-        binding,
-        &[
-            "open-apis",
-            "im",
-            "v1",
-            "messages",
-            message_id,
-            "resources",
-            resource_key,
-        ],
-        Some(resource_kind.as_str()),
-    )?;
-    let response = send(http, url, key, deadline).await?;
-    // These embedded resources are images/videos. A provider JSON error is not media.
-    if response.status() != reqwest::StatusCode::OK
-        || response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| {
-                v.split(';')
-                    .next()
-                    .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"))
-            })
-    {
-        return Err(FetchError::Rejected);
-    }
-    Ok((response, deadline))
+    Ok(())
 }
 
 fn allowed_shared_service(service: &Value) -> bool {
@@ -355,7 +370,7 @@ fn endpoint(base: &Url, path: &[&str]) -> Result<Url, FetchError> {
         .extend(path);
     Ok(url)
 }
-fn proxy_url(
+pub(crate) fn proxy_url(
     base: &Url,
     binding: &LarkResourceBinding,
     path: &[&str],

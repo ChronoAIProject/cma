@@ -26,6 +26,7 @@ pub struct ToolsState {
     pub complete_replies_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
     pub telegram_effects: Option<Arc<super::MessageEffectsClient>>,
+    pub lark_effects: Option<Arc<super::LarkEffectsClient>>,
     /// Advertise templates only after the WhatsApp relay contract is verified.
     pub whatsapp_templates_enabled: bool,
     pub discord_interactions_enabled: bool,
@@ -102,7 +103,8 @@ impl ToolsState {
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
-        let channel = if message.discord_message.is_some()
+        let channel = if message.lark_effect.is_some()
+            || message.discord_message.is_some()
             || (message.interaction_record_id.is_some() && message.route_id.starts_with("discord:"))
         {
             self.resolver

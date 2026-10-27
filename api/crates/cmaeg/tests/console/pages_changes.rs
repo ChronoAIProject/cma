@@ -163,6 +163,7 @@ impl SourceChanges for RecordingSources {
                     bot_id,
                     trust_normalized,
                     verify_raw_event,
+                    lark_message_effects,
                     lark_resources,
                     admission,
                 } => Source::NyxidRelay {
@@ -175,6 +176,7 @@ impl SourceChanges for RecordingSources {
                     bot_id,
                     trust_normalized,
                     verify_raw_event,
+                    lark_message_effects,
                     lark_resources,
                     admission,
                 },

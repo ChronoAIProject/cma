@@ -45,6 +45,14 @@ fn lark_resource_writes_allow_source_opt_in_after_compatible_reader_rollout() {
     );
 }
 
+#[test]
+fn lark_message_effects_enrollment_remains_explicitly_disabled() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_LARK_MESSAGE_EFFECTS_WRITES_ENABLED"),
+        Some("false")
+    );
+}
+
 struct Line<'a> {
     indent: usize,
     text: &'a str,

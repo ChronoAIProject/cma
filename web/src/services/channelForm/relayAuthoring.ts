@@ -83,6 +83,23 @@ export function validateRelayAuthoring(
       continue;
     }
     if (source.type !== 'nyxid_relay') continue;
+    if (source.lark_message_effects != null && !unchanged) {
+      const effects = object(source.lark_message_effects);
+      const binding = object(effects.connection);
+      if (discovery.authoring?.lark_message_effects_writes_enabled !== true)
+        throw new Error(
+          'New or changed message effects are disabled on this gateway. Your draft has been retained.',
+        );
+      if (
+        (!effects.delete && !effects.reaction) ||
+        ['user_service_id', 'catalog_service_id', 'app_id'].some(
+          (field) => !text(binding[field]).trim(),
+        )
+      )
+        throw new Error(
+          'Select at least one message effect and confirm its bot API connection and app ID. Your draft has been retained.',
+        );
+    }
     if (source.lark_resources != null && !unchanged) {
       const binding = object(source.lark_resources);
       if (

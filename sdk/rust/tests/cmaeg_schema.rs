@@ -69,6 +69,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         AttachmentKind,
         AttachmentSource,
         LarkResourceBinding,
+        LarkMessageEffectsBinding,
         LarkResourceKind,
         AttachmentImage,
         AttachmentImageOrigin,

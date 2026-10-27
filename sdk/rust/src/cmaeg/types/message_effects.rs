@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-/// Native Telegram reactions supported for a confirmed CMA message reference.
+/// Retained reaction wire shape for a confirmed CMA message reference.
+/// Lark/Feishu use `Emoji` with a platform emoji_type such as `THUMBSUP`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TelegramReaction {
-    /// A Unicode emoji that Telegram permits for the message.
+    /// A supported Unicode emoji, or a Lark/Feishu platform emoji_type.
     Emoji {
         /// The reaction emoji.
         emoji: String,
@@ -32,7 +33,7 @@ pub struct MessageEffectReceipt {
     /// Confirmed, rejected, unknown, rate-limited, or unsupported outcome.
     pub delivery: super::DeliveryOutcome,
 }
-/// Exact-message transport support; Telegram still checks bot permissions.
+/// Exact-message transport support; platform permissions and limits still apply.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageEffectsCapabilities {
