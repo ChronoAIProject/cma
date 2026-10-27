@@ -151,3 +151,5 @@ data:
 
   # Issue new native Telegram effect references only after every reader is upgraded.
   CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED: "true"
+  # Reader-first effects-only authority for one confirmed native upload message.
+  CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED: "false"

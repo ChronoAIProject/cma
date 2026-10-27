@@ -157,6 +157,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let discord_multiselect = config::discord_multiselect_from_env()?;
     let whatsapp_templates = config::whatsapp_templates_from_env()?;
     let telegram_effects = config::telegram_message_effects_from_env()?;
+    let telegram_media_effects = config::telegram_media_effects_from_env()?;
     let config = Config::from_env()?;
     serve::serve(
         config,
@@ -178,6 +179,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         discord_card_effects,
         consumer_interactions,
         telegram_effects,
+        telegram_media_effects,
     )
     .await
 }

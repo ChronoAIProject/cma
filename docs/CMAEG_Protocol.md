@@ -3042,8 +3042,12 @@ This capability does not widen a routed lease or send window. Native media calls
 are not automatically retried: an explicit first-call 429 is typed rate-limited,
 while a lost or malformed response is unknown. Any failure after a confirmed
 part is `unknown`/`partial_delivery`; a batch is not atomic. Confirmed media
-batches return a platform message ID but no editable/effect-bearing message
-reference. The existing native text, interactive and effect paths are unchanged.
+batches return a platform message ID. Behind the separate default-off
+`CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` gate, exactly one confirmed individual
+upload can also return an effects-only reference; separate text plus media,
+multiple uploads, album receipts and uncertain delivery cannot. Caption/media
+editing remains unsupported. See [native Telegram media effects](CMAEG_Native_Telegram_Media_Effects.md).
+The existing native text and interactive paths are unchanged.
 These adapter semantics are tested against local HTTP fixtures; this is not an
 assertion of live Telegram acceptance or deployment.
 
@@ -3376,6 +3380,14 @@ New confirmed native Telegram bot sends can carry additional authority inside th
 existing opaque `message_ref`; no extra target-mint step is required. The operator
 must complete reader rollout and enable `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED`.
 Legacy references retain edit behavior and explicitly do not grant new effects.
+Single native uploads additionally require the default-off
+`CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` gate and carry an additive
+`telegram_effect.effects_only=true` marker. They cannot authorize text, caption
+or media edits. Historical text/card authority omits this marker and keeps its
+serialized identity. Media scopes use the existing durable message-fence
+algorithm with a separate Telegram media namespace; unknown writes remain fenced
+against new keys through expiry. Details and reader rollout are documented in
+[native Telegram media effects](CMAEG_Native_Telegram_Media_Effects.md).
 
 - `GET /v1/messages/{message_ref}/capabilities` (`readMessageCapabilities`) returns
   `delete`, `reaction`, `scope=confirmed_native_bot_message`, `max_reactions` and an
@@ -3400,11 +3412,13 @@ when enabled it explicitly reports false for relay and unproved events.
 Telegram `deleteMessage` requires a message younger than 48 hours; certain service
 messages cannot be deleted and private-chat dice require age over 24 hours. Bot
 permissions differ for channels/groups. CMA only issues authority for its own
-confirmed outbound text/card messages and bounds it to 24 hours. It does not expose
+confirmed outbound text/card messages or separately gated individual uploads,
+and bounds it to 24 hours. It does not expose
 moderation of arbitrary inbound messages. `setMessageReaction` changes only the
 bot's reaction; bots have at most one, cannot use paid reactions, and some service
 messages are unsupported. Telegram applies reactions on media groups to the first
-non-deleted member. CMA's current direct sends are text/card messages.
+non-deleted member. New media authority excludes album receipts and never combines
+several native messages into one target.
 
 Official contracts: https://core.telegram.org/bots/api#deletemessage and
 https://core.telegram.org/bots/api#setmessagereaction (reviewed 2026-10-26).

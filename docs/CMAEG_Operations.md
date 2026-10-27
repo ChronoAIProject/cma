@@ -237,6 +237,7 @@ applies with all media flags off.**
 | `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. No threaded cards or mixed native media; native forms have a separate default-off gate. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
 | `CMAEG_LARK_FORMS_ENABLED` | boolean | `false` | Enables new native Lark/Feishu Form issuance after every serving and rollback reader supports optional form authority and persisted submitted results. Requires the native-card gate; named consumers also require the consumer-interaction gate. Off retains historical text-form rendering, while already-issued native form callbacks and edits remain active. Only exact `true`/`false` are accepted. See [native form rollout](#native-lark-and-feishu-form-rollout). |
 | `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED` | boolean | `false` | Issues native Telegram admission evidence and effect authority on newly confirmed bot-message references; advertises delete/reaction tools after all readers are upgraded. Exactly `true`/`false`. Disabling stops new issuance and discovery; previously issued references remain usable until their 24-hour expiry or authority revocation. Relay transports are unsupported. |
+| `CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` | boolean | `false` | Issues effects-only references for one individually confirmed native Telegram upload, including its caption. Requires the existing Telegram effects gate and native admission proof. Separate text plus uploads, multiple uploads, albums and uncertain sends get no media reference. Text/caption/media edits remain unsupported. Deploy compatible readers for the new sealed scope before enabling; checked-in ConfigMap stays off. See [Telegram media effects](CMAEG_Native_Telegram_Media_Effects.md). |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
@@ -2643,6 +2644,12 @@ a native platform receipt; a deadline or incomplete receipt leaves an unknown
 outcome, without retrying the send. Text-only templates retain the normal budget.
 
 ## Native Telegram message effects rollout
+
+Native uploads have a separate default-off reader rollout under
+`CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED`; see
+[native Telegram media effects](CMAEG_Native_Telegram_Media_Effects.md).
+Only one individually confirmed upload receives the new effects-only reference.
+It never authorizes a text/caption/media edit or all messages in a batch.
 
 Deploy compatible readers with `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED=false` first.
 Keep the flag false until every gateway replica understands the optional native
