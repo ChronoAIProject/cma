@@ -1,3 +1,4 @@
+import { LarkResourceBindingSchema } from './channels.js';
 import { NativeMediaCapabilitiesSchema } from './messages.js';
 import { MessageEffectsCapabilitiesSchema } from './message-effects.js';
 import {
@@ -59,6 +60,9 @@ export const ActivityConversationSchema = object({
 });
 export type ActivityConversation = Output<typeof ActivityConversationSchema>;
 
+export const LarkResourceKindSchema = enumeration('image', 'file');
+export type LarkResourceKind = Output<typeof LarkResourceKindSchema>;
+
 // A non-secret locator bound into the activity digest; fetching still requires
 // the event reference's authority.
 export const AttachmentSourceSchema = tagged(
@@ -70,6 +74,15 @@ export const AttachmentSourceSchema = tagged(
       type: enumeration('discord'),
     }),
     nyxid_relay: object({ index: integer, type: enumeration('nyxid_relay') }),
+    lark_resource: object({
+      type: enumeration('lark_resource'),
+      message_id: text,
+      resource_key: text,
+      resource_kind: LarkResourceKindSchema,
+      binding: LarkResourceBindingSchema,
+      bot_id: text,
+      source_revision: text,
+    }),
     telegram: object({
       file_id: text,
       file_unique_id: text,

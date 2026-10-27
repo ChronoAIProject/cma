@@ -8,6 +8,7 @@
 //! error, a log line or a span.
 pub mod discord;
 pub mod inline;
+pub(crate) mod lark;
 pub mod nyxid;
 pub mod telegram;
 pub mod url;
@@ -53,6 +54,9 @@ pub fn configured(
 ) -> bool {
     match locator {
         Some(AttachmentSource::Discord { .. }) => discord::configured(channel, &activity.source),
+        Some(locator @ AttachmentSource::LarkResource { .. }) => {
+            lark::configured(channel, &activity.source, locator)
+        }
         Some(AttachmentSource::NyxidRelay { .. }) => nyxid::configured(channel, &activity.source),
         Some(AttachmentSource::Telegram { .. }) => {
             telegram::configured_token(channel, &activity.source).is_some()
@@ -180,6 +184,11 @@ impl SourceRegistry {
                 "discord",
                 self.discord.as_ref().ok_or(FetchError::NotRetrievable)?,
                 matches!(request.activity.source, SourceKind::Discord { .. }),
+            ),
+            AttachmentSource::LarkResource { .. } => (
+                "lark_resource",
+                &self.nyxid,
+                lark::configured(request.channel, &request.activity.source, locator),
             ),
             AttachmentSource::NyxidRelay { .. } => (
                 "nyxid",

@@ -58,6 +58,11 @@ pub fn locator_key(locator: &AttachmentSource) -> String {
             attachment_id,
         } => format!("discord:{channel_id}:{message_id}:{attachment_id}"),
         AttachmentSource::NyxidRelay { index } => format!("relay:{index}"),
+        AttachmentSource::LarkResource {
+            message_id,
+            resource_key,
+            ..
+        } => format!("lark:{message_id}:{resource_key}"),
         AttachmentSource::Telegram { file_unique_id, .. } => format!("telegram:{file_unique_id}"),
         AttachmentSource::Url { url } => url.clone(),
         AttachmentSource::Inline { pointer } => format!("inline:{pointer}"),

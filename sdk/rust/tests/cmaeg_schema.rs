@@ -11,6 +11,19 @@ fn fixtures() -> Value {
     ))
     .unwrap()
 }
+
+#[test]
+fn legacy_relay_sources_never_gain_a_resource_binding_on_roundtrip() {
+    for platform in ["telegram", "lark", "feishu", "discord", "whatsapp", "slack"] {
+        let request = json!({"type":"nyxid_relay","platform":platform,"issuer":"https://nyx.example","key_id":"key-fixture","route_ids":["route-fixture"],"admission":{"type":"all"}});
+        let decoded: SourceRequest = serde_json::from_value(request.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), request);
+        let mut source = request;
+        source["jwks_url"] = json!("https://nyx.example/.well-known/jwks.json");
+        let decoded: Source = serde_json::from_value(source.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), source);
+    }
+}
 fn roundtrip<T: DeserializeOwned + Serialize>(name: &str, examples: &Value) {
     for example in examples[name].as_array().unwrap() {
         let decoded: T = serde_json::from_value(example.clone())
@@ -43,6 +56,8 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         Attachment,
         AttachmentKind,
         AttachmentSource,
+        LarkResourceBinding,
+        LarkResourceKind,
         AttachmentImage,
         AttachmentImageOrigin,
         AttachmentStatus,

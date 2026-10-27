@@ -231,6 +231,22 @@ pub struct Attachment {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AttachmentSource {
+    /// Sealed native resource retrieved through an exact scoped NyxID connection.
+    #[serde(rename = "lark_resource")]
+    LarkResource {
+        /// Native Lark/Feishu message ID (`om_…`).
+        message_id: String,
+        /// Native image or file resource key.
+        resource_key: String,
+        /// Regional API resource type.
+        resource_kind: LarkResourceKind,
+        /// Authorized connection and expected application identity.
+        binding: super::LarkResourceBinding,
+        /// Independently pinned receiving bot open ID (`ou_…`).
+        bot_id: String,
+        /// Digest of the exact source and channel credential revision.
+        source_revision: String,
+    },
     /// Native Discord attachment, resolved with current bot custody.
     #[serde(rename = "discord")]
     Discord {
@@ -468,4 +484,14 @@ pub struct PublicActivity {
     /// The routing decision of a routed event; absent on unrouted events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<ActivityRouting>,
+}
+
+/// Native Lark/Feishu message resource type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LarkResourceKind {
+    /// Image resource.
+    Image,
+    /// File resource, including embedded video.
+    File,
 }

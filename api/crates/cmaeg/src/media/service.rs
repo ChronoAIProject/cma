@@ -80,6 +80,7 @@ pub struct MediaCapabilities {
 
 /// The single media facade: targets, derivations and shared budgets.
 pub struct MediaService {
+    lark_resolver: Option<crate::channels::resolver::ChannelResolver>,
     pipeline: Arc<Pipeline>,
     keys: Arc<MasterKeyRing>,
     tool_providers: Arc<MediaToolProviders>,
@@ -111,6 +112,7 @@ impl MediaService {
             limiter.clone(),
         );
         Self {
+            lark_resolver: None,
             pipeline: Arc::new(Pipeline {
                 sources: deps.sources,
                 transcriber: deps.transcriber,
@@ -128,6 +130,12 @@ impl MediaService {
             responses: ResponseBudget::new(&limits),
             limiter,
         }
+    }
+
+    /// New proxy resource locators require current authority even on cache hits.
+    pub fn with_resolver(mut self, resolver: crate::channels::resolver::ChannelResolver) -> Self {
+        self.lark_resolver = Some(resolver);
+        self
     }
 
     /// The media target of a turn: its sealed event_ref, opened and checked
@@ -159,6 +167,37 @@ impl MediaService {
         artifact: Artifact,
         wait: Duration,
     ) -> JobOutcome<Derived, DeriveError> {
+        let refreshed;
+        let target =
+            if let Some(locator @ cmaeg_core::activity::AttachmentSource::LarkResource { .. }) =
+                target
+                    .attachment(index)
+                    .and_then(|attachment| attachment.source.as_ref())
+            {
+                let Some(resolver) = &self.lark_resolver else {
+                    return JobOutcome::Failed(DeriveError::NotRetrievable);
+                };
+                let current = match super::source::lark::refresh(
+                    resolver,
+                    &target.channel,
+                    &target.event,
+                    &target.activity.source,
+                    locator,
+                    Instant::now() + JOB_CAP,
+                )
+                .await
+                {
+                    Ok(current) => current,
+                    Err(error) => return JobOutcome::Failed(error.into()),
+                };
+                refreshed = MediaTarget {
+                    channel: current,
+                    ..target.clone()
+                };
+                &refreshed
+            } else {
+                target
+            };
         let key = match self.admit(target, index, artifact) {
             Ok(Admission::Cached(value)) => return JobOutcome::Ready(value),
             Ok(Admission::Run(key)) => key,
@@ -342,6 +381,7 @@ impl Drop for Record {
 
 /// What [`compose`] needs beyond the configuration.
 pub struct ComposeDeps {
+    pub resolver: crate::channels::resolver::ChannelResolver,
     pub keys: Arc<MasterKeyRing>,
     pub tool_providers: Arc<MediaToolProviders>,
     pub telegram: Arc<TelegramClient>,
@@ -365,7 +405,10 @@ pub fn compose(
     let limits = MediaLimits::from_config(&config.media);
     let sources = Arc::new(
         SourceRegistry::new(
-            Arc::new(NyxidSource::new(&config.management.nyxid_base_url)?),
+            Arc::new(
+                NyxidSource::new(&config.management.nyxid_base_url)?
+                    .with_resolver(deps.resolver.clone()),
+            ),
             Arc::new(TelegramFileSource::new(deps.telegram)),
             Arc::new(UrlSource::new(Arc::new(PinnedTransport))),
             Arc::new(InlineSource),
@@ -425,7 +468,8 @@ pub fn compose(
         tool_providers: deps.tool_providers,
         decode,
         inflight,
-    });
+    })
+    .with_resolver(deps.resolver);
     tracing::info!(?limits, capabilities = ?service.capabilities(), "inbound media service composed");
     Ok(Some(Arc::new(service)))
 }

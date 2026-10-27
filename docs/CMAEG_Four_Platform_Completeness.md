@@ -17,7 +17,7 @@ external platform send is authorized by this review.
 | Capability | Telegram | WhatsApp | Lark / Feishu | Discord |
 | --- | --- | --- | --- | --- |
 | Ordinary ingress | Native webhook and authenticated relay; private/group admission | Raw-verified relay for private conversations | Verified relay private/group text and rich-post text | Native authenticated Gateway, owned supervision, durable inbox and routed execution; bounded source discovery and self-service creation. Relay slash commands are also supported |
-| Inbound media | Source-bound image/file/audio/video retrieval, voice/sticker facts and album identity | Source-bound image/file/audio/video retrieval; voice/sticker, contact/location and quote facts | Standalone image/file/audio/video retrieval; embedded rich-post media is an explicit non-retrievable placeholder | Native exact-message metadata and attachment-bound official CDN retrieval; correlated relay media |
+| Inbound media | Source-bound image/file/audio/video retrieval, voice/sticker facts and album identity | Source-bound image/file/audio/video retrieval; voice/sticker, contact/location and quote facts | Standalone image/file/audio/video retrieval; default-off exact-source proxy binding can retrieve embedded rich-post images/videos, otherwise honest placeholders | Native exact-message metadata and attachment-bound official CDN retrieval; correlated relay media |
 | Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads | Native multipart REST uploads; gated relay uploads |
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
 | Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits through sealed exact-message references; gated relay text edits |
@@ -132,7 +132,11 @@ and the [protocol](CMAEG_Protocol.md).
 - Lark rich-post image/video exists in NyxID's internal `embedded_attachments`,
   but its external callback and indexed download contract expose only
   `inbound.attachments`. CMA retains honest placeholders instead of inventing a
-  download URL. This is a relay integration boundary, not a Lark media limit.
+  download URL. The additive default-off `lark_resources` path instead uses the
+  existing authorized NyxID bot-API proxy and independent receiving-bot evidence.
+  This is advanced explicit configuration, with no generic connection selector or
+  automatic grants and no live regional acceptance claim. See the
+  [binding contract](CMAEG_Protocol.md#opt-in-lark-and-feishu-embedded-resource-binding).
 - WhatsApp free-form replies remain subject to its 24-hour customer service
   window. Approved templates require provider approval and the matching relay
   contract; a CMA template flag does not grant either.

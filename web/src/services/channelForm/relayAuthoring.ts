@@ -37,6 +37,14 @@ export function validateRelayAuthoring(
       continue;
     }
     if (source.type !== 'nyxid_relay') continue;
+    if (
+      source.lark_resources != null &&
+      discovery.authoring?.lark_resource_writes_enabled !== true &&
+      !unchanged
+    )
+      throw new Error(
+        'New or changed embedded media bindings are disabled on this gateway. Keep the saved source unchanged or remove its media binding. Your draft has been retained.',
+      );
     const platform = String(source.platform);
     const mode =
       source.verify_raw_event === true
