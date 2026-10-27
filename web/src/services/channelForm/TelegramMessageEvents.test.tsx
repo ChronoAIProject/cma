@@ -24,9 +24,9 @@ it('requires confirmed support, preserves saved opt-in, and allows opt-out', () 
   expect(screen.getByLabelText('Receive message edits and reactions')).toBeChecked();
   fireEvent.click(screen.getByLabelText('Receive message edits and reactions'));
   expect(onChange).toHaveBeenCalledWith(source);
-  expect(screen.getByText(/CMA does not yet support anonymous reaction counts/)).toHaveTextContent(
-    'Telegram does not provide general message deletion events.',
-  );
+  const help = screen.getByText(/Anonymous reactions and aggregate reaction counts/);
+  expect(help).toHaveTextContent('keep the actor unknown and require open sender admission.');
+  expect(help).toHaveTextContent('Telegram does not provide general message deletion events.');
   const opted = { sources: [{ ...source, message_events: true }] };
   expect(() => validateRelayAuthoring({ status: 'legacy' }, opted)).toThrow(/disabled/);
   expect(() => validateRelayAuthoring({ status: 'legacy' }, opted, opted)).not.toThrow();
