@@ -21,6 +21,7 @@ export function StreamEntry({
   activeRunId,
   showUsage = false,
   usage,
+  duration,
   user,
   unknownUserName,
   feedback,
@@ -34,6 +35,7 @@ export function StreamEntry({
   readonly activeRunId?: string;
   readonly showUsage?: boolean;
   readonly usage?: AgentUsage['currentTurn'];
+  readonly duration?: string;
   readonly user?: MessageUser;
   readonly unknownUserName?: string;
   readonly feedback?: MessageFeedbackControls;
@@ -59,6 +61,11 @@ export function StreamEntry({
             <MessageContent content={message.content} streaming={message.status === 'streaming'} />
           )}
           {/* A turn that reported nothing draws no line; absence is never shown as zero. */}
+          {duration === undefined ? null : (
+            <div className="message__duration" aria-label="Turn duration">
+              {duration}
+            </div>
+          )}
           {showUsage && usage !== undefined ? (
             <div className="message__usage" aria-label="Turn token usage">
               <TurnUsage usage={usage} animateInitial={false} />

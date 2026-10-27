@@ -156,7 +156,7 @@ fn retired_runtime_close_requires_exact_quiet_retirement_and_checkpoint_provenan
             4 => sandbox.lifecycle.checkpoints.latest = None,
             5 => sandbox.owner = SubjectId::new("another-owner"),
             6 => agent.status = AgentStatus::Ready,
-            7 => agent.requested_stop_reason = Some(AgentStopReason::Owner),
+            7 => agent.requested_stop_reason = None,
             8 => agent.conversation.runtime_generation = Some(3),
             9 => agent.conversation.conversation_id = Some("another-conversation".into()),
             10 => sandbox.work.step = SandboxWorkStep::TeardownRuntime,
@@ -215,6 +215,31 @@ fn retired_runtime_close_requires_exact_quiet_retirement_and_checkpoint_provenan
             "variant {variant}"
         );
     }
+}
+
+#[test]
+fn pending_owner_stop_uses_parent_retirement_proof_without_changing_attribution() {
+    let (mut agent, worktree, sandbox) = fixture();
+    agent.requested_stop_reason = Some(AgentStopReason::Owner);
+    let mutation = completed_advance(&agent, AgentWorkStep::PublishStopped);
+    assert_eq!(
+        validate_agent_work_mutation_with_sandbox(
+            &agent,
+            &worktree,
+            agent.conversation.last_seq,
+            &mutation,
+            &sandbox,
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        mutation.agent.requested_stop_reason,
+        Some(AgentStopReason::Owner)
+    );
+    assert_eq!(mutation.agent.work.receipts, agent.work.receipts);
+    let mut unretired = sandbox;
+    unretired.status = SandboxStatus::Paused;
+    assert!(!retiring_sandbox_process_is_absent(&agent, &unretired));
 }
 
 #[test]
