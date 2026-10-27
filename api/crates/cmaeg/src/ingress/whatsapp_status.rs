@@ -1,5 +1,5 @@
 //! Authenticated delivery facts annotate the original consumer; never a new turn.
-use super::IngressState;
+use super::{routing_store::PlanStore, IngressState};
 use crate::{
     activity::{ActivityDelivery, ActivityRecipient, Change, ConsumerState},
     channels::resolver::ResolvedChannel,
@@ -60,9 +60,7 @@ impl IngressState {
         {
             return Ok(());
         }
-        let routing = self.routed.as_ref().ok_or(())?;
-        let Some(plan) = routing
-            .plans
+        let Some(plan) = PlanStore::new(self.resolver.record_client(), self.master_keys.clone())
             .load(&receipt.original)
             .await
             .map_err(|_| ())?
