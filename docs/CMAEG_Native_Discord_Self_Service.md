@@ -17,7 +17,10 @@ contract and gates; ordinary conversation partitioning is the baseline here.
 
 ## Deployment gates
 
-All flags below default to `false`. Enabling authoring does not itself open a
+All flags below default to `false` in code. The deployment manifest records the
+desired enabled state after compatible-reader deployment and predecessor drain;
+it is not evidence that production has already activated those values.
+Enabling authoring does not itself open a
 Discord connection. A staged deployment can continue using explicit canary
 records with automatic discovery disabled.
 

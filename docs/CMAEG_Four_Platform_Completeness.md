@@ -81,16 +81,24 @@ Source anchors: `discord/lifecycle.rs`, `source_discovery.rs`, `journal.rs`,
 
 ## Implemented gates and deployment status
 
-The checked-in `infra/cmaeg/configmap.yaml` enables outbound-message authoring,
-raw relay verification, thread-contract authoring and inbound media. It leaves
-native Discord authoring/runtime/discovery, thread metadata, edits, effects and controls
-disabled. Routed recovery/admission, multi-consumer and dynamic-source authoring
-are also disabled and the explicit record lists are empty. Relay native uploads,
-complete-reply attestation, relay text edits, Lark cards, WhatsApp
-interactions/templates, named-consumer controls and native Telegram effects remain
-disabled. These are repository values, not a fresh read of the production cluster.
+The checked-in `infra/cmaeg/configmap.yaml` records the desired staged activation:
+native Discord authoring/runtime/discovery, verified thread metadata, edits,
+effects and controls; routed recovery/admission; multi-consumer and dynamic-source
+authoring; named-consumer controls; and native Telegram effects. The CMA provider
+has explicit Responses v2 recovery paths. Nyxbot recovery remains absent because
+its deployed durable GET replay contract has not been proved. Explicit record
+lists remain empty, so ordinary existing HTTP/Custom ingress is not moved into
+routed execution. Native discovery selects only explicitly authored native sources.
 
-Activation therefore needs an explicit rollout decision:
+These desired values are not evidence of production activation. Deploy the new
+images with the previous live configuration first, let predecessor Pods drain,
+then apply the reviewed activation values and roll only the Gateway. Existing
+outbound-message authoring, raw relay verification, thread-contract authoring and
+inbound media stay enabled. Relay native uploads, complete-reply attestation,
+relay text edits, Lark cards and WhatsApp interactions/templates remain disabled
+until the actual serving relay contract and its required acceptance are verified.
+
+Activation requires the following release sequence:
 
 1. Deploy compatible serving and rollback readers before issuing new persisted
    metadata, message references, effect windows or routing records.
