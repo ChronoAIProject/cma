@@ -4,6 +4,14 @@ use crate::interactions::Destination;
 use serde_json::{json, Value};
 
 impl RelayClient {
+    /// Stop new form issuance independently of retained callback recovery.
+    pub fn with_lark_forms(mut self, enabled: bool) -> Self {
+        self.lark_forms = enabled;
+        self
+    }
+    pub(in crate::delivery) fn lark_forms_enabled(&self) -> bool {
+        self.lark_forms
+    }
     pub(crate) async fn send_lark_card(
         &self,
         address: &ReplyAddress,

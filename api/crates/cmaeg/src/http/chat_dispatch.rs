@@ -26,7 +26,7 @@ use tokio::sync::OwnedSemaphorePermit;
 pub(crate) struct AdmittedChat {
     pub request: LaunchRequest,
     pub routed_source: Option<crate::ingress::routed::VerifiedIngress>,
-    pub callback: Option<CallbackFacts>,
+    pub callback: Option<Box<CallbackFacts>>,
     pub route: String,
     pub now: i64,
 }
@@ -65,6 +65,7 @@ pub(crate) async fn dispatch(
                 &callback.id,
                 &callback.data,
                 &callback.message_id,
+                callback.form.as_ref(),
             )
             .await
         {
@@ -91,14 +92,17 @@ pub(crate) async fn dispatch(
             return invalid(timing.source(), VerificationError("event_ref_invalid"));
         };
         if let Some(owner) = interaction.2 {
-            request.consumer = Some(owner.consumer.clone());
+            request.consumer = owner.consumer.clone();
             request.conversation_id = owner.conversation_id.clone();
-            request.idempotency_key = cmaeg_core::ids::IdempotencyKey::for_consumer(
-                &request.activity.event_id,
-                &owner.consumer,
-            );
-            request.activity.routing = Some(owner.routing);
-            opened.payload.consumer = Some(owner.consumer);
+            request.idempotency_key = match &owner.consumer {
+                Some(consumer) => cmaeg_core::ids::IdempotencyKey::for_consumer(
+                    &request.activity.event_id,
+                    consumer,
+                ),
+                None => cmaeg_core::ids::IdempotencyKey::from_event(&request.activity.event_id),
+            };
+            request.activity.routing = owner.routing;
+            opened.payload.consumer = owner.consumer;
             opened.payload.conversation_id = owner.conversation_id;
             opened.payload.partition_key = owner.partition_key;
         }
