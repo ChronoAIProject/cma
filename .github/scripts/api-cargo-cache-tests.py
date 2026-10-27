@@ -177,6 +177,26 @@ class CacheTests(unittest.TestCase):
             cache.run("inject", self.root)
         transfer.assert_not_called()
 
+    def test_malformed_archive_metadata_falls_back_without_invoking_docker(self):
+        directory = self.root
+        self.root = directory / "data"
+        self.bundle()
+        (directory / "state.json").write_text(json.dumps({"prefix": self.prefix}))
+        for archives in (None, 42, list(cache.MOUNTS), {"unexpected": "digest"}):
+            self.manifest()
+            path = self.root / "manifest.json"
+            manifest = json.loads(path.read_text())
+            manifest["archives"] = archives
+            path.write_text(json.dumps(manifest))
+            with self.subTest(archives=archives), \
+                    patch.object(cache.sys, "argv", ["cache", "inject"]), \
+                    patch.object(cache, "context", return_value=directory), \
+                    patch.object(cache, "transfer") as transfer, \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                cache.main()
+            transfer.assert_not_called()
+            self.assertIn("::warning::API Cargo cache inject unavailable (ValueError)", output.getvalue())
+
     def test_bridge_mount_ids_match_the_real_api_dockerfile(self):
         definition = (cache.ROOT / "infra/api/Dockerfile").read_text()
         self.assertIn(f'id={cache.MOUNTS["registry"]},target=/usr/local/cargo/registry,sharing=locked', definition)
