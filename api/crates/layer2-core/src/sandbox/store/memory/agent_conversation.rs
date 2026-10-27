@@ -18,6 +18,24 @@ impl AgentConversationStore for InMemorySandboxStore {
         Ok(checkpoint)
     }
 
+    async fn commit_agent_reopen_update(
+        &self,
+        current: Agent,
+        previous: Option<super::AgentMessageCheckpoint>,
+        next: super::AgentMessageCheckpoint,
+        mutation: Option<AgentConversationMutation>,
+        guard: crate::sandbox::store::AgentReopenGuard,
+    ) -> Result<crate::sandbox::AgentUpdateOutcome, SandboxStoreError> {
+        commit_message(
+            &mut self.lock(),
+            current,
+            previous,
+            next,
+            mutation,
+            Some(&guard),
+        )
+    }
+
     async fn commit_agent_message_update(
         &self,
         current: Agent,
@@ -25,70 +43,7 @@ impl AgentConversationStore for InMemorySandboxStore {
         next: super::AgentMessageCheckpoint,
         mutation: Option<AgentConversationMutation>,
     ) -> Result<crate::sandbox::AgentUpdateOutcome, SandboxStoreError> {
-        next.validate()?;
-        let mut state = self.lock();
-        let actual = state.agent_message_checkpoints.get(&current.id);
-        let reanchor = mutation.is_none()
-            && previous
-                .as_ref()
-                .and_then(|value| value.reanchored(&current))
-                .as_ref()
-                == Some(&next);
-        if let Some(recorded) = actual.filter(|value| {
-            value.update_id == next.update_id && (!reanchor || value.after_seq >= next.after_seq)
-        }) {
-            return if recorded.update_fingerprint == next.update_fingerprint {
-                Ok(recorded.outcome.clone())
-            } else {
-                Err(SandboxStoreError::Conflict)
-            };
-        }
-        if state.agents.get(&current.id) != Some(&current)
-            || actual != previous.as_ref()
-            || !current.status.is_live()
-        {
-            return Err(SandboxStoreError::Conflict);
-        }
-        let mut candidate = state.clone();
-        if reanchor {
-            candidate
-                .agent_message_checkpoints
-                .insert(current.id, next.clone());
-            *state = candidate;
-            return Ok(next.outcome);
-        }
-        match mutation {
-            Some(mutation) => {
-                if mutation.agent.id != current.id || !next.matches(&mutation.agent) {
-                    return Err(SandboxStoreError::Conflict);
-                }
-                let appended = apply_conversation(&mut candidate, mutation)?;
-                if appended != next.outcome.appended {
-                    return Err(SandboxStoreError::Conflict);
-                }
-            }
-            None => {
-                if !next.matches(&current)
-                    || !next.outcome.appended.is_empty()
-                    || next.outcome.turn_closed
-                {
-                    return Err(SandboxStoreError::Conflict);
-                }
-                let actual_last_seq = candidate
-                    .agent_logs
-                    .get(&current.id)
-                    .and_then(|logs| logs.last())
-                    .map_or(0, |entry| entry.seq);
-                if actual_last_seq != current.conversation.last_seq {
-                    return Err(SandboxStoreError::SequenceConflict);
-                }
-            }
-        }
-        candidate
-            .agent_message_checkpoints
-            .insert(current.id.clone(), next.clone());
-        *state = candidate;
-        Ok(next.outcome)
+        commit_message(&mut self.lock(), current, previous, next, mutation, None)
     }
 
     async fn commit_agent_conversation(
@@ -292,4 +247,104 @@ fn append_log_batch(
         appended.push(entry);
     }
     Ok(appended)
+}
+
+fn commit_message(
+    state: &mut State,
+    current: Agent,
+    previous: Option<super::AgentMessageCheckpoint>,
+    next: super::AgentMessageCheckpoint,
+    mutation: Option<AgentConversationMutation>,
+    guard: Option<&crate::sandbox::store::AgentReopenGuard>,
+) -> Result<crate::sandbox::AgentUpdateOutcome, SandboxStoreError> {
+    let project = |agent: &Agent| match guard {
+        Some(guard) => guard.project(agent),
+        None => Ok(agent.clone()),
+    };
+    next.validate()?;
+
+    let actual = state.agent_message_checkpoints.get(&current.id);
+    if let Some(guard) = guard {
+        let parent = state
+            .sandboxes
+            .get(&current.sandbox_id)
+            .ok_or(SandboxStoreError::Conflict)?;
+        let actual_agent = state
+            .agents
+            .get(&current.id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        if actual_agent != &current {
+            return Err(SandboxStoreError::Conflict);
+        }
+        guard
+            .validate(parent, actual_agent, &crate::now_rfc3339())
+            .map_err(|_| {
+                SandboxStoreError::InvalidTransaction("reopen output authority is stale")
+            })?;
+    } else if actual.is_some_and(|checkpoint| {
+        Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
+    }) {
+        return Err(SandboxStoreError::Conflict);
+    }
+    let reanchor = mutation.is_none()
+        && previous
+            .as_ref()
+            .and_then(|value| value.reanchored(&current))
+            .as_ref()
+            == Some(&next);
+    if let Some(recorded) = actual.filter(|value| {
+        value.update_id == next.update_id && (!reanchor || value.after_seq >= next.after_seq)
+    }) {
+        return if recorded.update_fingerprint == next.update_fingerprint {
+            Ok(recorded.outcome.clone())
+        } else {
+            Err(SandboxStoreError::Conflict)
+        };
+    }
+    if state.agents.get(&current.id) != Some(&current)
+        || actual != previous.as_ref()
+        || !current.status.is_live()
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    let mut candidate = state.clone();
+    if reanchor {
+        candidate
+            .agent_message_checkpoints
+            .insert(current.id, next.clone());
+        *state = candidate;
+        return Ok(next.outcome);
+    }
+    match mutation {
+        Some(mutation) => {
+            if mutation.agent.id != current.id || !next.matches(&project(&mutation.agent)?) {
+                return Err(SandboxStoreError::Conflict);
+            }
+            let appended = apply_conversation(&mut candidate, mutation)?;
+            if appended != next.outcome.appended {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
+        None => {
+            if !next.matches(&project(&current)?)
+                || !next.outcome.appended.is_empty()
+                || next.outcome.turn_closed
+            {
+                return Err(SandboxStoreError::Conflict);
+            }
+            let actual_last_seq = candidate
+                .agent_logs
+                .get(&current.id)
+                .and_then(|logs| logs.last())
+                .map_or(0, |entry| entry.seq);
+            if actual_last_seq != current.conversation.last_seq {
+                return Err(SandboxStoreError::SequenceConflict);
+            }
+        }
+    }
+    candidate
+        .agent_message_checkpoints
+        .insert(current.id.clone(), next.clone());
+    *state = candidate;
+    Ok(next.outcome)
 }

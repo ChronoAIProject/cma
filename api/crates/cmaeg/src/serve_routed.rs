@@ -99,6 +99,7 @@ pub(crate) fn compose(
             config.routing.non_human_providers.clone(),
             replay_providers,
         )
+        .with_native_discovery(state.native_discord.clone())
         .with_admissions_enabled(config.routing.admission_enabled)
         .with_sync_delivery(true),
     );

@@ -22,6 +22,12 @@ import {
 } from './channelForm/model';
 export type { EditorSection } from './channelForm/model';
 export interface Channel {
+  native_discord_activation?: {
+    state: string;
+    detail: string;
+    capacity: number;
+    selected_records: number;
+  };
   created_at?: string;
   owner?: unknown;
   channel_id: string;
@@ -128,7 +134,11 @@ export function ChannelEditor({
           setRouting((current) => routingProjection(current, confirmed, request.section));
         }
       }
-      setNotice('Changes saved.');
+      setNotice(
+        value.native_discord_activation
+          ? `Changes saved. ${value.native_discord_activation.detail}`
+          : 'Changes saved.',
+      );
       onDone(hasChannelAddress(value) ? value : undefined);
     } catch (e) {
       if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
@@ -307,7 +317,11 @@ export function ChannelEditor({
         </form>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
-      {notice ? <p role="status">{notice}</p> : null}
+      {notice ? (
+        <p role="status">{notice}</p>
+      ) : baseline?.native_discord_activation ? (
+        <p role="status">{baseline.native_discord_activation.detail}</p>
+      ) : null}
       {pending ? (
         <div className="service-actions">
           <Button variant="primary" disabled={busy} onClick={() => void send(pending)}>

@@ -42,15 +42,34 @@ impl PlanStore {
         request: &crate::ingress::launch::LaunchRequest,
         source_body: &[u8],
     ) -> Result<Option<AdmittedPlan>, AdmissionError> {
+        self.replay_inner(request, source_body, false).await
+    }
+    pub(crate) async fn replay_native_interaction(
+        &self,
+        request: &crate::ingress::launch::LaunchRequest,
+        source_body: &[u8],
+    ) -> Result<Option<AdmittedPlan>, AdmissionError> {
+        if !crate::ingress::native_interaction::shape(&request.activity) {
+            return Err(AdmissionError::Invalid);
+        }
+        self.replay_inner(request, source_body, true).await
+    }
+    async fn replay_inner(
+        &self,
+        request: &crate::ingress::launch::LaunchRequest,
+        source_body: &[u8],
+        native: bool,
+    ) -> Result<Option<AdmittedPlan>, AdmissionError> {
         if source_body.len() > MAX_SOURCE_BYTES {
             return Err(AdmissionError::TooLarge);
         }
-        if request.consumer.is_some()
-            || request.activity.routing.is_some()
-            || matches!(
-                request.activity.kind,
-                cmaeg_core::activity::ActivityKind::Interaction(_)
-            )
+        if !native
+            && (request.consumer.is_some()
+                || request.activity.routing.is_some()
+                || matches!(
+                    request.activity.kind,
+                    cmaeg_core::activity::ActivityKind::Interaction(_)
+                ))
         {
             return Err(AdmissionError::Invalid);
         }
@@ -68,7 +87,8 @@ impl PlanStore {
             record_id: request.channel.pointer.record_id.clone(),
             event_id: request.activity.event_id.clone(),
         };
-        if event.consumer.is_some()
+        if (!native && event.consumer.is_some())
+            || (native && event.consumer != request.consumer)
             || event.lineage.is_some()
             || !event.verifies_activity(&request.activity)
             || event.channel_id != identity.channel_id

@@ -40,6 +40,8 @@ pub struct ManagementState {
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
+    pub native_discord: crate::discord::selection::Selection,
+    pub native_discord_admission_enabled: bool,
     pub outbound_messages_writes_enabled: bool,
     pub outbound_relay: Option<crate::delivery::relay_client::RelayClient>,
     /// Receives every record head management writes or deletes; a no-op
@@ -133,6 +135,8 @@ impl ManagementState {
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
             native_discord_writes_enabled: false,
+            native_discord: Default::default(),
+            native_discord_admission_enabled: false,
             outbound_messages_writes_enabled: false,
             outbound_relay: None,
             index,

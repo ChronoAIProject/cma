@@ -176,11 +176,15 @@ impl App {
         let tracker = TurnTracker::new(Readiness::initialized());
         let tools = ToolsState {
             whatsapp_templates_enabled: false,
+            discord_interactions_enabled: false,
             whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
             telegram_effects: None,
             native_media_enabled: false,
+            native_discord_edits_enabled: false,
+            discord_effects_issuance_enabled: false,
+            discord_effects: None,
             relay_text_edits_enabled: false,
             lark_cards_enabled: false,
             resolver: resolver.clone(),

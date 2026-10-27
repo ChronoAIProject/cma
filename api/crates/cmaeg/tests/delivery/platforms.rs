@@ -46,6 +46,7 @@ async fn lark_replies_are_plain_text_without_reply_markup_even_with_interactions
             trace: tracing::Span::current(),
             channel: app.turn.channel.clone(),
             message_ref: MessageRefPayload {
+                discord_message: None,
                 telegram_effect: None,
                 interaction_record_id: Some("record-1".into()),
                 ..reference

@@ -1,4 +1,8 @@
 //! Native Discord REST. Bot credentials go only to the fixed official API origin.
+mod component_channel;
+mod effects;
+#[cfg(test)]
+pub(crate) mod effects_tests;
 use crate::{
     channels::resolver::ResolvedChannel,
     media::{
@@ -137,12 +141,31 @@ impl DiscordRest {
         text: &str,
         files: &[PreparedFile],
     ) -> Result<String, RestError> {
+        self.send_components(token, bot, channel, reply_to, text, files, None)
+            .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn send_components(
+        &self,
+        token: &Secret,
+        bot: &str,
+        channel: &str,
+        reply_to: Option<&str>,
+        text: &str,
+        files: &[PreparedFile],
+        components: Option<&Value>,
+    ) -> Result<String, RestError> {
         if !valid_id(bot)
             || !valid_id(channel)
             || reply_to.is_some_and(|id| !valid_id(id))
             || text.chars().map(char::len_utf16).sum::<usize>() > 2000
-            || (text.is_empty() && files.is_empty())
+            || (text.is_empty() && files.is_empty() && components.is_none())
             || files.len() > 4
+            || components.is_some_and(|value| {
+                value
+                    .as_array()
+                    .is_none_or(|rows| rows.is_empty() || rows.len() > 5)
+            })
         {
             return Err(RestError::Rejected);
         }
@@ -151,6 +174,9 @@ impl DiscordRest {
         self.ready(token)?;
         let mut payload =
             json!({"content":text,"allowed_mentions":{"parse":[],"replied_user":false}});
+        if let Some(components) = components {
+            payload["components"] = components.clone();
+        }
         if let Some(message) = reply_to {
             payload["message_reference"] =
                 json!({"message_id":message,"channel_id":channel,"fail_if_not_exists":false});
@@ -198,6 +224,52 @@ impl DiscordRest {
             .filter(|id| valid_id(id))
             .map(str::to_owned)
             .ok_or(RestError::Unknown)
+    }
+    /// Edit one confirmed bot message without retries or changing its destination.
+    pub async fn edit_text(
+        &self,
+        token: &Secret,
+        bot: &str,
+        channel: &str,
+        message: &str,
+        text: &str,
+    ) -> Result<(), RestError> {
+        if !valid_id(bot)
+            || !valid_id(channel)
+            || !valid_id(message)
+            || text.is_empty()
+            || text.encode_utf16().count() > 2000
+        {
+            return Err(RestError::Rejected);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        self.ready(token)?;
+        tokio::time::timeout_at(deadline, self.verify_bot(token, bot))
+            .await
+            .map_err(|_| RestError::Unavailable)??;
+        self.ready(token)?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(RestError::Unavailable);
+        }
+        let response = self
+            .client
+            .patch(self.url(&format!("channels/{channel}/messages/{message}"))?)
+            .header("Authorization", format!("Bot {}", token.as_str()))
+            .timeout(remaining)
+            .json(&json!({"content":text,"allowed_mentions":{"parse":[],"replied_user":false}}))
+            .send()
+            .await
+            .map_err(|_| RestError::Unknown)?;
+        let body = self.decode(response, token, true).await?;
+        if body["id"].as_str() != Some(message)
+            || body["channel_id"].as_str() != Some(channel)
+            || body["author"]["id"].as_str() != Some(bot)
+            || body["content"].as_str() != Some(text)
+        {
+            return Err(RestError::Unknown);
+        }
+        Ok(())
     }
     fn url(&self, path: &str) -> Result<Url, RestError> {
         self.origin.join(path).map_err(|_| RestError::Rejected)

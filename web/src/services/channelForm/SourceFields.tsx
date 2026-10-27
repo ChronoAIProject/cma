@@ -1,3 +1,4 @@
+import { DiscordSourceFields } from './DiscordSourceFields';
 import { Button } from '../../ui/Button';
 import { modeUnavailable, RelayDiscoveryNotice, useRelayCapabilities } from '../RelayCapabilities';
 import { RelaySetupGuidance } from './RelaySetupGuidance';
@@ -21,6 +22,7 @@ export function SourceFields({
     'trusted_normalized',
   );
   const set = (key: string, next: unknown) => onChange({ ...value, [key]: next });
+  if (value.type === 'discord') return <DiscordSourceFields value={value} onChange={onChange} />;
   if (value.type === 'custom') return <CustomSource value={value} onChange={onChange} />;
   if (value.type !== 'telegram' && value.type !== 'nyxid_relay')
     return (

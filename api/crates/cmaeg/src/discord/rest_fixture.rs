@@ -7,7 +7,10 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Clone)]
 pub struct Capture {
@@ -17,13 +20,16 @@ pub struct Capture {
     pub content_type: Option<String>,
     pub body: Vec<u8>,
 }
+type OnCall = Arc<dyn Fn(&Capture) + Send + Sync>;
 pub struct Memory {
+    pub on_call: Mutex<Option<OnCall>>,
     pub calls: Mutex<Vec<Capture>>,
     pub identities: Mutex<Vec<Capture>>,
     pub status: Mutex<StatusCode>,
     pub response: Mutex<Vec<u8>>,
     pub broken: Mutex<bool>,
     pub bot: Mutex<Value>,
+    pub responses: Mutex<VecDeque<(StatusCode, Value)>>,
 }
 pub struct Fixture {
     pub api: DiscordRest,
@@ -39,6 +45,7 @@ impl Drop for Fixture {
 impl Fixture {
     pub async fn new() -> Self {
         let memory = Arc::new(Memory {
+            on_call: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
             identities: Mutex::new(Vec::new()),
             status: Mutex::new(StatusCode::OK),
@@ -48,6 +55,7 @@ impl Fixture {
             ),
             broken: Mutex::new(false),
             bot: Mutex::new(json!({"id":"77","bot":true})),
+            responses: Mutex::default(),
         });
         let app = Router::new().fallback(endpoint).with_state(memory.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -94,7 +102,16 @@ async fn endpoint(State(state): State<Arc<Memory>>, request: Request) -> Respons
             ))
             .unwrap();
     }
+    if let Some(on_call) = state.on_call.lock().unwrap().as_ref() {
+        on_call(&capture);
+    }
     state.calls.lock().unwrap().push(capture);
+    if let Some((status, body)) = state.responses.lock().unwrap().pop_front() {
+        return Response::builder()
+            .status(status)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+    }
     let body = if *state.broken.lock().unwrap() {
         Body::from_stream(futures_util::stream::iter([Err::<bytes::Bytes, _>(
             std::io::Error::other("fixture lost response"),

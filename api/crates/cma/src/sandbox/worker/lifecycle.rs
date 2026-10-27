@@ -13,6 +13,7 @@ mod conversations;
 mod home_recovery;
 mod pause;
 mod queue;
+mod reopen_output;
 mod restore;
 mod service_access;
 mod support;

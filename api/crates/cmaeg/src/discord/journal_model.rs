@@ -1,6 +1,6 @@
 //! Private persisted records. No record or checkpoint implements Debug.
 use super::{Checkpoint, GatewayError};
-use cmaeg_core::channel::{ChannelDefinition, Secret, Source};
+use cmaeg_core::channel::{AdmissionPolicy, ChannelDefinition, Secret, Source};
 use serde::{Deserialize, Serialize};
 
 pub(super) const LEASE_MS: i64 = 30_000;
@@ -30,6 +30,7 @@ pub(super) struct Authority {
     pub intents: u64,
     pub revision: String,
     pub token: Secret,
+    pub admission: AdmissionPolicy,
     pub public_definition: serde_json::Value,
 }
 impl Authority {
@@ -48,7 +49,9 @@ impl Authority {
             .find(|s| matches!(s, Source::Discord { .. }))
             .ok_or(GatewayError::Authority)?;
         let Source::Discord {
-            bot_id, intents, ..
+            bot_id,
+            intents,
+            admission,
         } = source
         else {
             unreachable!()
@@ -66,6 +69,7 @@ impl Authority {
             intents: *intents,
             revision,
             token,
+            admission: admission.clone(),
             public_definition: definition.to_public_json(),
         })
     }

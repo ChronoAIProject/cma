@@ -25,7 +25,7 @@ pub struct DurableJournal {
     pub(super) activity: Arc<dyn ActivityObserver>,
     worker: String,
     epoch: u64,
-    api: DiscordApi,
+    pub(super) api: DiscordApi,
     serial: Mutex<()>,
 }
 impl DurableJournal {
@@ -147,7 +147,7 @@ impl DurableJournal {
         }
         Ok(current)
     }
-    async fn fenced(&self) -> Result<(Lease, u64), GatewayError> {
+    pub(super) async fn fenced(&self) -> Result<(Lease, u64), GatewayError> {
         let (lease, version) = self
             .store
             .load::<Lease>(&self.id, false)
@@ -224,6 +224,9 @@ impl DurableJournal {
         }
         if event.name == "MESSAGE_CREATE" {
             self.persist_message(&current, event).await?;
+        }
+        if event.name == "INTERACTION_CREATE" {
+            self.persist_component(&current, event).await?;
         }
         // Persisting an inbox record cannot advance the stream or launch work.
         // The checkpoint follows confirmed durable storage, under the same fence.

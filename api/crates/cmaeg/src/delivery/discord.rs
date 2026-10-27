@@ -24,18 +24,24 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if self.relay.discord_interactions_enabled()
+            && crate::interactions::discord::requested(message)
+        {
+            return self.discord_controls(ctx, event, message).await;
+        }
         let effects = SendEffects::default();
         let ReplyAddress::Discord {
             bot_id,
             channel_id,
             message_id,
+            thread_id,
         } = &event.reply
         else {
             return (unsupported(), effects);
         };
         if message.validate().is_err()
             || message.whatsapp_template.is_some()
-            || message.thread_reply
+            || (message.thread_reply && thread_id.as_ref() != Some(channel_id))
             || message.reply_to.is_some()
         {
             return (unsupported(), effects);
@@ -138,10 +144,18 @@ impl Sender {
                 reason: "partial_delivery".into(),
             };
         }
+        if confirmed == 1 && parts.len() == 1 && super::discord_edit::editable_content(message) {
+            if let DeliveryOutcome::Confirmed {
+                platform_message_id: Some(id),
+            } = &receipt.delivery
+            {
+                receipt.message_ref = self.discord_message_ref(ctx.channel, event, id);
+            }
+        }
         (receipt, effects)
     }
 }
-fn outcome(error: RestError) -> DeliveryOutcome {
+pub(super) fn outcome(error: RestError) -> DeliveryOutcome {
     match error {
         RestError::RateLimited(retry_after) => DeliveryOutcome::RateLimited { retry_after },
         RestError::Rejected | RestError::NotFound => DeliveryOutcome::Rejected {

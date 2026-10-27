@@ -5,6 +5,7 @@ const labels: Record<string, string> = {
   agent_key: 'Provider agent key',
   channel_key: 'NyxID channel key',
   telegram_bot_token: 'Telegram bot token',
+  discord_bot_token: 'Discord bot token',
   telegram_webhook_secret: 'Telegram webhook secret',
 };
 export function CredentialsFields({

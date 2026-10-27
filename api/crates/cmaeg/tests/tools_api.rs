@@ -35,6 +35,8 @@ mod media_downloads;
 mod media_links;
 #[path = "tools/media_support.rs"]
 pub mod media_support;
+#[path = "tools/native_discord_edits.rs"]
+mod native_discord_edits;
 #[path = "relay/support.rs"]
 pub mod relay_support;
 #[path = "tools/rest.rs"]

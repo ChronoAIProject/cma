@@ -39,6 +39,10 @@ pub struct InboxReader {
 pub(super) struct Body {
     pub dispatch: serde_json::Value,
     pub channel: ChannelDefinition,
+    #[serde(default)]
+    pub native_channel: Option<super::thread_context::ChannelEvidence>,
+    #[serde(default)]
+    pub component: Option<super::components::Snapshot>,
 }
 impl InboxReader {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
@@ -157,13 +161,37 @@ impl InboxReader {
         if body.channel.record_id != current.pointer.record_id
             || body.channel.owner != current.definition.owner
             || body.dispatch["id"].as_str() != Some(&inbox.message_id)
-            || body.channel.secrets.agent_key_hash != current.definition.secrets.agent_key_hash
         {
             return Err(GatewayError::Authority);
         }
-        // Routing/profile/admission remain the accepted snapshot. Only currently
-        // authorized credentials are supplied, never stale secrets from an inbox.
-        body.channel.secrets = current.definition.secrets.clone();
+        if let Some(component) = &body.component {
+            component.validate(&inbox.bot_id, &inbox.message_id)?;
+            if component.identity.source_revision != inbox.source_revision
+                || current.definition.routing.is_none()
+                || current
+                    .consumer(Some(&component.identity.consumer))
+                    .is_none_or(|consumer| {
+                        consumer.pending
+                            || consumer.credential.is_none()
+                            || consumer.provider != &component.identity.provider
+                    })
+            {
+                return Err(GatewayError::Authority);
+            }
+            // The component owns its immutable single target, conversation and
+            // partition; routing is never evaluated again. Use the current
+            // serving definition so retired unrelated consumers are absent and
+            // rotated credentials agree with their public/decoded key hashes.
+            // The original bytes below remain the durable admission identity.
+            body.channel = current.definition.clone();
+        } else {
+            if body.channel.secrets.agent_key_hash != current.definition.secrets.agent_key_hash {
+                return Err(GatewayError::Authority);
+            }
+            // Ordinary messages retain their accepted routing/profile/admission
+            // snapshot, with only currently authorized credentials supplied.
+            body.channel.secrets = current.definition.secrets.clone();
+        }
         body.channel
             .validate()
             .map_err(|_| GatewayError::Authority)?;
@@ -185,12 +213,28 @@ impl InboxReader {
             .checked_add(1800)
             .ok_or(GatewayError::Protocol)?
             .min(inbox.retained_until);
-        let partition_key = activity.partition_key(&body.channel.partition);
-        let conversation_id = ConversationId::derive(
-            &self.store.keys,
-            &current.id,
-            body.channel.partition.version,
-            &partition_key,
+        let partition_key = body.component.as_ref().map_or_else(
+            || activity.partition_key(&body.channel.partition),
+            |component| component.identity.partition_key.clone(),
+        );
+        let conversation_id = body.component.as_ref().map_or_else(
+            || {
+                ConversationId::derive(
+                    &self.store.keys,
+                    &current.id,
+                    body.channel.partition.version,
+                    &partition_key,
+                )
+            },
+            |component| component.identity.conversation_id.clone(),
+        );
+        let consumer = body.component.as_ref().and_then(|component| {
+            (!component.identity.consumer.is_default())
+                .then_some(component.identity.consumer.clone())
+        });
+        let reply_message = body.component.as_ref().map_or_else(
+            || inbox.message_id.clone(),
+            |component| component.message_id.clone(),
         );
         let event_ref = EventRef::seal(
             &EventRefPayload {
@@ -206,16 +250,20 @@ impl InboxReader {
                 reply: ReplyAddress::Discord {
                     bot_id: inbox.bot_id,
                     channel_id: activity.conversation.id.clone(),
-                    message_id: inbox.message_id,
+                    message_id: reply_message,
+                    thread_id: activity.conversation.thread_id.clone(),
                 },
-                consumer: None,
+                consumer: consumer.clone(),
                 lineage: None,
             },
             &self.store.keys,
         )
         .map_err(|_| GatewayError::Protocol)?;
         let request = LaunchRequest {
-            idempotency_key: IdempotencyKey::from_event(&activity.event_id),
+            idempotency_key: consumer.as_ref().map_or_else(
+                || IdempotencyKey::from_event(&activity.event_id),
+                |consumer| IdempotencyKey::for_consumer(&activity.event_id, consumer),
+            ),
             channel: Arc::new(ResolvedChannel {
                 id: current.id.clone(),
                 pointer: current.pointer.clone(),
@@ -233,7 +281,7 @@ impl InboxReader {
             received_at: Instant::now(),
             trace: tracing::Span::current(),
             timing: None,
-            consumer: None,
+            consumer,
         };
         Ok(InboxLaunch::Launch(Box::new(VerifiedInboxLaunch {
             request,
@@ -245,6 +293,14 @@ impl InboxReader {
 
 impl Body {
     pub(super) fn activity(&self, bot: &str) -> Result<Normalized, GatewayError> {
+        if self.component.is_some() && self.native_channel.is_some() {
+            return Err(GatewayError::Protocol);
+        }
+        if let Some(component) = &self.component {
+            let id = self.dispatch["id"].as_str().ok_or(GatewayError::Protocol)?;
+            component.validate(bot, id)?;
+            return Ok(Normalized::Activity(Box::new(component.activity.clone())));
+        }
         let Source::Discord { admission, .. } = self
             .channel
             .sources
@@ -254,10 +310,15 @@ impl Body {
         else {
             unreachable!()
         };
-        let activity = normalize(&self.dispatch, bot, admission)?;
-        if let Normalized::Activity(activity) = &activity {
-            if self.channel.partition.key_for(&activity.source)
-                == cmaeg_core::channel::PartitionKey::Thread
+        let mut activity = normalize(&self.dispatch, bot, admission)?;
+        if let Normalized::Activity(activity) = &mut activity {
+            let proven = self
+                .native_channel
+                .as_ref()
+                .is_some_and(|evidence| evidence.apply(&self.dispatch, activity));
+            if !proven
+                && self.channel.partition.key_for(&activity.source)
+                    == cmaeg_core::channel::PartitionKey::Thread
             {
                 return Ok(Normalized::Refused(Refusal::ThreadEvidenceUnavailable));
             }
