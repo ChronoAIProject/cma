@@ -1,4 +1,4 @@
-//! Regional, redirect-free API client. Only explicit success proves a text send.
+//! Regional, redirect-free API client. Only explicit success proves a send.
 use crate::net::exchange::{read_bounded, HttpReply, TransportError};
 use cmaeg_core::channel::{
     native_lark::safe_id, NativeLarkCredentials, NativeLarkIdentity, NativeLarkReply, Secret,
@@ -75,7 +75,7 @@ impl Client {
         self.transport = transport;
         self
     }
-    async fn call(
+    pub(super) async fn call(
         &self,
         identity: &NativeLarkIdentity,
         method: Method,
@@ -83,17 +83,6 @@ impl Client {
         token: Option<&Secret>,
         body: Option<Value>,
     ) -> Result<Value, Error> {
-        identity.validate().map_err(|_| Error::Invalid)?;
-        let url = Url::parse(&format!("{}{path}", identity.region.origin()))
-            .map_err(|_| Error::Invalid)?;
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if let Some(token) = token {
-            let mut value = HeaderValue::from_str(&format!("Bearer {}", token.as_str()))
-                .map_err(|_| Error::Invalid)?;
-            value.set_sensitive(true);
-            headers.insert(AUTHORIZATION, value);
-        }
         let bytes = body
             .map(|b| serde_json::to_vec(&b))
             .transpose()
@@ -102,6 +91,32 @@ impl Client {
         // The official text endpoint allows 150 KB, including the double-encoded content.
         if bytes.len() > 150 * 1024 {
             return Err(Error::Invalid);
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        self.call_bytes(identity, method, path, token, headers, bytes)
+            .await
+    }
+    pub(super) async fn call_bytes(
+        &self,
+        identity: &NativeLarkIdentity,
+        method: Method,
+        path: &str,
+        token: Option<&Secret>,
+        mut headers: HeaderMap,
+        bytes: Vec<u8>,
+    ) -> Result<Value, Error> {
+        identity.validate().map_err(|_| Error::Invalid)?;
+        if bytes.len() as u64 > crate::media::outbound::MAX_OUTBOUND_BYTES + 16 * 1024 {
+            return Err(Error::Invalid);
+        }
+        let url = Url::parse(&format!("{}{path}", identity.region.origin()))
+            .map_err(|_| Error::Invalid)?;
+        if let Some(token) = token {
+            let mut value = HeaderValue::from_str(&format!("Bearer {}", token.as_str()))
+                .map_err(|_| Error::Invalid)?;
+            value.set_sensitive(true);
+            headers.insert(AUTHORIZATION, value);
         }
         let response = tokio::time::timeout(
             Duration::from_secs(5),
@@ -192,17 +207,28 @@ impl Client {
         if text.is_empty() || text.len() > 28 * 1024 {
             return Err(Error::Invalid);
         }
+        self.send_content(token, reply, "text", json!({"text":text}))
+            .await
+    }
+    pub(super) async fn send_content(
+        &self,
+        token: &Secret,
+        reply: &NativeLarkReply,
+        kind: &str,
+        content: Value,
+    ) -> Result<String, Error> {
+        reply.validate().map_err(|_| Error::Invalid)?;
         // Send to the retained chat so recalled originals remain replyable. Thread replies
         // use the retained original message; a platform rejection is never rerouted.
         let (path, body) = if reply.thread_id.is_some() {
             (
                 format!("/open-apis/im/v1/messages/{}/reply", reply.message_id),
-                json!({"msg_type":"text","content":json!({"text":text}).to_string(),"reply_in_thread":true}),
+                json!({"msg_type":kind,"content":content.to_string(),"reply_in_thread":true}),
             )
         } else {
             (
                 "/open-apis/im/v1/messages?receive_id_type=chat_id".into(),
-                json!({"receive_id":reply.chat_id,"msg_type":"text","content":json!({"text":text}).to_string()}),
+                json!({"receive_id":reply.chat_id,"msg_type":kind,"content":content.to_string()}),
             )
         };
         let value = self
@@ -222,7 +248,11 @@ impl Client {
         if id == reply.message_id || message["chat_id"].as_str() != Some(&reply.chat_id) {
             return Err(Error::Unconfirmed);
         }
-        let actual_thread = message["thread_id"].as_str().filter(|id| !id.is_empty());
+        let actual_thread = match message.get("thread_id") {
+            None => None,
+            Some(Value::String(id)) => (!id.is_empty()).then_some(id.as_str()),
+            _ => return Err(Error::Unconfirmed),
+        };
         if actual_thread != reply.thread_id.as_deref() {
             return Err(Error::Unconfirmed);
         }

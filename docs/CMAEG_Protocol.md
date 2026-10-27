@@ -626,6 +626,16 @@ backend failures; 500 `internal`. Body extraction failures are reported as
 400. Authentication precedes mutation; no operation grants access based on a
 caller-supplied owner alone.
 
+Native WhatsApp status callbacks annotate existing Channel Activity delivery
+rows without admitting a turn. The additive `platform_status` step reports
+`sent`, `delivered`, `read` or `played`; `platform_failure` reports `failed`.
+The existing string fields and snapshot schema are unchanged. For these steps,
+`confirmed_at` is the authenticated provider timestamp and `observed_at` is the
+gateway observation time. API send confirmation alone is not a recipient read
+or delivery receipt. Original channel, source, recipient, message and consumer
+bindings remain mandatory; failure grants no resend authority. See
+[native WhatsApp status reconciliation](CMAEG_Native_WhatsApp_Status.md).
+
 ### Multi-consumer routing (read-only)
 
 A channel can be read with several consumers: agents that each receive the
@@ -1490,6 +1500,18 @@ is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
 Telegram source, or `{type:"custom"}`.
 NyxID managed Telegram bots may identify the transport as `telegram-new`; CMAEG
 accepts that alias and normalizes it to the canonical Telegram protocol platform.
+Direct native Telegram sources optionally declare `message_events: true` for retained
+original edit/reaction routing and `channel_posts: true` for native channel posts
+and edits. Both fields default to false; channel posts require message events and
+its authoring/durable recovery prerequisites. Channel posts use
+`actor: {id:"telegram:chat:<channel_id>",kind:"unknown"}` and conversation kind
+`channel`, without a topic. Their undisclosed publisher cannot satisfy a human
+sender allowlist; open senders, current chat policy and non-private addressing
+rules are required. Edits retain the original admitted consumers, conversation
+and sealed channel destination. Human message-effect authority, discussion-group
+comments and channel direct-message topics are not inferred. See the
+[native Telegram message events contract](CMAEG_Native_Telegram_Message_Events.md).
+
 Activity kind is one of:
 
 | Type | Fields |
@@ -2992,8 +3014,8 @@ forum-topic/reply-chain and mention evidence before it can advertise this contra
 `OutboundMessage.native_attachments` is an optional array, omitted when empty.
 It is independent of legacy `blocks` attachment records, which retain their
 link-text rendering. A caller must discover `context.capabilities.native_media`
-before using native attachments. The separate `native_lark` source is text-only
-and never advertises this capability; its relay counterpart keeps the existing
+before using native attachments. The separate `native_lark` source advertises its bounded subset only under
+`CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED`; its relay counterpart keeps the existing
 relay contract. Native Telegram and native Discord advertise
 this capability independently of the NyxID-specific relay gate. For relay
 sources it is absent while `CMAEG_NYXID_NATIVE_MEDIA_ENABLED=false`, and it is
@@ -3002,9 +3024,24 @@ Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 `delivery.outcome: "unsupported"` before any platform send. The field does not
 enable a new native connection.
 
+Native Lark/Feishu advertises `kinds: ["image", "file", "audio", "video"]`,
+`mime_types: ["image/jpeg", "image/png", "application/pdf", "text/plain", "audio/ogg", "video/mp4"]`,
+`max_total_bytes: 8388608`, `max_image_bytes: 8388608` and `max_caption_chars: 0`.
+It supports RGB/RGBA PNG/JPEG, PDF, UTF-8 text, mono Opus Ogg and the shared
+Baseline H.264/AAC-LC MP4 structural profile. Explanation text remains separate;
+unsupported captions/control mixtures fail before upload. Every upload and send
+rechecks regional bot custody and exact current default/named consumer/provider
+and source authority. Confirmed messages retain durable receipts; unknown or
+partial delivery never automatically resends. See [native Lark outbound media](CMAEG_Native_Lark_Outbound_Media.md)
+for exact limits, remaining format gaps and official regional API evidence.
+
 Native WhatsApp private replies advertise a separate bounded subset only when
 `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio", "sticker", "video"]`,
-`mime_types: ["image/jpeg", "image/png", "application/pdf", "audio/aac", "audio/amr",
+`mime_types: ["image/jpeg", "image/png", "application/pdf", "text/plain",
+"application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+"application/vnd.openxmlformats-officedocument.presentationml.presentation", "audio/aac", "audio/amr",
 "audio/mpeg", "audio/mp4", "audio/ogg", "image/webp", "video/mp4", "video/3gpp"]`,
 `max_total_bytes: 8388608`, `max_image_bytes: 5000000`, and `max_caption_chars: 1024`.
 These four optional capability fields refine the existing limits; they are absent
@@ -3015,6 +3052,12 @@ AMR narrowband, MPEG Layer III, non-fragmented self-contained single-track AAC-L
 and one complete mono Opus Ogg stream. Supplied audio MIME/filename extensions
 must match the validated container. Audio captions are refused before any write;
 text stays separate. Audio sends contain the uploaded ID only, with no voice flag.
+Documents accept full-encoding-checked TXT, header/trailer-checked PDF, bounded
+CFB Word/BIFF8 Excel/PowerPoint, and CRC-checked OOXML DOCX/XLSX/PPTX packages.
+MIME and extension must match the byte-validated format. Office package parsing
+never extracts files or follows relationships; bounded expansion and XML checks
+are detailed in [native WhatsApp outbound media](CMAEG_Native_WhatsApp_Outbound_Media.md).
+The existing 64 KiB inline/8 MiB aggregate limits apply to documents too.
 Structural checks do not prove full payload decodability or Meta acceptance.
 The additive `sticker` kind admits bounded static/animated WebP with no caption.
 Its optional `native_media.sticker` object reports required `width`/`height` 512,
@@ -3183,7 +3226,7 @@ automatic resend. See [native groups](CMAEG_Native_WhatsApp_Groups.md) for curre
 Meta eligibility, bounded membership proof and connected v25 acceptance limits.
 
 Group media requires the existing independent media gates. Discovery omits sticker
-and `image/webp`; the existing image/PDF/audio/video profiles and limits apply.
+and `image/webp`; the existing image/document/audio/video profiles and limits apply.
 Eligible group template discovery includes `whatsapp_templates: true` and optional
 `whatsapp_template_components: ["header", "body"]`; all button components refuse
 before provider calls. Unsupported group controls/reactions/edit/delete remain
@@ -4080,3 +4123,17 @@ for limits, rollback rules, official reference pin and local/live evidence bound
 ### Native separate-app Lark / Feishu ingress
 
 `POST /v1/native-lark/{channel_id}` accepts encrypted signed schema-2.0 callbacks from an explicitly configured separate native app. The `native_lark` source pins region, app, tenant and bot identity; its encrypted app secret, Encrypt Key and Verification Token are independent of NyxID. Authoring and intake gates default off. Text, recall and human reaction deltas use durable original-plan routing and native text replies with confirmed target receipts. Incoming edits are not claimed. See [native Lark / Feishu](CMAEG_Native_Lark.md) for setup, authentication, source shape, acknowledgment behavior, retention and limitations. Existing NyxID webhook URLs must not be replaced.
+
+Native Telegram opted-in retained-message notifications also preserve anonymous
+`actor_chat` reactions and aggregate `message_reaction_count` updates. Both use
+`cma.message.reaction.updated.v1` with an unknown Activity actor and require an
+open sender policy. Aggregate data uses `observation: aggregate` and
+`reaction_counts: [{type, total_count}]`, without inventing per-user old/new
+reactions. Exact source, original consumer, partition and chat/topic custody
+remain mandatory. See `CMAEG_Native_Telegram_Message_Events.md`.
+
+### Separate native Lark message effects
+
+The separately provisioned native Lark/Feishu app can issue exact confirmed-message text-edit, recall and own-reaction authority under `CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED`. `CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED` independently adds reaction-only `received_message` context for the original retained routed human message. Both default false. This authority is distinct from NyxID relay `lark_effect`; its current region, app, tenant, bot, source credentials, channel record, selected consumer/provider and routing must still match. A single native message from a confirmed reply can issue one reference; multipart replies do not issue a reference to only their first part. Single media messages grant recall/reaction authority without text editing. References expire within 24 hours of the original receipt or message; received references also respect the original event expiry.
+
+Stable effect claims and an exact-message durable fence span all native mutations. An unknown write, uncertain receipt storage, or partially applied reaction replacement keeps the message fenced across restart and new request keys. `updateMessage` has no idempotency-key argument; an uncertain native update is likewise fenced from further mutation. The client verifies fresh native bot custody and exact message metadata, then current local authority before every write. It removes only a retained reaction ID proven to belong to the same app, repeating the checks between removal and creation. See [native Lark message effects](CMAEG_Native_Lark_Message_Effects.md) for the supported subset and regional API contracts.

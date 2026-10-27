@@ -3779,3 +3779,5 @@ loss cancels pending reads and releases previews. Unsafe URLs and raw HTML remai
 inert, and unavailable files keep their visible label instead of disappearing.
 
 | 2026-10-28 | Render authorized local and remote reply media with bounded layout, native playback, lazy file reads, and visible preview recovery. |
+
+| 2026-10-28 | Distinguish WhatsApp API acceptance from authenticated sent, delivered, read, played and failed receipts in the existing animated Channel Activity rows. Preserve provider timestamps, original recipients and independent failure evidence; add no polling, new layout or notifications. |

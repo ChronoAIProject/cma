@@ -225,6 +225,24 @@ impl Change {
                     && (delivery.step == "heartbeat"
                         || previous.platform_message_id == delivery.platform_message_id)
             }) {
+                if matches!(
+                    delivery.step.as_str(),
+                    "platform_status" | "platform_failure"
+                ) {
+                    let rank = |status: &str| match status {
+                        "sent" => 1,
+                        "delivered" => 2,
+                        "read" => 3,
+                        "played" => 4,
+                        "failed" => 5,
+                        _ => 0,
+                    };
+                    // Reordered or duplicate callbacks retain the strongest
+                    // observation and its original gateway receive timestamp.
+                    if rank(&delivery.outcome) <= rank(&previous.outcome) {
+                        return;
+                    }
+                }
                 *previous = delivery.clone();
             } else {
                 consumer.deliveries.push(delivery.clone());

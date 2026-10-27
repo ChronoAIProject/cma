@@ -3,7 +3,7 @@
 Reviewed 2026-10-28 against the integrated CMA source, including native Discord
 self-service and message effects, separate-app Lark/Feishu intake and inbound
 media, and native WhatsApp video, templates, private controls and existing-group
-messaging. New source-specific gates remain independent.
+messaging. New source-specific gates remain independent. The [accepted PR #1157 activation](CMAEG_Operations.md#native-lark-and-whatsapp-owner-testing-activation-2026-10-28) enables native Lark intake/media and WhatsApp private controls, reactions, templates and existing-group testing. Connected native acceptance remains unverified; the five newer follow-up gates remain false.
 This document replaces the historical transport-only descriptions; it does not
 claim complete four-platform support or that every implemented feature is live.
 
@@ -20,12 +20,20 @@ external platform send is authorized by this review.
 | --- | --- | --- | --- | --- |
 | Ordinary ingress | Native webhook and authenticated relay; private/group admission | Raw-verified relay for private conversations; separate native signed-webhook private intake and independently gated owner-selected existing groups | Verified relay private/group text and rich-post text; separate default-off native app source with durable text intake and native text replies | Native authenticated Gateway, owned supervision, durable inbox and routed execution; bounded source discovery and self-service creation. Relay slash commands are also supported |
 | Inbound media | Source-bound image/file/audio/video retrieval, voice/sticker facts and album identity | Source-bound image/file/audio/video retrieval; voice/sticker, contact/location and quote facts; native retrieval uses authenticated metadata and the signed media digest | Relay standalone media and opt-in exact-source rich-post resources; independently gated native image/file/audio/video and rich-post image/video retrieval, bound to the original regional app and message | Native exact-message metadata and attachment-bound official CDN retrieval; correlated relay media |
-| Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Default-off native JPEG/PNG, PDF and bounded AAC/AMR/MP3/M4A/mono Opus Ogg audio plus static/animated WebP stickers and bounded Baseline H.264 MP4/3GPP video; gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads; separate native app source is text-only | Native multipart REST uploads; gated relay uploads |
+| Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Independently gated native JPEG/PNG, TXT/PDF/DOC/XLS/PPT/DOCX/XLSX/PPTX documents and bounded AAC/AMR/MP3/M4A/mono Opus Ogg audio plus static/animated WebP stickers and bounded Baseline H.264 MP4/3GPP video; gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads; independently gated native JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and bounded Baseline H.264 MP4 replies | Native multipart REST uploads; gated relay uploads |
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
-| Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits and separately gated native card replacement with durable receipt replay; gated relay text edits |
-| Delete/react to a sent message | Gated effects on confirmed bot messages; a separate default-off gate adds effects-only references for one individual native upload. Subject to permissions, age and reaction limits | No CMA relay operation | Separate opt-in CMA adapter through the existing NyxID bot-service proxy: exact confirmed text/cards, own retained reaction ID, durable uncertainty fences; live acceptance unverified | Gated native effects on confirmed single-part bot text/link replies; separately gated effects-only uploads contained in one exact native message. Durable idempotency and per-message serialization; no arbitrary message IDs or relay effects |
+| Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary relay text edits and issued-card updates; independently gated exact confirmed native text edits | Gated native single-part text/link edits and separately gated native card replacement with durable receipt replay; gated relay text edits |
+| Delete/react to a sent message | Gated effects on confirmed bot messages; a separate default-off gate adds effects-only references for one individual native upload. Subject to permissions, age and reaction limits | No CMA relay operation | Separate opt-in CMA adapter through the existing NyxID bot-service proxy: exact confirmed text/cards, own retained reaction ID, durable uncertainty fences. Independent default-off native app effects grant recall and own reactions for one confirmed text/media message; live acceptance unverified | Gated native effects on confirmed single-part bot text/link replies; separately gated effects-only uploads contained in one exact native message. Durable idempotency and per-message serialization; no arbitrary message IDs or relay effects |
+| React to the received user message | Independent default-off reaction-only scope for the exact retained native human message, including topics; albums excluded; no edit/delete authority | Independent native reaction gate for exact retained private received messages; relay unchanged | Independent default-off reaction-only scope for the exact retained native human message; separate regional app authority | Independent default-off reaction-only scope for the exact retained native human message/thread; verifies original author and changes only the bot's own ordinary reactions |
 | Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated relay controls and independently gated native private buttons/single-choice lists with signed durable callbacks; approved templates have separate relay and native reply gates. Groups do not gain controls | Gated JSON 2.0 cards and durable verified callbacks through the existing relay connection; separately gated typed Form submissions. Separate native app sources do not gain these controls | Gated native buttons/single-select controls, separately gated multi-select and modal Forms, and durable type-3/type-5 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
-| Incoming edits/deletes/reactions | Owner-opted-in native retained private/group edits and attributable user reactions notify the original agents through durable admission. Channel-post edits and anonymous reactions remain CMA limitations; Bot API has no generic deletion update. See [native message events](CMAEG_Native_Telegram_Message_Events.md) | Native opt-in supports private text and reactions on retained incoming and confirmed outgoing messages; existing relay status/system/reaction input remains refused | Pinned relay filters recall and reaction events. A separate default-off native app source retains recall notifications with unknown actors and human reaction add/remove deltas on admitted incoming and confirmed outgoing targets; incoming edit propagation remains unverified. See the [native source](CMAEG_Native_Lark.md) and preserved [incoming-event audit](CMAEG_Lark_Incoming_Message_Events.md) | Default-off durable edits/deletes retain original consumers; separate owner reaction-intent opt-in supports add/remove/all/emoji-clear deltas on retained inbound and confirmed outbound messages, with exact original routing and bounded durable wait for confirming receipts and explicit expired-target refusals |
+| Incoming edits/deletes/reactions | Owner-opted-in native retained private/group edits and attributable user reactions notify the original agents through durable admission. Anonymous actor-chat reactions and aggregate counts retain unknown actors and require an open sender policy. Separate `channel_posts` opt-in admits native posts and retained edits with unknown channel actors and open sender admission; Bot API has no generic deletion update. See [native message events](CMAEG_Native_Telegram_Message_Events.md) | Native opt-in supports private text and reactions on retained incoming and confirmed outgoing messages; existing relay status/system/reaction input remains refused | Pinned relay filters recall and reaction events. A separate default-off native app source retains recall notifications with unknown actors and human reaction add/remove deltas on admitted incoming and confirmed outgoing targets; incoming edit propagation remains unverified. See the [native source](CMAEG_Native_Lark.md) and preserved [incoming-event audit](CMAEG_Lark_Incoming_Message_Events.md) | Default-off durable edits/deletes retain original consumers; separate owner reaction-intent opt-in supports add/remove/all/emoji-clear deltas on retained inbound and confirmed outbound messages, with exact original routing and bounded durable wait for confirming receipts and explicit expired-target refusals |
+
+The [received-message reaction implementation](CMAEG_Received_Message_Reactions.md)
+uses the existing context/tools for native Telegram and Discord with separate
+issuance gates, a new compatible-reader floor and durable per-target uncertainty
+fences. Its local authority/transport tests do not establish connected platform
+acceptance. Sent-message effects and incoming reaction notifications remain
+separate capabilities.
 
 Native Discord thread creation, archive/reopen, join/follow and listing are not
 implemented. Explicit history reads have a default-off, source-opt-in path through
@@ -45,13 +53,13 @@ CMA-only ingestion path](CMAEG_WhatsApp_Incoming_Reactions.md).
 The separate default-off [native WhatsApp source](CMAEG_Native_WhatsApp.md) adds
 private text ingress, separately gated inbound media retrieval, retained
 incoming/outbound reaction authority and native text replies without changing
-that relay. A separate default-off gate adds native JPEG/PNG, PDF and bounded
-AAC/AMR/MP3/M4A/mono Opus, static/animated WebP sticker and Baseline H.264
-MP4/3GPP video replies. A separate default-off gate adds native approved-template
+that relay. Its independent outbound gate adds native JPEG/PNG, bounded
+TXT/PDF/DOC/XLS/PPT/DOCX/XLSX/PPTX documents, AAC/AMR/MP3/M4A/mono Opus,
+static/animated WebP sticker and Baseline H.264 MP4/3GPP video replies. A separate default-off gate adds native approved-template
 replies using the full existing typed header/body/URL-button contract, with
 durable receipt replay. Separate default-off [existing-group gates](CMAEG_Native_WhatsApp_Groups.md)
 add exact OBA phone/group membership verification, distinct group/participant
-ingress and replies, bounded image/PDF/audio/video and header/body-only templates.
+ingress and replies, bounded image/document/audio/video and header/body-only templates.
 Groups do not gain stickers, controls, reactions, edit/delete or management
 operations; connected v25/OBA acceptance remains unverified. The independent native reaction gate adds own reactions
 to exact authenticated received messages through `received_message` context.
@@ -60,19 +68,28 @@ adds buttons and single-choice lists with signed callbacks bound to the original
 recipient, message, consumer and retained card. Group callbacks cannot consume
 private cards. Local signed-webhook/provider/send tests pass and structured
 source/credential setup is available in the portal. Broader document/codec
-profiles, delivery-status reconciliation and connected Meta acceptance remain
+profiles and connected Meta acceptance remain
 outstanding, so this does not complete WhatsApp support.
+
+Native [status reconciliation](CMAEG_Native_WhatsApp_Status.md) annotates retained
+private/group sends with sent, delivered, read, played or failed observations.
+It preserves original recipients/consumers and does not resend or start a turn.
 
 The separate default-off [native Lark / Feishu source](CMAEG_Native_Lark.md)
 uses its own regional app, tenant, bot, encrypted credentials and webhook. It
 supports durable text admission, native text replies and retained recall/human
 reaction notifications, with source/credential revocation before execution and
 sending. Its independent [inbound media gate](CMAEG_Native_Lark_Media.md) adds
-image/file/audio/video and exact rich-post image/video resource reads. The
-existing relay's webhook and capabilities remain independent. This source does
-not advertise native outbound media, cards/forms, outgoing message effects,
-thread history or incoming edits. Its local encrypted-callback, resource-read
-and regional API tests do not establish live permission, subscription or client acceptance. The
+image/file/audio/video and exact rich-post image/video resource reads. Its
+independent default-off [outbound media gate](CMAEG_Native_Lark_Outbound_Media.md)
+adds JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and bounded Baseline H.264 MP4
+replies with regional bot custody checks and durable delivery uncertainty fences.
+Independent default-off [message effects](CMAEG_Native_Lark_Message_Effects.md)
+add exact confirmed text edit, recall and own reactions; a separate received-message
+gate grants reaction-only references to retained routed human messages. The existing
+relay's webhook and capabilities remain independent. This source does not advertise
+native cards/forms, thread history or incoming edits. Its local encrypted-callback, resource-read, upload and regional
+API tests do not establish live permission, subscription or client acceptance. The
 [original gap audit](CMAEG_Lark_Incoming_Message_Events.md) remains the record of
 the pinned relay limitations and the separate-app provisioning constraint.
 

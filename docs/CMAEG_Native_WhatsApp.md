@@ -8,7 +8,7 @@ currently discards reactions before CMA receives them; see
 
 This implementation supports private text messages, gated [inbound media](CMAEG_Native_WhatsApp_Media.md), incoming reaction updates
 on retained incoming messages and confirmed CMA replies, gated [reply buttons and single-choice lists](CMAEG_Native_WhatsApp_Controls.md), and actual native
-text, separately gated [JPEG/PNG/PDF/audio/sticker/video replies](CMAEG_Native_WhatsApp_Outbound_Media.md)
+text, separately gated [JPEG/PNG/document/audio/sticker/video replies](CMAEG_Native_WhatsApp_Outbound_Media.md)
 and [approved-template replies](#approved-template-replies) through Graph API `v25.0`.
 Separate default-off authoring and issuance gates add [existing OBA group messaging](CMAEG_Native_WhatsApp_Groups.md) with explicit source group IDs, distinct original participants and group destinations, and conservative media/template subsets.
 A separate gate enables [own reactions to authenticated received messages](CMAEG_Native_WhatsApp_Reactions.md).
@@ -168,6 +168,12 @@ Each rendered text part records its own target receipt. Uncertain acceptance,
 receipt-storage loss, and partial delivery remain `unknown`; CMA does not resend
 automatically after an uncertain native effect. Free-form replies remain subject
 to Meta's customer service window; approved templates have a separate gate.
+
+Authenticated `sent`, `delivered`, `read`, `played` and `failed` callbacks now
+annotate these exact retained sends in Channel Activity. API acceptance is shown
+separately from recipient delivery. Status observation never admits another
+turn or resends a failed message; see [status reconciliation](CMAEG_Native_WhatsApp_Status.md)
+for original-consumer binding, bounded retention and retry behavior.
 
 Validation uses original Meta-shaped envelopes, injected Graph transports and
 local CMA/provider HTTP fixtures. These prove local contracts and do not prove

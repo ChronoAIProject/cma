@@ -107,8 +107,18 @@ export function validateRelayAuthoring(
     }
     if (
       source.type === 'telegram' &&
+      source.channel_posts === true &&
+      source.message_events !== true
+    )
+      throw new Error('Channel posts require message events to retain original routing.');
+    if (
+      source.type === 'telegram' &&
       source.message_events === true &&
       !unchanged &&
+      !(
+        source.channel_posts !== true &&
+        oldSources.some((old) => canonical(old) === canonical({ ...source, channel_posts: true }))
+      ) &&
       discovery.authoring?.native_telegram_message_events_enabled !== true
     )
       throw new Error(

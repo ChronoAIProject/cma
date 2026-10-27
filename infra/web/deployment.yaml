@@ -8,16 +8,16 @@ metadata:
     app.kubernetes.io/part-of: cma
   annotations:
     cma.chronoai.dev/build-mode: "github-ci-artifact"
-    cma.chronoai.dev/candidate: "2929f805436ea5df19cd4394c9f5ee2573dcdca9"
-    cma.chronoai.dev/ci-archive-sha256: "sha256:fd7e7a1e806aac1640a1305d69a3aff199b4984cb2674086a813375ead72f0de"
-    cma.chronoai.dev/ci-artifact: "12744618621"
+    cma.chronoai.dev/candidate: "8eb52da8213869b717ad2691fa8066e846831833"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:3d5ba2bcbf83ac0567c3c221997cd9de58b3e013fff49ddb38bf94d0711ae9d6"
+    cma.chronoai.dev/ci-artifact: "12764147835"
     cma.chronoai.dev/ci-attempt: "1"
-    cma.chronoai.dev/ci-head: "2929f805436ea5df19cd4394c9f5ee2573dcdca9"
-    cma.chronoai.dev/ci-publication-sha256: "sha256:a3a77a854b5bf198315b7932b963ec6cd6a2a222feee53581ec8d20a13898971"
-    cma.chronoai.dev/ci-run: "40526648228"
-    cma.chronoai.dev/image-digest: "sha256:3784e2e7f290a491f8c0a670687896e4d1660b774391565f393f7392eeb96df5"
-    cma.chronoai.dev/image-source: "2cb955cfe3b2e6c810f31a683744be134535947c"
-    cma.chronoai.dev/source-tree: "20eaf3e2a9ff03a3e0e8038b922c55623b5328bc"
+    cma.chronoai.dev/ci-head: "8eb52da8213869b717ad2691fa8066e846831833"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:704641d15a07233396c40666ba7a36e9283ac61e647d4d6eba364f69460a4b1c"
+    cma.chronoai.dev/ci-run: "40568297150"
+    cma.chronoai.dev/image-digest: "sha256:2a5fdf21a71f7d95020850cb81b1a1f5ac1d004eee8ab9a9d55e37887233baee"
+    cma.chronoai.dev/image-source: "6352eced6d92e505c7f4f8ffba6d1944ad901d98"
+    cma.chronoai.dev/source-tree: "43851ca76cf21769c98da0b00680487bd336417c"
 spec:
   replicas: 1
   selector:
@@ -27,16 +27,16 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "2929f805436ea5df19cd4394c9f5ee2573dcdca9"
-        cma.chronoai.dev/ci-archive-sha256: "sha256:fd7e7a1e806aac1640a1305d69a3aff199b4984cb2674086a813375ead72f0de"
-        cma.chronoai.dev/ci-artifact: "12744618621"
+        cma.chronoai.dev/candidate: "8eb52da8213869b717ad2691fa8066e846831833"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:3d5ba2bcbf83ac0567c3c221997cd9de58b3e013fff49ddb38bf94d0711ae9d6"
+        cma.chronoai.dev/ci-artifact: "12764147835"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "2929f805436ea5df19cd4394c9f5ee2573dcdca9"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:a3a77a854b5bf198315b7932b963ec6cd6a2a222feee53581ec8d20a13898971"
-        cma.chronoai.dev/ci-run: "40526648228"
-        cma.chronoai.dev/image-digest: "sha256:3784e2e7f290a491f8c0a670687896e4d1660b774391565f393f7392eeb96df5"
-        cma.chronoai.dev/image-source: "2cb955cfe3b2e6c810f31a683744be134535947c"
-        cma.chronoai.dev/source-tree: "20eaf3e2a9ff03a3e0e8038b922c55623b5328bc"
+        cma.chronoai.dev/ci-head: "8eb52da8213869b717ad2691fa8066e846831833"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:704641d15a07233396c40666ba7a36e9283ac61e647d4d6eba364f69460a4b1c"
+        cma.chronoai.dev/ci-run: "40568297150"
+        cma.chronoai.dev/image-digest: "sha256:2a5fdf21a71f7d95020850cb81b1a1f5ac1d004eee8ab9a9d55e37887233baee"
+        cma.chronoai.dev/image-source: "6352eced6d92e505c7f4f8ffba6d1944ad901d98"
+        cma.chronoai.dev/source-tree: "43851ca76cf21769c98da0b00680487bd336417c"
       labels:
         app.kubernetes.io/name: cma-web
         app.kubernetes.io/part-of: cma
@@ -61,6 +61,29 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: web-assets-release
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:2a5fdf21a71f7d95020850cb81b1a1f5ac1d004eee8ab9a9d55e37887233baee
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-3784e2e7f290
           image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:3784e2e7f290a491f8c0a670687896e4d1660b774391565f393f7392eeb96df5
           command: ["/bin/sh", "-c"]
           args:
@@ -547,7 +570,7 @@ spec:
               mountPath: /compat
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:3784e2e7f290a491f8c0a670687896e4d1660b774391565f393f7392eeb96df5
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:2a5fdf21a71f7d95020850cb81b1a1f5ac1d004eee8ab9a9d55e37887233baee
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

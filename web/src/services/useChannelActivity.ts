@@ -2,7 +2,15 @@ import { useEffect, useState } from 'react';
 import { segment } from './client';
 
 export interface ActivityDelivery {
-  step: 'ack' | 'heartbeat' | 'answer' | 'tool_reply' | 'failure' | 'default_reply';
+  step:
+    | 'ack'
+    | 'heartbeat'
+    | 'answer'
+    | 'tool_reply'
+    | 'failure'
+    | 'default_reply'
+    | 'platform_status'
+    | 'platform_failure';
   destination: 'origin' | 'default';
   outcome:
     | 'confirmed'
@@ -11,7 +19,12 @@ export interface ActivityDelivery {
     | 'unknown'
     | 'unsupported'
     | 'buffered'
-    | 'unavailable';
+    | 'unavailable'
+    | 'sent'
+    | 'delivered'
+    | 'read'
+    | 'played'
+    | 'failed';
   observed_at: string;
   confirmed_at: string | null;
   platform_message_id: string | null;

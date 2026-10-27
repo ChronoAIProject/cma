@@ -5,11 +5,11 @@ pub(crate) fn fixtures() -> [(&'static str, &'static [u8]); 2] {
     [
         (
             "video/mp4",
-            include_bytes!("../../tests/fixtures/whatsapp-outbound/whatsapp-baseline.mp4"),
+            include_bytes!("../../../tests/fixtures/whatsapp-outbound/whatsapp-baseline.mp4"),
         ),
         (
             "video/3gpp",
-            include_bytes!("../../tests/fixtures/whatsapp-outbound/whatsapp-baseline-aac.3gp"),
+            include_bytes!("../../../tests/fixtures/whatsapp-outbound/whatsapp-baseline-aac.3gp"),
         ),
     ]
 }
@@ -58,14 +58,14 @@ fn native_whatsapp_video_real_baseline_fixtures_and_brand_mime() {
 #[test]
 fn native_whatsapp_video_refuses_other_codecs_and_misleading_profile_labels() {
     for bytes in [
-        &include_bytes!("../../tests/fixtures/media/h264_aac.mp4")[..],
-        &include_bytes!("../../tests/fixtures/media/hevc_4k.mp4")[..],
-        &include_bytes!("../../tests/fixtures/media/vp9_opus.webm")[..],
-        &include_bytes!("../../tests/fixtures/whatsapp-outbound/whatsapp-tone.m4a")[..],
+        &include_bytes!("../../../tests/fixtures/media/h264_aac.mp4")[..],
+        &include_bytes!("../../../tests/fixtures/media/hevc_4k.mp4")[..],
+        &include_bytes!("../../../tests/fixtures/media/vp9_opus.webm")[..],
+        &include_bytes!("../../../tests/fixtures/whatsapp-outbound/whatsapp-tone.m4a")[..],
     ] {
         assert!(inspect(bytes).is_none());
     }
-    let mut high = include_bytes!("../../tests/fixtures/media/h264_aac.mp4").to_vec();
+    let mut high = include_bytes!("../../../tests/fixtures/media/h264_aac.mp4").to_vec();
     let avcc = position(&high, b"avcC");
     high[avcc + 1] = 66;
     high[avcc + 9] = 66; // SPS profile too; high-profile syntax is still refused.
