@@ -203,9 +203,10 @@ by CMA. Expired or revoked authority stops further credential operations with
 token. On the original Agent, submit a new idempotency key with both `services`
 and `expected_services` equal to the current scope. Once the prior request has
 settled or failed, this records fresh consent for that exact scope, including
-when credential rotation or revocation is still pending. It preserves the prior
-audit, scope generation, runtime and conversation; a changed scope remains a
-separate update after rotation settles. Replaying an old key returns its original
+when credential rotation or revocation is still pending. Pending rotation
+continues at its existing scope generation; settled access performs an ordinary
+rotation with a fresh backing-node plan. Both preserve the prior audit, runtime
+and conversation. A changed scope remains a separate update after rotation settles. Replaying an old key returns its original
 result and never substitutes new authority.
 
 HTTP 403 `agent_access_owner_authority_required` requests a direct owner access

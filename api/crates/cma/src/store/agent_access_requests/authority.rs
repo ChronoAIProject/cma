@@ -123,6 +123,10 @@ pub(super) async fn renew_current_scope(
     };
     if next.approved_services()? != scope.services
         || !matches!(&next.decision, Some(AgentAccessDecision::Approved { authorization, .. }) if authorization.authority_id.starts_with("owner-api:"))
+        || !(sandbox.needs_service_access_credential()
+            || sandbox.status == SandboxStatus::CredentialRotating
+            || sandbox.credential.pending.is_some()
+            || !sandbox.credential.revoke_debt.is_empty())
     {
         return Ok(());
     }
