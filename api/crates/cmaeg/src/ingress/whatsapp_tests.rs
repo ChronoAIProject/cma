@@ -40,6 +40,7 @@ impl TargetExecutor for Executor {
     }
 }
 struct Setup {
+    now: i64,
     server: Server,
     state: IngressState,
     channel: Arc<crate::channels::resolver::ResolvedChannel>,
@@ -47,6 +48,9 @@ struct Setup {
 }
 impl Setup {
     async fn new() -> Self {
+        Self::at(fixture::NOW).await
+    }
+    async fn at(now: i64) -> Self {
         let request = fixture::request(
             |value| {
                 fixture::targets(value);
@@ -57,6 +61,7 @@ impl Setup {
             fixture::message("unused"),
         );
         let server = Server::start().await;
+        server.memory.clock.store(now, Ordering::SeqCst);
         let keys = Arc::new(fixture::keys());
         let (scheduler, handle) = Scheduler::new(
             Arc::new(server.store()),
@@ -72,7 +77,7 @@ impl Setup {
             BTreeSet::from(["cma_codex".into(), "nyxbot".into()]),
             BTreeSet::from(["cma_codex".into(), "nyxbot".into()]),
         )
-        .with_clock(Arc::new(|| fixture::NOW));
+        .with_clock(Arc::new(move || now));
         let state = IngressState::new(
             ChannelResolver::new(
                 Arc::new(server.records.clone()),
@@ -87,6 +92,7 @@ impl Setup {
         .with_routed(Some(Arc::new(routed)))
         .with_whatsapp_receipts(Arc::new(Store::new(server.records.clone(), keys)));
         Self {
+            now,
             server,
             state,
             channel: request.channel,
@@ -105,7 +111,7 @@ impl Setup {
                 .remove(0),
             body,
             received: Instant::now(),
-            received_at: fixture::NOW,
+            received_at: self.now,
         }
     }
     async fn launch(&self, verified: VerifiedWhatsappMessage) -> LaunchOutcome {
