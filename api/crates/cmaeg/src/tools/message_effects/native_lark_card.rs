@@ -36,6 +36,7 @@ impl ToolsState {
             && crate::interactions::native_lark::mutation_ready(&card)
             && self.native_lark_effects.is_some();
         Ok(MessageEffectsCapabilities {
+            media_edit: None,
             delete: enabled,
             reaction: enabled,
             max_reactions: u8::from(enabled),
