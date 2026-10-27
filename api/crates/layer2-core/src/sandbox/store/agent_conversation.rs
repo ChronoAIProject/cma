@@ -184,6 +184,21 @@ fn admits_input(current: &Agent, mutation: &AgentConversationMutation) -> bool {
 /// Durable agent conversation state and its gap-free semantic log.
 #[async_trait]
 pub trait AgentConversationStore: Send + Sync {
+    /// Record a quiet original conversation under the exact current lifecycle lease.
+    /// Implementations without a parent write fence must refuse this operation.
+    async fn commit_agent_reopen_update(
+        &self,
+        _current: Agent,
+        _previous: Option<super::AgentMessageCheckpoint>,
+        _next: super::AgentMessageCheckpoint,
+        _mutation: Option<AgentConversationMutation>,
+        _guard: super::AgentReopenGuard,
+    ) -> Result<crate::sandbox::AgentUpdateOutcome, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "durable reopen recording is unsupported",
+        ))
+    }
+
     async fn agent_message_checkpoint(
         &self,
         id: &AgentId,

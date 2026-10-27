@@ -67,6 +67,19 @@ pub enum AgentConversationError {
 
 #[async_trait::async_trait]
 pub trait AgentUpdateRecorder: Send + Sync {
+    async fn record_reopen_update(
+        &self,
+        _id: &AgentId,
+        _guard: &super::store::AgentReopenGuard,
+        _assembly: &mut AgentMessageAssembly,
+        _update: ConversationUpdate,
+        _appended_at: String,
+    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+        Err(AgentConversationError::InvalidState(
+            "durable reopen recording is unsupported",
+        ))
+    }
+
     fn subscribe_live(&self, _id: &AgentId) -> Option<super::AgentLiveSubscription> {
         None
     }

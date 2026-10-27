@@ -49,6 +49,9 @@ type Pending = Arc<Mutex<HashMap<String, PendingCall>>>;
 mod declaration;
 use declaration::validate_ready;
 
+#[path = "acp_calls.rs"]
+mod calls;
+
 #[path = "acp_recovery.rs"]
 mod recovery;
 
@@ -100,6 +103,21 @@ pub(super) struct OpenedBridge {
     pub(super) bridge: Arc<Bridge>,
     pub(super) reader: tokio::task::JoinHandle<()>,
     pub(super) relay: tokio::task::JoinHandle<()>,
+}
+
+struct OpeningTasks {
+    reader: tokio::task::AbortHandle,
+    relay: tokio::task::AbortHandle,
+    armed: bool,
+}
+
+impl Drop for OpeningTasks {
+    fn drop(&mut self) {
+        if self.armed {
+            self.reader.abort();
+            self.relay.abort();
+        }
+    }
 }
 
 impl Bridge {
@@ -165,6 +183,12 @@ impl Bridge {
                 "prompt recovery requires a held conversation".into(),
             ));
         }
+        // Quiet recovery already has an exact durable identity. Its receipts
+        // must be available even before initialize replies: a failed load may
+        // have left a full retained backlog on this same bridge.
+        let startup_session = resume_conversation
+            .clone()
+            .filter(|_| recovered_prompt.is_none());
         let (sink, mut source) = stream.split();
         let declaration = tokio::time::timeout(DECLARATION_DEADLINE, source.next())
             .await
@@ -194,6 +218,10 @@ impl Bridge {
             context_goal: Mutex::new(None),
         });
         let (updates, relay) = super::update_relay::spawn(updates_tx);
+        if let Some(session) = &startup_session {
+            bridge.activate_session(session.clone(), &updates).await?;
+            bridge.activate_output(session, &updates).await?;
+        }
         let writer = Arc::clone(&bridge);
         let writer_updates = updates.clone();
         let input = ConversationInputSender::spawn(INPUT_BUFFER, move |input| {
@@ -204,6 +232,11 @@ impl Bridge {
         .with_settings_support(bridge.clone());
 
         let reader_task = reader::spawn(Arc::clone(&bridge), source, updates.clone(), acknowledged);
+        let mut opening_tasks = OpeningTasks {
+            reader: reader_task.abort_handle(),
+            relay: relay.abort_handle(),
+            armed: true,
+        };
 
         if let Err(error) = bridge
             .handshake(resume_conversation, cwd, settings, &updates)
@@ -233,6 +266,7 @@ impl Bridge {
             relay.abort();
             return Err(error);
         }
+        opening_tasks.armed = false;
         Ok(OpenedBridge {
             channel: ConversationChannel {
                 input,
@@ -311,34 +345,6 @@ impl Bridge {
     fn scope_activity(&self, update: ConversationUpdate) -> ConversationUpdate {
         let owns_prompt = self.owned_prompt_waiters.load(Ordering::SeqCst) > 0;
         super::acp_inbound::scope_activity(update, owns_prompt)
-    }
-
-    pub(super) async fn call(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> crate::Result<serde_json::Value> {
-        self.call_within(method, params, CALL_DEADLINE).await
-    }
-
-    pub(super) async fn call_within(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-        deadline: Duration,
-    ) -> crate::Result<serde_json::Value> {
-        let waiting = self.begin(method, params).await?;
-        let frame = tokio::time::timeout(deadline, waiting)
-            .await
-            .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?
-            .map_err(|_| AdapterError::Unavailable(format!("{method} lost its answer")))?;
-        if let Some(error) = frame.get("error") {
-            return Err(AdapterError::Rejected(format!("{method}: {error}")));
-        }
-        Ok(frame
-            .get("result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null))
     }
 
     pub(super) async fn begin(
