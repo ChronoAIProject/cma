@@ -117,6 +117,9 @@ impl ProviderTarget {
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Source {
     Telegram {
+        /// Retain original message routing for edits and attributable reactions.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        message_events: bool,
         bot_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,

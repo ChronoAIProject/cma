@@ -151,6 +151,7 @@ pub struct Config {
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
+    pub native_telegram_message_events_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
@@ -258,6 +259,9 @@ impl Config {
             )?,
             native_discord_thread_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED",
+            )?,
+            native_telegram_message_events_writes_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED",
             )?,
             native_discord_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_WRITES_ENABLED",

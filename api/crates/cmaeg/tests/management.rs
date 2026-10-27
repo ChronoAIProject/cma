@@ -242,3 +242,6 @@ mod outbound;
 
 #[path = "management/native_discord.rs"]
 mod native_discord;
+
+#[path = "management/native_telegram.rs"]
+mod native_telegram;

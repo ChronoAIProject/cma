@@ -85,6 +85,7 @@ pub(crate) fn parse(form: &[u8]) -> Result<Parsed, &'static str> {
             credentials.telegram_bot_token = fields.secret("telegram_bot_token");
             credentials.telegram_webhook_secret = fields.secret("telegram_webhook_secret");
             SourceRequest::Telegram {
+                message_events: false,
                 bot_id: fields.required("bot_id", "Enter the bot id.")?,
                 bot_username: fields.optional("bot_username"),
                 admission: admission(&fields)?,
