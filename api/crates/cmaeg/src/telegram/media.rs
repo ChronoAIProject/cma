@@ -157,7 +157,12 @@ pub(crate) fn media_token_matches(token: &Secret, bot: &str) -> bool {
 fn message_identity(value: &Value, chat: &str, thread: Option<&str>) -> Result<String, Error> {
     let actual_chat = value["chat"]["id"].as_i64().map(|id| id.to_string());
     let actual_thread = value.get("message_thread_id").map(positive).transpose()?;
-    if actual_chat.as_deref() != Some(chat) || actual_thread.as_deref() != thread {
+    // These individual send methods cannot produce albums. Telegram redirects
+    // album reactions to the first surviving message, so never accept that scope.
+    if actual_chat.as_deref() != Some(chat)
+        || actual_thread.as_deref() != thread
+        || value.get("media_group_id").is_some()
+    {
         return Err(Error::Unconfirmed);
     }
     positive(&value["message_id"])
