@@ -1,5 +1,6 @@
 //! Native Lark/Feishu custom apps are distinct from every NyxID relay source.
 mod client;
+pub(crate) mod content;
 pub use client::{Client, Error, Transport};
 pub(crate) mod management;
 pub(crate) mod message;
@@ -49,3 +50,6 @@ mod tests;
 
 #[cfg(test)]
 mod client_tests;
+
+#[cfg(test)]
+mod content_tests;

@@ -81,6 +81,13 @@ export const AttachmentSourceSchema = tagged(
       type: enumeration('discord'),
     }),
     nyxid_relay: object({ index: integer, type: enumeration('nyxid_relay') }),
+    native_lark: object({
+      type: enumeration('native_lark'),
+      message_id: string,
+      resource_key: string,
+      resource_kind: LarkResourceKindSchema,
+      source_revision: string,
+    }),
     lark_resource: object({
       type: enumeration('lark_resource'),
       message_id: text,

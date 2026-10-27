@@ -158,6 +158,21 @@ impl IngressState {
         } else {
             (request, None)
         };
+        // Issuance gates stop new media admissions, never duplicate retained work.
+        if message.has_resources() && !(self.media_enabled && self.native_lark_media_enabled) {
+            match routing
+                .plans
+                .load(&record_identity(request.activity.event_id.clone()))
+                .await
+            {
+                Ok(Some(existing))
+                    if serde_json::from_slice::<Message>(&existing.source_body)
+                        .is_ok_and(|m| m == message) => {}
+                Ok(Some(_)) => return refused(409, "native_lark_message_identity_conflict"),
+                Ok(None) => return refused(422, "native_lark_media_disabled"),
+                Err(_) => return refused(503, "native_lark_admission_unavailable"),
+            }
+        }
         // Persist bounded verified facts, never the callback verification token.
         // Ordinary keys use message_id: repeated receive envelopes do not run twice.
         let body = match serde_json::to_vec(&message) {

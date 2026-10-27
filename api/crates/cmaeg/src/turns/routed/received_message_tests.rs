@@ -181,3 +181,6 @@ async fn received_message_remint_refuses_changed_source_provider_or_missing_curr
     .await
     .is_ok());
 }
+
+#[path = "native_lark_media_authority_tests.rs"]
+mod native_lark_media;
