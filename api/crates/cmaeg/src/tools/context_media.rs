@@ -30,6 +30,25 @@ pub struct NativeMediaCapabilities {
 }
 
 impl NativeMediaCapabilities {
+    pub(super) fn native_lark(enabled: bool) -> Option<Self> {
+        enabled.then(|| Self {
+            kinds: ["image", "file", "audio", "video"].map(String::from).into(),
+            sources: ["url", "base64"].map(String::from).into(),
+            max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
+            max_inline_bytes: cmaeg_core::message::MAX_NATIVE_INLINE_BYTES,
+            mime_types: Some(
+                crate::native_lark::outbound::MIME_TYPES
+                    .map(String::from)
+                    .into(),
+            ),
+            max_total_bytes: Some(crate::media::outbound::MAX_OUTBOUND_BYTES),
+            max_image_bytes: Some(crate::media::outbound::MAX_OUTBOUND_BYTES),
+            max_caption_chars: Some(0),
+            sticker: None,
+            video: Some(NativeVideoCapabilities::bounded_baseline()),
+        })
+    }
+
     pub(super) fn native_whatsapp(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
             kinds: ["image", "file", "audio", "sticker", "video"]
