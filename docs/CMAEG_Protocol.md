@@ -2671,6 +2671,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/messages/{message_ref}/delete` | `deleteMessage` |
 | `POST /v1/messages/{message_ref}/reaction` | `setMessageReaction` |
 | `GET /v1/permissions` | `getPermissions` |
+| `GET /v1/relay-resource-connections` | `listRelayResourceConnections` |
 | `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
 | `GET /v1/channel-capabilities` | Discover platform setup methods and optional capabilities. |
 | `POST /v1/channel-connections` | Begin a durable owner-authorized gateway connection setup. |
