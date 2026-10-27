@@ -30,6 +30,14 @@ const MIN_TRANSFORMER_MEMORY_MIB: u64 = 2048;
 const MIB: u64 = 1024 * 1024;
 
 #[test]
+fn native_whatsapp_authoring_stays_off_pending_reader_rollout_and_meta_acceptance() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED"),
+        Some("false")
+    );
+}
+
+#[test]
 fn lark_resource_writes_allow_source_opt_in_after_compatible_reader_rollout() {
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_LARK_RESOURCE_WRITES_ENABLED"),
