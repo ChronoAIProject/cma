@@ -8,6 +8,8 @@ mod components_execution_tests;
 #[cfg(test)]
 pub(crate) mod components_fixture;
 #[cfg(test)]
+mod components_restore_tests;
+#[cfg(test)]
 mod components_tests;
 pub(crate) mod facts;
 pub mod inbox_dispatch;

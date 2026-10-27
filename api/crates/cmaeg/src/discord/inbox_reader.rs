@@ -161,13 +161,13 @@ impl InboxReader {
         if body.channel.record_id != current.pointer.record_id
             || body.channel.owner != current.definition.owner
             || body.dispatch["id"].as_str() != Some(&inbox.message_id)
-            || body.channel.secrets.agent_key_hash != current.definition.secrets.agent_key_hash
         {
             return Err(GatewayError::Authority);
         }
         if let Some(component) = &body.component {
             component.validate(&inbox.bot_id, &inbox.message_id)?;
             if component.identity.source_revision != inbox.source_revision
+                || current.definition.routing.is_none()
                 || current
                     .consumer(Some(&component.identity.consumer))
                     .is_none_or(|consumer| {
@@ -178,10 +178,20 @@ impl InboxReader {
             {
                 return Err(GatewayError::Authority);
             }
+            // The component owns its immutable single target, conversation and
+            // partition; routing is never evaluated again. Use the current
+            // serving definition so retired unrelated consumers are absent and
+            // rotated credentials agree with their public/decoded key hashes.
+            // The original bytes below remain the durable admission identity.
+            body.channel = current.definition.clone();
+        } else {
+            if body.channel.secrets.agent_key_hash != current.definition.secrets.agent_key_hash {
+                return Err(GatewayError::Authority);
+            }
+            // Ordinary messages retain their accepted routing/profile/admission
+            // snapshot, with only currently authorized credentials supplied.
+            body.channel.secrets = current.definition.secrets.clone();
         }
-        // Routing/profile/admission remain the accepted snapshot. Only currently
-        // authorized credentials are supplied, never stale secrets from an inbox.
-        body.channel.secrets = current.definition.secrets.clone();
         body.channel
             .validate()
             .map_err(|_| GatewayError::Authority)?;
