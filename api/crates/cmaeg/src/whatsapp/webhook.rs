@@ -34,6 +34,11 @@ pub enum Content {
         target: String,
         emoji: String,
     },
+    /// Only authenticated, bounded locators become candidates for card authority.
+    Control {
+        locator: String,
+        context: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,7 +136,7 @@ fn parse(raw: &Value) -> Result<Option<Message>, Error> {
     let kind = raw["type"].as_str().ok_or(Error::Message)?;
     if !matches!(
         kind,
-        "text" | "reaction" | "image" | "document" | "audio" | "video" | "sticker"
+        "text" | "reaction" | "interactive" | "image" | "document" | "audio" | "video" | "sticker"
     ) {
         return Ok(None);
     }
@@ -159,6 +164,8 @@ fn parse(raw: &Value) -> Result<Option<Message>, Error> {
         Content::Text {
             text: text.to_owned(),
         }
+    } else if kind == "interactive" {
+        super::interactive::extract(raw)?
     } else if kind == "reaction" {
         let target = raw["reaction"]["message_id"]
             .as_str()

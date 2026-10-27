@@ -115,6 +115,7 @@ pub struct RelayClient {
     native_media: bool,
     native_whatsapp_outbound_media: bool,
     native_whatsapp_templates: bool,
+    native_whatsapp_interactions: bool,
     text_edits: bool,
     native_discord_edits: bool,
     native_discord_effects: bool,
@@ -178,14 +179,6 @@ impl RelayClient {
     pub(super) fn text_edits_enabled(&self) -> bool {
         self.text_edits
     }
-    /// Attest that every deployed NyxID replica honors bounded native media replies.
-    pub fn with_native_media(mut self, enabled: bool) -> Self {
-        self.native_media = enabled;
-        self
-    }
-    pub(crate) fn native_media_enabled(&self) -> bool {
-        self.native_media
-    }
     /// Select complete ordinary replies in the delivery engine. Enabling this
     /// attests that NyxID splits ordinary/thread replies without truncation and
     /// acknowledges only all-parts acceptance. Low-level sends keep their
@@ -225,6 +218,7 @@ impl RelayClient {
             native_media: false,
             native_whatsapp_outbound_media: false,
             native_whatsapp_templates: false,
+            native_whatsapp_interactions: false,
             text_edits: false,
             native_discord_edits: false,
             native_discord_effects: false,

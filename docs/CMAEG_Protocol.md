@@ -3273,6 +3273,19 @@ and its agent authorization through the existing public workflow.
 
 ## WhatsApp native choices
 
+Native `whatsapp` events use the independent default-off
+`CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED` gate and the same public buttons/list
+subset below. They send directly with the sealed native phone/recipient/context
+and preserve authenticated callbacks through durable admission to the original
+default or named consumer, provider conversation and partition. The optional
+native card authority and native WhatsApp interaction payload require compatible
+Gateway readers before issuance, and retained callbacks remain supported with
+issuance off. Native foreign controls are refused; callback titles never provide
+action values. Native sends are not automatically retried after uncertainty.
+See [native WhatsApp controls](CMAEG_Native_WhatsApp_Controls.md) for exact source,
+actor, confirmed binding, expiry and replay checks. The relay-specific behavior
+below is unchanged.
+
 For a raw-verified WhatsApp private event, `readEventContext` reports
 `buttons:"native_interactive"` when `CMAEG_WHATSAPP_INTERACTIONS_ENABLED=true`.
 It continues to report `edit:false`; callbacks remain usable after issuance is

@@ -377,7 +377,13 @@ pub(super) fn project(
         activity_verified,
         state.lark_cards_enabled && consumer_controls,
     );
-    if state.whatsapp_interactions_enabled
+    let whatsapp_controls =
+        if matches!(event.reply, cmaeg_core::seal::ReplyAddress::Whatsapp { .. }) {
+            state.native_whatsapp_interactions_enabled
+        } else {
+            state.whatsapp_interactions_enabled
+        };
+    if whatsapp_controls
         && consumer_controls
         && activity_verified
         && crate::interactions::whatsapp::eligible(channel, event, &activity)

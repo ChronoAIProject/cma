@@ -43,6 +43,9 @@ pub struct Card {
     /// New WhatsApp records retain the exact control kind. Legacy bytes are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp: Option<WhatsappKind>,
+    /// Native source and exact default/named dispatch custody; absent on relay cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp: Option<super::whatsapp_authority::Authority>,
     /// Native Discord identity is absent from every historical card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord: Option<super::discord::Identity>,

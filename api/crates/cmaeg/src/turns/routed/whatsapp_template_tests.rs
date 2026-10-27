@@ -259,7 +259,7 @@ async fn native_whatsapp_template_queued_sends_recheck_source_credential_and_con
                                 .iter_mut()
                                 .find(|consumer| consumer.id == setup.target().launch.consumer)
                                 .unwrap()
-                                .provider = current.definition.provider.clone()
+                                .provider = current.consumer(None).unwrap().provider.clone()
                         }
                         _ => unreachable!(),
                     }

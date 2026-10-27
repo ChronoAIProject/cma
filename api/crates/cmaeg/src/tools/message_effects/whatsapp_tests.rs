@@ -785,3 +785,6 @@ async fn native_whatsapp_reaction_metadata_timeout_preserves_verified_context() 
     assert!(context(&app).await.received_message.is_some());
     assert!(graph.calls.lock().unwrap().is_empty());
 }
+
+#[path = "whatsapp_control_context_tests.rs"]
+mod control_context;
