@@ -3425,12 +3425,16 @@ reply authority is recorded as expired without renewing it or erasing retained
 intake data. Routed execution recovery continues independently after admission.
 
 Native runtime activation is separate from authoring: `CMAEG_NATIVE_DISCORD_ENABLED`
-defaults to false, and `CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` defaults to empty.
-This staged rollout accepts at most 64 explicit canonical channel records already
-selected for durable routed recovery. Without activation and selection, no native
-worker, scanner or Discord request starts. Each source must retain its original
-ready public channel identity and an explicit routing snapshot; normal-user source
-auto-discovery and native single-default-consumer planning are separate rollout work.
+and `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED` default to false, and
+`CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` defaults to empty. The implemented worker
+supports explicit canaries or bounded automatic discovery of eligible native
+sources, with at most 64 selections per process. Explicit canaries must also be
+selected for routed recovery; discovery requires native runtime and routed
+recovery and works with an empty static list. Each source must retain its original
+ready public channel identity and an explicit routing snapshot. With native
+runtime disabled, or with both discovery disabled and no canaries, no native
+worker, scanner or Discord request starts. Pausing new routed admission preserves
+recovery and makes the public auto-activation capability false.
 Each supervised attempt reacquires its fenced lease and stored Resume checkpoint.
 Retryable disconnects back off and preserve Discord's Gateway and discovery REST
 cooldowns; terminal authentication/configuration errors wait for a changed source
@@ -3477,11 +3481,14 @@ HTTP fixtures cover native text/multipart delivery, admission, immutable inbox
 restoration, custody, CDN origin/identity restrictions, caps, rate limits and lost
 responses without sending messages to any external user.
 
-These readers and adapters do **not** themselves activate application startup or
-schedule inbox records. Source discovery/reconnection/revocation, durable inbox
-scheduling and routed recovery must be composed before enabling native messaging.
-The source write flag stays off in the deployment manifest. Relay Discord
-behavior and retained serialization remain compatible.
+Application startup composes source discovery/reconnection/revocation, durable
+inbox scheduling and routed recovery under their explicit gates. The desired
+deployment manifest enables native source writes, native runtime and discovery;
+its static canary list remains empty. These source settings do not establish
+live activation, bot authentication or external delivery. Verify the serving
+configuration and owner-visible source state after rollout, and record connected
+platform acceptance separately. Relay Discord behavior and retained serialization
+remain compatible.
 
 ### Native Discord thread metadata and replies
 
