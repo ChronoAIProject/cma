@@ -35,6 +35,11 @@ single-message edit/effect authority described above. WhatsApp editing and group
 are limitations of this CMA integration, not universal claims about the platform;
 WhatsApp account identity also does not prove a human sender.
 
+Incoming WhatsApp reactions are filtered out by the pinned NyxID adapter before
+callback construction. CMA cannot enable them by widening its relay parser or
+declaring activity callback support. See the [pinned reaction-contract review and
+CMA-only ingestion path](CMAEG_WhatsApp_Incoming_Reactions.md).
+
 ## Native Lark and Feishu forms
 
 The CMA native form path supports one Form with 1–12 text, number, date or
