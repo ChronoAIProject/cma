@@ -228,6 +228,7 @@ impl App {
             complete_replies_enabled: true,
             telegram_effects_issuance_enabled: false,
             telegram_effects: None,
+            lark_effects_issuance_enabled: true,
             lark_effects: Some(Arc::new(
                 lark_transport::LarkEffectsClient::new(&base).unwrap(),
             )),

@@ -72,9 +72,29 @@ pub struct PlatformCapability {
     pub optional_capabilities: Vec<String>,
 }
 
+/// Server tool metadata; does not grant channel, source or event permission.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentToolCapability {
+    /// Exact MCP tool name.
+    pub name: String,
+    /// Exact MCP tool description.
+    pub description: String,
+    /// MCP read-only behavior hint.
+    pub read_only: bool,
+    /// MCP destructive behavior hint.
+    pub destructive: bool,
+    /// MCP idempotency behavior hint.
+    pub idempotent: bool,
+    /// MCP open-world behavior hint.
+    pub open_world: bool,
+}
+
 /// Gateway connection capabilities.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityView {
+    /// Deployment tool catalog; absent or null means availability was not reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_tools: Option<Vec<AgentToolCapability>>,
     /// Additive source-policy features; absent on older gateways.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_features: Vec<String>,
@@ -134,6 +154,7 @@ pub struct RelayAuthoringCapabilities {
     /// Opt-in native Discord thread history is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_history_enabled: Option<bool>,
+    /// Whether native Discord incoming reaction events are enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_reactions_enabled: Option<bool>,
     /// New direct Discord source and token writes are available.
