@@ -3064,8 +3064,12 @@ This capability does not widen a routed lease or send window. Native media calls
 are not automatically retried: an explicit first-call 429 is typed rate-limited,
 while a lost or malformed response is unknown. Any failure after a confirmed
 part is `unknown`/`partial_delivery`; a batch is not atomic. Confirmed media
-batches return a platform message ID but no editable/effect-bearing message
-reference. The existing native text, interactive and effect paths are unchanged.
+batches return a platform message ID. Behind the separate default-off
+`CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` gate, exactly one confirmed individual
+upload can also return an effects-only reference; separate text plus media,
+multiple uploads, album receipts and uncertain delivery cannot. Caption/media
+editing remains unsupported. See [native Telegram media effects](CMAEG_Native_Telegram_Media_Effects.md).
+The existing native text and interactive paths are unchanged.
 These adapter semantics are tested against local HTTP fixtures; this is not an
 assertion of live Telegram acceptance or deployment.
 
@@ -3398,6 +3402,14 @@ New confirmed native Telegram bot sends can carry additional authority inside th
 existing opaque `message_ref`; no extra target-mint step is required. The operator
 must complete reader rollout and enable `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED`.
 Legacy references retain edit behavior and explicitly do not grant new effects.
+Single native uploads additionally require the default-off
+`CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` gate and carry an additive
+`telegram_effect.effects_only=true` marker. They cannot authorize text, caption
+or media edits. Historical text/card authority omits this marker and keeps its
+serialized identity. Media scopes use the existing durable message-fence
+algorithm with a separate Telegram media namespace; unknown writes remain fenced
+against new keys through expiry. Details and reader rollout are documented in
+[native Telegram media effects](CMAEG_Native_Telegram_Media_Effects.md).
 
 - `GET /v1/messages/{message_ref}/capabilities` (`readMessageCapabilities`) returns
   `delete`, `reaction`, `scope=confirmed_native_bot_message`, `max_reactions` and an
@@ -3422,11 +3434,13 @@ when enabled it explicitly reports false for relay and unproved events.
 Telegram `deleteMessage` requires a message younger than 48 hours; certain service
 messages cannot be deleted and private-chat dice require age over 24 hours. Bot
 permissions differ for channels/groups. CMA only issues authority for its own
-confirmed outbound text/card messages and bounds it to 24 hours. It does not expose
+confirmed outbound text/card messages or separately gated individual uploads,
+and bounds it to 24 hours. It does not expose
 moderation of arbitrary inbound messages. `setMessageReaction` changes only the
 bot's reaction; bots have at most one, cannot use paid reactions, and some service
 messages are unsupported. Telegram applies reactions on media groups to the first
-non-deleted member. CMA's current direct sends are text/card messages.
+non-deleted member. New media authority excludes album receipts and never combines
+several native messages into one target.
 
 Official contracts: https://core.telegram.org/bots/api#deletemessage and
 https://core.telegram.org/bots/api#setmessagereaction (reviewed 2026-10-26).
@@ -3714,14 +3728,23 @@ accept newly issued native Discord message references. The optional sealed
 `discord_message.effects` window binds issuance and expiry for at most 24 hours;
 legacy edit-only references omit it without changing their serialized form.
 `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` defaults to false and requires
-`CMAEG_NATIVE_DISCORD_EDITS_ENABLED` for issuance. All serving and rollback
+`CMAEG_NATIVE_DISCORD_EDITS_ENABLED` for text-reference issuance. Media-reference
+issuance instead requires `CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED`, also
+default-off. All serving and rollback
 readers must understand this field before writers are enabled. Disabling either
 issuance switch does not revoke previously authorized effects. Editing a message
 preserves its original effect window and cannot extend it.
 
-Only a confirmed single-part ordinary text/link reply can currently issue this
-authority. Multipart, media, interaction controls, relay destinations and handoff
-lineage do not grant native effects. A caller cannot supply arbitrary Discord
+Confirmed single-part ordinary text/link replies and, behind the separate media
+gate, native uploads contained in one exact Discord message can issue this
+authority. Media references carry `discord_message.effects_only=true`; they
+cannot update content or attachments. Text destinations omit the field and keep
+their serialized identity. One upload message can contain up to four files,
+including attachment-only delivery. Multiple Discord messages, uncertain or
+partial delivery, interaction controls, relay destinations and handoff lineage
+do not grant this ordinary native authority. See
+[native Discord media effects](CMAEG_Native_Discord_Media_Effects.md) for rollout,
+attachment semantics and pinned official API evidence. A caller cannot supply arbitrary Discord
 channel or message IDs. Current owner, source policy, consumer, provider binding
 and consumer key are checked before and after a durable claim. A replacement bot
 token is allowed only when it authenticates as the original bot. Changing source
@@ -3740,8 +3763,8 @@ support, not a guarantee that Discord permits a particular current operation.
 A stable idempotency key covers both effects on the exact sealed message. A
 conflicting action is 409, concurrent/restarted callers replay the durable
 receipt, and an abandoned claim returns an uncertain outcome instead of sending
-again. Expired effect authority returns 410 while its independent text edit
-reference remains usable. These additions do not expand the Telegram or relay
+again. Expired effect authority returns 410 while an independent text edit
+reference remains usable; media references never gain edit authority. These additions do not expand the Telegram or relay
 contracts.
 
 Different idempotency keys also serialize through a durable exact-message fence,
