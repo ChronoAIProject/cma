@@ -46,8 +46,17 @@ pub struct Card {
     /// Native replacement claim and result; omitted on all historical cards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord_edit: Option<super::discord_edit::Edit>,
+    /// Latest non-consuming native modal attempt; absent on historical cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_form_launch: Option<super::discord_form::Launch>,
+    /// Retained native effect capability and deletion fence; absent on historical cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_effect: Option<super::discord_effect::State>,
 }
 impl Card {
+    pub(crate) fn chat_id(&self) -> &str {
+        &self.chat
+    }
     pub(crate) fn consumed_at(&self) -> Option<&str> {
         self.consumed
             .as_ref()
@@ -92,6 +101,8 @@ pub struct Click {
     /// Canonical whole-form result; absent on every pre-form click.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) submitted: Option<super::lark_form::Submitted>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) form_launch: Option<String>,
     pub(super) occurred_at: String,
 }
 pub struct PreparedCard {

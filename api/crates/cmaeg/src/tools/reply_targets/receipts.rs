@@ -38,6 +38,11 @@ pub(crate) enum Admission {
     Claimed(Claim),
     Replay(IntentReceipt),
 }
+impl Claim {
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+}
 impl Store {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
@@ -78,21 +83,15 @@ impl Store {
         owner: &str,
         expires_at: i64,
     ) -> Result<Admission, Problem> {
-        let digest = Sha256::digest(format!("{namespace}\0{scope}\0{request_id}").as_bytes());
-        let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
-        bytes[6] = (bytes[6] & 0x0f) | 0x40;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        let mut claim = Claim {
-            kind: kind.into(),
-            id: uuid::Uuid::from_bytes(bytes).to_string(),
-            owner: owner.into(),
+        let mut claim = Self::scoped_claim(
+            kind,
+            namespace,
             scope,
+            request_id,
             request_hash,
-            // Retain through every target that can be minted from this original event.
+            owner,
             expires_at,
-            receipt: None,
-            version: 0,
-        };
+        );
         let url = self
             .records
             .record_url(&claim.id)
@@ -118,6 +117,66 @@ impl Store {
             Err(_) => Err(unavailable()),
         }
     }
+    #[allow(clippy::too_many_arguments)]
+    fn scoped_claim(
+        kind: &str,
+        namespace: &str,
+        scope: String,
+        request_id: &str,
+        request_hash: String,
+        owner: &str,
+        expires_at: i64,
+    ) -> Claim {
+        let digest = Sha256::digest(format!("{namespace}\0{scope}\0{request_id}").as_bytes());
+        let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        Claim {
+            kind: kind.into(),
+            id: uuid::Uuid::from_bytes(bytes).to_string(),
+            owner: owner.into(),
+            scope,
+            request_hash,
+            // Retain through every target that can be minted from this original event.
+            expires_at,
+            receipt: None,
+            version: 0,
+        }
+    }
+    /// Check retained results before deciding whether a stale card may start new work.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn lookup_scoped(
+        &self,
+        kind: &str,
+        namespace: &str,
+        scope: String,
+        request_id: &str,
+        request_hash: String,
+        owner: &str,
+        expires_at: i64,
+    ) -> Result<Option<IntentReceipt>, Problem> {
+        let claim = Self::scoped_claim(
+            kind,
+            namespace,
+            scope,
+            request_id,
+            request_hash,
+            owner,
+            expires_at,
+        );
+        let url = self
+            .records
+            .record_url(&claim.id)
+            .map_err(|_| unavailable())?;
+        match self.records.get(url.as_str()).await {
+            Ok(value) => match self.replay(&claim, &value.blob)? {
+                Admission::Replay(receipt) => Ok(Some(receipt)),
+                Admission::Claimed(_) => unreachable!("replay never claims"),
+            },
+            Err(RecordError::NotFound) => Ok(None),
+            Err(_) => Err(unavailable()),
+        }
+    }
     fn replay(&self, expected: &Claim, blob: &[u8]) -> Result<Admission, Problem> {
         let opened = open_interaction(&self.keys, &expected.id, blob).map_err(|_| unavailable())?;
         let saved: Claim = serde_json::from_slice(&opened.payload).map_err(|_| unavailable())?;
@@ -132,7 +191,9 @@ impl Store {
                 409,
                 if matches!(
                     expected.kind.as_str(),
-                    "telegram_message_effect_v1" | "discord_message_effect_v1"
+                    "telegram_message_effect_v1"
+                        | "discord_message_effect_v1"
+                        | "discord_card_effect_v1"
                 ) {
                     "message_effect_idempotency_conflict"
                 } else {

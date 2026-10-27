@@ -98,3 +98,10 @@ CMA uses the existing action-row component format and does not set
 Local REST, encrypted-store, callback and provider fixtures establish the CMA
 contract. Actual Discord edit/render/callback acceptance requires a separately
 authorized platform test. No NyxID change or deployment is part of this feature.
+
+Card PATCH shares the durable exact-message mutation lock with native card and
+text effects. A successor inherits adopted card-effect capability without
+extending expiry and clears operation-local effect state. Unknown writes or lost
+final acknowledgements keep the destination fenced across revisions. See
+[native card effects](CMAEG_Native_Discord_Card_Effects.md) for reader rollout and
+accepted callback recovery after deletion.

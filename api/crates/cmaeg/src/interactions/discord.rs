@@ -17,6 +17,8 @@ use serde_json::{json, Value};
 pub struct Identity {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread: Option<ThreadIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<super::discord_form::Authority>,
     pub bot_id: String,
     pub source_revision: String,
     pub consumer: ConsumerId,
@@ -86,6 +88,7 @@ pub(super) fn identity(
         return Err(Error::Denied);
     };
     Ok(Identity {
+        form: None,
         thread,
         bot_id: bot_id.clone(),
         source_revision: source_revision(&channel.definition)?,
@@ -137,13 +140,17 @@ pub(crate) fn valid(card: &Card) -> bool {
         && identity.partition_key.len() <= 4096
         && cmaeg_core::channel::valid_discord_id(&identity.bot_id)
         && card.route_id == route(&identity.bot_id, &card.chat)
-        && (if card.revision > 1 {
-            render_replacement
+        && (if identity.form.is_some() {
+            super::discord_form::valid(card)
         } else {
-            render
-        })(&card.message, &card.id, card.revision)
-        .is_ok()
-        && selection_valid(card)
+            (if card.revision > 1 {
+                render_replacement
+            } else {
+                render
+            })(&card.message, &card.id, card.revision)
+            .is_ok()
+                && selection_valid(card)
+        })
 }
 pub(crate) fn route(bot: &str, channel: &str) -> String {
     format!("discord:{bot}:{channel}")

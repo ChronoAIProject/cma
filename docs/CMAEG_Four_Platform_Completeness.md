@@ -23,7 +23,7 @@ external platform send is authorized by this review.
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
 | Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits and separately gated native card replacement with durable receipt replay; gated relay text edits |
 | Delete/react to a sent message | Gated effects on confirmed bot messages, subject to permissions, age and reaction limits | No CMA relay operation | No CMA relay operation | Gated native effects on confirmed single-part bot text/link replies; durable idempotency and per-message serialization. No arbitrary message IDs or relay effects |
-| Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks; separately gated typed Form submissions | Gated native buttons/single-select controls, separately gated multi-select, and durable type-3 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
+| Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks; separately gated typed Form submissions | Gated native buttons/single-select controls, separately gated multi-select and modal Forms, and durable type-3/type-5 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
 | Incoming edits/deletes/reactions | Do not start ordinary agent work | Status, system and reaction input is refused | No general message-edit/delete/reaction propagation | Native ordinary intake admits `MESSAGE_CREATE`; edits/deletes/reactions do not start work |
 
 Native Discord thread creation, archive/reopen, join/follow and listing are not
@@ -53,6 +53,20 @@ mixed with a native form, multi-choice fields, native media and threaded forms
 remain unsupported. Local signed callback and recorded delivery tests establish
 the composed CMA path; actual Lark and Feishu rendering/submission acceptance
 remains unverified. See [native forms](CMAEG_Native_Lark_Forms.md).
+
+## Native Discord forms
+
+Native Discord Forms are separately default-off. Eligible forms use one launch
+button and a type-9 modal containing up to five Label-wrapped TextInput or
+StringSelect fields. Number and Date use explicitly labeled, strictly validated
+text; their rendering report records degradation. Whole submissions preserve
+the original actor, provider, consumer, conversation and destination. Invalid
+values do not consume a card; users open a fresh modal to retry. Existing text
+fallback for oversized or mixed forms is preserved before native side effects.
+Retained callbacks and exact lost-inbox recovery survive disabling issuance.
+Local contract fixtures pass through the real routed provider execution path;
+real Discord client acceptance remains unverified. See
+[native Discord forms](CMAEG_Native_Discord_Forms.md).
 
 ## Native Discord integration and its bounds
 

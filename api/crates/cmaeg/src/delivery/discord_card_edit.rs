@@ -34,6 +34,7 @@ impl Sender {
             Ok(Admission::Ready(candidate)) => candidate,
             Err(_) => return unsupported(),
         };
+        let form = crate::interactions::discord_form::schema(message).is_ok();
         let Some(identity) = candidate.card.discord.as_ref() else {
             return unsupported();
         };
@@ -44,12 +45,14 @@ impl Sender {
                 && !self.relay.discord_multiselect_enabled()
                 && !discord::multiselect_requested(&candidate.card.message))
             || (message.thread_reply && candidate.conversation.thread_id.is_none())
-            || discord::render_replacement(
-                message,
-                "00000000000000000000000000000000",
-                candidate.card.revision.saturating_add(1),
-            )
-            .is_err()
+            || (form && identity.form.is_none() && !self.relay.discord_forms_enabled())
+            || (!form
+                && discord::render_replacement(
+                    message,
+                    "00000000000000000000000000000000",
+                    candidate.card.revision.saturating_add(1),
+                )
+                .is_err())
         {
             return unsupported();
         }
@@ -57,7 +60,10 @@ impl Sender {
             buttons: "inline_keyboard".into(),
             ..Capabilities::native_discord()
         };
-        let (parts, rendering) = RelayText.render(message, &capabilities);
+        let (parts, mut rendering) = RelayText.render(message, &capabilities);
+        if form {
+            crate::interactions::discord_form::report(message, &mut rendering);
+        }
         if parts.len() != 1 || (parts[0].text.is_empty() && !discord::requested(message)) {
             return unsupported();
         }
@@ -102,6 +108,35 @@ impl Sender {
         if !ctx.gate.commit() {
             return refused(rendering, expired());
         }
+        let serial = store.mutation_store();
+        let held = match serial
+            .acquire(
+                candidate.mutation_destination(),
+                &ctx.channel.definition.owner.subject,
+                candidate.card.expires_at,
+            )
+            .await
+        {
+            Ok(Some(held)) => held,
+            Ok(None) => {
+                return refused(
+                    rendering,
+                    DeliveryOutcome::Rejected {
+                        reason: "native_message_effect_busy".into(),
+                    },
+                )
+            }
+            Err(_) => return discord_edit::uncertain(),
+        };
+        // Refresh after the shared destination lock, before the card CAS. A
+        // callback may have won in the meantime; retain its consumed result.
+        let candidate = match store
+            .discord_edit_candidate(ctx.channel, reference, message)
+            .await
+        {
+            Ok(Admission::Ready(candidate)) => candidate,
+            _ => return discord_edit::uncertain(),
+        };
         let mut claim = match store.begin_discord_edit(*candidate, message).await {
             Ok(claim) => claim,
             Err(_) => return discord_edit::uncertain(),
@@ -152,6 +187,11 @@ impl Sender {
         }
         if store.finish_discord_edit(claim, &receipt).await.is_err() {
             return discord_edit::uncertain();
+        }
+        if !matches!(receipt.delivery, DeliveryOutcome::Unknown { .. })
+            && serial.release(held).await.is_err()
+        {
+            tracing::warn!("native card mutation fence remains held after completed edit");
         }
         receipt
     }
