@@ -171,7 +171,7 @@ impl Fixture {
             self.state.launch_verified(request, source, hold).await,
             LaunchOutcome::Admitted { .. }
         ));
-        context.remember(&self.state, &self.channel).await;
+        context.remember(&self.state, &self.channel).await.unwrap();
         self.plan("telegram:77:101").await.unwrap()
     }
     pub async fn plan(&self, event: &str) -> Option<AdmittedPlan> {
