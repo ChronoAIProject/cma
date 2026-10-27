@@ -40,6 +40,10 @@ pub(crate) async fn serve(
     );
     let (records, creator_auth, browser) =
         crate::serve_storage::compose(&config, service_auth).await?;
+    let resource_connections = connections::relay_resources::ResourceConnections::new(
+        creator_auth.clone(),
+        &config.management.nyxid_base_url,
+    )?;
     // No-op observers and no queue while CMAEG_CONSOLE_ENABLED is off.
     let mut observers = console::observer::Observers::new(config.console.enabled);
     let mut state = http::ManagementState::observed(
@@ -258,6 +262,9 @@ pub(crate) async fn serve(
             waiters,
         }))
         .merge(http::connections::router(connections.clone()))
+        .merge(http::relay_resource_connections::router(
+            resource_connections,
+        ))
         .merge(http::connection_browser::router(connections))
         .merge(http::telegram::router(ingress.clone()))
         .merge(http::callbacks::router(ingress))
