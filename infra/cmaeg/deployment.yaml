@@ -32,6 +32,7 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/thread-contract-writes: "v1"
+        cma.chronoai.dev/operator-config-reload: "pr1141-f308d88f-40486174299-discord-multiselect-card-edits-f68aab5c8bc4"
         cma.chronoai.dev/authoring-activation: "76bcae97d-20261026"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
         cma.chronoai.dev/candidate: "f308d88f23754c2c55aef5a51372fd534c2a89d9"
