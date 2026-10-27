@@ -32,6 +32,17 @@ const MIN_TRANSFORMER_MEMORY_MIB: u64 = 2048;
 const MIB: u64 = 1024 * 1024;
 
 #[test]
+fn native_telegram_message_events_wait_for_compatible_reader_rollout() {
+    assert_eq!(
+        configmap_value(
+            CONFIGMAP,
+            "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED"
+        ),
+        Some("false")
+    );
+}
+
+#[test]
 fn lark_resource_writes_allow_source_opt_in_after_compatible_reader_rollout() {
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_LARK_RESOURCE_WRITES_ENABLED"),

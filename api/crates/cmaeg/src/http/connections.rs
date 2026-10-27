@@ -31,6 +31,10 @@ pub fn router(service: ConnectionService) -> Router {
 }
 #[derive(Serialize, ToSchema)]
 pub struct CapabilityView {
+    /// Server tools selected by the same runtime gates as MCP tools/list.
+    /// This catalog does not grant channel, source or event permission.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_tools: Option<Vec<crate::mcp::catalog::AgentToolCapability>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_features: Vec<String>,
     /// Native connection setup workflows; separate from NyxID relay ingestion.
@@ -50,6 +54,7 @@ pub struct PlatformCapability {
 pub async fn capabilities(State(service): State<ConnectionService>, _creator: Creator) -> Response {
     no_store(
         Json(CapabilityView {
+            agent_tools: Some(crate::mcp::catalog::view(&service.tools)),
             source_features: if service.management.native_bot_mentions_writes_enabled {
                 vec!["native_bot_mentions_v1".into()]
             } else {
