@@ -35,6 +35,7 @@ pub struct OutboundMessage {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "media_update::present"
     )]
+    #[schema(nullable = false)]
     pub native_media_update: Option<NativeMediaUpdate>,
     /// Approved WhatsApp template; exclusive of text, blocks, media and reply targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
