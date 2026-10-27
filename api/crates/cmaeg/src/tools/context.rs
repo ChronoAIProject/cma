@@ -60,6 +60,9 @@ pub struct Capabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_lifecycle: Option<cmaeg_core::thread_lifecycle::ThreadCapabilities>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_history:
+        Option<cmaeg_core::conversation_history::ConversationHistoryCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_media_edits: Option<crate::native_media::Capabilities>,
     /// A fixed 20-message prior window is available on explicit request.
     #[serde(skip_serializing_if = "Option::is_none")]

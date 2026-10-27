@@ -600,3 +600,6 @@ fn native_thread_lifecycle_is_independent_consent_and_retained_settings_can_be_r
         .get("thread_lifecycle")
         .is_none());
 }
+
+#[path = "write_gate_history_tests.rs"]
+mod conversation_history;

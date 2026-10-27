@@ -20,6 +20,7 @@ impl Capabilities {
             message_effects: None,
             thread_history: None,
             thread_lifecycle: None,
+            conversation_history: None,
         }
     }
     pub fn native_telegram() -> Self {
@@ -45,6 +46,7 @@ impl Capabilities {
             message_effects: None,
             thread_history: None,
             thread_lifecycle: None,
+            conversation_history: None,
         }
     }
     /// Text-only delivery through NyxID's generic relay reply: no native
@@ -66,6 +68,7 @@ impl Capabilities {
             message_effects: None,
             thread_history: None,
             thread_lifecycle: None,
+            conversation_history: None,
         }
     }
     /// Legacy capabilities before ordinary relay text-edit issuance is enabled.

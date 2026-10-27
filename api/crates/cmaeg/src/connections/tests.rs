@@ -133,6 +133,7 @@ impl Fixture {
         let tools = ToolsState {
             discord_thread_history: None,
             discord_threads: None,
+            discord_conversation_history: None,
             complete_replies_enabled: false,
             resolver: management.resolver.clone(),
             keys: self.keys.clone(),

@@ -105,6 +105,9 @@ pub enum Source {
         /// Explicit opt-in to bounded native Discord thread lifecycle operations.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         thread_lifecycle: bool,
+        /// Explicit read-only pagination within the original admitted conversation.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        conversation_history: bool,
         admission: AdmissionPolicy,
     },
     NyxidRelay {

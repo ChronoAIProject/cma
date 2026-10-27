@@ -202,6 +202,8 @@ impl ToolsState {
         response.thread_history = Some(history);
         response.capabilities.thread_lifecycle =
             self.thread_capabilities(caller, &event, &current).await;
+        response.capabilities.conversation_history =
+            self.history_capabilities(caller, &event, &current).await;
         Ok(response)
     }
 }

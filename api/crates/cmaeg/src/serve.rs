@@ -242,6 +242,14 @@ pub(crate) async fn serve(
     )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        discord_conversation_history: config
+            .native_discord_conversation_history_enabled
+            .then(|| {
+                crate::discord::DiscordRest::new()
+                    .map(crate::tools::DiscordConversationHistory::new)
+                    .map(std::sync::Arc::new)
+            })
+            .transpose()?,
         discord_threads: state
             .native_discord_thread_lifecycle_enabled
             .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreads::new))
