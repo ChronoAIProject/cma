@@ -4,6 +4,7 @@ pub(crate) mod content;
 pub use client::{Client, Error, Transport};
 pub(crate) mod management;
 pub(crate) mod message;
+pub(crate) mod outbound;
 pub mod receipts;
 pub(crate) mod webhook;
 use cmaeg_core::{

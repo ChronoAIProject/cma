@@ -20,7 +20,10 @@ pub struct NativeVideoCapabilities {
 }
 impl NativeVideoCapabilities {
     pub(super) fn whatsapp() -> Self {
-        use crate::whatsapp::outbound::video;
+        Self::bounded_baseline()
+    }
+    pub(super) fn bounded_baseline() -> Self {
+        use crate::media::outbound_profiles::video;
         Self {
             video_codec: "h264".into(),
             video_profile: "baseline".into(),
