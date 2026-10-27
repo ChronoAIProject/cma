@@ -1467,6 +1467,16 @@ The fallback leaves the original CloudEvent's `time` absent, so `occurred_at`
 alone does not establish that a timestamp came from the source. In channel
 Activity snapshots, `received_at` separately records gateway receipt.
 
+Recent channel receipts additionally expose optional `kind` (the category
+`message`, `interaction`, `command` or `event`), `event_type` (CloudEvent type)
+and `source_occurred_at` (explicit CloudEvent `time`). They never copy message
+text, event data or attachments into the recent-activity projection. Historical
+receipts may omit all three fields. A missing source time stays unknown even
+when `occurred_at` contains a normalization timestamp. Native message edits,
+deletions and reaction changes retain their explicit CloudEvent types in this
+projection; deletion actors remain unknown when the platform does not report
+them. These fields are descriptive and do not grant message or routing authority.
+
 Actor is `{id,kind,display_name?}`, kind `human|bot|system|unknown`. Conversation
 is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
 `{type:"nyxid_relay",platform,route_id}`, with a §6 platform, `{type:"telegram",platform:"telegram",bot_id}` for a native

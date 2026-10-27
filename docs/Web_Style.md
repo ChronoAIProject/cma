@@ -3718,3 +3718,15 @@ first section and retains explicit section selections without requiring scroll.
 The existing smooth and reduced-motion navigation behaviors remain unchanged.
 
 | 2026-10-27 | Keep configuration navigation highlights on the requested section through bottom-clamped scrolling, resume position tracking on user scroll, and preserve first/explicit selections when all content fits. |
+
+Channel Activity and its map preview label the recorded event category using
+the existing heading and metadata styles: Message received, Message edited,
+Message deleted, Reaction updated, Interaction received or Command received.
+Unknown or historical categories use Event received. An unknown actor reads
+Actor not reported. Event receipts show Source event time only from the explicit
+source timestamp, otherwise Not reported; the separate Received timestamp always
+means gateway receipt. Historical and ordinary receipt timestamps retain the
+Recorded event time label without claiming their source. These labels share the
+existing Presence animation and do not introduce another feed or polling.
+
+| 2026-10-27 | Distinguish message changes from new messages in Activity and its preview, retaining unknown actors and source times without inferring them from gateway receipt. |

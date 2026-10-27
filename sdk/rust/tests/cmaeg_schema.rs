@@ -13,6 +13,18 @@ fn fixtures() -> Value {
 }
 
 #[test]
+fn historical_activity_receipts_roundtrip_without_inventing_event_facts() {
+    let mut page = fixtures()["ActivityPage"][0].clone();
+    for row in page["items"].as_array_mut().unwrap() {
+        for key in ["kind", "event_type", "source_occurred_at"] {
+            row.as_object_mut().unwrap().remove(key);
+        }
+    }
+    let decoded: ActivityPage = serde_json::from_value(page.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), page);
+}
+
+#[test]
 fn legacy_relay_sources_never_gain_a_resource_binding_on_roundtrip() {
     for platform in ["telegram", "lark", "feishu", "discord", "whatsapp", "slack"] {
         let request = json!({"type":"nyxid_relay","platform":platform,"issuer":"https://nyx.example","key_id":"key-fixture","route_ids":["route-fixture"],"admission":{"type":"all"}});

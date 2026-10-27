@@ -1736,6 +1736,20 @@
           "event_id": {
             "type": "string"
           },
+          "event_type": {
+            "description": "CloudEvent type, when this receipt represents an event.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "description": "Payload category only; message text and event data are never copied here.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "occurred_at": {
             "description": "Normalized event time: source timestamp when supplied, otherwise gateway normalization time.",
             "type": "string"
@@ -1746,6 +1760,13 @@
           },
           "source": {
             "$ref": "#/components/schemas/SourceKind"
+          },
+          "source_occurred_at": {
+            "description": "Explicit CloudEvent time; absent when the source did not report one.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
