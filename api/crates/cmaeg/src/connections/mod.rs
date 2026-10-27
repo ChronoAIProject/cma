@@ -16,6 +16,8 @@ pub(crate) mod service;
 pub mod store;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tool_catalog_tests;
 mod webhook;
 pub use service::ConnectionService;
 
