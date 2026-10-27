@@ -38,6 +38,7 @@ interface TreeRowProps {
   readonly actions?: readonly TreeRowAction[];
   readonly onNavigate: (route: AppRoute) => void;
   readonly onToggle?: () => void;
+  readonly onActivate?: () => void;
   readonly onAction?: (id: string) => void;
 }
 
@@ -57,6 +58,7 @@ export function TreeRow({
   actions = [],
   onNavigate,
   onToggle,
+  onActivate,
   onAction,
 }: TreeRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -111,10 +113,16 @@ export function TreeRow({
           {expanded === true ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
         </button>
       )}
-      {route === undefined && onToggle === undefined ? (
+      {route === undefined && onToggle === undefined && onActivate === undefined ? (
         <span className="tree-row__label">{labelContent}</span>
       ) : route === undefined ? (
-        <button type="button" className="tree-row__label" tabIndex={-1} onClick={onToggle}>
+        <button
+          type="button"
+          className="tree-row__label"
+          tabIndex={-1}
+          aria-current={selected ? 'page' : undefined}
+          onClick={onActivate ?? onToggle}
+        >
           {labelContent}
         </button>
       ) : (

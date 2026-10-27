@@ -44,7 +44,7 @@ export function NodeFields({
       {create || section.kind === 'producer'
         ? sources.map((source, index) =>
             create || index === producer ? (
-              <Section title={`Producer ${index + 1}`} key={index}>
+              <Section title={`Producer ${index + 1}`} key={index} navigation={create}>
                 {create || index >= sourceCount ? (
                   <Choice
                     label={`Producer ${index + 1} connection type`}

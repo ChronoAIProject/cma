@@ -25,6 +25,8 @@ export interface SidebarLink {
  */
 export interface SidebarNewAgent {
   readonly onCreate: () => void;
+  readonly label?: string;
+  readonly icon?: ReactNode;
   readonly unavailableReason?: string;
 }
 
@@ -103,8 +105,8 @@ export function Sidebar({
               <button
                 type="button"
                 className="sidebar__new"
-                aria-label="New agent"
-                title={collapsed ? 'New agent' : undefined}
+                aria-label={newAgent.label ?? 'New agent'}
+                title={collapsed ? (newAgent.label ?? 'New agent') : undefined}
                 aria-disabled={newAgent.unavailableReason === undefined ? undefined : true}
                 aria-describedby={
                   newAgent.unavailableReason === undefined ? undefined : unavailableId
@@ -113,8 +115,8 @@ export function Sidebar({
                   if (newAgent.unavailableReason === undefined) newAgent.onCreate();
                 }}
               >
-                <IconPlusOutline16 />
-                <span>New agent</span>
+                {newAgent.icon ?? <IconPlusOutline16 />}
+                <span>{newAgent.label ?? 'New agent'}</span>
               </button>
               {newAgent.unavailableReason === undefined ? null : (
                 <p id={unavailableId} className="sidebar__reason" hidden={collapsed}>
