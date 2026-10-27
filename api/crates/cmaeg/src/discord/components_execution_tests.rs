@@ -38,21 +38,25 @@ fn frames(thread: bool) -> Vec<Value> {
 }
 #[tokio::test]
 async fn native_component_runs_real_provider_once_and_replies_to_original_card() {
-    run(false, false, false).await;
+    run(false, false, false, false).await;
 }
 #[tokio::test]
 async fn native_thread_buttons_and_selects_run_one_original_consumer_and_reply_in_same_thread() {
     for select in [false, true] {
-        run(true, select, false).await;
+        run(true, select, false, false).await;
     }
 }
 #[tokio::test]
 async fn native_discord_multiselect_executes_one_whole_set_and_preserves_named_thread_reply() {
     for thread in [false, true] {
-        run(thread, true, true).await;
+        run(thread, true, true, false).await;
     }
 }
-async fn run(thread: bool, select: bool, multi: bool) {
+#[tokio::test]
+async fn native_discord_edited_multiselect_executes_once_for_original_named_thread() {
+    run(true, true, true, true).await;
+}
+async fn run(thread: bool, select: bool, multi: bool, edited: bool) {
     let mut fixture = if thread {
         FixtureState::named_thread(11).await
     } else if multi {
@@ -66,7 +70,12 @@ async fn run(thread: bool, select: bool, multi: bool) {
     } else {
         message(select)
     };
-    let card = fixture.card(&outbound).await;
+    let card = if edited {
+        replaced_card(&fixture, &outbound).await
+    } else {
+        fixture.card(&outbound).await
+    };
+    let before_callback = fixture.rest.memory.calls.lock().unwrap().len();
     let mut raw = fixture.callback(
         card.markup[0]["components"][0]["custom_id"]
             .as_str()
@@ -86,7 +95,7 @@ async fn run(thread: bool, select: bool, multi: bool) {
     fixture.receive(raw.clone(), 2).await.unwrap();
     {
         let mut calls = fixture.rest.memory.calls.lock().unwrap();
-        assert_eq!(calls.len(), if thread { 3 } else { 1 });
+        assert_eq!(calls.len(), before_callback + if thread { 2 } else { 1 });
         assert!(calls.last().unwrap().path.ends_with("/callback"));
         calls.clear();
     }
@@ -259,4 +268,105 @@ async fn run(thread: bool, select: bool, multi: bool) {
         .unwrap();
     assert_eq!(completed.received_at, receipt.received_at);
     assert_eq!(completed.consumers.len(), 1);
+}
+
+async fn replaced_card(
+    f: &FixtureState,
+    message: &cmaeg_core::message::OutboundMessage,
+) -> crate::interactions::PreparedCard {
+    use crate::{
+        delivery::{
+            intents::{DeliveryOutcome, IntentReceipt},
+            render::{RelayText, Renderer},
+        },
+        interactions::{discord_edit::Admission, Destination},
+        tools::Capabilities,
+    };
+    let old = f.card(&super::components_fixture::message(false)).await;
+    let reference = old
+        .card
+        .reference
+        .as_ref()
+        .unwrap()
+        .open(&f.keys())
+        .unwrap()
+        .payload;
+    let Admission::Ready(candidate) = f
+        .store
+        .discord_edit_candidate(&f.channel, &reference, message)
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    f.queue_thread_metadata();
+    let credential = super::rest::token(&f.channel, "77").unwrap();
+    let proof = f
+        .rest
+        .api
+        .verify_component_channel(credential, "99", &f.context.activity.conversation)
+        .await
+        .unwrap();
+    assert_eq!(proof, old.card.discord.as_ref().unwrap().thread);
+    let mut claim = f
+        .store
+        .begin_discord_edit(*candidate, message)
+        .await
+        .unwrap();
+    let (parts, rendering) = RelayText.render(
+        message,
+        &Capabilities {
+            buttons: "inline_keyboard".into(),
+            ..Capabilities::native_discord()
+        },
+    );
+    f.rest.respond(
+        axum::http::StatusCode::OK,
+        json!({"id":"800","channel_id":"99","author":{"id":"77"},
+        "content":parts[0].text,"components":claim.prepared.markup}),
+    );
+    f.rest
+        .api
+        .edit_components(
+            credential,
+            "77",
+            "99",
+            "800",
+            &parts[0].text,
+            &claim.prepared.markup,
+        )
+        .await
+        .unwrap();
+    let reference = f
+        .store
+        .bind(
+            &mut claim.prepared,
+            Destination {
+                outbound_id: "800".into(),
+                platform_id: "800".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let result = crate::interactions::PreparedCard {
+        card: claim.prepared.card.clone(),
+        version: claim.prepared.version,
+        markup: claim.prepared.markup.clone(),
+    };
+    f.store
+        .finish_discord_edit(
+            claim,
+            &IntentReceipt {
+                message_ref: Some(reference),
+                rendering,
+                delivery: DeliveryOutcome::Confirmed {
+                    platform_message_id: Some("800".into()),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    f.rest
+        .respond(axum::http::StatusCode::NO_CONTENT, Value::Null);
+    result
 }

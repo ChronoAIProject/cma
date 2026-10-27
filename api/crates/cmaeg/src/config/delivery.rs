@@ -12,6 +12,7 @@ pub const CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED: &str =
 pub const CMAEG_CONSUMER_INTERACTIONS_ENABLED: &str = "CMAEG_CONSUMER_INTERACTIONS_ENABLED";
 pub const CMAEG_WHATSAPP_INTERACTIONS_ENABLED: &str = "CMAEG_WHATSAPP_INTERACTIONS_ENABLED";
 pub const CMAEG_DISCORD_INTERACTIONS_ENABLED: &str = "CMAEG_DISCORD_INTERACTIONS_ENABLED";
+pub const CMAEG_DISCORD_CARD_EDITS_ENABLED: &str = "CMAEG_DISCORD_CARD_EDITS_ENABLED";
 pub const CMAEG_DISCORD_MULTISELECT_ENABLED: &str = "CMAEG_DISCORD_MULTISELECT_ENABLED";
 pub const CMAEG_WHATSAPP_TEMPLATES_ENABLED: &str = "CMAEG_WHATSAPP_TEMPLATES_ENABLED";
 pub const CMAEG_LARK_CARDS_ENABLED: &str = "CMAEG_LARK_CARDS_ENABLED";
@@ -117,6 +118,9 @@ fn whatsapp_templates(value: Result<String, env::VarError>) -> Result<bool, Conf
 
 pub(crate) fn lark_cards_from_env() -> Result<bool, ConfigError> {
     lark_cards(env::var(CMAEG_LARK_CARDS_ENABLED))
+}
+pub(crate) fn discord_card_edits_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag(CMAEG_DISCORD_CARD_EDITS_ENABLED)
 }
 pub(crate) fn lark_forms_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_LARK_FORMS_ENABLED)
