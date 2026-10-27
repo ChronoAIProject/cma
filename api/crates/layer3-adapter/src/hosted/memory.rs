@@ -102,6 +102,7 @@ pub struct InMemoryHostedBackend {
     lost_responses: Arc<StdMutex<VecDeque<WireOperation>>>,
     corrupt_install_receipt: Arc<AtomicBool>,
     corrupt_capture_digest: Arc<AtomicBool>,
+    inventory_unavailable: Arc<AtomicBool>,
     archives: Arc<StdMutex<BTreeMap<String, checkpoint::HomeArchive>>>,
 }
 
@@ -151,6 +152,11 @@ impl HostedBackend for InMemoryHostedBackend {
     }
 
     async fn inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+        if self.inventory_unavailable.load(Ordering::SeqCst) {
+            return Err(AdapterError::Unavailable(
+                "provider inventory is unavailable".into(),
+            ));
+        }
         self.runtimes
             .lock()
             .await

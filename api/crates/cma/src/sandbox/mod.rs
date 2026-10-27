@@ -10,6 +10,7 @@ mod agent_worker;
 mod checkpoint_maintenance;
 mod composition;
 mod credential;
+pub(crate) use credential::owner_tokens::ServiceAccessOwnerTokens;
 mod home;
 mod home_native;
 mod live_agent_stopper;

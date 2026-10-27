@@ -44,6 +44,7 @@ pub enum AgentStopReason {
     Operator,
     RuntimeLost,
     SandboxRetired,
+    BindingRetired,
     Failed,
 }
 
@@ -54,6 +55,7 @@ impl AgentStopReason {
             Self::Operator => "operator",
             Self::RuntimeLost => "runtime_lost",
             Self::SandboxRetired => "sandbox_retired",
+            Self::BindingRetired => "binding_retired",
             Self::Failed => "failed",
         }
     }

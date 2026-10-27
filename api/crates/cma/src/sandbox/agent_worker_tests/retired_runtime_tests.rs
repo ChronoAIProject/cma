@@ -3,6 +3,7 @@ use layer2_core::sandbox::store::WorkspaceAdmissionStore;
 use layer2_core::sandbox::{SandboxCheckpointConversation, SandboxCheckpointRef};
 use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
 use sha2::{Digest, Sha256};
+mod public_api;
 
 async fn completed_retirement(harness: &Harness, remove_runtime: bool) {
     let mut parent = harness
@@ -170,6 +171,15 @@ async fn retired_sandbox_workspace_removal_requires_provider_absence_and_finishe
 }
 
 async fn retire_paused_parent(harness: &Harness, ready: &Agent, remove_runtime: bool) {
+    retire_paused_parent_with_pending_stop(harness, ready, remove_runtime, None).await;
+}
+
+async fn retire_paused_parent_with_pending_stop(
+    harness: &Harness,
+    ready: &Agent,
+    remove_runtime: bool,
+    reason: Option<AgentStopReason>,
+) {
     let stamp = rfc3339_at(harness.now + Duration::from_secs(5));
     let mut paused = ready.clone();
     paused
@@ -180,6 +190,18 @@ async fn retire_paused_parent(harness: &Harness, ready: &Agent, remove_runtime: 
         .save_agent(ready.revision, paused)
         .await
         .unwrap();
+    if let Some(reason) = reason {
+        let paused = harness.stored(&ready.id).await;
+        harness
+            .store
+            .schedule_agent_stop(layer2_core::sandbox::store::AgentStopRequest {
+                target: AgentControlTarget::from(&paused),
+                reason,
+                requested_at: stamp.clone(),
+            })
+            .await
+            .unwrap();
+    }
     if remove_runtime {
         harness.adapter.teardown(&harness.runtime).await.unwrap();
     }
@@ -219,6 +241,77 @@ async fn retire_paused_parent(harness: &Harness, ready: &Agent, remove_runtime: 
     sandbox.status = SandboxStatus::Paused;
     sandbox.begin_retirement(stamp).unwrap();
     harness.store.save_sandbox(revision, sandbox).await.unwrap();
+}
+
+#[tokio::test]
+async fn owner_stop_before_retirement_survives_worker_restart_and_preserves_original_reason() {
+    use crate::sandbox::worker::LiveAgentStopper;
+    let harness = Harness::with_generation(Arc::new(EmptyAgentSkillResolver), 4).await;
+    let admitted = harness.admit("pending-owner-stop", Vec::new()).await;
+    let ready = harness.drive_ready(&admitted.id).await;
+    retire_paused_parent_with_pending_stop(&harness, &ready, true, Some(AgentStopReason::Owner))
+        .await;
+    let parent = harness
+        .store
+        .get_sandbox(&ready.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let stopper = crate::sandbox::live_agent_stopper::DurableLiveAgentStopper::new(
+        harness.store.clone(),
+        harness.registry.clone(),
+    );
+    for _ in 0..2 {
+        assert!(stopper
+            .stop_live_agents(&parent, None, "retirement")
+            .await
+            .is_err());
+        assert_eq!(
+            harness.stored(&ready.id).await.requested_stop_reason,
+            Some(AgentStopReason::Owner)
+        );
+    }
+    let now = harness.now + Duration::from_secs(6);
+    harness.run(&ready.id, now).await;
+    assert_eq!(
+        harness.stored(&ready.id).await.work.step,
+        AgentWorkStep::CloseProcess
+    );
+    let before = harness.backend.requests().await.len();
+    let registry = Arc::new(LiveAgentRegistry::default());
+    let worker = AgentWorker::new(
+        AgentWorkerDependencies {
+            store: harness.store.clone(),
+            adapter: harness.adapter.clone(),
+            skills: Arc::new(EmptyAgentSkillResolver),
+            registry: registry.clone(),
+            updates: harness.updates.clone(),
+            operations: AgentOperationService::new(harness.store.clone(), registry),
+        },
+        AgentWorkerConfig::new("replacement-worker", DEPLOYMENT_ID),
+    );
+    for _ in 0..2 {
+        assert!(worker.run_one(&ready.id, now).await.unwrap());
+    }
+    let stopped = harness.stored(&ready.id).await;
+    assert_eq!(stopped.status, AgentStatus::Stopped);
+    assert_eq!(stopped.stop_reason, Some(AgentStopReason::Owner));
+    assert_eq!(
+        stopped.conversation.conversation_id,
+        ready.conversation.conversation_id
+    );
+    assert_eq!(stopped.work.receipts, ready.work.receipts);
+    assert_eq!(harness.backend.requests().await.len(), before);
+    assert!(harness
+        .adapter
+        .runtime_inventory()
+        .await
+        .unwrap()
+        .is_empty());
+    stopper
+        .stop_live_agents(&parent, None, "retirement")
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

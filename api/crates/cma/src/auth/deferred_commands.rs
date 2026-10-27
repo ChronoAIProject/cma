@@ -20,6 +20,7 @@ mod api_bearer;
 mod binding;
 mod custody;
 mod delegated;
+mod owner_service_access;
 mod personal_owner;
 mod resource;
 mod sandbox_controls;
@@ -106,6 +107,24 @@ impl AgentCommandAdmissionAuthority for AuthState {
 
 #[async_trait::async_trait]
 impl PersonalCommandAdmissionAuthority for AuthState {
+    async fn owner_service_access_authority(
+        &self,
+        context: &layer2_core::resource_access::CallerContext,
+        credential: &str,
+    ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        self.admit_owner_service_access(context, credential).await
+    }
+
+    async fn confirm_owner_service_scope(
+        &self,
+        context: &layer2_core::resource_access::CallerContext,
+        credential: &str,
+        services: &[String],
+    ) -> Result<(), layer2_core::sandbox::agent_access::AgentAccessError> {
+        self.verify_owner_service_scope(context, credential, services)
+            .await
+    }
+
     /// Bind admission to explicit credential custody. A bearer-only caller with
     /// no matching durable token cannot silently borrow another login's grant.
     async fn personal_command_authority(

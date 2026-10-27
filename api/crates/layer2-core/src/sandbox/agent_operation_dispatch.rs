@@ -212,7 +212,7 @@ impl AgentOperationService {
             operation_sequence,
             turn_sequence,
             required,
-            input: ConversationInput::Prompt(vec![ContentBlock::from(text)]),
+            input: ConversationInput::Steer(vec![ContentBlock::from(text)]),
             rollback: PreWriteRollback::None,
             queued_message_sequence: None,
         })
