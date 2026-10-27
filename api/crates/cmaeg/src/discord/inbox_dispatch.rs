@@ -132,7 +132,22 @@ impl InboxDispatcher {
                         .clone()
                         .try_acquire_owned()
                         .map_err(|_| GatewayError::Unavailable)?;
-                    match self.ingress.launch_native_verified(*verified, permit).await {
+                    let outcome = if let Some(original) = verified.original_message {
+                        self.ingress
+                            .launch_message_event_verified(
+                                crate::ingress::message_event::VerifiedMessageEvent {
+                                    request: verified.request,
+                                    source_bytes: verified.source_bytes,
+                                    received_at: verified.received_at,
+                                    original,
+                                },
+                                permit,
+                            )
+                            .await
+                    } else {
+                        self.ingress.launch_native_verified(*verified, permit).await
+                    };
+                    match outcome {
                         LaunchOutcome::Admitted { admission_id, .. } => {
                             Disposition::Admitted { admission_id }
                         }
