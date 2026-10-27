@@ -3,6 +3,8 @@ mod channels;
 pub use channels::*;
 mod sources;
 pub use sources::*;
+mod native_media_update;
+pub use native_media_update::*;
 mod messages;
 pub use messages::*;
 mod message_effects;
@@ -36,4 +38,6 @@ mod outbound;
 pub use outbound::*;
 
 mod thread_history;
+mod thread_lifecycle;
 pub use thread_history::*;
+pub use thread_lifecycle::*;

@@ -44,6 +44,9 @@ impl CustomDelivery {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> IntentReceipt {
+        if message.native_media_update.is_some() {
+            return super::send::unsupported();
+        }
         let data = custom::data(event, message.text.as_deref(), Some(message), None);
         // Commit point (Amendment R3 §R3.1): for a Sync-origin event the
         // emitted frame is the first side effect. Emitting to any other
@@ -86,6 +89,7 @@ impl CustomDelivery {
                     Some(text),
                     Some(&OutboundMessage {
                         whatsapp_template: None,
+                        native_media_update: None,
                         native_attachments: Vec::new(),
                         thread_reply: false,
                         text: Some(text.clone()),
@@ -322,6 +326,7 @@ mod tests {
     pub(super) fn message() -> OutboundMessage {
         OutboundMessage {
             whatsapp_template: None,
+            native_media_update: None,
             native_attachments: Vec::new(),
             thread_reply: false,
             text: Some("hello".into()),

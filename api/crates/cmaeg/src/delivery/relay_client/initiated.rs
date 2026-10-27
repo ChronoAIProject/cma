@@ -30,6 +30,9 @@ impl RelayClient {
         message
             .validate()
             .map_err(|_| invalid("outbound_message_invalid"))?;
+        if message.native_media_update.is_some() {
+            return Err(invalid("native_media_update_requires_updateMessage"));
+        }
         if message.thread_reply || message.reply_to.is_some() {
             return Err(invalid(
                 "initiated_send_has_no_inbound_reply_or_thread_authority",

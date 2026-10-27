@@ -45,6 +45,7 @@ pub(super) fn capabilities(
 ) -> Result<MessageEffectsCapabilities, Problem> {
     whatsapp_authority::check(message, channel, caller)?;
     Ok(MessageEffectsCapabilities {
+        media_edit: None,
         delete: false,
         reaction: enabled,
         scope: "received_native_user_message".into(),

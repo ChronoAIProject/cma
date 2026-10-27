@@ -214,6 +214,13 @@ pub struct IntentReceipt {
 /// CMAEG `OutboundMessage` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutboundMessage {
+    /// Update-only patch: omitted preserves; an empty caption/text clears; null refuses.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub native_media_update: Option<super::NativeMediaUpdate>,
     /// Approved WhatsApp template, exclusive of other message content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_template: Option<super::WhatsappTemplate>,
@@ -252,7 +259,7 @@ pub struct TypingReceipt {
 }
 
 /// Native media category supported by the destination relay.
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NativeMediaKind {
     /// Image rendered by the destination platform.

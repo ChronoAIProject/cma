@@ -1669,6 +1669,12 @@
           "edit": {
             "type": "boolean"
           },
+          "forms": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "inbound_media": {
             "oneOf": [
               {
@@ -1707,11 +1713,32 @@
               }
             ]
           },
+          "native_media_edits": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeMediaEditCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "thread_history": {
             "description": "A fixed 20-message prior window is available on explicit request.",
             "type": [
               "boolean",
               "null"
+            ]
+          },
+          "thread_lifecycle": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadCapabilities",
+                "description": "Derived from retained native evidence; actual platform permissions are checked per call."
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "typing": {
@@ -2638,6 +2665,25 @@
         ],
         "type": "object"
       },
+      "CreateThreadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_archive_duration": {
+            "description": "Discord minutes: 60, 1440, 4320, or 10080. Always explicit.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "auto_archive_duration"
+        ],
+        "type": "object"
+      },
       "CredentialPatch": {
         "additionalProperties": false,
         "properties": {
@@ -3522,6 +3568,22 @@
         ],
         "type": "string"
       },
+      "ManageThreadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ThreadAction"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ThreadTarget"
+          }
+        },
+        "required": [
+          "target",
+          "action"
+        ],
+        "type": "object"
+      },
       "McpAuth": {
         "oneOf": [
           {
@@ -3651,6 +3713,16 @@
             "format": "int32",
             "minimum": 0,
             "type": "integer"
+          },
+          "media_edit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeMediaEditCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reaction": {
             "type": "boolean"
@@ -3942,6 +4014,52 @@
         ],
         "type": "object"
       },
+      "NativeMediaEditCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "caption": {
+            "type": "boolean"
+          },
+          "content": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "idempotency_key_required": {
+            "type": "boolean"
+          },
+          "max_attachments": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "replacement_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/NativeMediaKind"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "caption",
+          "content",
+          "replacement_kinds",
+          "max_attachments",
+          "max_bytes",
+          "idempotency_key_required"
+        ],
+        "type": "object"
+      },
       "NativeMediaKind": {
         "enum": [
           "image",
@@ -3951,6 +4069,34 @@
           "sticker"
         ],
         "type": "string"
+      },
+      "NativeMediaReplacement": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NativeMediaKind"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/NativeMediaSource"
+          }
+        },
+        "required": [
+          "kind",
+          "source"
+        ],
+        "type": "object"
       },
       "NativeMediaSource": {
         "oneOf": [
@@ -3993,6 +4139,23 @@
             "type": "object"
           }
         ]
+      },
+      "NativeMediaUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "caption": {
+            "description": "Telegram visible caption; Discord attachment description (alt text).",
+            "type": "string"
+          },
+          "replacement": {
+            "$ref": "#/components/schemas/NativeMediaReplacement"
+          },
+          "text": {
+            "description": "Discord visible message content. Unsupported for Telegram media updates.",
+            "type": "string"
+          }
+        },
+        "type": "object"
       },
       "NativeStickerCapabilities": {
         "properties": {
@@ -4158,6 +4321,10 @@
               "$ref": "#/components/schemas/NativeAttachment"
             },
             "type": "array"
+          },
+          "native_media_update": {
+            "$ref": "#/components/schemas/NativeMediaUpdate",
+            "description": "Explicit single-media update; accepted only by updateMessage."
           },
           "reply_to": {
             "oneOf": [
@@ -4910,7 +5077,25 @@
               "null"
             ]
           },
+          "native_discord_thread_lifecycle_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_discord_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_lark_controls_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_lark_forms_enabled": {
             "type": [
               "boolean",
               "null"
@@ -5682,6 +5867,10 @@
                 "description": "Allow an admitted consumer to read up to 20 earlier messages in its exact thread.",
                 "type": "boolean"
               },
+              "thread_lifecycle": {
+                "description": "Explicit opt-in to bounded native Discord thread lifecycle operations.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "discord"
@@ -6126,6 +6315,10 @@
                 "description": "Allow an admitted consumer to read up to 20 earlier messages in its exact thread.",
                 "type": "boolean"
               },
+              "thread_lifecycle": {
+                "description": "Explicit opt-in to bounded native Discord thread lifecycle operations.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "discord"
@@ -6336,6 +6529,15 @@
         ],
         "type": "string"
       },
+      "ThreadAction": {
+        "enum": [
+          "archive",
+          "reopen",
+          "join",
+          "leave"
+        ],
+        "type": "string"
+      },
       "ThreadAddress": {
         "enum": [
           "mention",
@@ -6344,6 +6546,39 @@
           "unknown"
         ],
         "type": "string"
+      },
+      "ThreadCapabilities": {
+        "additionalProperties": false,
+        "description": "Scope availability, never a claim about the bot's current Discord permissions.",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/ThreadAction"
+            },
+            "type": "array"
+          },
+          "create_from_original_message": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "list": {
+            "$ref": "#/components/schemas/ThreadListScope"
+          },
+          "manage_original_thread": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "create_from_original_message",
+          "list",
+          "manage_original_thread",
+          "actions",
+          "expires_at"
+        ],
+        "type": "object"
       },
       "ThreadContract": {
         "additionalProperties": false,
@@ -6490,6 +6725,239 @@
           "native"
         ],
         "type": "string"
+      },
+      "ThreadList": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/ThreadListScope"
+          },
+          "threads": {
+            "items": {
+              "$ref": "#/components/schemas/ThreadSummary"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "description": "At most 25 results. There is deliberately no transferable pagination cursor.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "threads",
+          "truncated",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "ThreadListScope": {
+        "enum": [
+          "original_thread",
+          "public_children_of_original_parent"
+        ],
+        "type": "string"
+      },
+      "ThreadListView": {
+        "enum": [
+          "active",
+          "archived"
+        ],
+        "type": "string"
+      },
+      "ThreadOutcome": {
+        "oneOf": [
+          {
+            "properties": {
+              "status": {
+                "enum": [
+                  "confirmed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "unsupported"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "rejected"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "retry_after": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "rate_limited"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "retry_after",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ThreadReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/ThreadOutcome"
+          },
+          "thread": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "ThreadRef": {
+        "type": "string"
+      },
+      "ThreadSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "thread_id": {
+            "type": "string"
+          },
+          "thread_ref": {
+            "$ref": "#/components/schemas/ThreadRef"
+          }
+        },
+        "required": [
+          "thread_ref",
+          "thread_id",
+          "parent_id",
+          "name",
+          "archived",
+          "locked",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "ThreadTarget": {
+        "oneOf": [
+          {
+            "description": "Only the exact thread containing this event, never its siblings.",
+            "properties": {
+              "event_ref": {
+                "$ref": "#/components/schemas/EventRef"
+              },
+              "type": {
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event_ref",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "thread_ref": {
+                "$ref": "#/components/schemas/ThreadRef"
+              },
+              "type": {
+                "enum": [
+                  "thread"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "thread_ref",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "TypingOutcome": {
         "enum": [
@@ -8769,6 +9237,120 @@
         ]
       }
     },
+    "/events/{event_ref}/threads": {
+      "get": {
+        "operationId": "listEventThreads",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ThreadListView"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      },
+      "post": {
+        "operationId": "createEventThread",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateThreadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
     "/events/{event_ref}/typing": {
       "post": {
         "operationId": "sendTyping",
@@ -9026,6 +9608,18 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Required for native_media_update; retain the same key and patch on retry.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -9335,6 +9929,61 @@
         },
         "tags": [
           "ingress"
+        ]
+      }
+    },
+    "/thread-operations": {
+      "post": {
+        "operationId": "manageThread",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManageThreadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
         ]
       }
     },

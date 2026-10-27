@@ -20,7 +20,7 @@ fn message() -> cmaeg_core::message::OutboundMessage {
     let ReplayEffect::Reply(message) = effect() else {
         unreachable!()
     };
-    message
+    *message
 }
 fn receipt() -> crate::delivery::intents::IntentReceipt {
     receipt_for(DeliveryOutcome::Confirmed {

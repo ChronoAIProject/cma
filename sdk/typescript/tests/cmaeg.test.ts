@@ -389,3 +389,39 @@ describe('native relay media', () => {
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual(message);
   });
 });
+
+it('uses scoped thread references, explicit stable keys and exact lifecycle wire methods', async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>();
+  const client = new Cmaeg({
+    baseUrl: 'https://gateway.example',
+    credential: () => 'fixture',
+    fetch,
+  });
+  const eventRef = 'opaque/+?%event';
+  fetch.mockResolvedValueOnce(
+    json({ threads: [], truncated: false, scope: 'public_children_of_original_parent' }),
+  );
+  await client.listEventThreads(eventRef, 'archived');
+  expect(fetch.mock.calls[0]?.[0]).toBe(
+    `https://gateway.example/v1/events/${encodeURIComponent(eventRef)}/threads?view=archived`,
+  );
+  const create = { name: 'Review', auto_archive_duration: 1440 };
+  fetch.mockResolvedValueOnce(
+    json({ outcome: { status: 'unknown', reason: 'thread_write_unconfirmed' } }),
+  );
+  const result = await client.createEventThread(eventRef, 'create-stable', create);
+  expect(result.outcome.status).toBe('unknown');
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const creation = fetch.mock.calls[1]?.[1];
+  expect(creation?.method).toBe('POST');
+  expect(new Headers(creation?.headers).get('Idempotency-Key')).toBe('create-stable');
+  expect(JSON.parse(creation?.body as string)).toEqual(create);
+  const request = {
+    target: { type: 'thread' as const, thread_ref: 'cmaeg1.tr.original' },
+    action: 'leave' as const,
+  };
+  fetch.mockResolvedValueOnce(json({ outcome: { status: 'confirmed' } }));
+  await client.manageThread('leave-stable', request);
+  expect(fetch.mock.calls[2]?.[0]).toBe('https://gateway.example/v1/thread-operations');
+  expect(JSON.parse(fetch.mock.calls[2]?.[1]?.body as string)).toEqual(request);
+});

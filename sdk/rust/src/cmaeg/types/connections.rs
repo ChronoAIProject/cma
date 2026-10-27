@@ -154,12 +154,21 @@ pub struct RelayAuthoringCapabilities {
     /// Native webhook intake gate, independent of authoring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_lark_intake_enabled: Option<bool>,
+    /// Native Lark card and button issuance is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_controls_enabled: Option<bool>,
+    /// Native Lark form issuance is available and requires native controls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_forms_enabled: Option<bool>,
     /// Native Telegram owners may enable durable edit and reaction notifications.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_telegram_message_events_enabled: Option<bool>,
     /// Opt-in native Discord thread history is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_history_enabled: Option<bool>,
+    /// Native Discord lifecycle opt-in and execution gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_thread_lifecycle_enabled: Option<bool>,
     /// Whether native Discord incoming reaction events are enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_reactions_enabled: Option<bool>,

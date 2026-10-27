@@ -2,6 +2,7 @@ export * from './types/primitives.js';
 export * from './types/profile.js';
 export * from './types/messages.js';
 export * from './types/message-effects.js';
+export * from './types/thread-lifecycle.js';
 export * from './types/activities.js';
 export * from './types/channel-activity.js';
 export * from './types/channels.js';

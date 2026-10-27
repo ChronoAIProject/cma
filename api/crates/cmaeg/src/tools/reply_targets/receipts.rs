@@ -189,7 +189,9 @@ impl Store {
             return Err(Problem::new(
                 ProblemCode::Conflict,
                 409,
-                if matches!(
+                if expected.kind == "native_media_update_v1" {
+                    "native_media_update_idempotency_conflict"
+                } else if matches!(
                     expected.kind.as_str(),
                     "lark_message_effect_v1"
                         | "native_lark_message_effect_v1"

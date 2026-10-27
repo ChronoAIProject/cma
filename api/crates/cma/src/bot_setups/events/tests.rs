@@ -185,9 +185,11 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
     let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":backend,"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1}]).to_string()).unwrap();
     ToolsState {
         discord_thread_history: None,
+        discord_threads: None,
         complete_replies_enabled: false,
         routed_replies: None,
         telegram_effects_issuance_enabled: false,
+        native_media_edits: None,
         native_lark_effects: None,
         lark_effects_issuance_enabled: false,
         lark_effects: None,

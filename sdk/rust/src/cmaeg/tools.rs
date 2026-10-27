@@ -3,6 +3,51 @@ use crate::{Result, http::Request};
 use reqwest::{Method, StatusCode, header};
 
 impl Cmaeg {
+    /// List a bounded window under the original native Discord scope, with no caller destination.
+    pub async fn list_event_threads(
+        &self,
+        event_ref: &str,
+        view: ThreadListView,
+    ) -> Result<ThreadList> {
+        let segments = ["v1", "events", event_ref, "threads"];
+        let mut request = Request::get(&segments);
+        let query = [(
+            "view",
+            match view {
+                ThreadListView::Active => "active",
+                ThreadListView::Archived => "archived",
+            }
+            .to_owned(),
+        )];
+        request.query = &query;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Create a public thread from the exact original message; never retry an unknown outcome.
+    pub async fn create_event_thread(
+        &self,
+        event_ref: &str,
+        idempotency_key: &str,
+        body: &CreateThreadRequest,
+    ) -> Result<ThreadReceipt> {
+        let segments = ["v1", "events", event_ref, "threads"];
+        let mut request = Request::operation(Method::POST, &segments, Some(body), StatusCode::OK)?
+            .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Manage an exact scoped thread or current bot membership using a stable idempotency key.
+    pub async fn manage_thread(
+        &self,
+        idempotency_key: &str,
+        body: &ManageThreadRequest,
+    ) -> Result<ThreadReceipt> {
+        let segments = ["v1", "thread-operations"];
+        let mut request = Request::operation(Method::POST, &segments, Some(body), StatusCode::OK)?
+            .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Discover exact-message effects without assuming transport or bot permissions.
     pub async fn read_message_capabilities(
         &self,
@@ -90,6 +135,21 @@ impl Cmaeg {
         let segments = ["v1", "messages", message_ref, "update"];
         let mut request =
             Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Edit native media with a stable key. Retain the returned next message reference;
+    /// retry an uncertain outcome only with the same reference, body and key.
+    pub async fn update_message_with_idempotency(
+        &self,
+        message_ref: &str,
+        idempotency_key: &str,
+        message: &OutboundMessage,
+    ) -> Result<IntentReceipt> {
+        let segments = ["v1", "messages", message_ref, "update"];
+        let mut request =
+            Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?
+                .with_command_key(Some(idempotency_key))?;
         request.root = true;
         self.client.request(request).await
     }

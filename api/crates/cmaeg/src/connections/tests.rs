@@ -132,6 +132,7 @@ impl Fixture {
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = ToolsState {
             discord_thread_history: None,
+            discord_threads: None,
             complete_replies_enabled: false,
             resolver: management.resolver.clone(),
             keys: self.keys.clone(),
@@ -148,6 +149,7 @@ impl Fixture {
             native_whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_media_edits: None,
             native_lark_effects: None,
             lark_effects_issuance_enabled: false,
             lark_effects: None,
