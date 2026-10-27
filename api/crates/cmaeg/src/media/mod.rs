@@ -17,6 +17,7 @@ pub mod forward;
 pub mod image;
 pub mod jobs;
 pub(crate) mod outbound;
+pub(crate) mod outbound_profiles;
 pub mod prepare;
 pub mod service;
 pub mod sniff;
