@@ -154,7 +154,7 @@ async fn telegram_message_context_recovers_lost_write_ack_and_original_plan_is_r
         &[f.channel.definition.record_id.as_str(), "77", "42", "5"],
     );
     f.server.fault(id, true, false);
-    context.remember(&f.state, &f.channel).await;
+    assert!(context.remember(&f.state, &f.channel).await.is_err());
     // A locator alone cannot manufacture authority before the original commits.
     assert!(matches!(
         f.verified(&f.edit()).await,

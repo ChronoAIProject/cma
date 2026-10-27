@@ -81,11 +81,27 @@ pub async fn callback(
                 None
             };
             let channel = admitted.request.channel.clone();
+            if admitted.callback.is_none()
+                && crate::ingress::routed::telegram::opted_in(&admitted.request)
+                && matches!(
+                    admitted.request.activity.kind,
+                    cmaeg_core::activity::ActivityKind::Message { .. }
+                )
+                && context.is_none()
+            {
+                return events::failure(
+                    &state,
+                    &channel.definition.record_id,
+                    telegram::events::Error::Unavailable,
+                );
+            }
             let response =
                 super::chat_dispatch::dispatch(state.clone(), admitted, timing, permit).await;
             if response.status() == StatusCode::ACCEPTED {
                 if let Some(context) = context {
-                    context.remember(&state, &channel).await;
+                    if let Err(error) = context.remember(&state, &channel).await {
+                        return events::failure(&state, &channel.definition.record_id, error);
+                    }
                 }
             }
             response
