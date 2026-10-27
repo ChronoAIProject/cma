@@ -335,6 +335,15 @@ export function AgentSurface({
           />
         ) : null}
         <MessageStream
+          media={
+            lifecycleClient?.files && !accessUncertain && accessAuthorized
+              ? {
+                  agentId,
+                  files: lifecycleClient.files,
+                  workingDirectory: conversation.runtimeMetadata?.workingDirectory,
+                }
+              : undefined
+          }
           feedback={feedback}
           user={user}
           viewPosition={viewPosition}

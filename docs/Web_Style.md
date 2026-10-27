@@ -3756,3 +3756,26 @@ opening the inspector adds no discovery request or polling, and catalog entries
 do not establish platform permissions or installation in connected agents.
 
 | 2026-10-27 | Render the authoritative advertised tool catalog in the existing inspector, distinguish unknown/empty/loading/error states, and preserve shared discovery, agent-installation caveats and reduced-motion arrival. |
+
+Completed Agent turns show **Worked for 2 hours 3 minutes 4 seconds.** below
+their final reply, before token usage and the message footer. Use the existing
+12/18 caption typography without a background, border or new spacing. This
+duration stays visible at rest. Omit unused leading hours/minutes, use singular
+units for one, and retain hours beyond 24. Derive elapsed time from recorded turn
+start and terminal timestamps; approval pauses, reconnects and route changes do
+not restart the clock. An approval wait is not completion. Unknown or invalid
+timestamps show no duration; history replay restores the recorded value.
+
+| 2026-10-28 | Retain recorded elapsed time below a completed turn's final reply, including long turns, replay and approval/reconnect continuity. |
+
+Agent replies display Markdown images and linked image, audio and video files
+within the existing message column. Images/video keep their natural aspect ratio
+and never exceed the column width; audio/video use native keyboard-accessible
+controls without autoplay. Reuse the image's 8px radius and the existing 4px
+caption gap. Loading and failed previews use 12/18 caption text and the compact
+Retry preview Button. File previews require current file-view access and load
+through the public Agent file API when scrolled into view. Navigation or access
+loss cancels pending reads and releases previews. Unsafe URLs and raw HTML remain
+inert, and unavailable files keep their visible label instead of disappearing.
+
+| 2026-10-28 | Render authorized local and remote reply media with bounded layout, native playback, lazy file reads, and visible preview recovery. |

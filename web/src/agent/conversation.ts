@@ -13,6 +13,7 @@ import { setPlan } from './plans';
 import { descriptionSource, durableRuntimeMetadata, mergeRuntimeMetadata } from './runtimeMetadata';
 import { sessionCommands } from './slashCommands';
 import { number, object, text } from './conversationValues';
+import { startTurn, finishTurn } from './turnTiming';
 import type {
   ApprovalRequest,
   ConversationMessage,
@@ -75,6 +76,15 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
     recovery,
     activeRunId: activeTurn === undefined ? undefined : String(activeTurn.turnSequence),
     activeRunStartedAt: activeTurn?.startedAt,
+    turnTiming: Object.fromEntries(
+      transcript.turns.map((turn) => [
+        String(turn.turnSequence),
+        {
+          startedAt: turn.startedAt,
+          finishedAt: turn.outcome.type === 'active' ? undefined : text(turn.outcome.at),
+        },
+      ]),
+    ),
     cursor: transcript.throughSeq,
   };
 }
@@ -105,16 +115,12 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'conversation_opened':
     case 'turn_started':
       return {
-        ...next,
+        ...(kind.type === 'turn_started'
+          ? startTurn(next, String(number(kind.turn_sequence) ?? event.seq), event.appendedAt)
+          : next),
         recovery: next.recovery.filter(
           (notice) => !notice.id.startsWith('sign-in:') && notice.id !== 'live-sign-in',
         ),
-        activeRunId:
-          kind.type === 'turn_started'
-            ? String(number(kind.turn_sequence) ?? event.seq)
-            : next.activeRunId,
-        activeRunStartedAt:
-          kind.type === 'turn_started' ? event.appendedAt : next.activeRunStartedAt,
       };
     case 'owner_message':
     case 'agent_message': {
@@ -238,11 +244,29 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       };
     case 'turn_completed':
     case 'turn_interrupted':
-      return { ...next, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] };
+      return {
+        ...finishTurn(
+          next,
+          number(kind.turn_sequence)?.toString() ?? next.activeRunId,
+          event.appendedAt,
+        ),
+        activeRunId: undefined,
+        activeRunStartedAt: undefined,
+        reasoning: [],
+      };
     case 'turn_failed': {
       const failure = object(kind.failure);
       return recover(
-        { ...next, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] },
+        {
+          ...finishTurn(
+            next,
+            number(kind.turn_sequence)?.toString() ?? next.activeRunId,
+            event.appendedAt,
+          ),
+          activeRunId: undefined,
+          activeRunStartedAt: undefined,
+          reasoning: [],
+        },
         {
           id: `run-error:${String(event.seq)}`,
           runId:
@@ -453,15 +477,7 @@ function foldLive(
     return liveReasoning(next, event);
   }
   if (event.type === 'STATE_DELTA') return liveState(next, event);
-  if (event.type === 'RUN_STARTED')
-    return {
-      ...next,
-      activeRunId: event.runId,
-      activeRunStartedAt:
-        next.activeRunId === event.runId
-          ? (next.activeRunStartedAt ?? event.timestamp)
-          : event.timestamp,
-    };
+  if (event.type === 'RUN_STARTED') return startTurn(next, event.runId, event.timestamp);
   if (event.type === 'RUN_FINISHED') {
     const outcome = object(event.outcome);
     const interrupts = Array.isArray(outcome?.interrupts) ? outcome.interrupts : [];
@@ -470,7 +486,7 @@ function foldLive(
       .filter((approval): approval is ApprovalRequest => approval !== undefined)
       .reduce((items, approval) => upsert(items, approval), next.approvals);
     return {
-      ...next,
+      ...(interrupts.length === 0 ? finishTurn(next, event.runId, event.timestamp) : next),
       approvals,
       reasoning: [],
       activeRunId: undefined,
@@ -478,10 +494,11 @@ function foldLive(
     };
   }
   if (event.type === 'RUN_ERROR') {
+    const finished = finishTurn(next, event.runId, event.timestamp);
     if (['owner', 'operator', 'sandbox_retired', 'agent_deleted'].includes(text(event.code) ?? ''))
-      return { ...next, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] };
+      return { ...finished, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] };
     return recover(
-      { ...next, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] },
+      { ...finished, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] },
       {
         id: `live-error:${event.runId}`,
         runId: event.runId,
