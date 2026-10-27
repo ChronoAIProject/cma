@@ -1,6 +1,6 @@
 # Native Telegram message edits and reactions
 
-Authenticated `edited_message` and attributable `message_reaction` updates can
+Authenticated `edited_message`, `message_reaction`, and `message_reaction_count` updates can
 notify the agents that received the original private/group message. They use
 `Activity.kind.type = event`, preserving the original consumers, provider
 bindings, conversation IDs, partition and topic. An edited `/to` command or a
@@ -70,16 +70,41 @@ entries are refused; reactions are canonicalized as sets.
 
 Telegram does not include original text or topic in a reaction update. Those
 facts come only from the verified original admission. Both original-author and
-reactor admission are checked. No guessed author, empty prior-state inference,
-or current routing decision substitutes for that context.
+attributable-reactor admission are checked. No guessed author, empty prior-state
+inference, or current routing decision substitutes for that context.
+
+## Anonymous reaction facts
+
+An `actor_chat` reaction preserves the represented chat as `data.actor_chat`
+(`id` and `type`). Its Activity actor is `unknown`, with the distinct identity
+`telegram:chat:<chat_id>` and an optional bounded chat title. It never adopts the
+original message author or a numeric human identity. Supplying both `user` and
+`actor_chat` is refused.
+
+A `message_reaction_count` notification uses the same reaction-updated event type
+with `data.observation = aggregate` and a complete `data.reaction_counts` array
+of `{type, total_count}`. It does not invent `old_reactions`, a user delta, or an
+exact per-person receipt. Its actor remains `unknown`, identified as
+`telegram:anonymous:<chat_id>`. Empty counts are valid; reaction types must be
+unique and valid, with at most 64 entries and nonnegative 32-bit integer counts.
+Telegram may batch/delay these aggregate updates. The source event timestamp is
+retained rather than presented as a real-time per-person reaction timestamp.
+
+Both anonymous paths require an open sender policy. A human sender allowlist or
+deny policy refuses them because Telegram supplies no verifiable human identity.
+Original-author, current chat/group policy, retained source/credential and exact
+original consumer/partition/topic checks still apply. No new consumer is chosen.
+Duplicate update IDs replay their exact admission; changed content under an
+already admitted ID conflicts. The existing `message_events` opt-in is required;
+channels without it retain their existing behavior.
 
 ## Setup and remaining limits
 
 New native webhook registrations request `message`, `edited_message`,
-`callback_query`, and `message_reaction`, preserving pending updates. Existing
+`callback_query`, `message_reaction`, and `message_reaction_count`, preserving pending updates. Existing
 webhooks need an explicit registration refresh before Telegram sends the added
 update types. Telegram requires the bot to be a chat administrator and requires
-`message_reaction` explicitly in `allowed_updates`; it does not send reactions
+the respective reaction type explicitly in `allowed_updates`; it does not send reactions
 set by bots. A production registration change is separate from this code change.
 
 | Input | Status and reason |
@@ -87,8 +112,8 @@ set by bots. A production registration change is separate from this code change.
 | Private/group message edit | Supported for a retained durably admitted original, with existing text/media and actor admission |
 | Attributable user reaction | Supported with the same original-message requirement and Telegram administrator/update subscription prerequisites |
 | `edited_channel_post` | Bot API supports it; current CMA original channel-post/sender-chat admission does not. Refused as `system_sender`; this is a CMA limitation |
-| Anonymous `actor_chat` reaction | Bot API supports it; current CMA path requires an attributable human. Refused as `unknown_sender`; this is a CMA limitation |
-| `message_reaction_count` | Bot API supports delayed aggregate anonymous counts; current CMA path does not assign these to a fabricated user. Refused as `system_sender`; this is a CMA limitation |
+| Anonymous `actor_chat` reaction | Supported for retained originals with open sender policy, preserving the represented chat and unknown human identity |
+| `message_reaction_count` | Supported as bounded aggregate facts for retained originals with open sender policy; no human or per-user delta is inferred |
 | Generic message deletion | No general Bot API deletion update exists. `deleted_business_messages` belongs to a separate business-connection contract and is not ordinary deletion coverage |
 | Message predating retained context, legacy-only ingress, or expired context | No notification authority is inferred; ordinary messaging remains available |
 | NyxID Telegram relay | Unchanged; these native webhook extensions do not claim relay support |
