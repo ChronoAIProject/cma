@@ -12,6 +12,9 @@ pub(crate) mod lark;
 pub mod nyxid;
 pub mod telegram;
 pub mod url;
+pub mod whatsapp;
+mod whatsapp_body;
+mod whatsapp_transport;
 
 pub use crate::media::body::SourceStream;
 
@@ -54,6 +57,7 @@ pub fn configured(
 ) -> bool {
     match locator {
         Some(AttachmentSource::Discord { .. }) => discord::configured(channel, &activity.source),
+        Some(AttachmentSource::Whatsapp { .. }) => whatsapp::configured(channel, &activity.source),
         Some(locator @ AttachmentSource::LarkResource { .. }) => {
             lark::configured(channel, &activity.source, locator)
         }
@@ -100,11 +104,12 @@ pub trait MediaSource: Send + Sync {
     ) -> BoxFuture<'a, Result<SourceStream, FetchError>>;
 }
 
-/// The four sources, each injected so tests and later callers can swap an
+/// Sources are injected so tests and later callers can swap an
 /// implementation without touching anything that fetches.
 #[derive(Clone)]
 pub struct SourceRegistry {
     discord: Option<Arc<dyn MediaSource>>,
+    whatsapp: Option<Arc<dyn MediaSource>>,
     nyxid: Arc<dyn MediaSource>,
     telegram: Arc<dyn MediaSource>,
     url: Arc<dyn MediaSource>,
@@ -120,6 +125,7 @@ impl SourceRegistry {
     ) -> Self {
         Self {
             discord: None,
+            whatsapp: None,
             nyxid,
             telegram,
             url,
@@ -129,6 +135,11 @@ impl SourceRegistry {
 
     pub fn with_discord(mut self, source: Arc<dyn MediaSource>) -> Self {
         self.discord = Some(source);
+        self
+    }
+
+    pub fn with_whatsapp(mut self, source: Arc<dyn MediaSource>) -> Self {
+        self.whatsapp = Some(source);
         self
     }
 
@@ -180,6 +191,11 @@ impl SourceRegistry {
             return Err(FetchError::NotRetrievable);
         };
         let (label, source, matches) = match locator {
+            AttachmentSource::Whatsapp { .. } => (
+                "whatsapp",
+                self.whatsapp.as_ref().ok_or(FetchError::NotRetrievable)?,
+                matches!(request.activity.source, SourceKind::Whatsapp { .. }),
+            ),
             AttachmentSource::Discord { .. } => (
                 "discord",
                 self.discord.as_ref().ok_or(FetchError::NotRetrievable)?,

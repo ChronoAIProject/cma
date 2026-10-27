@@ -25,6 +25,7 @@ data:
   CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED: "true"
   # Keep native Meta source authoring off until compatible readers and setup acceptance.
   CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "false"
+  CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "false"
   # Only explicitly authored native sources are discovered; existing relay sources stay unchanged.
   CMAEG_NATIVE_DISCORD_WRITES_ENABLED: "true"
   CMAEG_NATIVE_DISCORD_ENABLED: "true"
