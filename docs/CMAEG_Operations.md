@@ -2663,8 +2663,11 @@ these implemented features available. Root verifies deployment and isolated
 Custom Channel behavior; external platform sends still require a designated
 test destination. Record platform acceptance separately from feature availability.
 
-`CMAEG_NYXID_COMPLETE_REPLIES` stays false. Its ordinary complete-request budget
-is currently five seconds while the upstream splitter sends parts sequentially.
-A valid multipart reply can exceed that budget even when individual sends fit
-the legacy per-part deadline. Coordinate its request and owning operation budgets
-before enabling it; do not widen the routed delivery window beyond its leases.
+`CMAEG_NYXID_COMPLETE_REPLIES` stays false pending complete-send acceptance.
+The implemented ordinary complete-request exchange budget is 15 seconds, and
+its non-routed owning tool waits up to 18 seconds. A compatible runtime provides
+a 70-second opaque tool-proxy wait; retained runtimes can still have the earlier
+10-second cutoff. Verify the deployed splitter's complete receipts, timing and
+runtime compatibility before enabling full sends, without interrupting active
+Sandboxes. Source budgets and desired configuration are not production acceptance
+evidence; do not widen the routed delivery window beyond its leases.
