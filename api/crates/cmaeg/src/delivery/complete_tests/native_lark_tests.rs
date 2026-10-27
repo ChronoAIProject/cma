@@ -30,9 +30,10 @@ async fn media_setup(
     let definition = &mut Arc::make_mut(&mut channel).definition;
     definition.sources = vec![native::source()];
     definition.secrets.native_lark = Some(native::credentials());
-    definition.secrets.provider_credential = Some(cmaeg_core::channel::Secret::new(
-        "native-effects-test-agent",
-    ));
+    crate::channels::definition::fixture::replace_default_credential(
+        definition,
+        Some("native-effects-test-agent"),
+    );
     event.reply = ReplyAddress::NativeLark(reply());
     (sender, channel, event, io, server)
 }
