@@ -3869,6 +3869,17 @@
                 "type": "null"
               }
             ]
+          },
+          "video": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeVideoCapabilities",
+                "description": "Exact structural video profile; absent when no bounded profile is declared."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3974,6 +3985,76 @@
           "max_frames",
           "max_duration_ms",
           "min_frame_duration_ms"
+        ],
+        "type": "object"
+      },
+      "NativeVideoCapabilities": {
+        "description": "Bounded structural video profile; full decoding and provider acceptance remain separate.",
+        "properties": {
+          "audio_codec": {
+            "type": "string"
+          },
+          "fast_start_required": {
+            "type": "boolean"
+          },
+          "max_audio_tracks": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_duration_ms": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_frame_rate": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_samples": {
+            "description": "Total samples across video and optional audio tracks.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_slices_per_frame": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "progressive_only": {
+            "type": "boolean"
+          },
+          "video_codec": {
+            "type": "string"
+          },
+          "video_profile": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_codec",
+          "video_profile",
+          "audio_codec",
+          "max_audio_tracks",
+          "max_width",
+          "max_height",
+          "max_frame_rate",
+          "max_duration_ms",
+          "max_samples",
+          "progressive_only",
+          "max_slices_per_frame",
+          "fast_start_required"
         ],
         "type": "object"
       },

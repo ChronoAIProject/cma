@@ -164,7 +164,10 @@ fn a_removed_consumer_is_answered_as_an_expired_reference() {
 fn native_whatsapp_media_discovery_is_independent_and_reports_exact_subset() {
     assert!(NativeMediaCapabilities::native_whatsapp(false).is_none());
     let capability = NativeMediaCapabilities::native_whatsapp(true).unwrap();
-    assert_eq!(capability.kinds, ["image", "file", "audio", "sticker"]);
+    assert_eq!(
+        capability.kinds,
+        ["image", "file", "audio", "sticker", "video"]
+    );
     assert_eq!(
         capability.mime_types.unwrap(),
         [
@@ -176,12 +179,18 @@ fn native_whatsapp_media_discovery_is_independent_and_reports_exact_subset() {
             "audio/mpeg",
             "audio/mp4",
             "audio/ogg",
-            "image/webp"
+            "image/webp",
+            "video/mp4",
+            "video/3gpp"
         ]
     );
     assert_eq!(capability.max_image_bytes, Some(5_000_000));
     assert_eq!(capability.max_total_bytes, Some(8 * 1024 * 1024));
     assert_eq!(capability.max_caption_chars, Some(1024));
+    assert_eq!(
+        serde_json::to_value(capability.video.unwrap()).unwrap(),
+        serde_json::json!({"video_codec": "h264", "video_profile": "baseline", "audio_codec": "aac_lc", "max_audio_tracks": 1, "max_width": 1920, "max_height": 1080, "max_frame_rate": 60, "max_duration_ms": 600000, "max_samples": 65536, "progressive_only": true, "max_slices_per_frame": 1, "fast_start_required": true})
+    );
     let sticker = capability.sticker.unwrap();
     assert_eq!((sticker.width, sticker.height), (512, 512));
     assert_eq!(
