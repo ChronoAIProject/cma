@@ -230,6 +230,30 @@ async fn pinned_native_agent_and_revoked_authority_prevent_future_delivery() {
 }
 #[tokio::test]
 async fn idle_stream_renews_lease_and_bounded_invocation_releases_ownership() {
+    async fn wait_for_state(
+        setup: &Setup,
+        ready: impl Fn(&TargetState) -> bool,
+        description: &str,
+    ) -> TargetState {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some((state, _)) = setup
+                    .journal()
+                    .read::<TargetState>(&setup.target().id)
+                    .await
+                    .unwrap()
+                {
+                    if ready(&state) {
+                        return state;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {description}"))
+    }
+
     let setup = Setup::new(supported()).await;
     let http = HttpServer::start().await;
     http.memory.lock().unwrap().config.replay_frames =
@@ -237,15 +261,43 @@ async fn idle_stream_renews_lease_and_bounded_invocation_releases_ownership() {
     http.memory.lock().unwrap().config.replay_idle = true;
     let (mut runner, _rx, work) = executor(&setup, &http);
     runner.renew_interval = Duration::from_millis(20);
-    runner.invocation_bound = Duration::from_millis(200);
-    let (result, ()) = tokio::join!(runner.execute(&work), async {
-        tokio::time::sleep(Duration::from_millis(80)).await;
-        setup.server.memory.clock.fetch_add(20, Ordering::SeqCst);
-        tokio::time::sleep(Duration::from_millis(60)).await;
-        let state = stored(&setup).await;
-        assert!(state.ownership.until > fixture::NOW + 30);
-    });
+    // Allow real loopback record IO without racing the observer against release.
+    // Each persisted-state wait is bounded below this fixture-only deadline.
+    runner.invocation_bound = Duration::from_secs(5);
+    let started = tokio::time::Instant::now();
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(runner.execute(&work), async {
+            let state = wait_for_state(
+                &setup,
+                |state| {
+                    matches!(
+                        state.phase,
+                        Phase::Accepted {
+                            durable_cursor: Some(0),
+                            ..
+                        }
+                    )
+                },
+                "the idle stream's durable cursor",
+            )
+            .await;
+            assert_eq!(state.ownership.until, fixture::NOW + 30);
+            setup.server.memory.clock.fetch_add(20, Ordering::SeqCst);
+            // No further frames arrive. This extension must come from the
+            // executor's idle renewal, after its initial frame was committed.
+            let state = wait_for_state(
+                &setup,
+                |state| state.ownership.until > fixture::NOW + 30,
+                "the idle lease renewal before invocation release",
+            )
+            .await;
+            assert!(state.ownership.until > fixture::NOW + 30);
+        })
+    })
+    .await
+    .expect("idle execution must release ownership within its bounded invocation");
     assert!(matches!(result, Disposition::Retry(_)));
+    assert!(started.elapsed() >= runner.invocation_bound);
     assert_eq!(stored(&setup).await.ownership.until, fixture::NOW + 20);
     assert!(matches!(
         stored(&setup).await.phase,
