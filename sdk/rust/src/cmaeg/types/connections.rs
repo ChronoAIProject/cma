@@ -72,9 +72,29 @@ pub struct PlatformCapability {
     pub optional_capabilities: Vec<String>,
 }
 
+/// Server tool metadata; does not grant channel, source or event permission.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentToolCapability {
+    /// Exact MCP tool name.
+    pub name: String,
+    /// Exact MCP tool description.
+    pub description: String,
+    /// MCP read-only behavior hint.
+    pub read_only: bool,
+    /// MCP destructive behavior hint.
+    pub destructive: bool,
+    /// MCP idempotency behavior hint.
+    pub idempotent: bool,
+    /// MCP open-world behavior hint.
+    pub open_world: bool,
+}
+
 /// Gateway connection capabilities.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityView {
+    /// Deployment tool catalog; absent or null means availability was not reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_tools: Option<Vec<AgentToolCapability>>,
     /// Additive source-policy features; absent on older gateways.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_features: Vec<String>,
@@ -128,9 +148,15 @@ pub struct CreateConnection {
 /// Deployment gates for new relay authoring; existing exact records remain readable.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayAuthoringCapabilities {
+    /// Native Telegram owners may enable durable edit and reaction notifications.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_telegram_message_events_enabled: Option<bool>,
     /// Opt-in native Discord thread history is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_history_enabled: Option<bool>,
+    /// Whether native Discord incoming reaction events are enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_reactions_enabled: Option<bool>,
     /// New direct Discord source and token writes are available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_writes_enabled: Option<bool>,
@@ -140,6 +166,12 @@ pub struct RelayAuthoringCapabilities {
     /// Per-process native channel selection bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_capacity: Option<usize>,
+    /// New native Meta WhatsApp source and credential writes are available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_writes_enabled: Option<bool>,
+    /// Durable admission/recovery and routing authoring prerequisites are enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_auto_activation_enabled: Option<bool>,
     /// Enables new dynamic-source and partition writes.
     pub dynamic_sources_writes_enabled: bool,
     /// Enables Discord/WhatsApp raw-event verification writes independently.
@@ -147,6 +179,9 @@ pub struct RelayAuthoringCapabilities {
     /// Enables explicit bindings for embedded Lark/Feishu media reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lark_resource_writes_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Whether owners may enroll new Lark/Feishu message-effect bindings.
+    pub lark_message_effects_writes_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Whether owner-initiated message preparation and commit are enabled.
     pub outbound_messages_writes_enabled: Option<bool>,

@@ -3,13 +3,18 @@ import { Button } from '../ui/Button';
 import { ServiceError, serviceRequest, type Denied } from './client';
 
 export interface RelayAuthoringCapabilities {
+  readonly native_whatsapp_writes_enabled?: boolean | null;
+  readonly native_whatsapp_auto_activation_enabled?: boolean | null;
+  readonly native_telegram_message_events_enabled?: boolean | null;
   readonly native_discord_thread_history_enabled?: boolean | null;
+  readonly native_discord_reactions_enabled?: boolean | null;
   readonly native_discord_writes_enabled?: boolean | null;
   readonly native_discord_auto_activation_enabled?: boolean | null;
   readonly native_discord_capacity?: number | null;
   readonly dynamic_sources_writes_enabled: boolean;
   readonly relay_raw_verification_writes_enabled: boolean;
   readonly lark_resource_writes_enabled?: boolean | null;
+  readonly lark_message_effects_writes_enabled?: boolean | null;
   readonly outbound_messages_writes_enabled?: boolean | null;
   readonly native_media_writes_enabled?: boolean | null;
   readonly multi_consumer_writes_enabled: boolean;
@@ -27,7 +32,20 @@ export interface RelayAuthoringCapabilities {
 export interface RelayDiscovery {
   readonly status: 'loading' | 'ready' | 'legacy' | 'failed';
   readonly authoring?: RelayAuthoringCapabilities;
+  readonly agentTools?: readonly AgentToolCapability[];
   readonly retry?: () => void;
+}
+export interface AgentToolCapability {
+  readonly name: string;
+  readonly description: string;
+  readonly read_only: boolean;
+  readonly destructive: boolean;
+  readonly idempotent: boolean;
+  readonly open_world: boolean;
+}
+interface CapabilityView {
+  readonly relay_authoring?: RelayAuthoringCapabilities | null;
+  readonly agent_tools?: readonly AgentToolCapability[] | null;
 }
 export const RelayCapabilitiesContext = createContext<RelayDiscovery>({ status: 'legacy' });
 export const useRelayCapabilities = () => useContext(RelayCapabilitiesContext);
@@ -42,8 +60,7 @@ export function RelayCapabilitiesProvider({
 }) {
   const [discovery, setDiscovery] = useState<RelayDiscovery>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
-  const pending =
-    useRef<Promise<{ relay_authoring?: RelayAuthoringCapabilities | null }>>(undefined);
+  const pending = useRef<Promise<CapabilityView>>(undefined);
   const deniedRef = useRef(denied);
   useEffect(() => {
     deniedRef.current = denied;
@@ -54,11 +71,11 @@ export function RelayCapabilitiesProvider({
     void pending.current.then(
       (value) => {
         if (active)
-          setDiscovery(
-            value.relay_authoring
-              ? { status: 'ready', authoring: value.relay_authoring }
-              : { status: 'legacy' },
-          );
+          setDiscovery({
+            status: value.relay_authoring ? 'ready' : 'legacy',
+            authoring: value.relay_authoring ?? undefined,
+            agentTools: value.agent_tools ?? undefined,
+          });
       },
       (error: unknown) => {
         if (!active) return;
@@ -132,5 +149,18 @@ export function nativeDiscordUnavailable(
       discovery.authoring.multi_consumer_writes_enabled !== true)
   )
     return 'This gateway has not enabled automatic activation for new direct Discord channels.';
+  return undefined;
+}
+
+export function nativeWhatsappUnavailable(
+  discovery: RelayDiscovery,
+  automatic = true,
+): string | undefined {
+  if (discovery.authoring?.native_whatsapp_writes_enabled !== true)
+    return discovery.status === 'loading'
+      ? 'Checking direct WhatsApp support…'
+      : 'This gateway has not enabled direct WhatsApp setup.';
+  if (automatic && discovery.authoring.native_whatsapp_auto_activation_enabled !== true)
+    return 'This gateway has not enabled message delivery for new direct WhatsApp producers.';
   return undefined;
 }

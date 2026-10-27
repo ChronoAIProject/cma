@@ -39,13 +39,18 @@ export const RelayPlatformCapabilitySchema = object({
 });
 export type RelayPlatformCapability = Output<typeof RelayPlatformCapabilitySchema>;
 export const RelayAuthoringCapabilitiesSchema = object({
+  native_telegram_message_events_enabled: optional(nullable(boolean)),
   native_discord_thread_history_enabled: optional(nullable(boolean)),
+  native_discord_reactions_enabled: optional(nullable(boolean)),
   native_discord_writes_enabled: optional(nullable(boolean)),
   native_discord_auto_activation_enabled: optional(nullable(boolean)),
   native_discord_capacity: optional(nullable(integer)),
+  native_whatsapp_writes_enabled: optional(nullable(boolean)),
+  native_whatsapp_auto_activation_enabled: optional(nullable(boolean)),
   dynamic_sources_writes_enabled: boolean,
   relay_raw_verification_writes_enabled: boolean,
   lark_resource_writes_enabled: optional(nullable(boolean)),
+  lark_message_effects_writes_enabled: optional(nullable(boolean)),
   outbound_messages_writes_enabled: optional(nullable(boolean)),
   native_media_writes_enabled: optional(nullable(boolean)),
   multi_consumer_writes_enabled: boolean,
@@ -55,7 +60,19 @@ export const RelayAuthoringCapabilitiesSchema = object({
 });
 export type RelayAuthoringCapabilities = Output<typeof RelayAuthoringCapabilitiesSchema>;
 
+/** Server tool metadata; does not grant channel, source or event permission. */
+export const AgentToolCapabilitySchema = object({
+  name: text,
+  description: text,
+  read_only: boolean,
+  destructive: boolean,
+  idempotent: boolean,
+  open_world: boolean,
+});
+export type AgentToolCapability = Output<typeof AgentToolCapabilitySchema>;
+
 export const CapabilityViewSchema = object({
+  agent_tools: optional(nullable(array(AgentToolCapabilitySchema))),
   platforms: array(PlatformCapabilitySchema),
   source_features: optional(array(text)),
   relay_authoring: optional(nullable(RelayAuthoringCapabilitiesSchema)),

@@ -149,6 +149,26 @@ fn sink_label(sink: &Sink) -> String {
 fn source_view(source: &Source) -> SourceView {
     let id = source.source_id();
     match source {
+        Source::Whatsapp {
+            app_id,
+            waba_id,
+            phone_number_id,
+            admission,
+        } => SourceView {
+            id,
+            kind: "Native WhatsApp",
+            platform: Some("whatsapp"),
+            route_count: None,
+            bot_username: None,
+            bot_id: Some(phone_number_id.clone()),
+            admission: Some(admission_label(admission)),
+            auth: "Meta app signature".into(),
+            key_ids: Vec::new(),
+            settings: vec![
+                format!("App {app_id}; account {waba_id}; dedicated callback required"),
+                "Text, reactions and text replies; media and templates unavailable".into(),
+            ],
+        },
         Source::Discord {
             bot_id, admission, ..
         } => SourceView {
@@ -164,6 +184,7 @@ fn source_view(source: &Source) -> SourceView {
             settings: vec!["Gateway intake not activated".into()],
         },
         Source::Telegram {
+            message_events: _,
             bot_id,
             bot_username,
             admission,

@@ -115,7 +115,14 @@ impl InboxStore {
             .map_err(|_| GatewayError::Protocol)?;
         let value: serde_json::Value =
             serde_json::from_slice(&opened.payload).map_err(|_| GatewayError::Protocol)?;
-        if value["kind"].as_str() != Some("discord_inbox_v1") {
+        if !matches!(
+            value["kind"].as_str(),
+            Some(
+                "discord_inbox_v1"
+                    | "discord_message_event_inbox_v1"
+                    | "discord_reaction_pending_v1"
+            )
+        ) {
             return Ok(None);
         }
         let inbox: Inbox = serde_json::from_value(value).map_err(|_| GatewayError::Protocol)?;
@@ -127,10 +134,7 @@ impl InboxStore {
             || inbox.retained_until <= now
             || inbox.parts.is_empty()
             || inbox.parts.len() > 64
-            || index_id(
-                "discord-native-message-v1",
-                &[&inbox.channel_record, &inbox.bot_id, &inbox.message_id],
-            ) != head.record_id
+            || inbox.id()? != head.record_id
         {
             return Err(GatewayError::Protocol);
         }

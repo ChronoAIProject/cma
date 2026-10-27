@@ -84,6 +84,10 @@ impl Sender {
         if let Err(error) = self.relay.discord.verify_bot(token, bot_id).await {
             return (refused(rendering, super::discord::outcome(error)), effects);
         }
+        let target_receipt = match self.discord_reaction_receipt(ctx.channel, event).await {
+            Ok(receipt) => receipt,
+            Err(_) => return (rejected("reaction_target_custody_unavailable"), effects),
+        };
         let route = interactions::discord::route(bot_id, channel_id);
         let _ticket = match ctx.gate.enter_route(&route).await {
             Ok(ticket) => ticket,
@@ -137,6 +141,10 @@ impl Sender {
         ctx.gate.progress();
         match sent {
             Ok(id) => {
+                let target_confirmed = match &target_receipt {
+                    Some(receipt) => receipt.confirm(&id).await.is_ok(),
+                    None => true,
+                };
                 let reference = store
                     .bind(
                         &mut card,
@@ -150,7 +158,7 @@ impl Sender {
                     IntentReceipt {
                         message_ref: reference.as_ref().ok().cloned(),
                         rendering,
-                        delivery: if reference.is_ok() {
+                        delivery: if reference.is_ok() && target_confirmed {
                             DeliveryOutcome::Confirmed {
                                 platform_message_id: Some(id),
                             }

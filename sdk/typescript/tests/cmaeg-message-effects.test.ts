@@ -3,13 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { Cmaeg } from '../src/cmaeg/index.js';
 import {
   EmptyEffectRequestSchema,
+  LarkMessageEffectsBindingSchema,
   MessageEffectReceiptSchema,
   MessageEffectsCapabilitiesSchema,
   MessageReactionRequestSchema,
   TelegramReactionSchema,
 } from '../src/cmaeg/types.js';
 
-describe('native Telegram message effects', () => {
+describe('confirmed message effects', () => {
   it('round-trips every effect contract example and exposes explicit unsupported capabilities', async () => {
     const examples = JSON.parse(
       readFileSync(
@@ -19,6 +20,7 @@ describe('native Telegram message effects', () => {
     ) as Record<string, readonly unknown[]>;
     for (const [name, parse] of Object.entries({
       EmptyEffectRequest: EmptyEffectRequestSchema,
+      LarkMessageEffectsBinding: LarkMessageEffectsBindingSchema,
       MessageEffectReceipt: MessageEffectReceiptSchema,
       MessageEffectsCapabilities: MessageEffectsCapabilitiesSchema,
       MessageReactionRequest: MessageReactionRequestSchema,

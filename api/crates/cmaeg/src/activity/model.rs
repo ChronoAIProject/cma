@@ -18,6 +18,15 @@ pub struct ActivityPage {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ChannelActivity {
     pub event_id: String,
+    /// Payload category only; message text and event data are never copied here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// CloudEvent type, when this receipt represents an event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+    /// Explicit CloudEvent time; absent when the source did not report one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_occurred_at: Option<String>,
     pub source: SourceKind,
     pub actor: Actor,
     pub conversation: ActivityConversation,

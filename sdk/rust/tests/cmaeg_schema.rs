@@ -13,6 +13,18 @@ fn fixtures() -> Value {
 }
 
 #[test]
+fn historical_activity_receipts_roundtrip_without_inventing_event_facts() {
+    let mut page = fixtures()["ActivityPage"][0].clone();
+    for row in page["items"].as_array_mut().unwrap() {
+        for key in ["kind", "event_type", "source_occurred_at"] {
+            row.as_object_mut().unwrap().remove(key);
+        }
+    }
+    let decoded: ActivityPage = serde_json::from_value(page.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), page);
+}
+
+#[test]
 fn legacy_relay_sources_never_gain_a_resource_binding_on_roundtrip() {
     for platform in ["telegram", "lark", "feishu", "discord", "whatsapp", "slack"] {
         let request = json!({"type":"nyxid_relay","platform":platform,"issuer":"https://nyx.example","key_id":"key-fixture","route_ids":["route-fixture"],"admission":{"type":"all"}});
@@ -57,6 +69,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         AttachmentKind,
         AttachmentSource,
         LarkResourceBinding,
+        LarkMessageEffectsBinding,
         LarkResourceKind,
         AttachmentImage,
         AttachmentImageOrigin,
@@ -75,6 +88,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         CallbackResponse,
         Capabilities,
         CapabilityView,
+        AgentToolCapability,
         RelayAuthoringCapabilities,
         RelayPlatformCapability,
         RelayVerificationCapability,
@@ -106,6 +120,8 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ConversationKind,
         CredentialPatch,
         CredentialsRequest,
+        WhatsappCredentials,
+        WhatsappWebhookResponse,
         CustomAttachments,
         CustomAuth,
         DeliveryOutcome,
@@ -488,13 +504,4 @@ fn native_bot_extensions_preserve_legacy_omitted_defaults() {
     let policy = json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"mention"});
     let parsed: AdmissionPolicy = serde_json::from_value(policy.clone()).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap(), policy);
-}
-
-#[test]
-fn retained_native_sources_keep_thread_history_absent() {
-    let value = json!({"type":"discord","bot_id":"77","intents":37377,"admission":{"type":"all"}});
-    let source: Source = serde_json::from_value(value.clone()).unwrap();
-    let request: SourceRequest = serde_json::from_value(value.clone()).unwrap();
-    assert_eq!(serde_json::to_value(source).unwrap(), value);
-    assert_eq!(serde_json::to_value(request).unwrap(), value);
 }

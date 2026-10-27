@@ -42,6 +42,9 @@ export interface ActivityConsumer {
 }
 export interface ChannelActivityEvent {
   event_id: string;
+  kind?: string | null;
+  event_type?: string | null;
+  source_occurred_at?: string | null;
   source: { type: string; platform?: string; bot_id?: string; route_id?: string };
   actor: { id: string; display_name?: string; kind: string };
   conversation: { id: string; kind: string; thread_id?: string };
@@ -89,6 +92,9 @@ export function useChannelActivity(channelId: string, owner: string, active: boo
           page.items.some(
             (item) =>
               typeof item.event_id !== 'string' ||
+              (['kind', 'event_type', 'source_occurred_at'] as const).some(
+                (key) => item[key] != null && typeof item[key] !== 'string',
+              ) ||
               !item.source ||
               !item.actor ||
               !item.conversation ||

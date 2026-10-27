@@ -39,6 +39,7 @@ pub struct Memory {
     pub clock: Arc<AtomicI64>,
     realtime: bool,
     pub unavailable_reads: AtomicUsize,
+    pub unavailable_read_id: Mutex<Option<String>>,
     pub writes: AtomicUsize,
 }
 impl Memory {
@@ -76,6 +77,7 @@ impl Server {
             clock: Arc::new(AtomicI64::new(fixture::NOW)),
             realtime,
             unavailable_reads: AtomicUsize::new(0),
+            unavailable_read_id: Mutex::new(None),
             writes: AtomicUsize::new(0),
         });
         let app = Router::new()
@@ -209,6 +211,9 @@ async fn write(
     }
 }
 async fn read(State(state): State<Arc<Memory>>, Path(id): Path<String>) -> Response {
+    if state.unavailable_read_id.lock().unwrap().as_deref() == Some(&id) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     if state
         .unavailable_reads
         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))

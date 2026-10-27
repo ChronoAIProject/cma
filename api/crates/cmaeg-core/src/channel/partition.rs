@@ -44,7 +44,10 @@ impl PartitionRule {
         let has_relay = sources.iter().any(|source| {
             matches!(
                 source,
-                Source::NyxidRelay { .. } | Source::Telegram { .. } | Source::Discord { .. }
+                Source::NyxidRelay { .. }
+                    | Source::Whatsapp { .. }
+                    | Source::Telegram { .. }
+                    | Source::Discord { .. }
             )
         });
         if has_custom
@@ -105,10 +108,19 @@ impl PartitionRule {
         }
         for source in sources {
             match source {
+                Source::Whatsapp { .. } if self.key == PartitionKey::Thread => {
+                    return Err(ValidationError::new(
+                        "/partition/key",
+                        "native WhatsApp private chats do not have threads",
+                    ));
+                }
                 Source::Custom { .. } if !is_custom_key(self.key_for(&SourceKind::Custom)) => {
                     return Err(ValidationError::new("/partition/key", CUSTOM_KEYS));
                 }
-                Source::Telegram { .. } | Source::Discord { .. } | Source::NyxidRelay { .. }
+                Source::Whatsapp { .. }
+                | Source::Telegram { .. }
+                | Source::Discord { .. }
+                | Source::NyxidRelay { .. }
                     if self.key == PartitionKey::PerEvent =>
                 {
                     return Err(ValidationError::new(

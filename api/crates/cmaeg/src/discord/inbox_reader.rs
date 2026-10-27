@@ -30,19 +30,25 @@ pub struct VerifiedInboxLaunch {
     pub request: LaunchRequest,
     pub source_bytes: Vec<u8>,
     pub received_at: i64,
+    pub(crate) outbound_consumer: Option<cmaeg_core::ids::ConsumerId>,
+    pub(crate) original_message: Option<crate::ingress::routing_store::EventIdentity>,
 }
 pub struct InboxReader {
-    store: Store,
+    pub(super) store: Store,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Body {
+    #[serde(default)]
+    pub pending_reaction: Option<super::reaction_pending::Pending>,
     pub dispatch: serde_json::Value,
     pub channel: ChannelDefinition,
     #[serde(default)]
     pub native_channel: Option<super::thread_context::ChannelEvidence>,
     #[serde(default)]
     pub component: Option<super::components::Snapshot>,
+    #[serde(default)]
+    pub message_event: Option<super::message_event::Snapshot>,
 }
 impl InboxReader {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
@@ -65,6 +71,7 @@ impl InboxReader {
         if expires_at <= now {
             return Err(GatewayError::Authority);
         }
+        let body = self.resolve_reaction(body, &inbox, now).await?;
         let activity = match body.activity(&inbox.bot_id)? {
             Normalized::Activity(activity) => *activity,
             Normalized::Refused(reason) => return Ok(InboxLaunch::Refused(reason)),
@@ -109,7 +116,7 @@ impl InboxReader {
             .ok_or(GatewayError::Unavailable)?;
         let authority = Authority::from_definition(&current.definition)?;
         if version != 1
-            || inbox.kind != "discord_inbox_v1"
+            || inbox.id().is_err()
             || inbox.channel_record != authority.record
             || inbox.bot_id != authority.bot_id
             || inbox.source_revision != authority.revision
@@ -119,10 +126,7 @@ impl InboxReader {
             || inbox.retained_until <= now
             || inbox.parts.is_empty()
             || inbox.parts.len() > 64
-            || index_id(
-                "discord-native-message-v1",
-                &[&inbox.channel_record, &inbox.bot_id, &inbox.message_id],
-            ) != id
+            || inbox.id()? != id
         {
             return Err(GatewayError::Authority);
         }
@@ -160,11 +164,33 @@ impl InboxReader {
         let mut body: Body = serde_json::from_slice(&bytes).map_err(|_| GatewayError::Protocol)?;
         if body.channel.record_id != current.pointer.record_id
             || body.channel.owner != current.definition.owner
-            || body.dispatch["id"].as_str() != Some(&inbox.message_id)
+            || body.message_id() != Some(&inbox.message_id)
         {
             return Err(GatewayError::Authority);
         }
-        if let Some(component) = &body.component {
+        if (body.message_event.is_some() || body.pending_reaction.is_some())
+            != inbox.change_id.is_some()
+        {
+            return Err(GatewayError::Protocol);
+        }
+        if body.pending_reaction.is_some() {
+            if inbox.kind != "discord_reaction_pending_v1"
+                || body.message_event.is_some()
+                || body.component.is_some()
+                || body.native_channel.is_some()
+            {
+                return Err(GatewayError::Protocol);
+            }
+            body.channel = current.definition.clone();
+        } else if let Some(change) = &body.message_event {
+            change.validate(&inbox.bot_id, &inbox.message_id)?;
+            if inbox.change_id.as_deref() != Some(change.activity.event_id.as_str()) {
+                return Err(GatewayError::Protocol);
+            }
+            // Retained target selection is loaded from the original admission;
+            // only current credentials and source authority may execute it.
+            body.channel = current.definition.clone();
+        } else if let Some(component) = &body.component {
             component.validate(&inbox.bot_id, &inbox.message_id)?;
             if component.identity.source_revision != inbox.source_revision
                 || current.definition.routing.is_none()
@@ -259,6 +285,18 @@ impl InboxReader {
             &self.store.keys,
         )
         .map_err(|_| GatewayError::Protocol)?;
+        let original_message = body.message_event.as_ref().map(|change| {
+            crate::ingress::routing_store::EventIdentity {
+                owner: body.channel.owner.subject.clone(),
+                channel_id: current.id.clone(),
+                record_id: current.pointer.record_id.clone(),
+                event_id: change.original_event_id.clone(),
+            }
+        });
+        let outbound_consumer = body
+            .message_event
+            .as_ref()
+            .and_then(|event| event.outbound_consumer.clone());
         let request = LaunchRequest {
             idempotency_key: consumer.as_ref().map_or_else(
                 || IdempotencyKey::from_event(&activity.event_id),
@@ -287,17 +325,38 @@ impl InboxReader {
             request,
             source_bytes: bytes,
             received_at: inbox.received_at,
+            original_message,
+            outbound_consumer,
         })))
     }
 }
 
 impl Body {
+    pub(super) fn message_id(&self) -> Option<&str> {
+        let reaction = self.pending_reaction.is_some() || self.message_event.as_ref().is_some_and(|event| {
+            matches!(&event.activity.kind, cmaeg_core::activity::ActivityKind::Event { ce, .. } if ce.r#type == "cma.message.reaction.updated.v1")
+        });
+        self.dispatch[if reaction { "message_id" } else { "id" }].as_str()
+    }
     pub(super) fn activity(&self, bot: &str) -> Result<Normalized, GatewayError> {
+        if self.pending_reaction.is_some() {
+            return Err(GatewayError::Unavailable);
+        }
+        if self.message_event.is_some()
+            && (self.component.is_some() || self.native_channel.is_some())
+        {
+            return Err(GatewayError::Protocol);
+        }
+        if let Some(change) = &self.message_event {
+            let id = self.message_id().ok_or(GatewayError::Protocol)?;
+            change.validate(bot, id)?;
+            return Ok(Normalized::Activity(Box::new(change.activity.clone())));
+        }
         if self.component.is_some() && self.native_channel.is_some() {
             return Err(GatewayError::Protocol);
         }
         if let Some(component) = &self.component {
-            let id = self.dispatch["id"].as_str().ok_or(GatewayError::Protocol)?;
+            let id = self.message_id().ok_or(GatewayError::Protocol)?;
             component.validate(bot, id)?;
             return Ok(Normalized::Activity(Box::new(component.activity.clone())));
         }

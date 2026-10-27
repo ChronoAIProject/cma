@@ -127,6 +127,8 @@ impl App {
             complete_replies_enabled: false,
             discord_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            lark_effects_issuance_enabled: false,
+            lark_effects: None,
             telegram_effects: None,
             whatsapp_templates_enabled: false,
             whatsapp_interactions_enabled: false,

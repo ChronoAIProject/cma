@@ -116,7 +116,7 @@ it('keeps the welcome diagram before selection, then shares one live feed with t
 
   act(() => feed.snapshot(snapshot('Build service')));
   expect(within(latest).getByText('Build service')).toBeVisible();
-  expect(within(latest).getByText('custom')).toBeVisible();
+  expect(within(latest).getByText('Event received · custom')).toBeVisible();
   expect(latest.querySelector('time')).toHaveAttribute('datetime', '2026-10-27T00:00:01Z');
   expect(within(latest).getByText('Reviewer · Queued')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Activity' }));

@@ -81,6 +81,7 @@ async fn native_edit_authorization_rechecks_current_record_after_cached_key_revo
                 channel_id: "99".into(),
                 authority_sha256: [3; 32],
             })),
+            lark_effect: None,
             telegram_effect: None,
             channel_id: channel.id.clone(),
             event_id: "discord:77:700".parse().unwrap(),
@@ -124,6 +125,7 @@ async fn native_card_edit_authorization_rechecks_current_record_after_cached_key
     let reference = MessageRef::seal(
         &MessageRefPayload {
             discord_message: None,
+            lark_effect: None,
             telegram_effect: None,
             channel_id: channel.id.clone(),
             event_id: "discord:77:700".parse().unwrap(),

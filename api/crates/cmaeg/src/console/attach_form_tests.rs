@@ -26,6 +26,7 @@ fn a_telegram_form_becomes_a_telegram_source_with_its_secrets() {
     assert_eq!(parsed.request.expected_version, 4);
     assert!(parsed.generated.is_none());
     let SourceRequest::Telegram {
+        message_events: _,
         bot_id,
         bot_username,
         admission,

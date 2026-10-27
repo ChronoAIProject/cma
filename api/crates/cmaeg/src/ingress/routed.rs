@@ -1,5 +1,8 @@
 //! Durable admission for explicitly selected channel records. Legacy traffic
 //! never performs a routing-store read or retains its raw body here.
+#[path = "routed_whatsapp.rs"]
+mod whatsapp;
+
 use super::{
     launch::{LaunchOutcome, LaunchRequest},
     routing_plan::{self, OrdinaryPlan, RoutingOptions},
@@ -27,6 +30,11 @@ pub struct VerifiedIngress {
     attributes_signed: bool,
     received_at: Option<i64>,
 }
+
+#[path = "routed_message_event.rs"]
+mod message_event;
+#[path = "routed_telegram.rs"]
+pub(crate) mod telegram;
 
 pub struct RoutedIngress {
     plans: PlanStore,
@@ -113,6 +121,7 @@ impl RoutedIngress {
         source: VerifiedIngress,
         observer: &dyn ActivityObserver,
         native_interaction: bool,
+        message_plan: Option<super::routing_plan::RoutedPlan>,
     ) -> Result<Option<LaunchOutcome>, Problem> {
         if source.oversized {
             return Err(admission_problem(AdmissionError::TooLarge));
@@ -138,7 +147,9 @@ impl RoutedIngress {
             )
         })?;
         // Restore committed selection before looking at mutable routing policy.
-        let replay = if native_interaction {
+        let replay = if message_plan.is_some() {
+            self.plans.replay_message_event(request, &source.body).await
+        } else if native_interaction {
             self.plans
                 .replay_native_interaction(request, &source.body)
                 .await
@@ -148,7 +159,9 @@ impl RoutedIngress {
         let committed = match replay {
             Ok(Some(plan)) => plan,
             Ok(None) => {
-                let decision = if native_interaction {
+                let decision = if let Some(plan) = message_plan.as_ref() {
+                    Ok(OrdinaryPlan::Routed(Box::new(plan.clone())))
+                } else if native_interaction {
                     super::native_interaction::plan(request, &self.keys, (self.clock)())
                         .map(|plan| OrdinaryPlan::Routed(Box::new(plan)))
                 } else {
@@ -203,7 +216,15 @@ impl RoutedIngress {
                         "routed_delivery_unsupported",
                     )
                 })?;
-                let candidate = if native_interaction {
+                let candidate = if message_plan.is_some() {
+                    Candidate::prepare_message_event(
+                        request,
+                        &plan,
+                        &source.body,
+                        &self.keys,
+                        (self.clock)(),
+                    )
+                } else if native_interaction {
                     Candidate::prepare_native_interaction(
                         request,
                         &plan,
@@ -319,7 +340,13 @@ impl IngressState {
             received_at: Some(verified.received_at),
         };
         match routing
-            .admit(&request, source, self.activity.as_ref(), native_interaction)
+            .admit(
+                &request,
+                source,
+                self.activity.as_ref(),
+                native_interaction,
+                None,
+            )
             .await
         {
             Ok(Some(outcome @ LaunchOutcome::Admitted { .. })) => outcome,
@@ -340,7 +367,7 @@ impl IngressState {
     ) -> Option<VerifiedIngress> {
         self.routed
             .as_ref()
-            .filter(|routing| routing.selected(&request.channel.definition.record_id))
+            .filter(|routing| routing.selected_request(request))
             .filter(|_| ordinary(request))
             .map(|_| VerifiedIngress {
                 body: if body.len() <= MAX_SOURCE_BYTES {
@@ -362,9 +389,11 @@ impl IngressState {
         source: Option<VerifiedIngress>,
         hold: OwnedSemaphorePermit,
     ) -> LaunchOutcome {
-        if let Some(routing) = self.routed.as_ref().filter(|routing| {
-            routing.selected(&request.channel.definition.record_id) && ordinary(&request)
-        }) {
+        if let Some(routing) = self
+            .routed
+            .as_ref()
+            .filter(|routing| routing.selected_request(&request) && ordinary(&request))
+        {
             let Some(source) = source else {
                 return LaunchOutcome::Refused(Problem::new(
                     ProblemCode::Internal,
@@ -373,13 +402,20 @@ impl IngressState {
                 ));
             };
             match routing
-                .admit(&request, source, self.activity.as_ref(), false)
+                .admit(&request, source, self.activity.as_ref(), false, None)
                 .await
             {
                 Ok(Some(outcome)) => return outcome,
                 Ok(None) => {}
                 Err(error) => return LaunchOutcome::Refused(error),
             }
+        }
+        if ordinary(&request) && telegram::opted_in(&request) {
+            return LaunchOutcome::Refused(Problem::new(
+                ProblemCode::ProviderUnavailable,
+                503,
+                "telegram_message_events_durable_admission_unavailable",
+            ));
         }
         self.launcher.launch_holding(request, hold).await
     }

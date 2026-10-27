@@ -49,6 +49,9 @@ pub async fn create(
             )
             .map_err(ManagementError::Invalid)?;
             super::native_discord::initialize(state, &mut definition)?;
+            super::native_telegram::initialize(state, None, &mut definition)?;
+            crate::whatsapp::management::initialize(state, &mut definition)?;
+            crate::whatsapp::management::verify(state, None, &definition).await?;
             definition.creation = Some(ChannelCreation {
                 channel_id: channel_id.clone(),
                 fingerprint: fingerprint.clone(),

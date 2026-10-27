@@ -326,6 +326,9 @@ pub enum Refusal {
     /// Wire value `message_edit`.
     #[serde(rename = "message_edit")]
     MessageEdit,
+    /// Wire value `message_context_unavailable`.
+    #[serde(rename = "message_context_unavailable")]
+    MessageContextUnavailable,
     /// Wire value `interactive_action_unsupported`.
     #[serde(rename = "interactive_action_unsupported")]
     InteractiveActionUnsupported,

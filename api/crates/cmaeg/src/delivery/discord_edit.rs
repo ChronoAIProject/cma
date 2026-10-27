@@ -88,6 +88,7 @@ impl Sender {
                 channel_id: channel_id.clone(),
                 authority_sha256: authority(channel, event.consumer.as_ref(), bot_id)?,
             })),
+            lark_effect: None,
             telegram_effect: None,
             channel_id: channel.id.clone(),
             event_id: event.event_id.clone(),
