@@ -14,6 +14,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ContextResponse {
+    /// Reaction-only reference to the exact received native WhatsApp message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub received_message: Option<super::ReceivedMessageContext>,
     /// Explicitly requested current text context of the original native thread.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_history: Option<super::ThreadHistory>,
@@ -400,6 +403,7 @@ pub(super) fn project(
         capabilities.cards = "none".into();
     }
     ContextResponse {
+        received_message: None,
         thread_history: None,
         event_id: event.event_id.clone(),
         channel_id: channel.id.clone(),

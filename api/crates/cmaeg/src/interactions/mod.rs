@@ -163,6 +163,7 @@ impl InteractionStore {
         MessageRef::seal(
             &MessageRefPayload {
                 discord_message: None,
+                whatsapp_reaction: None,
                 lark_effect: None,
                 telegram_effect: None,
                 channel_id: card.channel_id.clone(),

@@ -195,6 +195,7 @@ impl Store {
                         | "telegram_message_effect_v1"
                         | "discord_message_effect_v1"
                         | "discord_card_effect_v1"
+                        | "whatsapp_received_reaction_v1"
                 ) {
                     "message_effect_idempotency_conflict"
                 } else {
