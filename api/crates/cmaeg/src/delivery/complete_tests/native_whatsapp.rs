@@ -261,6 +261,143 @@ async fn native_whatsapp_media_records_each_confirmed_message_and_authorizes_eac
 }
 
 #[tokio::test]
+async fn native_whatsapp_audio_only_and_mixed_media_preserve_targets_and_receipts() {
+    for (mime, _) in whatsapp::outbound::audio::tests::fixtures() {
+        for mixed in [false, true] {
+            // Every codec traverses the composed sender; one mixed batch proves
+            // ordering without repeating its real three-second pacing per codec.
+            if mixed && mime != "audio/mp4" {
+                continue;
+            }
+            let mut replies = Vec::new();
+            let mut message = media_message();
+            message.native_attachments = vec![attachment(mime)];
+            let mut expected = vec![("audio", "wamid.audio")];
+            if mixed {
+                replies.push(confirmed("wamid.text"));
+                message.native_attachments.push(attachment("image/png"));
+                message
+                    .native_attachments
+                    .push(attachment("application/pdf"));
+                expected.extend([("image", "wamid.image"), ("document", "wamid.pdf")]);
+            } else {
+                message.text = None;
+            }
+            for (_, id) in &expected {
+                replies.push(answer(json!({"id":"45678"})));
+                replies.push(confirmed(id));
+            }
+            let (sender, channel, event, graph, _server) = media_setup(replies).await;
+            let gate = RecordingGate::new(true);
+            let receipt = send_media(&sender, &channel, &event, &message, &gate).await;
+            assert!(
+                matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }),
+                "{mime}, mixed={mixed}"
+            );
+            assert!(receipt.message_ref.is_none());
+            let writes = expected.len() * 2 + usize::from(mixed);
+            assert_eq!(
+                gate.calls()
+                    .iter()
+                    .filter(|value| **value == "commit")
+                    .count(),
+                writes
+            );
+            {
+                let calls = graph.calls.lock().unwrap();
+                assert_eq!(calls.len(), writes);
+                for (index, (kind, _)) in expected.iter().enumerate() {
+                    let send = &calls[usize::from(mixed) + index * 2 + 1];
+                    let body: serde_json::Value = serde_json::from_slice(&send.2).unwrap();
+                    assert_eq!(body["to"], "447700900123");
+                    assert_eq!(body["context"]["message_id"], "wamid.original");
+                    assert_eq!(body["type"], *kind);
+                    if *kind == "audio" {
+                        assert_eq!(body["audio"], json!({"id":"45678"}));
+                    }
+                }
+            }
+            for (_, id) in expected {
+                let stored = sender
+                    .relay
+                    .whatsapp_receipts
+                    .as_ref()
+                    .unwrap()
+                    .load(
+                        &event.channel_id,
+                        &cmaeg_core::activity::SourceKind::Whatsapp {
+                            app_id: "12345".into(),
+                            waba_id: "23456".into(),
+                            phone_number_id: "34567".into(),
+                        },
+                        "447700900123",
+                        id,
+                        time::OffsetDateTime::now_utc().unix_timestamp(),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(stored.original.event_id, event.event_id);
+                assert_eq!(stored.conversation_id, event.conversation_id);
+                assert_eq!(stored.partition_key, event.partition_key);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_whatsapp_audio_preflights_entire_batch_before_text_or_upload() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use cmaeg_core::message::NativeMediaSource;
+    for (mime, bytes) in whatsapp::outbound::audio::tests::fixtures() {
+        for defect in 0..6 {
+            let (sender, channel, event, graph, _server) = media_setup(vec![]).await;
+            let mut message = media_message();
+            let mut audio = attachment(mime);
+            match defect {
+                0 => audio.caption = Some("Audio cannot carry a caption".into()),
+                1 => audio.mime_type = Some("audio/wav".into()),
+                2 => audio.filename = Some("wrong.wav".into()),
+                3 => {
+                    audio.source = NativeMediaSource::Base64 {
+                        data: STANDARD.encode(&bytes[..bytes.len() - 1]),
+                    }
+                }
+                4 => {
+                    audio.source = NativeMediaSource::Base64 {
+                        data: STANDARD.encode(b"RIFF\0\0\0\0WAVE"),
+                    }
+                }
+                5 => {
+                    audio.mime_type = Some("audio/ogg".into());
+                    audio.source = NativeMediaSource::Base64 {
+                        data: STANDARD.encode(whatsapp::outbound::audio::tests::stereo_ogg()),
+                    };
+                }
+                _ => unreachable!(),
+            }
+            message.native_attachments.push(audio);
+            let receipt = send_media(
+                &sender,
+                &channel,
+                &event,
+                &message,
+                &RecordingGate::new(true),
+            )
+            .await;
+            assert!(
+                matches!(
+                    receipt.delivery,
+                    DeliveryOutcome::Unsupported | DeliveryOutcome::Rejected { .. }
+                ),
+                "{mime}, defect={defect}"
+            );
+            assert!(graph.calls.lock().unwrap().is_empty());
+        }
+    }
+}
+
+#[tokio::test]
 async fn native_whatsapp_media_preflight_gate_and_revocation_refuse_before_any_write() {
     for defect in 0..7 {
         let (mut sender, mut channel, event, graph, _server) = media_setup(vec![]).await;
@@ -270,7 +407,7 @@ async fn native_whatsapp_media_preflight_gate_and_revocation_refuse_before_any_w
             0 => sender.relay = sender.relay.with_native_whatsapp_outbound_media(false),
             1 => Arc::make_mut(&mut channel).definition.sources.clear(),
             2 => Arc::make_mut(&mut channel).definition.secrets.whatsapp = None,
-            3 => message.native_attachments.push(attachment("audio/mpeg")),
+            3 => message.native_attachments[0].kind = cmaeg_core::message::NativeMediaKind::Video,
             4 => message.native_attachments[0].filename = Some("wrong.exe".into()),
             5 => message.thread_reply = true,
             6 => {}
@@ -402,4 +539,58 @@ async fn native_whatsapp_media_revocation_after_upload_blocks_recipient_send() {
     .await;
     assert!(matches!(receipt.delivery, DeliveryOutcome::Rejected { .. }));
     assert_eq!(graph.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn native_whatsapp_audio_uncertainty_receipt_loss_and_revocation_stop_later_effects() {
+    for failure in 0..5 {
+        let replies = match failure {
+            0 => vec![Err(TransportError::Unavailable)],
+            1 => vec![
+                answer(json!({"id":"45678"})),
+                Err(TransportError::Unavailable),
+            ],
+            2 => vec![answer(json!({"id":"45678"})), confirmed("wamid.audio")],
+            3 => vec![answer(json!({"id":"45678"}))],
+            4 => vec![
+                answer(json!({"id":"45678"})),
+                confirmed("wamid.audio"),
+                Err(TransportError::Unavailable),
+            ],
+            _ => unreachable!(),
+        };
+        let (mut sender, channel, event, graph, _server) = media_setup(replies).await;
+        if failure == 2 {
+            sender.relay.whatsapp_receipts = Some(Arc::new(Store::new(
+                crate::records::RecordClient::new("http://127.0.0.1:1", "fixture").unwrap(),
+                sender.keys.clone(),
+            )));
+        }
+        let mut message = media_message();
+        message.text = None;
+        message.native_attachments = vec![
+            attachment("audio/mpeg"),
+            attachment("image/png"),
+            attachment("application/pdf"),
+        ];
+        let allowed = RecordingGate::new(true);
+        let revoked = RevokeAfterUpload(std::sync::atomic::AtomicUsize::new(0));
+        let gate: &dyn crate::delivery::gate::SendGate =
+            if failure == 3 { &revoked } else { &allowed };
+        let receipt = send_media(&sender, &channel, &event, &message, gate).await;
+        if failure == 3 {
+            assert!(matches!(receipt.delivery, DeliveryOutcome::Rejected { .. }));
+        } else {
+            assert!(matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }));
+        }
+        assert_eq!(
+            graph.calls.lock().unwrap().len(),
+            match failure {
+                0 | 3 => 1,
+                4 => 3,
+                _ => 2,
+            }
+        );
+        assert!(receipt.message_ref.is_none());
+    }
 }

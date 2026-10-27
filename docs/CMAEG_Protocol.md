@@ -2976,14 +2976,20 @@ Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 enable a new native connection.
 
 Native WhatsApp advertises a separate bounded subset only when
-`CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file"]`,
-`mime_types: ["image/jpeg", "image/png", "application/pdf"]`,
+`CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio"]`,
+`mime_types: ["image/jpeg", "image/png", "application/pdf", "audio/aac", "audio/amr",
+"audio/mpeg", "audio/mp4", "audio/ogg"]`,
 `max_total_bytes: 8388608`, `max_image_bytes: 5000000`, and `max_caption_chars: 1024`.
 These four optional capability fields refine the existing limits; they are absent
 on transports that do not declare them. Shared captions remain limited to 1024
 UTF-8 bytes. Images require 8-bit RGB/RGBA headers; JPEG is limited to baseline or
-progressive three-component images. Native audio/video/stickers and other document
-formats remain unsupported. Public HTTPS sources use the existing pinned public
+progressive three-component images. Audio accepts bounded AAC-LC ADTS, single-channel
+AMR narrowband, MPEG Layer III, non-fragmented self-contained single-track AAC-LC M4A,
+and one complete mono Opus Ogg stream. Supplied audio MIME/filename extensions
+must match the validated container. Audio captions are refused before any write;
+text stays separate. Audio sends contain the uploaded ID only, with no voice flag.
+Structural checks do not prove full payload decodability or Meta acceptance.
+Native video/stickers and other document formats remain unsupported. Public HTTPS sources use the existing pinned public
 address fetcher without Meta credentials, redirects or local-file access; inline
 sources retain the 65536-byte aggregate limit. Every attachment is prepared before
 any text/upload is sent. A native upload returns the sole media ID accepted by the
