@@ -215,6 +215,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         native_media_enabled: false,
         native_whatsapp_outbound_media_enabled: false,
         whatsapp_reactions: None,
+        native_whatsapp_templates_enabled: false,
         relay_text_edits_enabled: false,
         media: None,
         downloads: Default::default(),
