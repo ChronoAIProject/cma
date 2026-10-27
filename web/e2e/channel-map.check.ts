@@ -31,6 +31,24 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await page.addInitScript(() => localStorage.setItem('cma:appearance', 'light'));
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL!);
+  await page.route('**/auth/session', (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        subject: 'local-owner',
+        display_name: 'Local owner',
+        capabilities: [
+          'use_own_sandboxes',
+          'create_sandbox',
+          'delete_own_sandbox',
+          'manage_own_bots',
+        ],
+      },
+    }),
+  );
+  await page.route('**/api/v1/bots?**', (route) =>
+    route.fulfill({ json: { items: [], next_after: null } }),
+  );
   const channel = {
     channel_id: 'channel-local',
     record_id: 'record-local',
@@ -164,10 +182,13 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await expect(
     page.getByLabel('Illustrative event journey').locator('.channel-map__node'),
   ).toHaveCount(4);
+  await expect(
+    page.getByRole('group', { name: 'Navigation view' }).getByRole('button', { name: 'Consumers' }),
+  ).toBeVisible();
   await capture('channel-welcome-light-1600.png', 'light');
   await page
     .getByRole('region', { name: 'Channels' })
-    .getByRole('button', { name: /^Team workspace/ })
+    .getByRole('treeitem', { name: /^Team workspace/ })
     .click();
   const map = page.getByRole('region', { name: 'Delivery map' });
   await expect(map.getByRole('button', { name: /^(Producer|Channel|Consumer):/ })).toHaveCount(7);
@@ -193,6 +214,19 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await expect(page.getByLabel('Bot username', { exact: true })).toHaveValue('retained_bot');
   expect(await editor.evaluate((element, previous) => element === previous, retained)).toBe(true);
   await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await map.getByRole('button', { name: /^Toolsets: Agent toolsets/ }).click();
+  await expect(page.getByText('readEventContext', { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole('navigation', { name: 'Configuration sections' })
+      .getByRole('button', { name: 'Optional tools' }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await map.getByRole('button', { name: 'Producer: Telegram (NyxID relay)' }).click();
+  await expect(page.getByLabel('Bot username', { exact: true })).toHaveValue('retained_bot');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(map.getByText('Browse delivery nodes')).toHaveCount(0);
+  await expect(map.locator('.react-flow__edge-path[marker-end]')).toHaveCount(8);
   for (const theme of ['light', 'dark'] as const) {
     await page.evaluate((value) => {
       localStorage.setItem('cma:appearance', value);
@@ -251,6 +285,24 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
         )
         .toBe(true);
       await capture(`channel-inspector-${theme}-${width}.png`, theme);
+      await page
+        .getByRole('navigation', { name: 'Configuration sections' })
+        .getByRole('button', { name: 'NyxID connection', exact: true })
+        .click();
+      await expect(page.getByLabel('NyxID issuer', { exact: true })).toBeVisible();
+      await expect
+        .poll(() =>
+          page
+            .getByRole('group', { name: 'NyxID connection', exact: true })
+            .evaluate((element) =>
+              Math.abs(
+                element.getBoundingClientRect().top -
+                  element.closest('.channel-inspector')!.getBoundingClientRect().top,
+              ),
+            ),
+        )
+        .toBeLessThan(36);
+      await capture(`channel-fields-${theme}-${width}.png`, theme);
       await page.getByRole('button', { name: 'Close', exact: true }).click();
     }
   }
