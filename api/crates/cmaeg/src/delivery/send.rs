@@ -138,6 +138,13 @@ impl Sender {
         if matches!(event.reply, ReplyAddress::Whatsapp { .. }) {
             return self.whatsapp_reply(ctx, event, message).await;
         }
+        if message
+            .native_attachments
+            .iter()
+            .any(|item| item.kind == cmaeg_core::message::NativeMediaKind::Sticker)
+        {
+            return (unsupported(), SendEffects::default());
+        }
         if matches!(event.reply, ReplyAddress::Discord { .. }) {
             return self.discord_reply(ctx, event, message).await;
         }

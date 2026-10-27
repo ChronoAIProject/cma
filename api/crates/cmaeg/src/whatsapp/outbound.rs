@@ -1,6 +1,8 @@
 //! Bounded native image, PDF and audio uploads; media IDs are produced only by upload.
 #[path = "outbound_audio.rs"]
 pub(crate) mod audio;
+#[path = "outbound_sticker.rs"]
+pub(crate) mod sticker;
 use super::{Client, Error};
 use crate::media::{outbound::PreparedFile, sniff::sniff};
 use cmaeg_core::{
@@ -20,7 +22,7 @@ use serde_json::{json, Value};
 
 /// Meta documents 5 MB; use decimal bytes conservatively.
 pub(crate) const MAX_IMAGE_BYTES: usize = 5_000_000;
-pub(crate) const MIME_TYPES: [&str; 8] = [
+pub(crate) const MIME_TYPES: [&str; 9] = [
     "image/jpeg",
     "image/png",
     "application/pdf",
@@ -29,6 +31,7 @@ pub(crate) const MIME_TYPES: [&str; 8] = [
     "audio/mpeg",
     "audio/mp4",
     "audio/ogg",
+    "image/webp",
 ];
 
 pub(crate) struct MediaUpload {
@@ -50,6 +53,11 @@ impl Client {
         item: &NativeAttachment,
         mut file: PreparedFile,
     ) -> Result<MediaUpload, Error> {
+        if item.kind == NativeMediaKind::Sticker
+            && (file.caption.is_some() || sticker::inspect(&file.bytes).is_none())
+        {
+            return Err(Error::Invalid);
+        }
         let audio = if item.kind == NativeMediaKind::Audio {
             if file.caption.is_some() {
                 return Err(Error::Invalid);
@@ -80,6 +88,7 @@ impl Client {
             (NativeMediaKind::Image, "image/png") => ("image", &["png"][..]),
             (NativeMediaKind::File, "application/pdf") => ("document", &["pdf"][..]),
             (NativeMediaKind::Audio, _) => ("audio", audio.ok_or(Error::Invalid)?.extensions()),
+            (NativeMediaKind::Sticker, "image/webp") => ("sticker", &["webp"][..]),
             _ => return Err(Error::Invalid),
         };
         if kind == "image"

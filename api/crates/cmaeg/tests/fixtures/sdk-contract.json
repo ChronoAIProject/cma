@@ -781,7 +781,16 @@
         ],
         "max_total_bytes": 8388608,
         "max_image_bytes": 5000000,
-        "max_caption_chars": 1024
+        "max_caption_chars": 1024,
+        "sticker": {
+          "width": 512,
+          "height": 512,
+          "max_static_bytes": 100000,
+          "max_animated_bytes": 500000,
+          "max_frames": 128,
+          "max_duration_ms": 10000,
+          "min_frame_duration_ms": 8
+        }
       },
       "whatsapp_templates": true,
       "message_effects": {
@@ -3163,7 +3172,16 @@
           ],
           "max_total_bytes": 8388608,
           "max_image_bytes": 5000000,
-          "max_caption_chars": 1024
+          "max_caption_chars": 1024,
+          "sticker": {
+            "width": 512,
+            "height": 512,
+            "max_static_bytes": 100000,
+            "max_animated_bytes": 500000,
+            "max_frames": 128,
+            "max_duration_ms": 10000,
+            "min_frame_duration_ms": 8
+          }
         },
         "whatsapp_templates": true,
         "message_effects": {
@@ -3313,7 +3331,16 @@
           ],
           "max_total_bytes": 8388608,
           "max_image_bytes": 5000000,
-          "max_caption_chars": 1024
+          "max_caption_chars": 1024,
+          "sticker": {
+            "width": 512,
+            "height": 512,
+            "max_static_bytes": 100000,
+            "max_animated_bytes": 500000,
+            "max_frames": 128,
+            "max_duration_ms": 10000,
+            "min_frame_duration_ms": 8
+          }
         },
         "whatsapp_templates": true,
         "message_effects": {
@@ -5851,13 +5878,23 @@
       ],
       "max_total_bytes": 8388608,
       "max_image_bytes": 5000000,
-      "max_caption_chars": 1024
+      "max_caption_chars": 1024,
+      "sticker": {
+        "width": 512,
+        "height": 512,
+        "max_static_bytes": 100000,
+        "max_animated_bytes": 500000,
+        "max_frames": 128,
+        "max_duration_ms": 10000,
+        "min_frame_duration_ms": 8
+      }
     },
     {
       "kinds": [
         "image",
         "file",
-        "audio"
+        "audio",
+        "sticker"
       ],
       "max_attachments": 4,
       "max_inline_bytes": 65536,
@@ -5873,18 +5910,29 @@
         "audio/amr",
         "audio/mpeg",
         "audio/mp4",
-        "audio/ogg"
+        "audio/ogg",
+        "image/webp"
       ],
       "max_total_bytes": 8388608,
       "max_image_bytes": 5000000,
-      "max_caption_chars": 1024
+      "max_caption_chars": 1024,
+      "sticker": {
+        "width": 512,
+        "height": 512,
+        "max_static_bytes": 100000,
+        "max_animated_bytes": 500000,
+        "max_frames": 128,
+        "max_duration_ms": 10000,
+        "min_frame_duration_ms": 8
+      }
     }
   ],
   "NativeMediaKind": [
     "image",
     "file",
     "audio",
-    "video"
+    "video",
+    "sticker"
   ],
   "NativeMediaSource": [
     {
@@ -6658,6 +6706,17 @@
       "destructive": false,
       "idempotent": true,
       "open_world": true
+    }
+  ],
+  "NativeStickerCapabilities": [
+    {
+      "width": 512,
+      "height": 512,
+      "max_static_bytes": 100000,
+      "max_animated_bytes": 500000,
+      "max_frames": 128,
+      "max_duration_ms": 10000,
+      "min_frame_duration_ms": 8
     }
   ]
 }
