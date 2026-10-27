@@ -30,6 +30,7 @@ pub struct VerifiedInboxLaunch {
     pub request: LaunchRequest,
     pub source_bytes: Vec<u8>,
     pub received_at: i64,
+    pub(crate) original_message: Option<crate::ingress::routing_store::EventIdentity>,
 }
 pub struct InboxReader {
     store: Store,
@@ -43,6 +44,8 @@ pub(super) struct Body {
     pub native_channel: Option<super::thread_context::ChannelEvidence>,
     #[serde(default)]
     pub component: Option<super::components::Snapshot>,
+    #[serde(default)]
+    pub message_event: Option<super::message_event::Snapshot>,
 }
 impl InboxReader {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
@@ -109,7 +112,7 @@ impl InboxReader {
             .ok_or(GatewayError::Unavailable)?;
         let authority = Authority::from_definition(&current.definition)?;
         if version != 1
-            || inbox.kind != "discord_inbox_v1"
+            || inbox.id().is_err()
             || inbox.channel_record != authority.record
             || inbox.bot_id != authority.bot_id
             || inbox.source_revision != authority.revision
@@ -119,10 +122,7 @@ impl InboxReader {
             || inbox.retained_until <= now
             || inbox.parts.is_empty()
             || inbox.parts.len() > 64
-            || index_id(
-                "discord-native-message-v1",
-                &[&inbox.channel_record, &inbox.bot_id, &inbox.message_id],
-            ) != id
+            || inbox.id()? != id
         {
             return Err(GatewayError::Authority);
         }
@@ -164,7 +164,18 @@ impl InboxReader {
         {
             return Err(GatewayError::Authority);
         }
-        if let Some(component) = &body.component {
+        if body.message_event.is_some() != inbox.change_id.is_some() {
+            return Err(GatewayError::Protocol);
+        }
+        if let Some(change) = &body.message_event {
+            change.validate(&inbox.bot_id, &inbox.message_id)?;
+            if inbox.change_id.as_deref() != Some(change.activity.event_id.as_str()) {
+                return Err(GatewayError::Protocol);
+            }
+            // Retained target selection is loaded from the original admission;
+            // only current credentials and source authority may execute it.
+            body.channel = current.definition.clone();
+        } else if let Some(component) = &body.component {
             component.validate(&inbox.bot_id, &inbox.message_id)?;
             if component.identity.source_revision != inbox.source_revision
                 || current.definition.routing.is_none()
@@ -259,6 +270,14 @@ impl InboxReader {
             &self.store.keys,
         )
         .map_err(|_| GatewayError::Protocol)?;
+        let original_message = body.message_event.as_ref().map(|change| {
+            crate::ingress::routing_store::EventIdentity {
+                owner: body.channel.owner.subject.clone(),
+                channel_id: current.id.clone(),
+                record_id: current.pointer.record_id.clone(),
+                event_id: change.original_event_id.clone(),
+            }
+        });
         let request = LaunchRequest {
             idempotency_key: consumer.as_ref().map_or_else(
                 || IdempotencyKey::from_event(&activity.event_id),
@@ -287,12 +306,23 @@ impl InboxReader {
             request,
             source_bytes: bytes,
             received_at: inbox.received_at,
+            original_message,
         })))
     }
 }
 
 impl Body {
     pub(super) fn activity(&self, bot: &str) -> Result<Normalized, GatewayError> {
+        if self.message_event.is_some()
+            && (self.component.is_some() || self.native_channel.is_some())
+        {
+            return Err(GatewayError::Protocol);
+        }
+        if let Some(change) = &self.message_event {
+            let id = self.dispatch["id"].as_str().ok_or(GatewayError::Protocol)?;
+            change.validate(bot, id)?;
+            return Ok(Normalized::Activity(Box::new(change.activity.clone())));
+        }
         if self.component.is_some() && self.native_channel.is_some() {
             return Err(GatewayError::Protocol);
         }
