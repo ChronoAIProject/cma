@@ -248,3 +248,44 @@ it('retains saved thread history access and blocks a new opt-in when the gate is
     validateRelayAuthoring(available, { sources: [native] }, { sources: [source] }),
   ).not.toThrow();
 });
+
+it('reaction opt-in retains legacy defaults and follows the selected message scopes', () => {
+  const onChange = vi.fn();
+  const enabled = {
+    ...available,
+    authoring: { ...available.authoring!, native_discord_reactions_enabled: true },
+  };
+  const { rerender } = render(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={native} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  expect(
+    screen.queryByRole('checkbox', { name: 'Receive reactions to retained messages' }),
+  ).not.toBeInTheDocument();
+  expect(native).toMatchObject({ intents: 37377 });
+  rerender(
+    <RelayCapabilitiesContext value={enabled}>
+      <SourceFields value={native} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Receive reactions to retained messages' }));
+  const opted = { ...native, intents: 37377 | 1024 | 8192 };
+  expect(onChange).toHaveBeenLastCalledWith(opted);
+  rerender(
+    <RelayCapabilitiesContext value={enabled}>
+      <SourceFields value={opted} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Receive server messages' }));
+  expect(onChange).toHaveBeenLastCalledWith({ ...native, intents: 32768 | 4096 | 8192 });
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [opted] }, { sources: [native] }),
+  ).toThrow('reaction access');
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [opted] }, { sources: [opted] }),
+  ).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [native] }, { sources: [opted] }),
+  ).not.toThrow();
+});

@@ -80,6 +80,7 @@ pub(crate) async fn serve(
     state.native_telegram_durable_admission_enabled =
         config.routing.recovery_enabled && config.routing.admission_enabled;
     state.native_discord_thread_history_enabled = config.native_discord_thread_history_enabled;
+    state.native_discord_reactions_enabled = config.native_discord_reactions_enabled;
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
@@ -124,6 +125,7 @@ pub(crate) async fn serve(
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
+        .with_discord_reactions(config.native_discord_reactions_enabled)
         .with_native_discord_edits(native_discord_edits)
         .with_native_discord_effects(native_discord_effects)
         .with_lark_cards(lark_cards)

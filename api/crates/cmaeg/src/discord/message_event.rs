@@ -18,18 +18,25 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 pub(super) struct Snapshot {
     pub activity: Activity,
     pub original_event_id: EventId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound_consumer: Option<cmaeg_core::ids::ConsumerId>,
 }
 impl Snapshot {
     pub fn validate(&self, bot: &str, message: &str) -> Result<(), GatewayError> {
         let ActivityKind::Event { ce, .. } = &self.activity.kind else {
             return Err(GatewayError::Protocol);
         };
-        if self.original_event_id.as_str() != format!("discord:{bot}:{message}")
+        let reaction = ce.r#type == "cma.message.reaction.updated.v1";
+        if (!reaction && self.outbound_consumer.is_some())
+            || (self.outbound_consumer.is_none()
+                && self.original_event_id.as_str() != format!("discord:{bot}:{message}"))
             || self.activity.source != (SourceKind::Discord { bot_id: bot.into() })
             || self.activity.routing.is_some()
             || !matches!(
                 ce.r#type.as_str(),
-                "cma.message.updated.v1" | "cma.message.deleted.v1"
+                "cma.message.updated.v1"
+                    | "cma.message.deleted.v1"
+                    | "cma.message.reaction.updated.v1"
             )
             || ce.id != self.activity.event_id.as_str()
             || ce.subject.as_deref() != Some(message)
@@ -43,11 +50,11 @@ impl Snapshot {
                 .as_ref()
                 .and_then(|data| data["message_id"].as_str())
                 != Some(message)
-            || !self
-                .activity
-                .event_id
-                .as_str()
-                .starts_with(&format!("discord:{bot}:{message}:"))
+            || !self.activity.event_id.as_str().starts_with(&if reaction {
+                format!("discord:{bot}:reaction:")
+            } else {
+                format!("discord:{bot}:{message}:")
+            })
             || self.activity.validate().is_err()
         {
             return Err(GatewayError::Protocol);
@@ -194,6 +201,7 @@ pub(super) fn normalize_change(
     let snapshot = Snapshot {
         activity,
         original_event_id: original_id,
+        outbound_consumer: None,
     };
     snapshot.validate(bot, message)?;
     Ok(Some(snapshot))
