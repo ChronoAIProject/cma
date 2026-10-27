@@ -1,6 +1,6 @@
 use super::content::*;
 use cmaeg_core::{
-    activity::{ActivityKind, SourceKind},
+    activity::{ActivityKind, AttachmentKind, AttachmentSource, SourceKind},
     channel::{LarkResourceKind, Source},
 };
 use serde_json::json;

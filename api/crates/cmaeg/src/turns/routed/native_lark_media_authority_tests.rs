@@ -1,4 +1,5 @@
 use super::*;
+use cmaeg_core::channel::Secret;
 
 #[tokio::test]
 async fn native_media_keeps_immutable_original_consumer_provider_and_message_authority() {
