@@ -2,7 +2,7 @@
 
 This additive `/v1` contract is limited to one confirmed native attachment in one whole platform message. New references require durable upload receipt storage and explicit `native_media_edit` authority. Historical effects-only references remain ineligible for editing, including after issuance is enabled. Multipart per-message references, Telegram albums and Discord messages with multiple attachments remain separate pending work.
 
-`CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED` and `CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED` default to false and remain false in the manifest. Deploy compatible readers before enabling issuance. Turning issuance off does not revoke a valid retained reference. Provider acceptance is a separate deployment prerequisite; source and fixture validation alone do not establish connected acceptance.
+`CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED` and `CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED` default to false and remain false in the manifest. Deploy compatible readers before enabling issuance. Turning issuance off does not revoke a valid retained reference. After the release and isolated Custom verification pass, issuance can be enabled for owner testing. Connected provider acceptance is recorded separately; source and fixture validation alone do not establish it.
 
 Use the existing REST `POST /v1/messages/{message_ref}/update` or MCP `updateMessage` with an exclusive `native_media_update` object. Supply `Idempotency-Key` for REST or `idempotency_key` for MCP, using the existing visible-ASCII 1–128-byte bound. This key is required for media updates; existing text/card requests remain compatible without it.
 
