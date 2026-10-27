@@ -227,3 +227,70 @@ it('shows the Meta callback with the existing endpoint copy control', () => {
   expect(screen.getByRole('button', { name: 'Copy WhatsApp webhook' })).toBeInTheDocument();
   expect(screen.queryByText('Callback endpoint')).not.toBeInTheDocument();
 });
+
+it('requires separate group authoring support and preserves removal while all authoring is disabled', () => {
+  const grouped = { ...source, group_ids: ['opaque+/=='] };
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [grouped] }, { sources: [source] }),
+  ).toThrow('group opt-ins');
+  const groups = {
+    ...available,
+    authoring: { ...available.authoring!, native_whatsapp_groups_writes_enabled: true },
+  };
+  expect(() =>
+    validateRelayAuthoring(groups, { sources: [grouped] }, { sources: [source] }),
+  ).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring({ status: 'legacy' }, { sources: [grouped] }, { sources: [grouped] }),
+  ).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring({ status: 'legacy' }, { sources: [source] }, { sources: [grouped] }),
+  ).not.toThrow();
+  for (const group_ids of [
+    ['a', 'a'],
+    ['a'.repeat(513)],
+    ['../escape'],
+    Array.from({ length: 17 }, (_, i) => `group${i}`),
+  ]) {
+    expect(() =>
+      validateRelayAuthoring(
+        groups,
+        { sources: [{ ...source, group_ids }] },
+        { sources: [source] },
+      ),
+    ).toThrow('16 unique');
+  }
+});
+
+it('shows structured existing-group opt-in with only supported group admission rules', () => {
+  const onChange = vi.fn();
+  render(
+    <RelayCapabilitiesContext
+      value={{
+        ...available,
+        authoring: { ...available.authoring!, native_whatsapp_groups_writes_enabled: true },
+      }}
+    >
+      <SourceFields
+        value={{
+          ...source,
+          group_ids: ['opaque+/=='],
+          admission: {
+            type: 'scoped',
+            senders: { type: 'open' },
+            chats: { type: 'open' },
+            groups: 'all',
+          },
+        }}
+        onChange={onChange}
+      />
+    </RelayCapabilitiesContext>,
+  );
+  expect(screen.getByLabelText('Allowed group IDs 1')).toHaveValue('opaque+/==');
+  expect(screen.getByRole('button', { name: 'Group messages' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Remove Allowed group IDs 1' }));
+  expect(onChange).toHaveBeenCalledWith(
+    expect.not.objectContaining({ group_ids: expect.anything() }),
+  );
+  expect(screen.getByText(/Official Business Account/)).toBeInTheDocument();
+});

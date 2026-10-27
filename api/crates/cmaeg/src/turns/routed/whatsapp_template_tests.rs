@@ -32,11 +32,15 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-async fn setup(named: bool) -> Setup {
+pub(super) async fn setup_with(named: bool, group: bool) -> Setup {
     let mut activity = fixture::message("invoice please");
     activity.actor.id = "447700900123".into();
     activity.actor.kind = ActorKind::Unknown;
     activity.conversation.id = "447700900123".into();
+    if group {
+        activity.conversation.id = whatsapp::groups::tests::GROUP.into();
+        activity.conversation.kind = cmaeg_core::activity::ConversationKind::Group;
+    }
     activity.source = SourceKind::Whatsapp {
         app_id: "12345".into(),
         waba_id: "23456".into(),
@@ -44,7 +48,11 @@ async fn setup(named: bool) -> Setup {
     };
     let mut request = fixture::request(
         |value| {
-            value["sources"] = json!([whatsapp::tests::source()]);
+            value["sources"] = json!([if group {
+                whatsapp::groups::tests::source_group()
+            } else {
+                whatsapp::tests::source()
+            }]);
             let credentials = whatsapp::tests::credentials();
             value["secrets"]["whatsapp"] = json!({"app_secret":credentials.app_secret.as_str(),"access_token":credentials.access_token.as_str(),"verify_token":credentials.verify_token.as_str()});
             value["routing"]["default_targets"] =
@@ -54,12 +62,16 @@ async fn setup(named: bool) -> Setup {
         activity,
     );
     fixture::rewrite_ref(&mut request, |event| {
-        event.reply = ReplyAddress::Whatsapp {
-            app_id: "12345".into(),
-            waba_id: "23456".into(),
-            phone_number_id: "34567".into(),
-            recipient_id: "447700900123".into(),
-            message_id: "wamid.original".into(),
+        event.reply = if group {
+            ReplyAddress::WhatsappGroup(whatsapp::groups::tests::reply())
+        } else {
+            ReplyAddress::Whatsapp {
+                app_id: "12345".into(),
+                waba_id: "23456".into(),
+                phone_number_id: "34567".into(),
+                recipient_id: "447700900123".into(),
+                message_id: "wamid.original".into(),
+            }
         }
     });
     let setup = Setup::with_request(supported(), request).await;
@@ -98,7 +110,7 @@ fn engine(
 async fn native_whatsapp_templates_retain_default_and_named_receipts_and_replay_without_resend() {
     for named in [false, true] {
         for uncertain in [false, true] {
-            let setup = setup(named).await;
+            let setup = setup_with(named, false).await;
             let mut lease = accepted(&setup).await;
             let event = event(&setup.journal().body(&lease).await.unwrap());
             let channel = setup.current.channel.lock().unwrap().clone();
@@ -198,7 +210,7 @@ async fn native_whatsapp_templates_retain_default_and_named_receipts_and_replay_
 #[tokio::test]
 async fn native_whatsapp_template_queued_sends_recheck_source_credential_and_consumer_authority() {
     for defect in 0..6 {
-        let setup = setup(true).await;
+        let setup = setup_with(true, false).await;
         let lease = accepted(&setup).await;
         let event = event(&setup.journal().body(&lease).await.unwrap());
         let channel = setup.current.channel.lock().unwrap().clone();
@@ -223,6 +235,7 @@ async fn native_whatsapp_template_queued_sends_recheck_source_credential_and_con
                 {
                     let mut current = setup.current.channel.lock().unwrap();
                     let current = Arc::make_mut(&mut current);
+                    let replacement_provider = current.consumer(None).unwrap().provider.clone();
                     match defect {
                         0 => current.definition.sources.clear(),
                         1 => {
@@ -259,7 +272,7 @@ async fn native_whatsapp_template_queued_sends_recheck_source_credential_and_con
                                 .iter_mut()
                                 .find(|consumer| consumer.id == setup.target().launch.consumer)
                                 .unwrap()
-                                .provider = current.consumer(None).unwrap().provider.clone()
+                                .provider = replacement_provider
                         }
                         _ => unreachable!(),
                     }

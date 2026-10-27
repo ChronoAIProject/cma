@@ -10,6 +10,7 @@ This implementation supports private text messages, gated [inbound media](CMAEG_
 on retained incoming messages and confirmed CMA replies, gated [reply buttons and single-choice lists](CMAEG_Native_WhatsApp_Controls.md), and actual native
 text, separately gated [JPEG/PNG/PDF/audio/sticker/video replies](CMAEG_Native_WhatsApp_Outbound_Media.md)
 and [approved-template replies](#approved-template-replies) through Graph API `v25.0`.
+Separate default-off authoring and issuance gates add [existing OBA group messaging](CMAEG_Native_WhatsApp_Groups.md) with explicit source group IDs, distinct original participants and group destinations, and conservative media/template subsets.
 A separate gate enables [own reactions to authenticated received messages](CMAEG_Native_WhatsApp_Reactions.md).
 This does not establish complete WhatsApp support. Further video/audio/document profiles,
 outbound editing and connected Meta client
@@ -177,11 +178,13 @@ acceptance under a live app's current permissions or a real WhatsApp client.
 `CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED` defaults to false in code and the source
 ConfigMap. It is independent of the existing NyxID template flag and native media
 upload flag. Enabling it advertises the existing `capabilities.whatsapp_templates`
-only for verified private native contexts whose sealed source and recipient still
+for verified private native contexts, or explicitly opted-in group contexts with the independent groups gate enabled, whose sealed source and destination still
 match current source credentials. The existing `OutboundMessage.whatsapp_template`
 shape supplies approved name/language, text/image/video/document header, body
 text/currency/date-time substitutions and URL buttons at indices 0–2. See the
 [full typed contract](CMAEG_Protocol.md#approved-whatsapp-template-replies).
+Group contexts additionally advertise `whatsapp_template_components: ["header", "body"]`
+and reject all button components.
 
 Media headers use numeric Meta IDs or public HTTPS references. The shared template
 URL policy refuses private/special addresses and local/internal hosts before any

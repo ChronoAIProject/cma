@@ -305,6 +305,7 @@ export const CapabilitiesSchema = object({
   thread_history: optional(nullable(boolean)),
   message_effects: optional(nullable(MessageEffectsCapabilitiesSchema)),
   whatsapp_templates: optional(nullable(boolean)),
+  whatsapp_template_components: optional(nullable(array(text))),
   native_media: optional(nullable(NativeMediaCapabilitiesSchema)),
   attachments: text,
   buttons: text,

@@ -175,6 +175,9 @@ pub struct RelayAuthoringCapabilities {
     /// New native Meta WhatsApp source and credential writes are available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_writes_enabled: Option<bool>,
+    /// Owner opt-in to existing OBA groups, independent of group issuance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_groups_writes_enabled: Option<bool>,
     /// Durable admission/recovery and routing authoring prerequisites are enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_auto_activation_enabled: Option<bool>,

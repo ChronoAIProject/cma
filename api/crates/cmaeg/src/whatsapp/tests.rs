@@ -15,6 +15,7 @@ use std::{
 
 pub(crate) fn source() -> Source {
     Source::Whatsapp {
+        group_ids: vec![],
         app_id: "12345".into(),
         waba_id: "23456".into(),
         phone_number_id: "34567".into(),

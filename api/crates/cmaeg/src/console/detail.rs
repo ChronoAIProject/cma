@@ -171,6 +171,7 @@ fn source_view(source: &Source) -> SourceView {
             app_id,
             waba_id,
             phone_number_id,
+            group_ids,
             admission,
         } => SourceView {
             id,
@@ -184,7 +185,7 @@ fn source_view(source: &Source) -> SourceView {
             key_ids: Vec::new(),
             settings: vec![
                 format!("App {app_id}; account {waba_id}; dedicated callback required"),
-                "Text, reactions and text replies; media and templates unavailable".into(),
+                format!("Private messages and reactions; {} explicitly allowed existing groups. Media and templates require separate gateway capabilities.",group_ids.len()),
             ],
         },
         Source::Discord {
