@@ -2521,14 +2521,23 @@ CMAEG retains the bounded route cooldown but never retries that logical request,
 including with a channel key. Confirmed and unknown explicit replies both
 suppress automatic fallback answers.
 
-The default exchange timeout remains 5000 ms, configured by
-`CMAEG_NYXID_REPLY_TIMEOUT_MS`; it covers connection, send and receipt read for
-the complete request. The external tool deadline remains 8 s, including queueing
-and pacing. A timeout or cancellation after dispatch proves no absence of
-platform effects. Operators must verify that NyxID's complete splitting fits
-these deadlines and coordinate any future timeout change with upstream tool and
-proxy budgets. A fake transport passing this contract does not demonstrate live
-NyxID acceptance or platform reconstruction. See the operations rollout procedure.
+Complete ordinary relay requests have a fixed 15 s exchange budget for the
+whole sequential platform delivery. With complete mode enabled, non-routed
+NyxID reply tools without templates/native uploads wait 18 s including queueing
+and pacing. This also covers structured card/control requests because their
+eligible native rendering or complete-text fallback is determined inside the
+engine; native card/control exchanges still use their configured timeout.
+Update/typing tools keep their 8 s wait. `CMAEG_NYXID_REPLY_TIMEOUT_MS` continues
+to control legacy part exchanges, card/edit and non-media template exchanges
+(default 5000 ms), and the connection-establishment bound. Durable routed
+automatic/tool replies retain their 20 s window and 30 s claims/target leases.
+The opaque runtime tool proxy waits 70 s in compatible runtime images, covering
+both ordinary reply waits and the existing 60 s exchange/65 s non-routed
+native-upload wait. It does not extend the routed window. Existing Sandbox
+runtimes retain their pinned image and may still cut off at 10 s. A timeout or cancellation after dispatch proves no absence of
+platform effects. Valid long replies can still exceed these finite budgets and
+remain unknown without replay; a 64-part payload cap is not a timing guarantee. A fake
+transport passing this contract does not demonstrate live NyxID acceptance or platform reconstruction. See the operations rollout procedure.
 
 Provider idempotency deduplicates inbound events. Local delivery state prevents
 duplicates within a running replica; it is bounded and not durable. Crashes can
@@ -3444,9 +3453,11 @@ pinned connections and no redirects; the latter retain the shared 64 KiB inline
 aggregate bound. At most four files and 8 MiB of aggregate prepared bytes are
 accepted. Multipart metadata preserves filenames, MIME types and descriptions.
 Native media delivery does not depend on NyxID relay-media deployment flags.
-Native controls, deletion and reactions remain unsupported; structured blocks
-use the established text fallback. Native single-message text edits use the
-separate reader-first contract below.
+Native buttons and single-select controls use the separately gated
+[interaction contract](CMAEG_Native_Discord_Interactions.md); deletion and
+reactions use the [confirmed-message effects contract](#native-discord-confirmed-message-effects)
+below. Unsupported structured blocks keep their established text fallback.
+Native single-message text edits use the separate reader-first contract below.
 
 Native inbound media uses `{"type":"discord","channel_id":"99",
 "message_id":"700","attachment_id":"500"}`. This nonsecret locator is
