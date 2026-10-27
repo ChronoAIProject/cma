@@ -631,6 +631,38 @@
         ],
         "type": "object"
       },
+      "AgentToolCapability": {
+        "description": "Server tool metadata. Availability does not grant channel, source or event authority.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "destructive": {
+            "type": "boolean"
+          },
+          "idempotent": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "open_world": {
+            "type": "boolean"
+          },
+          "read_only": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "read_only",
+          "destructive",
+          "idempotent",
+          "open_world"
+        ],
+        "type": "object"
+      },
       "ApiType": {
         "enum": [
           "responses",
@@ -1646,6 +1678,16 @@
       },
       "CapabilityView": {
         "properties": {
+          "agent_tools": {
+            "description": "Server tools selected by the same runtime gates as MCP tools/list.\nThis catalog does not grant channel, source or event permission.",
+            "items": {
+              "$ref": "#/components/schemas/AgentToolCapability"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "platforms": {
             "description": "Native connection setup workflows; separate from NyxID relay ingestion.",
             "items": {

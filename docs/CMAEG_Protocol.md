@@ -2716,6 +2716,17 @@ an ordinary bot, not an exclusive replacement for a normal conversational bot.
 The owner enables it in official @BotFather; the gateway discovers it through
 `getMe.can_manage_bots`. No public API claims to enable that mode silently.
 
+The authenticated capability response also includes optional `agent_tools`, an
+array of `{name, description, read_only, destructive, idempotent, open_world}`.
+Names, descriptions and behavior hints come from the same tool definitions and
+runtime selection as MCP `tools/list`. Older servers may omit the catalog;
+missing or null means availability was not reported, while an empty array means
+no tools are advertised. Entries describe server tools and do not grant access
+to a channel, source, event, attachment or message. They do not attest that a
+provider installed the MCP server. Callers still need the existing agent
+credential and sealed references, and per-event capabilities remain authoritative.
+The response retains creator authentication and `Cache-Control: no-store`.
+
 The provider-facing connection operations are generic:
 
 | Operation | Contract |
