@@ -90,7 +90,7 @@ async fn owner_tool_catalog_equals_mcp_metadata_under_every_discovery_gate() {
             let http = reqwest::Client::new();
             let mcp: Value = http
                 .post(format!("{base}/mcp"))
-                .bearer_auth("nyxid_ag_catalog-fixture")
+                .bearer_auth("nyxid_ag_catalog-agent-fixture")
                 .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
                 .send()
                 .await
@@ -133,7 +133,7 @@ async fn owner_tool_catalog_equals_mcp_metadata_under_every_discovery_gate() {
             );
             // Listing a server tool grants no authority over an arbitrary message.
             let refused: Value = http.post(format!("{base}/mcp"))
-                .bearer_auth("nyxid_ag_catalog-fixture")
+                .bearer_auth("nyxid_ag_catalog-agent-fixture")
                 .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"deleteMessage","arguments":{"message_ref":"forged","idempotency_key":"catalog"}}}))
                 .send().await.unwrap().json().await.unwrap();
             assert!(refused.get("error").is_some());
@@ -169,7 +169,7 @@ async fn tool_catalog_requires_owner_authentication_without_agent_custody() {
     let http = reqwest::Client::new();
     for credential in [
         None,
-        Some("nyxid_ag_catalog-fixture"),
+        Some("nyxid_ag_catalog-agent-fixture"),
         Some("invalid-fixture"),
     ] {
         let mut request = http.get(format!("{base}/v1/channel-capabilities"));
