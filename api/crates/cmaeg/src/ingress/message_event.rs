@@ -18,6 +18,9 @@ pub(crate) struct VerifiedMessageEvent {
     pub source_bytes: Vec<u8>,
     pub received_at: i64,
     pub original: EventIdentity,
+    /// Set only after proving a durable confirmed outbound receipt for this
+    /// exact consumer, provider, partition, conversation and native target.
+    pub outbound_consumer: Option<cmaeg_core::ids::ConsumerId>,
 }
 
 pub(crate) fn shape(activity: &Activity) -> bool {
@@ -45,10 +48,33 @@ pub(crate) fn shape(activity: &Activity) -> bool {
 }
 
 pub(super) fn bind(
+    request: LaunchRequest,
+    original: &AdmittedPlan,
+    keys: &MasterKeyRing,
+    now: i64,
+) -> Result<(LaunchRequest, RoutedPlan), PlanError> {
+    bind_selected(request, original, keys, now, None)
+}
+
+/// Caller must first verify a durable confirmed-send receipt for this exact
+/// consumer, original plan, provider, partition, conversation and native target.
+/// This selector narrows retained authority; it never reruns current routing.
+pub(super) fn bind_outbound(
+    request: LaunchRequest,
+    original: &AdmittedPlan,
+    keys: &MasterKeyRing,
+    now: i64,
+    consumer: &cmaeg_core::ids::ConsumerId,
+) -> Result<(LaunchRequest, RoutedPlan), PlanError> {
+    bind_selected(request, original, keys, now, Some(consumer))
+}
+
+fn bind_selected(
     mut request: LaunchRequest,
     original: &AdmittedPlan,
     keys: &MasterKeyRing,
     now: i64,
+    selected: Option<&cmaeg_core::ids::ConsumerId>,
 ) -> Result<(LaunchRequest, RoutedPlan), PlanError> {
     let ActivityKind::Event { ce, .. } = &request.activity.kind else {
         return Err(PlanError::NotOrdinary);
@@ -59,7 +85,7 @@ pub(super) fn bind(
         .open(keys, now)
         .map_err(|_| PlanError::InvalidReference)?
         .payload;
-    if !matches!(original.activity.kind, ActivityKind::Message { .. })
+    if (selected.is_none() && !matches!(original.activity.kind, ActivityKind::Message { .. }))
         || original.identity.owner != definition.owner.subject
         || original.identity.channel_id != request.channel.id
         || original.identity.record_id != definition.record_id
@@ -91,6 +117,9 @@ pub(super) fn bind(
         .clone()
         .ok_or(PlanError::ContextMismatch)?;
     routing.addressing_bytes = 0;
+    if let Some(consumer) = selected {
+        routing.targets.retain(|target| &target.id == consumer);
+    }
     request.activity.routing = Some(routing);
     if !shape(&request.activity) || request.activity.validate().is_err() {
         return Err(PlanError::ContextMismatch);
@@ -98,6 +127,9 @@ pub(super) fn bind(
     let mut targets = Vec::new();
     for target in &original.targets {
         let retained = &target.launch;
+        if selected.is_some_and(|consumer| &retained.consumer != consumer) {
+            continue;
+        }
         let consumer = request
             .channel
             .consumer(Some(&retained.consumer))
