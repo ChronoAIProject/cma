@@ -30,3 +30,4 @@ pub use definition::{
 };
 
 mod native_discord;
+mod native_telegram;

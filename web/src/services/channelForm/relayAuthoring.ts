@@ -22,6 +22,15 @@ export function validateRelayAuthoring(
   const oldSources = records(previous?.sources);
   for (const source of records(next.sources)) {
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
+    if (
+      source.type === 'telegram' &&
+      source.message_events === true &&
+      !unchanged &&
+      discovery.authoring?.native_telegram_message_events_enabled !== true
+    )
+      throw new Error(
+        'New or changed Telegram message event settings are disabled on this gateway. Your draft has been retained.',
+      );
     if (source.type === 'discord') {
       if (
         source.thread_history === true &&

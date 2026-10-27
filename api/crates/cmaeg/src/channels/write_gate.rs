@@ -43,6 +43,7 @@ pub struct WriteFlags {
     pub lark_resources: bool,
     /// Admits native Discord sources and credential revisions after reader rollout.
     pub native_discord: bool,
+    pub telegram_message_events: bool,
     pub discord_thread_history: bool,
 }
 
@@ -65,6 +66,21 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Telegram {
+                message_events: true,
+                ..
+            }
+        ) && !flags.telegram_message_events
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/message_events"),
+            "native_telegram_message_events_writes_disabled",
+        ));
+    }
     if let Some(index) = next.sources.iter().position(|source| {
         matches!(
             source,

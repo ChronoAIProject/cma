@@ -212,6 +212,7 @@ impl Native {
         definition.connection_ref = Some(record.id.clone());
         let material = record.material.as_ref().unwrap();
         definition.sources = vec![Source::Telegram {
+            message_events: false,
             bot_id: material.bot_id.clone(),
             bot_username: Some(material.username.clone()),
             admission: cmaeg_core::channel::AdmissionPolicy::All {},

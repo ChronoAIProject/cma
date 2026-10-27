@@ -33,6 +33,9 @@ pub enum Source {
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
+        /// Retain original message routing for edits and attributable reactions.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
         /// Telegram bot identifier.
         bot_id: String,
         /// Telegram bot username when available.
@@ -109,6 +112,9 @@ pub enum SourceRequest {
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
+        /// Retain original message routing for edits and attributable reactions.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
         /// Telegram bot identifier.
         bot_id: String,
         /// Telegram bot username when available.

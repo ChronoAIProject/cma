@@ -52,6 +52,7 @@ fn source(
     admission: Option<AdmissionPolicy>,
 ) -> Result<SourceRequest, ManagementError> {
     Ok(SourceRequest::Telegram {
+        message_events: false,
         bot_id: material.bot_id.clone(),
         bot_username: Some(material.username.clone()),
         admission: admission.ok_or_else(|| invalid("connection_admission is required"))?,

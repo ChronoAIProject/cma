@@ -101,6 +101,7 @@ export const RefusalSchema = enumeration(
   'system_sender',
   'unknown_sender',
   'message_edit',
+  'message_context_unavailable',
   'interactive_action_unsupported',
   'interaction_expired_or_invalid',
   'system_event',

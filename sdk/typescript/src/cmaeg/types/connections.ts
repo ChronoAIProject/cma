@@ -39,6 +39,7 @@ export const RelayPlatformCapabilitySchema = object({
 });
 export type RelayPlatformCapability = Output<typeof RelayPlatformCapabilitySchema>;
 export const RelayAuthoringCapabilitiesSchema = object({
+  native_telegram_message_events_enabled: optional(nullable(boolean)),
   native_discord_thread_history_enabled: optional(nullable(boolean)),
   native_discord_writes_enabled: optional(nullable(boolean)),
   native_discord_auto_activation_enabled: optional(nullable(boolean)),
