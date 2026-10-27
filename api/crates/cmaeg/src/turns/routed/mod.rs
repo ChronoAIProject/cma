@@ -44,7 +44,7 @@ pub use tool_replies::RoutedToolReplies;
 pub use tool_reply_store::ToolReplyStatus;
 
 #[cfg(test)]
-mod adapter_test_server;
+pub(crate) mod adapter_test_server;
 #[cfg(test)]
 mod adapter_tests;
 #[cfg(test)]

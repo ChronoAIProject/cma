@@ -19,6 +19,7 @@ pub(super) fn channel_response(
     record_id: &cmaeg_core::ids::RecordId,
 ) -> Result<ChannelResponse, ManagementError> {
     Ok(ChannelResponse {
+        native_discord_activation: crate::discord::activation::view(state, definition),
         thread_contract_versions: if state.thread_contract_writes_enabled
             && cmaeg_core::thread::supported(definition)
         {
@@ -84,6 +85,7 @@ pub(super) fn channel_list_item(
         })
         .transpose()?;
     Ok(ChannelListItem {
+        native_discord_activation: crate::discord::activation::view(state, definition),
         channel_id: known.as_ref().map(|response| response.channel_id.clone()),
         endpoints: known.map(|response| response.endpoints),
         record_id: definition.record_id.to_string(),

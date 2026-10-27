@@ -130,6 +130,12 @@ fn reply_matches(event: &EventRefPayload, activity: &Activity) -> bool {
             },
         ) => platform == source_platform && route_id == source_route,
         (
+            ReplyAddress::Discord {
+                bot_id, channel_id, ..
+            },
+            SourceKind::Discord { bot_id: source_bot },
+        ) => bot_id == source_bot && channel_id == &activity.conversation.id,
+        (
             ReplyAddress::Telegram {
                 bot_id,
                 chat_id,

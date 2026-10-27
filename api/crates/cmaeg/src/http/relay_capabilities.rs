@@ -5,6 +5,12 @@ use utoipa::ToSchema;
 
 #[derive(Serialize, ToSchema)]
 pub struct RelayAuthoringCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_writes_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_auto_activation_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_capacity: Option<usize>,
     pub dynamic_sources_writes_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outbound_messages_writes_enabled: Option<bool>,
@@ -56,6 +62,11 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
     })
     .collect();
     RelayAuthoringCapabilities {
+        native_discord_writes_enabled: Some(state.native_discord_writes_enabled),
+        native_discord_auto_activation_enabled: Some(
+            state.native_discord.discovery_enabled() && state.native_discord_admission_enabled,
+        ),
+        native_discord_capacity: Some(crate::discord::selection::MAX_RECORDS),
         dynamic_sources_writes_enabled: state.dynamic_sources_writes_enabled,
         outbound_messages_writes_enabled: Some(state.outbound_messages_writes_enabled),
         native_media_writes_enabled: Some(

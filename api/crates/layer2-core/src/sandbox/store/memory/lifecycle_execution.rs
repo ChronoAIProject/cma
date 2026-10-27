@@ -130,6 +130,21 @@ impl SandboxLifecycleExecutionStore for InMemorySandboxStore {
         )?;
         for change in mutation.agents {
             let id = change.agent.id.clone();
+            if let Some(checkpoint) =
+                candidate
+                    .agent_message_checkpoints
+                    .get(&id)
+                    .and_then(|checkpoint| {
+                        candidate
+                            .agents
+                            .get(&id)
+                            .and_then(|current| checkpoint.advance(current, &change.agent))
+                    })
+            {
+                candidate
+                    .agent_message_checkpoints
+                    .insert(id.clone(), checkpoint);
+            }
             save_record!(
                 candidate,
                 agents,

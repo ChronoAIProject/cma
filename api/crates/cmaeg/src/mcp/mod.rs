@@ -165,7 +165,7 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
         "ping" => Ok(ToolOutput::Envelope(json!({}))),
         "tools/list" => Ok(ToolOutput::Envelope(message_effects::list(
             state.media.is_some(),
-            state.telegram_effects_issuance_enabled,
+            state.telegram_effects_issuance_enabled || state.discord_effects_issuance_enabled,
         ))),
         "tools/call" => {
             let call: Call = match serde_json::from_value(rpc.params) {

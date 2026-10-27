@@ -86,6 +86,15 @@ pub struct CreateConnection {
 /// Deployment gates for new relay authoring; existing exact records remain readable.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayAuthoringCapabilities {
+    /// New direct Discord source and token writes are available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_writes_enabled: Option<bool>,
+    /// New native channels can be discovered without operator record selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_auto_activation_enabled: Option<bool>,
+    /// Per-process native channel selection bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_capacity: Option<usize>,
     /// Enables new dynamic-source and partition writes.
     pub dynamic_sources_writes_enabled: bool,
     /// Enables Discord/WhatsApp raw-event verification writes independently.

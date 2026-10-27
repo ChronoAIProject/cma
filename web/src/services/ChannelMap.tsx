@@ -1,4 +1,4 @@
-import { useId, useMemo } from 'react';
+import { useId, useMemo, type ReactNode } from 'react';
 import { Button } from '../ui/Button';
 import type { Channel } from './ChannelEditor';
 import { DeliveryFlow } from './DeliveryFlow';
@@ -15,6 +15,7 @@ export function ChannelMap({
   selection,
   onSelect,
   onActivity,
+  activityPreview,
   inspectorId,
   canAddProducer = false,
 }: {
@@ -23,6 +24,7 @@ export function ChannelMap({
   readonly onSelect: (selection: ChannelSelection) => void;
   readonly inspectorId: string;
   readonly onActivity?: () => void;
+  readonly activityPreview?: ReactNode;
   readonly canAddProducer?: boolean;
 }) {
   const heading = useId();
@@ -53,6 +55,12 @@ export function ChannelMap({
           ) : null}
         </div>
       </div>
+      {channel.native_discord_activation ? (
+        <p className="channel-field-hint" role="status" aria-label="Native Discord activation">
+          {channel.native_discord_activation.detail}
+        </p>
+      ) : null}
+      {activityPreview}
       <DeliveryFlow
         groups={groups}
         selected={selectionKey(selection)}

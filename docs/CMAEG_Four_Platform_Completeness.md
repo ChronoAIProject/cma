@@ -1,171 +1,189 @@
-# Four-platform messaging audit
+# Four-platform messaging status
 
-This audit compares CMA routing integration base `f611b2f29` (including the
-merged messaging work from PR #1118) with read-only NyxID `origin/main` pinned at
-`2ab239cecbda8e3fb9f69ae4fa84fd7a801d7e4f`. The matrix describes implemented
-code paths, not production enablement or a claim of live platform verification.
-No NyxID code, deployment or external messages are changed by this audit.
+Reviewed 2026-10-27 against the integrated CMA source, including native Discord
+self-service, edits, verified threads, message effects and component controls.
+This document replaces the historical transport-only descriptions; it does not
+claim complete four-platform support or that every implemented feature is live.
 
-| Platform | Implemented ordinary ingress | Implemented replies and controls | Remaining boundary |
-| --- | --- | --- | --- |
-| Telegram | Native webhook and authenticated NyxID relay; private/group text, raw sender/addressing checks, image/file/audio/video/sticker facts and media retrieval; album identity | Native and relay text; native buttons and single/multiple choices; gated native reaction/delete effects; native Bot API image/file/audio/video uploads; gated relay native media | Native media is locally verified, not live-platform verified. Relay attachments require the native-media rollout gate and compatible NyxID replicas. Relay effects do not inherit native Bot API authority. |
-| WhatsApp | Opted-in raw Cloud API verification for private messages; text, image/file/audio/video, voice/stickers, locations/contacts, context correlation | Text; gated native media, reply buttons, single-choice lists and approved template replies | The legacy normalized source is text-only. Enable raw verification through its write gate first. No editing or group support is claimed; the Cloud API does not prove that the sending account is a human. |
-| Lark / Feishu | Verified private/group text; raw rich-post flattening; standalone image/file/audio/video retrieval; thread contracts | Text; gated native media, JSON 2.0 cards and text edits | Embedded post image/video remains a visible placeholder: NyxID stores `embedded_attachments`, but its external relay callback and indexed attachment contract expose only `inbound.attachments`. Stickers remain refused. Thread behavior needs the declared thread contract and exact current source authority. |
-| Discord | Raw verifier for signed relay slash commands and Gateway-shaped `MESSAGE_CREATE`; correlated image/file/audio/video attachments and explicit mention/reply evidence | Relay text; gated native media and ordinary text edits | A parser is not live Gateway intake. Pinned NyxID accepts signed Interactions HTTP webhooks and has no Discord Gateway WebSocket receiver; CMA previously had none either. Native Gateway intake can be owned by CMA. Discord interactive consent is not ready: pinned NyxID treats type 4 as a component, whereas Discord components are type 3 and type 4 is autocomplete. CMA correctly refuses type 4. |
+“Implemented” means a composed CMA code path with local contract coverage.
+Feature gates, source credentials, provider permissions and external verification
+are separate requirements. The NyxID contract was inspected read-only at
+`2ab239cecbda8e3fb9f69ae4fa84fd7a801d7e4f`; that pin is not proof that every
+currently serving NyxID replica has the same behavior. No NyxID code change or
+external platform send is authorized by this review.
 
-The matrix is supported by these concrete paths:
+## Current capabilities
 
-- CMA `ingress/relay/facts.rs` selects raw observers independently from the
-  explicitly trusted normalized observer. `discord.rs` and `whatsapp.rs`
-  correlate native actor, conversation, parent and attachment identities.
-- CMA `delivery/relay_client/media.rs` constructs native attachment requests for
-  Telegram, Lark/Feishu, Discord and WhatsApp. `send.rs` refuses them before
-  delivery when the gate or destination contract is absent.
-- CMA `interactions/`, `telegram/effects.rs`, `delivery/edit.rs` and
-  `delivery/relay_client/whatsapp.rs` implement the bounded controls above.
-- NyxID `channel_adapters/discord.rs` verifies `X-Signature-Ed25519` and
-  `X-Signature-Timestamp`, registers an Interactions endpoint and parses slash
-  commands. Its `parse_gateway_message` helper has no Gateway socket producer.
-  Its `INTERACTION_MESSAGE_COMPONENT` constant is 4 at the audited pin.
-- NyxID `channel_adapters/lark.rs` stores post `embedded_attachments`, while
-  `channel_relay_service.rs::build_callback_payload` enumerates only
-  `inbound.attachments` into the external attachment download indices.
+| Capability | Telegram | WhatsApp | Lark / Feishu | Discord |
+| --- | --- | --- | --- | --- |
+| Ordinary ingress | Native webhook and authenticated relay; private/group admission | Raw-verified relay for private conversations | Verified relay private/group text and rich-post text | Native authenticated Gateway, owned supervision, durable inbox and routed execution; bounded source discovery and self-service creation. Relay slash commands are also supported |
+| Inbound media | Source-bound image/file/audio/video retrieval, voice/sticker facts and album identity | Source-bound image/file/audio/video retrieval; voice/sticker, contact/location and quote facts | Standalone image/file/audio/video retrieval; embedded rich-post media is an explicit non-retrievable placeholder | Native exact-message metadata and attachment-bound official CDN retrieval; correlated relay media |
+| Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads | Native multipart REST uploads; gated relay uploads |
+| Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
+| Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits through sealed exact-message references; gated relay text edits |
+| Delete/react to a sent message | Gated effects on confirmed bot messages, subject to permissions, age and reaction limits | No CMA relay operation | No CMA relay operation | Gated native effects on confirmed single-part bot text/link replies; durable idempotency and per-message serialization. No arbitrary message IDs or relay effects |
+| Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks | Gated native buttons/single-select controls and durable type-3 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
+| Incoming edits/deletes/reactions | Do not start ordinary agent work | Status, system and reaction input is refused | No general message-edit/delete/reaction propagation | Native ordinary intake admits `MESSAGE_CREATE`; edits/deletes/reactions do not start work |
 
-The checked-in CMA deployment enables inbound media but leaves new native
-relay sends, raw-verifier writes, relay text edits, Lark cards, WhatsApp
-templates/interactions, named interaction issuance and native Telegram effects
-off. These capabilities can be enabled on the CMA side after all serving and
-rollback readers understand their retained schemas, upstream contracts are
-verified, and an authorized controlled platform test confirms the result.
-Their existence in code is not permission to send test messages to recipients.
-None of these flags creates ordinary Discord Gateway intake or fixes the
-upstream Discord component-type mismatch.
+Native Discord thread creation, archive/reopen, join/follow, listing and history
+retrieval are not implemented. Existing-thread replies do not imply those
+operations. Native uploads and multi-part/uncertain sends do not issue the
+single-message edit/effect authority described above. WhatsApp editing and groups
+are limitations of this CMA integration, not universal claims about the platform;
+WhatsApp account identity also does not prove a human sender.
 
-## Native Discord transport slice
+## Native Discord integration and its bounds
 
-`cmaeg/src/discord/` adds a concrete Discord v10 JSON Gateway client using the
-workspace's existing pinned `tokio-tungstenite`. It opens the real WebSocket
-transport when explicitly invoked; no runtime bootstrap or configuration invokes
-it in this change. It never fabricates a NyxID callback or borrows relay authority.
+The application composition starts owned source workers and an inbox dispatcher
+when the required runtime gates and provider configuration are enabled.
+Bot credentials remain encrypted; authenticated discovery binds the actual bot,
+Gateway endpoint and intents before the durable per-bot lease and IDENTIFY quota
+permit a connection. Resume, checkpoint recovery, source revocation, reconnect
+cooldowns and shutdown are implemented. The native path has no NyxID dependency.
+Only one-shard bots are supported; a sharding requirement is explicitly refused.
+Bot permissions, channel access and the privileged MESSAGE_CONTENT intent remain
+real Discord prerequisites.
 
-The client supports HELLO, IDENTIFY, RESUME, immediate/requested heartbeats and
-ACK liveness, reconnect requests, invalid-session handling and typed close-code
-refusals. It requires the privileged MESSAGE_CONTENT intent for this ordinary
-message use case; a missing intent is refused locally and a 4014 close is a
-terminal refusal. Only message-related intents are accepted. Sharded operation
-is not implemented; a platform sharding requirement is a typed refusal.
+Self-service creation initializes default-consumer routing for an explicitly
+authored native source when its gates and a replay-capable provider are present.
+Discovery verifies exact current records from the sealed channel index and keeps
+at most 64 selected records, including explicit canaries. It does not require
+manually adding each new native source to a canary list, and it does not broaden
+ordinary HTTP/custom ingress selection. Partial index reads cannot revoke a
+worker by treating an unseen record as absent.
 
-Frames are bounded to 1 MiB, the pending dispatch queue to four entries, and
-outbound Gateway commands to 110 in a rolling minute, below Discord's 120 limit.
-Compression is not requested. The bot token is private memory and never a public
-field or diagnostic. Resume endpoints must be Discord Gateway WSS origins with
-no userinfo, alternate port or arbitrary path. READY verifies the expected bot
-identity before committing any event. A slow admission does not block heartbeats;
-queue pressure ends the connection with its last durable checkpoint for replay.
+Native component callbacks retain one original consumer, provider binding,
+conversation and partition. Opaque control IDs resolve options from the saved
+card; callback-provided business values cannot change that authority. A sanitized
+durable inbox and Activity receipt precede one type-6 acknowledgement attempt
+within 2.5 seconds of the interaction's creation time. Uncertain acknowledgements
+are not retried. Exact consumed callbacks can recover their inbox after that
+deadline; new late clicks cannot consume a card. Buttons and single-select controls
+also support verified existing thread types 10, 11 and 12. Issuance and fresh
+callbacks authenticate the exact channel, type, guild and parent; the saved card,
+Activity and reply retain that same thread. Exact consumed replay retains the
+original proof. Multi-select, controls with native media and interactive card
+edits are not implemented.
 
-`NativeDiscordJournal` is a mandatory boundary, not a production implementation.
-Before connecting it must validate current native source ownership and credential
-revision. Fresh connections must reserve IDENTIFY against current
-`GET /gateway/bot` session-start limits and the five-second concurrency buckets.
-Resume never silently falls back to an unreserved IDENTIFY. Every dispatch is
-processed in order. Its checkpoint advances only after the journal confirms
-durable admission. Message admission must be unique by native source record and
-Discord message ID, independently of Gateway session/sequence; a fresh session
-can redeliver an old message. A failed or canceled commit can have succeeded
-remotely, so reconnect replay must restore the original admission idempotently.
+Native receipt is persisted and observed before provider execution. Immutable
+inbox snapshots preserve routing and receipt time across replay. Verified thread
+metadata comes from exact authenticated `GET /channels/{channel_id}`, with bounded
+reads and no per-channel cache; it is saved with the inbox. Missing or mismatched
+proof refuses thread partitioning. Replies stay on the original thread channel,
+and sealed thread authority cannot retarget to its parent.
 
-Mock WebSocket tests exercise the real framing and protocol commands, admission
-ordering, replay and native-ID deduplication, heartbeat failure, bounded
-backpressure, invalid sessions, intent/authentication close codes and URL/identity
-refusals. The mock journal demonstrates the required contract; it is not evidence
-that persistent source management is already implemented.
+Native edits and effects recheck current source, owner, consumer and bot custody.
+Effect authority has a maximum 24-hour window; editing cannot renew it. Different
+idempotency keys serialize on the same message, preventing concurrent reaction
+replacements from leaving multiple bot reactions. Unknown writes remain unknown
+and fenced instead of being retried under another key.
 
-## Required integration before native Discord activation
+Source anchors: `discord/lifecycle.rs`, `source_discovery.rs`, `journal.rs`,
+`inbox_reader.rs`, `thread_context.rs`; `channels/native_discord.rs`;
+`delivery/discord.rs`, `discord_edit.rs`; `tools/message_effects/discord.rs` and
+`discord/rest/effects.rs`, all under `api/crates/cmaeg/src/`.
 
-1. Add an explicit native Discord source, Activity source kind and reply authority.
-   Extend channel validation and public schemas additively and gate new writes
-   until all readers and rollback targets support them. Do not encode a native
-   socket event as `NyxidRelay` or a custom producer.
-2. Store the bot token only in the encrypted channel credential schema. Verify
-   the owner's bot identity and requested intents; redact public reads, rotation
-   diagnostics and logs. Use durable per-bot ownership to prevent multiple CMA
-   replicas from independently identifying for one source.
-3. Implement current `/gateway/bot` discovery and durable session-start quota
-   reservations, including reset windows and concurrency buckets. Persist source-
-   bound resume checkpoints and fence every admission with current ownership.
-4. Map ordinary messages through native Discord validation and the shared source
-   admission policy. Bind bot/guild/channel/author identities, refuse system and
-   disallowed bot messages, retain native media handles and use stable message
-   idempotency before launching any provider work. Preserve original routing on
-   retry rather than routing again after a policy edit.
-5. Add native Discord REST text/media replies and media retrieval with exact
-   source credential custody, bounded responses and platform rate limits. Keep
-   uncertain sends unknown; do not blindly repeat a send after a lost response.
-6. Wire owned connection supervision into CMAEG startup and source lifecycle;
-   stop on source revocation, drain on rollout, recover durable work and obey
-   reconnect delays. Test restart/owner takeover, token rotation, intent denial,
-   message replay and media delivery before any production activation.
+## Implemented gates and deployment status
 
-Ordinary Discord messaging is therefore an achievable CMA implementation path,
-not a permanently blocked dependency on a NyxID change. This transport slice
-alone does not yet expose that capability to users.
+The checked-in `infra/cmaeg/configmap.yaml` records the desired staged activation:
+native Discord authoring/runtime/discovery, verified thread metadata, edits,
+effects and controls; routed recovery/admission; multi-consumer and dynamic-source
+authoring; named-consumer controls; and native Telegram effects. The CMA provider
+has explicit Responses v2 recovery paths. Nyxbot recovery remains absent because
+its deployed durable GET replay contract has not been proved. Explicit record
+lists remain empty, so ordinary existing HTTP/Custom ingress is not moved into
+routed execution. Native discovery selects only explicitly authored native sources.
 
+These desired values are not evidence of production activation. Deploy the new
+images with the previous live configuration first, let predecessor Pods drain,
+then apply the reviewed activation values and roll only the Gateway. Existing
+outbound-message authoring, raw relay verification, thread-contract authoring and
+inbound media stay enabled. The desired user-testing activation also enables
+relay native uploads, relay text edits, Lark cards and WhatsApp interactions/templates.
+The observed NyxID catalog and matching serving source implement these wire
+contracts; actual platform delivery/callback acceptance remains unverified until
+an authorized test uses each bot. Enabling these features does not authorize test
+messages to external recipients. Complete replies remain disabled: the current
+five-second whole-request budget can expire during a valid multipart send, so
+its timeout ownership must be corrected before switching existing replies.
 
-## Native source and journal follow-up
+Activation requires the following release sequence:
 
-The next slice adds native `discord` source and Activity reader variants, a
-sealed optional `discord_bot_token`, and the independent default-off
-`CMAEG_NATIVE_DISCORD_WRITES_ENABLED` management gate. `DurableJournal::acquire`
-reads the actual channel record, verifies the bot and Gateway discovery using
-read-only Discord API calls, and acquires a globally bot-bound encrypted CAS
-lease. `run_connection` executes the real transport with lease renewal and
-shutdown fencing. Identify quota/bucket reservations and resume checkpoints are
-persistent. MESSAGE_CREATE payloads plus public channel/routing snapshots are
-chunked into an immutable encrypted inbox before checkpoint advancement, with
-stable native message deduplication and seven-day retention. No NyxID envelope
-or relay authority is involved.
+1. Deploy compatible serving and rollback readers before issuing new persisted
+   metadata, message references, effect windows or routing records.
+2. For native Discord self-service, enable native source and routing authoring,
+   native runtime/discovery and routed recovery, and configure the selected
+   provider's verified response-recovery paths. Explicit record canaries remain
+   available. Discovery does not enable unrelated HTTP/custom routed admission.
+3. Enable `CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` for verified thread
+   partitioning. Enable `CMAEG_NATIVE_DISCORD_EDITS_ENABLED` for new edit refs;
+   native effects additionally require
+   `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED`. Retained authority remains
+   readable after issuance is disabled.
+4. Verify each enabled feature against a specifically authorized test source and
+   the actual provider contract. Local fixtures and code flags are not permission
+   to send messages to external recipients. No external sends are authorized in
+   the current work. Native control issuance separately requires
+   `CMAEG_DISCORD_INTERACTIONS_ENABLED`; named-consumer controls also require
+   `CMAEG_CONSUMER_INTERACTIONS_ENABLED`.
 
-The application still does not start native source supervision, dispatch the
-native inbox into routed admission/execution, or provide native REST text/media
-replies. Those are the remaining activation prerequisites; the source write gate
-stays disabled in the deployment manifest. Bot transfer between channels also
-requires explicit source lifecycle management. The initial transport-only
-boundary above describes its original commit; this follow-up replaces its
-credential/ownership/quota/journal gaps without claiming full messaging delivery.
+Exact settings and contracts are maintained in [Operations](CMAEG_Operations.md)
+and the [protocol](CMAEG_Protocol.md).
 
-## Native normalization, REST and media follow-up
+## Provider boundaries that CMA flags cannot remove
 
-The native adapter now has genuine MESSAGE_CREATE normalization/admission and an
-immutable inbox-to-LaunchRequest reader, native sealed reply addresses, and exact
-native attachment locators. Native REST text and multipart replies use current
-bot custody, bounded preparation, disabled mentions, route gating/pacing and
-conservative unknown outcomes. Inbound media refreshes exact message metadata
-with the current bot credential and downloads only matching official CDN URLs
-without forwarding that credential. These capabilities are covered by local HTTP
-fixtures and do not require NyxID changes or native relay flags. The protocol's
-native Discord section records the supported bounds and refusal behavior.
+- Pinned NyxID Discord receives signed Interactions HTTP requests; its
+  `parse_gateway_message` helper has no Gateway socket producer. CMA's native
+  transport supplies ordinary Gateway intake. The pinned relay component
+  constant is 4, whereas Discord components are type 3 and type 4 is autocomplete;
+  its outbound relay builder also lacks the native control contract. CMA must
+  not treat those callbacks as user consent. No NyxID fix is included here.
+- Lark rich-post image/video exists in NyxID's internal `embedded_attachments`,
+  but its external callback and indexed download contract expose only
+  `inbound.attachments`. CMA retains honest placeholders instead of inventing a
+  download URL. This is a relay integration boundary, not a Lark media limit.
+- WhatsApp free-form replies remain subject to its 24-hour customer service
+  window. Approved templates require provider approval and the matching relay
+  contract; a CMA template flag does not grant either.
 
-Startup source supervision and durable inbox scheduling into routed execution
-remain separate composition work. The source write gate remains off; this slice
-performs no live bot activation or external messaging. The earlier sections
-record the preceding slices and their then-open integration boundaries.
+## Verification evidence and remaining acceptance
 
-## Native Telegram outbound media follow-up
+Local WebSocket and HTTP fixtures cover native ownership/resume quotas, source
+rotation, discovery/revocation, receipt-before-execution, immutable replay, media
+custody/caps, exact thread partitions/replies, edits/effects, rate limits and
+uncertain writes. Native ordinary and verified-thread fixtures execute the real
+routed pipeline through a local provider HTTP server and Discord REST server;
+repeated inbox scans and a lost acknowledgement produce one provider POST and
+one reply. These are local adapter/contract results, not connected-platform tests.
+The controls loopback fixture exercises a real provider POST and a reply to the
+original card: one acknowledgement, one provider turn and one reply, with Activity
+visible first and the interaction token absent from retained/provider bytes.
 
-The native Telegram path now accepts the existing explicit `native_attachments`
-contract and sends actual Bot API multipart `sendPhoto`, `sendDocument`,
-`sendAudio` and `sendVideo` calls. It shares Discord's unchanged bounded public
-HTTPS/base64 materializer, prepares every attachment before any text or media
-write, and retains the sealed bot/chat/topic, current source credential,
-per-effect gate and pacing. Native capability discovery is independent of the
-NyxID-only relay media gate; no configuration default or deployment is changed.
+The earlier deployed Activity API sample, recorded in
+[Deployment readiness](CMA_Deployment_Readiness.md#live-channel-activity-and-flow-workspace-publication-from-pr-1122-2026-10-27),
+used an isolated production Custom Channel: the corresponding Activity snapshot
+was received over SSE **196 ms after the event HTTP POST was sent**. A latest-Activity GET at
+**402 ms** already included the in-flight event, before provider completion at
+**15,921 ms**. Cursor reconnect restored the completed snapshot without another
+provider turn. This demonstrates receipt visibility independent of provider
+completion in one API/SSE sample; it is not a percentile, authenticated production
+browser measurement or Telegram/WhatsApp/Lark/Discord delivery result. Browser
+journeys were checked locally. No external platform messages were sent.
 
-Local HTTP fixtures verify upload bytes, captions, filenames and MIME types for
-all four methods, inline and fetched content, unsafe URLs and byte limits, bot
-custody, topic-bound receipts, partial writes, rate limits and response loss.
-Incomplete batches stay unknown and are never automatically resent. Media sends
-issue no editable or effect-bearing message reference; ordinary text, interactive
-cards and existing effects retain their previous code path. Outbound platform
-file IDs/cross-platform locators are explicitly unsupported. Existing routed
-lease/send windows remain in force and can end a media batch before its 60-second
-outer ceiling. No live Telegram send, activation or deployment was performed.
+The subsequently deployed PR #1130 Web image keeps one live feed for the selected
+Channel, shared between the map preview and Activity dialog. In its isolated
+production Custom sample, the event appeared over SSE after **413 ms** and in the
+browser after **420 ms**, before provider completion at **10,108 ms**. Reopening
+the Channel displayed its latest record after **149 ms** and completed the
+entrance animation after **367 ms**. Reconnect retained one provider turn. These
+browser checks used production assets and API/SSE through a saved-token transport
+adapter; ordinary OAuth cookie login was not exercised. The fixture and its exact
+temporary key were retired. These are individual samples, not latency percentiles
+or external-platform delivery evidence.
+
+Remaining acceptance is explicit: complete the combined release checks and
+controlled Custom Channel verification, then obtain authorization for platform ingress, media, reply,
+thread/edit/effect and callback tests under each actual bot's permissions. Record
+live gates and source/provider revisions separately from this source audit.
+Overall four-platform support remains incomplete until those gaps and external
+acceptance are resolved.

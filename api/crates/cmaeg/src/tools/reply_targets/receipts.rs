@@ -130,7 +130,10 @@ impl Store {
             return Err(Problem::new(
                 ProblemCode::Conflict,
                 409,
-                if expected.kind == "telegram_message_effect_v1" {
+                if matches!(
+                    expected.kind.as_str(),
+                    "telegram_message_effect_v1" | "discord_message_effect_v1"
+                ) {
                     "message_effect_idempotency_conflict"
                 } else {
                     "reply_idempotency_conflict"

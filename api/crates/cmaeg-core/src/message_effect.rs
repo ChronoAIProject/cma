@@ -1,4 +1,4 @@
-//! Bounded native Telegram reaction input, shared by REST and MCP.
+//! Bounded native Telegram and Discord reaction input, shared by REST and MCP.
 use crate::ValidationError;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -13,9 +13,10 @@ pub enum TelegramReaction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MessageReactionRequest {
-    /// Empty clears the bot's reaction; Telegram bots may set at most one.
+    /// Empty clears the bot's reaction; the gateway supports at most one.
     #[schema(max_items = 1)]
     pub reaction: Vec<TelegramReaction>,
+    /// Telegram-only presentation hint; Discord refuses true.
     #[serde(default)]
     pub is_big: bool,
 }

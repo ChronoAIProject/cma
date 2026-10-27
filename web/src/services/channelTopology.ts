@@ -60,18 +60,22 @@ export function channelNodes(channel: Channel) {
       title:
         source.type === 'custom'
           ? 'Custom events'
-          : source.type === 'telegram'
-            ? 'Telegram'
-            : relay
-              ? platformName(source.platform)
-              : `Producer ${index + 1}`,
+          : source.type === 'discord'
+            ? 'Discord'
+            : source.type === 'telegram'
+              ? 'Telegram'
+              : relay
+                ? platformName(source.platform)
+                : `Producer ${index + 1}`,
       subtitle: relay
         ? 'NyxID relay'
-        : source.type === 'telegram'
-          ? 'Direct webhook'
-          : source.type === 'custom'
-            ? 'HTTP events'
-            : 'Recorded source',
+        : source.type === 'discord'
+          ? 'Direct Discord bot'
+          : source.type === 'telegram'
+            ? 'Direct webhook'
+            : source.type === 'custom'
+              ? 'HTTP events'
+              : 'Recorded source',
       detail: relay
         ? list(source.route_ids).length === 0
           ? 'No routes'

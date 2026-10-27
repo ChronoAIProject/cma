@@ -141,9 +141,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let complete_replies = config::nyxid_complete_replies_from_env()?;
     let native_media = config::nyxid_native_media_from_env()?;
     let relay_text_edits = config::relay_text_edits_from_env()?;
+    let native_discord_edits = config::native_discord_edits_from_env()?;
+    let native_discord_effects = config::native_discord_effects_from_env()?;
+    let native_discord_threads = config::native_discord_thread_metadata_from_env()?;
     let lark_cards = config::lark_cards_from_env()?;
     let consumer_interactions = config::consumer_interactions_from_env()?;
     let whatsapp_interactions = config::whatsapp_interactions_from_env()?;
+    let discord_interactions = config::discord_interactions_from_env()?;
     let whatsapp_templates = config::whatsapp_templates_from_env()?;
     let telegram_effects = config::telegram_message_effects_from_env()?;
     let config = Config::from_env()?;
@@ -152,9 +156,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         complete_replies,
         native_media,
         relay_text_edits,
+        native_discord_edits,
+        native_discord_effects,
+        native_discord_threads,
         lark_cards,
         whatsapp_templates,
         whatsapp_interactions,
+        discord_interactions,
         consumer_interactions,
         telegram_effects,
     )
