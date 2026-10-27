@@ -32,7 +32,7 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/thread-contract-writes: "v1"
-        cma.chronoai.dev/operator-config-reload: "pr1148-forms-effects-40505257949-1fd3345ce6f1"
+        cma.chronoai.dev/operator-config-reload: "pr1151-native-platforms-2929f8054-20261028"
         cma.chronoai.dev/authoring-activation: "76bcae97d-20261026"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
         cma.chronoai.dev/candidate: "2929f805436ea5df19cd4394c9f5ee2573dcdca9"

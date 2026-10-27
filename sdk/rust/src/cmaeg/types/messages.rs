@@ -263,6 +263,8 @@ pub enum NativeMediaKind {
     Audio,
     /// Video attachment.
     Video,
+    /// Sticker presentation, only when advertised by the event destination.
+    Sticker,
 }
 
 /// Public HTTPS URL or a bounded standard-base64 body, never a local file path.
@@ -322,4 +324,26 @@ pub struct NativeMediaCapabilities {
     /// Caption characters; shared metadata byte limits still apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_caption_chars: Option<u32>,
+    /// Structural sticker limits, absent on unsupported destinations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sticker: Option<NativeStickerCapabilities>,
+}
+
+/// Exact dimensions, size and animation limits for native sticker delivery.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeStickerCapabilities {
+    /// Required canvas width.
+    pub width: u32,
+    /// Required canvas height.
+    pub height: u32,
+    /// Encoded static sticker byte ceiling.
+    pub max_static_bytes: u64,
+    /// Encoded animated sticker byte ceiling.
+    pub max_animated_bytes: u64,
+    /// Frame count ceiling for one animation cycle.
+    pub max_frames: u64,
+    /// Duration ceiling for one animation cycle, in milliseconds.
+    pub max_duration_ms: u32,
+    /// Minimum duration per animation frame, in milliseconds.
+    pub min_frame_duration_ms: u32,
 }
