@@ -62,6 +62,15 @@ impl ToolsState {
         activity: &cmaeg_core::activity::Activity,
         verified: bool,
     ) -> Option<ReceivedMessageContext> {
+        if matches!(
+            activity.source,
+            cmaeg_core::activity::SourceKind::Telegram { .. }
+                | cmaeg_core::activity::SourceKind::Discord { .. }
+        ) {
+            return self
+                .native_received_message_context(caller, event, activity, verified)
+                .await;
+        }
         if !verified
             || !self.whatsapp_reactions.as_ref()?.issuance_enabled
             || !matches!(
