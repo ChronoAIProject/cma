@@ -163,7 +163,7 @@ impl Sender {
                     )
                     .await
                 {
-                    Ok(body) => {
+                    Ok(body) if body["author"]["bot"] == true => {
                         let id = body["id"]
                             .as_str()
                             .map(str::to_owned)
@@ -171,6 +171,7 @@ impl Sender {
                         media_result = Some(body);
                         id
                     }
+                    Ok(_) => Err(RestError::Unknown),
                     Err(error) => Err(error),
                 }
             } else {
@@ -267,14 +268,10 @@ impl Sender {
                 }
                 _ => Err(()),
             };
-            match confirmed {
-                Ok(reference) => receipt.message_ref = Some(reference),
-                Err(()) => {
-                    receipt.message_ref = None;
-                    receipt.delivery = DeliveryOutcome::Unknown {
-                        reason: "native_media_receipt_unconfirmed".into(),
-                    };
-                }
+            // Edit enrichment is optional: a confirmed ordinary upload keeps its
+            // existing effects reference when this narrower receipt cannot be issued.
+            if let Ok(reference) = confirmed {
+                receipt.message_ref = Some(reference);
             }
         }
         (receipt, effects)
