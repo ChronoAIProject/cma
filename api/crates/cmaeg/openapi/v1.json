@@ -3758,6 +3758,17 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "sticker": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeStickerCapabilities",
+                "description": "Exact structural sticker limits; absent when sticker delivery is unsupported."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3773,7 +3784,8 @@
           "image",
           "file",
           "audio",
-          "video"
+          "video",
+          "sticker"
         ],
         "type": "string"
       },
@@ -3818,6 +3830,52 @@
             "type": "object"
           }
         ]
+      },
+      "NativeStickerCapabilities": {
+        "properties": {
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_animated_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_duration_ms": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_frames": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_static_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "min_frame_duration_ms": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "width",
+          "height",
+          "max_static_bytes",
+          "max_animated_bytes",
+          "max_frames",
+          "max_duration_ms",
+          "min_frame_duration_ms"
+        ],
+        "type": "object"
       },
       "NyxIdIdentity": {
         "additionalProperties": false,
