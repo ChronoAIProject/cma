@@ -1,4 +1,5 @@
 use super::*;
+use crate::channels::definition::fixture as definition_fixture;
 use cmaeg_core::channel::Secret;
 
 #[tokio::test]
@@ -51,9 +52,10 @@ async fn native_media_keeps_immutable_original_consumer_provider_and_message_aut
         let mut channel = (*source_request.channel).clone();
         let mut event = event.clone();
         match defect {
-            "provider" => {
-                channel.definition.provider.binding_id = "other-provider".parse().unwrap()
-            }
+            "provider" => definition_fixture::replace_default_binding(
+                &mut channel.definition,
+                "other-provider".parse().unwrap(),
+            ),
             "source" => channel.definition.sources.clear(),
             "credential" => {
                 channel
