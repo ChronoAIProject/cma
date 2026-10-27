@@ -9,6 +9,8 @@ use reqwest::Url;
 mod cache;
 mod console;
 mod delivery;
+mod duration;
+use duration::positive_duration;
 mod ingress;
 mod media;
 mod native_discord;
@@ -472,27 +474,6 @@ pub(crate) fn validate_origin(name: &'static str, value: &str) -> Result<String,
         });
     }
     Ok(url.as_str().trim_end_matches('/').to_owned())
-}
-
-fn positive_duration(
-    name: &'static str,
-    default_ms: u64,
-) -> Result<std::time::Duration, ConfigError> {
-    let value = env::var(name).unwrap_or_else(|_| default_ms.to_string());
-    let milliseconds = value
-        .parse::<u64>()
-        .ok()
-        .filter(|value| {
-            *value > 0
-                && std::time::Instant::now()
-                    .checked_add(std::time::Duration::from_millis(*value))
-                    .is_some()
-        })
-        .ok_or_else(|| ConfigError::InvalidDuration {
-            name,
-            value: value.clone(),
-        })?;
-    Ok(std::time::Duration::from_millis(milliseconds))
 }
 
 #[cfg(test)]
