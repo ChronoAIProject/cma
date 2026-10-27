@@ -16,13 +16,23 @@ change, or external send is part of this implementation.
 
 ## Reader deployment and authoring
 
-`CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED` defaults to `false`. Deploy compatible
+`CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED` defaults to `false`; the deployment
+ConfigMap explicitly retains that value pending connected Meta setup acceptance. Deploy compatible
 readers everywhere before enabling authoring: old readers cannot decode the new
 source, credentials or sealed reply address. Native authoring also requires
 `CMAEG_MULTI_CONSUMER_WRITES_ENABLED`, `CMAEG_ROUTED_ADMISSION_ENABLED` and
 `CMAEG_ROUTED_RECOVERY_ENABLED`. Every active consumer must use a provider with
 durable response recovery. Retained work uses the existing global recovery scan;
 native WhatsApp does not require adding every record to the legacy canary list.
+
+Authenticated `GET /v1/channel-capabilities` reports optional
+`relay_authoring.native_whatsapp_writes_enabled` and
+`relay_authoring.native_whatsapp_auto_activation_enabled`. The first is the exact
+native authoring flag; the second requires durable admission/recovery and routing
+authoring. New setup requires both to be explicitly `true`; missing or null fields
+on an older server do not grant support. Provider replay and Meta custody remain
+per-channel checks. Unchanged saved native sources and credentials remain valid
+for unrelated edits with authoring disabled.
 
 Create through the authenticated channel API with a stable canonical UUID v4
 `record_id`, the usual channel/profile/provider fields, and these additional
@@ -110,7 +120,8 @@ Incoming targets must exist in a retained, admitted ordinary-message plan for
 the exact source and private sender. Outgoing targets require an encrypted
 immutable confirmed-send receipt with exact app/WABA/phone, recipient, native
 message ID, original admitted event, consumer, provider, partition and conversation.
-That reaction reaches only the receipt's consumer. It never broadcasts to other
+That reaction reaches only the receipt's consumer, including when the confirmed
+reply was triggered by a retained reaction event. It never broadcasts to other
 consumers that happened to receive the original incoming message. Source removal,
 provider changes and expired evidence revoke target authority.
 
@@ -133,6 +144,9 @@ are explicitly refused and acknowledged; expired evidence refuses immediately.
 There is no pending-target queue. Distinct out-of-order
 reaction events preserve provider timestamps. CMA does not materialize a current
 reaction state or claim a total order for equal timestamps.
+Temporary failures reading a receipt's original admitted plan also return 503;
+a successful later read can admit the same reaction exactly once. A missing or
+expired original remains unavailable and cannot create a fresh route.
 
 ## Native reply confirmation
 

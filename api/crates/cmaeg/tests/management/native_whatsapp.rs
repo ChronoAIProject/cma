@@ -209,3 +209,54 @@ async fn native_whatsapp_management_update_proves_new_source_and_initializes_mis
     stop.send(()).unwrap();
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn native_whatsapp_management_retains_exact_source_and_credentials_with_authoring_off() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (enabled, _) = state(&provider, &cma, &nyxid, true);
+    let (base, stop, task) = serve_app(enabled).await;
+    let mut input = body();
+    let response = post(&base, &input).await;
+    assert_eq!(response.status(), 201);
+    let created: Value = response.json().await.unwrap();
+    stop.send(()).unwrap();
+    task.await.unwrap();
+
+    let (mut disabled, graph) = state(&provider, &cma, &nyxid, false);
+    disabled.native_whatsapp_writes_enabled = false;
+    disabled.native_whatsapp_admission_enabled = false;
+    disabled.multi_consumer_writes_enabled = false;
+    let (base, stop, task) = serve_app(disabled).await;
+    input.as_object_mut().unwrap().remove("record_id");
+    input["credentials"]
+        .as_object_mut()
+        .unwrap()
+        .remove("whatsapp");
+    input["name"] = "renamed native source".into();
+    input["expected_version"] = created["version"].clone();
+    let response = Client::new()
+        .put(format!(
+            "{base}/v1/channels/{}",
+            created["channel_id"].as_str().unwrap()
+        ))
+        .bearer_auth("token-alice")
+        .json(&input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let saved: Value = response.json().await.unwrap();
+    assert_eq!(
+        saved["definition"]["sources"],
+        created["definition"]["sources"]
+    );
+    assert_eq!(
+        saved["definition"]["routing"],
+        created["definition"]["routing"]
+    );
+    assert_eq!(graph.calls.load(Ordering::SeqCst), 0);
+    stop.send(()).unwrap();
+    task.await.unwrap();
+}

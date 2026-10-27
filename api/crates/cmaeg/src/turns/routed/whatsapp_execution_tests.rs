@@ -41,9 +41,13 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Notify, Semaphore};
 
-struct Graph(Mutex<Vec<Value>>);
+struct Graph {
+    calls: Mutex<Vec<Value>>,
+    first_seen: Notify,
+    release_first: Semaphore,
+}
 impl Transport for Graph {
     fn exchange(
         &self,
@@ -55,10 +59,17 @@ impl Transport for Graph {
     ) -> BoxFuture<'_, Result<HttpReply, TransportError>> {
         assert_eq!(method, Method::POST);
         assert_eq!(url.path(), "/v25.0/34567/messages");
-        let mut calls = self.0.lock().unwrap();
-        calls.push(serde_json::from_slice(&body).unwrap());
-        let id = format!("wamid.sent-{}", calls.len());
+        let number = {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(serde_json::from_slice(&body).unwrap());
+            calls.len()
+        };
+        let id = format!("wamid.sent-{number}");
         Box::pin(async move {
+            if number == 1 {
+                self.first_seen.notify_one();
+                self.release_first.acquire().await.unwrap().forget();
+            }
             Ok(HttpReply::new(StatusCode::OK, serde_json::to_vec(&json!({"messaging_product":"whatsapp","contacts":[{"wa_id":"447700900123"}],"messages":[{"id":id}]})).unwrap()))
         })
     }
@@ -71,7 +82,7 @@ fn frames() -> Vec<Value> {
         lifecycle(2, "response.completed", "completed"),
     ]
 }
-async fn post(url: &str, message: Value) {
+async fn post(url: &str, message: Value, expected: StatusCode) {
     let body = envelope(vec![message]);
     let secret = credentials();
     let tag = ring::hmac::sign(
@@ -92,7 +103,11 @@ async fn post(url: &str, message: Value) {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), expected);
+    if expected == StatusCode::SERVICE_UNAVAILABLE {
+        assert_eq!(response.headers()["retry-after"], "5");
+        return;
+    }
     assert_eq!(
         response.json::<Value>().await.unwrap(),
         json!({"accepted":1,"refused":0})
@@ -202,7 +217,11 @@ async fn native_whatsapp_real_provider_retries_run_once_and_outbound_reactions_r
     let tracker = TurnTracker::new(Readiness::initialized());
     let (tx, rx) = mpsc::channel(8);
     let sink = Arc::new(ShardedScheduler::new(tx));
-    let graph = Arc::new(Graph(Mutex::default()));
+    let graph = Arc::new(Graph {
+        calls: Mutex::default(),
+        first_seen: Notify::new(),
+        release_first: Semaphore::new(0),
+    });
     let receipts = Arc::new(crate::whatsapp::receipts::Store::new(
         records.records.clone(),
         keys.clone(),
@@ -275,22 +294,35 @@ async fn native_whatsapp_real_provider_retries_run_once_and_outbound_reactions_r
     let worker = tokio::spawn(scheduler.run(stopped));
     let mut message = text("wamid.e2e", "hello");
     message["timestamp"] = now.to_string().into();
-    post(&url, message.clone()).await;
-    post(&url, message).await;
-    complete(&plans, &journal, 1).await;
+    post(&url, message.clone(), StatusCode::OK).await;
+    post(&url, message, StatusCode::OK).await;
+    tokio::time::timeout(Duration::from_secs(5), graph.first_seen.notified())
+        .await
+        .expect("first native send must reach Graph");
     let mut message = reaction("wamid.e2e-reaction", "wamid.sent-1", "👍");
     message["timestamp"] = now.to_string().into();
-    post(&url, message.clone()).await;
-    post(&url, message).await;
+    // Meta can expose the sent message before its response/receipt settles.
+    post(&url, message.clone(), StatusCode::SERVICE_UNAVAILABLE).await;
+    graph.release_first.add_permits(1);
+    complete(&plans, &journal, 1).await;
+    post(&url, message.clone(), StatusCode::OK).await;
+    post(&url, message, StatusCode::OK).await;
     complete(&plans, &journal, 2).await;
+    // This receipt originates from the admitted reaction Event, not a Message.
+    let mut chained = reaction("wamid.e2e-chained-reaction", "wamid.sent-2", "❤️");
+    chained["timestamp"] = now.to_string().into();
+    post(&url, chained.clone(), StatusCode::OK).await;
+    post(&url, chained, StatusCode::OK).await;
+    complete(&plans, &journal, 3).await;
     stop.send(true).unwrap();
     worker.await.unwrap();
     assert!(engine.drain(Instant::now() + Duration::from_secs(5)).await);
     server.abort();
-    let calls = graph.0.lock().unwrap();
-    assert_eq!(calls.len(), 2);
+    let calls = graph.calls.lock().unwrap();
+    assert_eq!(calls.len(), 3);
     assert_eq!(calls[0]["context"]["message_id"], "wamid.e2e");
     assert_eq!(calls[1]["context"]["message_id"], "wamid.sent-1");
+    assert_eq!(calls[2]["context"]["message_id"], "wamid.sent-2");
     for call in calls.iter() {
         assert_eq!(call["text"]["body"], "native response");
         assert_eq!(call["to"], "447700900123");
@@ -300,7 +332,7 @@ async fn native_whatsapp_real_provider_retries_run_once_and_outbound_reactions_r
         .iter()
         .filter(|call| call.method == "POST" && call.uri == "/api/v2/responses")
         .collect();
-    assert_eq!(turns.len(), 2);
+    assert_eq!(turns.len(), 3);
     for turn in turns {
         let body: Value = serde_json::from_slice(&turn.body).unwrap();
         assert_eq!(

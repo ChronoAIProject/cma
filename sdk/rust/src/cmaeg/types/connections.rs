@@ -143,6 +143,12 @@ pub struct RelayAuthoringCapabilities {
     /// Per-process native channel selection bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_capacity: Option<usize>,
+    /// New native Meta WhatsApp source and credential writes are available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_writes_enabled: Option<bool>,
+    /// Durable admission/recovery and routing authoring prerequisites are enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_auto_activation_enabled: Option<bool>,
     /// Enables new dynamic-source and partition writes.
     pub dynamic_sources_writes_enabled: bool,
     /// Enables Discord/WhatsApp raw-event verification writes independently.

@@ -235,7 +235,40 @@ async fn confirmed_outbound_selector_narrows_to_one_retained_consumer() {
         fixture::NOW,
     )
     .unwrap();
-    server.store().admit(&candidate).await.unwrap();
+    let admitted_event = server.store().admit(&candidate).await.unwrap();
+    // A reply to a verified message event can itself receive a notification.
+    // Only the confirmed outbound selector permits that retained Event origin.
+    let mut followup = notification(&admitted_event.activity);
+    followup.routing = None;
+    followup.event_id = "reaction-to-event-reply".parse().unwrap();
+    let cmaeg_core::activity::ActivityKind::Event { ce, .. } = &mut followup.kind else {
+        panic!()
+    };
+    ce.id = followup.event_id.to_string();
+    let chained = || fixture::request(|_| {}, followup.clone());
+    assert!(
+        message_event::bind(chained(), &admitted_event, &fixture::keys(), fixture::NOW,).is_err()
+    );
+    let (_, chained_plan) = message_event::bind_outbound(
+        chained(),
+        &admitted_event,
+        &fixture::keys(),
+        fixture::NOW,
+        &selected.consumer,
+    )
+    .unwrap();
+    assert_eq!(chained_plan.targets.len(), 1);
+    let chained_target = &chained_plan.targets[0];
+    assert_eq!(chained_target.consumer, selected.consumer);
+    assert_eq!(chained_target.provider, selected.provider);
+    assert_eq!(
+        chained_target.event.partition_key,
+        selected.event.partition_key
+    );
+    assert_eq!(
+        chained_target.event.conversation_id,
+        selected.event.conversation_id
+    );
     assert!(message_event::bind_outbound(
         incoming(),
         &original,

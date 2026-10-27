@@ -44,6 +44,8 @@ export const RelayAuthoringCapabilitiesSchema = object({
   native_discord_writes_enabled: optional(nullable(boolean)),
   native_discord_auto_activation_enabled: optional(nullable(boolean)),
   native_discord_capacity: optional(nullable(integer)),
+  native_whatsapp_writes_enabled: optional(nullable(boolean)),
+  native_whatsapp_auto_activation_enabled: optional(nullable(boolean)),
   dynamic_sources_writes_enabled: boolean,
   relay_raw_verification_writes_enabled: boolean,
   lark_resource_writes_enabled: optional(nullable(boolean)),
