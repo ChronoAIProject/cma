@@ -1,5 +1,6 @@
 use super::{
     failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MIGRATIONS, RECORDS, SESSIONS, THREAD_FENCES,
+    WHATSAPP_FLOWS,
 };
 use crate::records::RecordError;
 use futures_util::TryStreamExt;
@@ -60,13 +61,14 @@ pub async fn verify_with_authority(
             let collection = resource.get_str("collection").map_err(|_| invalid())?;
             if resource.len() != 2
                 || resource.get_str("db").ok() != Some(db.name())
-                || (!COLLECTIONS.contains(&collection) && collection != THREAD_FENCES)
+                || (!COLLECTIONS.contains(&collection)
+                    && ![THREAD_FENCES, WHATSAPP_FLOWS].contains(&collection))
             {
                 return Err(invalid());
             }
             for action in grant.get_array("actions").map_err(|_| invalid())? {
                 let action = action.as_str().ok_or_else(&invalid)?;
-                let allowed = if collection == THREAD_FENCES {
+                let allowed = if [THREAD_FENCES, WHATSAPP_FLOWS].contains(&collection) {
                     &["find", "insert", "update", "listIndexes"][..]
                 } else if collection != MIGRATIONS {
                     &["find", "insert", "update", "remove", "listIndexes"][..]

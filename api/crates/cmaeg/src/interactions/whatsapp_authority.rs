@@ -21,7 +21,7 @@ pub struct Authority {
 }
 fn source_revision(channel: &ResolvedChannel, source: &SourceKind) -> Result<String, Error> {
     let source = channel.definition.source_of(source).ok_or(Error::Denied)?;
-    let value = serde_json::to_value(source).map_err(|_| Error::Denied)?;
+    let value = crate::whatsapp::legacy_source(source);
     Ok(crate::channels::definition::hash_secret(
         &cmaeg_core::profile::canonical_json(value),
     ))
@@ -120,7 +120,8 @@ pub(super) fn valid(card: &Card) -> bool {
         .consumer
         .clone()
         .unwrap_or_else(cmaeg_core::ids::ConsumerId::default_consumer);
-    card.whatsapp.is_some()
+    card.native_whatsapp_flow.is_none()
+        && card.whatsapp.is_some()
         && card.consumer == owner.consumer
         && !owner.consumer.as_ref().is_some_and(|id| id.is_default())
         && owner.conversation_id.is_wellformed()

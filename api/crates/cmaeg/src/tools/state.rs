@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub native_whatsapp_forms: Option<Arc<crate::whatsapp::forms::service::Forms>>,
     pub native_media_edits: Option<Arc<crate::native_media::Client>>,
     pub native_lark_effects: Option<Arc<super::NativeLarkEffectsClient>>,
     pub whatsapp_reactions: Option<Arc<super::WhatsappReactionsClient>>,
@@ -172,6 +173,15 @@ impl ToolsState {
                 .authorize_event(caller, reference, "replyToEvent")
                 .await?;
             let expires_at = event.expires_at;
+            if matches!(event.reply, cmaeg_core::seal::ReplyAddress::Whatsapp { .. })
+                && crate::whatsapp::forms::compile::requested(&message)
+            {
+                return Err(Problem::new(
+                    ProblemCode::Conflict,
+                    409,
+                    "whatsapp_form_preparation_required",
+                ));
+            }
             if let Some(routed) = &self.routed_replies {
                 if let Some(receipt) = routed
                     .reply_with_idempotency(

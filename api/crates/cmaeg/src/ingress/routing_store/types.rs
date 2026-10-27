@@ -173,3 +173,6 @@ pub(super) struct Chunk {
     #[serde(with = "codec::base64_bytes")]
     pub bytes: Vec<u8>,
 }
+
+pub(super) const NATIVE_WHATSAPP_FLOW_INTERACTION_KIND: &str =
+    "native_whatsapp_flow_interaction_v1";

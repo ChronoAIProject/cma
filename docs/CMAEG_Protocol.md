@@ -2732,6 +2732,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
 | `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
+| `POST /v1/events/{event_ref}/form-preparation` | `prepareFormReply` |
+| `GET /v1/events/{event_ref}/form-preparation` | `readFormPreparation` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |
 | `GET /v1/messages/{message_ref}/capabilities` | `readMessageCapabilities` |
@@ -4253,3 +4255,7 @@ Platform semantics were checked against the official Discord API documentation a
 [`discord/discord-api-docs@7dfc89db5b951ec2fb2637a00d1422c341cef5d8`](https://github.com/discord/discord-api-docs/tree/7dfc89db5b951ec2fb2637a00d1422c341cef5d8):
 `developers/resources/channel.mdx`, `developers/resources/guild.mdx`,
 `developers/topics/threads.mdx`, and `developers/topics/permissions.mdx`.
+
+### Native WhatsApp Form preparation
+
+`prepareFormReply` (`POST /v1/events/{event_ref}/form-preparation`) and `readFormPreparation` (`GET /v1/events/{event_ref}/form-preparation`) return the additive `FormPreparationReceipt`. Preparation requires one stable `Idempotency-Key` and never sends. Ready supplies an opaque selector; explicit `replyToEvent` commits the unchanged message with required stable key and `Form-Preparation-Ref` (MCP `form_preparation_ref`). Each preparation/status request has a total two-second deadline; commit remains eight seconds. Unknown sends never permit a new key. Duplicate keys/selectors are refused. Existing `IntentReceipt` and delivery variants are unchanged. [Full contract and limits](CMAEG_Native_WhatsApp_Forms.md).

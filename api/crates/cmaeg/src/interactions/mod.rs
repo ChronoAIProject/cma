@@ -41,6 +41,7 @@ mod replacement;
 pub(crate) mod whatsapp;
 pub(crate) mod whatsapp_authority;
 mod whatsapp_binding;
+pub(crate) mod whatsapp_flow;
 
 pub use card::*;
 pub use keyboard::has_controls;
@@ -77,6 +78,9 @@ impl InteractionStore {
     /// existed; a card a non-default consumer owns is sealed as `ic`, which an
     /// image that predates consumers cannot open.
     async fn save(&self, card: &Card, version: Option<u64>) -> Result<u64, Error> {
+        if card.native_whatsapp_flow.is_some() {
+            return Err(Error::Denied);
+        }
         let bytes = serde_json::to_vec(card).map_err(|_| Error::Unavailable)?;
         let seal = if card.consumer.is_some() {
             seal_consumer_interaction
@@ -131,6 +135,7 @@ impl InteractionStore {
         if card.id != id
             || card.expires_at <= now()
             || !native_lark::valid(&card, &self.keys)
+            || card.native_whatsapp_flow.is_some()
             || !owner::valid(&card)
             || !whatsapp::valid_record(&card)
             || !discord::valid(&card)
@@ -172,6 +177,12 @@ impl InteractionStore {
             .as_ref()
             .and_then(|a| a.destination.as_ref())
             .map(|d| &d.message_id)
+            .or_else(|| {
+                card.native_whatsapp_flow
+                    .as_ref()
+                    .and_then(|a| a.receipt())
+                    .map(|r| &r.message_id)
+            })
             .or_else(|| card.destination.as_ref().map(|d| &d.platform_id))
             .ok_or(Error::Denied)?;
         MessageRef::seal(

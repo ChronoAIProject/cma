@@ -3266,6 +3266,13 @@
         ],
         "type": "object"
       },
+      "FormCustomerMessage": {
+        "enum": [
+          "not_sent",
+          "attempted"
+        ],
+        "type": "string"
+      },
       "FormField": {
         "additionalProperties": false,
         "properties": {
@@ -3352,6 +3359,147 @@
             },
             "required": [
               "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "FormPreparationReceipt": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FormPreparationState"
+          },
+          {
+            "properties": {
+              "customer_message": {
+                "$ref": "#/components/schemas/FormCustomerMessage"
+              },
+              "expires_at": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "preparation_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "preparation_id",
+              "expires_at",
+              "customer_message"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "FormPreparationState": {
+        "oneOf": [
+          {
+            "properties": {
+              "retry_after_ms": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "pending"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "retry_after_ms",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "preparation_ref": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "ready"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "preparation_ref",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "declined"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "uncertain"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "revoked"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "receipt": {
+                "$ref": "#/components/schemas/IntentReceipt"
+              },
+              "status": {
+                "enum": [
+                  "delivery"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "receipt",
+              "status"
             ],
             "type": "object"
           }
@@ -5133,6 +5281,18 @@
               "null"
             ]
           },
+          "native_whatsapp_flow_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_whatsapp_forms_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_whatsapp_groups_writes_enabled": {
             "description": "Owner opt-in to existing OBA groups; independent of group issuance.",
             "type": [
@@ -5783,6 +5943,10 @@
               "app_id": {
                 "type": "string"
               },
+              "forms_enabled": {
+                "description": "Owner consent to create and publish managed static native Flow assets.",
+                "type": "boolean"
+              },
               "group_ids": {
                 "description": "Explicit existing group IDs; empty keeps private-only behavior.",
                 "items": {
@@ -6230,6 +6394,10 @@
               },
               "app_id": {
                 "type": "string"
+              },
+              "forms_enabled": {
+                "description": "Owner consent to create and publish managed static native Flow assets.",
+                "type": "boolean"
               },
               "group_ids": {
                 "description": "Explicit existing group IDs; empty keeps private-only behavior.",
@@ -9114,6 +9282,113 @@
         ]
       }
     },
+    "/events/{event_ref}/form-preparation": {
+      "get": {
+        "operationId": "readFormPreparation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FormPreparationReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      },
+      "post": {
+        "operationId": "prepareFormReply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required stable preparation key; preserve the same key and exact message after a timeout.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FormPreparationReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
     "/events/{event_ref}/replies": {
       "post": {
         "operationId": "replyToEvent",
@@ -9127,7 +9402,7 @@
             }
           },
           {
-            "description": "Optional stable operation ID of 1–128 visible ASCII bytes for durable routed replies. Keep the same key and message on retries; a different key permits a new send, even with identical content. Changed content under the same key conflicts. Never change keys to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior.",
+            "description": "Optional stable operation ID of 1–128 visible ASCII bytes for durable routed replies. Keep the same key and message on retries; a different key permits a new send, even with identical content. Changed content under the same key conflicts. Never change keys to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior. Native Form commits always require this key.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": false,
@@ -9135,6 +9410,18 @@
               "maxLength": 128,
               "minLength": 1,
               "pattern": "^[!-~]+$",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Opaque Ready selector for a native WhatsApp Form. Use the exact prepared message and a stable commit key; one event/consumer slot cannot be reset with another key.",
+            "in": "header",
+            "name": "Form-Preparation-Ref",
+            "required": false,
+            "schema": {
               "type": [
                 "string",
                 "null"
