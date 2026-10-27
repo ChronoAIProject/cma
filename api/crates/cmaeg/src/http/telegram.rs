@@ -160,20 +160,25 @@ async fn admit_update(
             ));
         }
     };
-    let Some((bot_id, bot_username, admission)) =
-        channel
-            .definition
-            .sources
-            .iter()
-            .find_map(|source| match source {
-                Source::Telegram {
-                    message_events: _,
-                    bot_id,
-                    bot_username,
-                    admission,
-                } => Some((bot_id.clone(), bot_username.clone(), admission)),
-                _ => None,
-            })
+    let Some((bot_id, bot_username, admission, channel_posts)) = channel
+        .definition
+        .sources
+        .iter()
+        .find_map(|source| match source {
+            Source::Telegram {
+                message_events: _,
+                channel_posts,
+                bot_id,
+                bot_username,
+                admission,
+            } => Some((
+                bot_id.clone(),
+                bot_username.clone(),
+                admission,
+                *channel_posts,
+            )),
+            _ => None,
+        })
     else {
         return Err(invalid(
             SOURCE,
@@ -243,18 +248,25 @@ async fn admit_update(
         .map_err(|error| events::failure(state, &record, error))?;
         return Ok(Admitted::Event(event));
     }
-    let observed = match telegram::observe(
+    let observed = match telegram::observe_source(
         raw,
         &bot_id,
         bot_username.as_deref(),
         state.media_enabled,
-        admission.native_bot_mentions(),
+        admission,
+        channel_posts,
     ) {
         Ok(Outcome::Admitted(observed)) => *observed,
         Ok(Outcome::Refused(reason)) => return Err(refuse(reason)),
         Err(error) => return Err(reject(error)),
     };
-    if let Err(reason) = admit(
+    let admit_observed =
+        if observed.facts.conversation == cmaeg_core::activity::ConversationKind::Channel {
+            telegram::channel_posts::admit_channel
+        } else {
+            admit
+        };
+    if let Err(reason) = admit_observed(
         admission,
         &AdmissionFacts {
             sender_id: &observed.payload.sender.platform_id,

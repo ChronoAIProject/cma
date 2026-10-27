@@ -1,7 +1,8 @@
-# Native Telegram message edits and reactions
+# Native Telegram channel posts, message edits and reactions
 
 Authenticated `edited_message`, `message_reaction`, and `message_reaction_count` updates can
-notify the agents that received the original private/group message. They use
+notify the agents that received the original private/group message. The separate
+channel-post opt-in also admits retained channel edits and reactions. These use
 `Activity.kind.type = event`, preserving the original consumers, provider
 bindings, conversation IDs, partition and topic. An edited `/to` command or a
 different reacting user cannot select another agent or conversation.
@@ -57,6 +58,46 @@ The Activity timestamp and CloudEvent time are the edit time, not the original
 message's creation time. This is a new notification; it does not rewrite a
 previous provider transcript or undo work already performed.
 
+## Native channel posts and edits
+
+Direct native Telegram sources may separately set `channel_posts: true`; omission
+remains false, including for existing `message_events` sources. Channel posts require
+`message_events: true`, its existing authoring gate and durable routing/recovery.
+The console exposes the two settings separately; disabling message events also removes
+the channel-post opt-in. Source and source-request SDK fields are optional. Managed
+connection sources remain opted out. Roll out compatible readers before saving this
+new source field; disabling the setting does not make an older source reader compatible.
+
+An authenticated `channel_post` must identify a negative numeric channel chat. An
+optional `sender_chat` must identify that same channel. CMA records
+`Actor { id: "telegram:chat:<channel_id>", kind: "unknown" }` and a `channel`
+conversation. The optional `from`, author signature or title never establishes a
+human publisher. Human sender allowlists and sender-deny policies refuse this
+identity, including a sender allowlist containing the synthetic channel actor ID.
+Open sender admission is required; chat allowlists and non-private group/addressing
+rules still apply. `reply_to_bot` admission is not inferred from channel post metadata.
+
+Text, captions, native attachment locators and media album IDs use the existing
+normalization bounds and inbound media gate. Channel posts have no message thread:
+the Bot API limits `message_thread_id` to private/supergroup chats. Channel topic,
+direct-message topic, business-message and automatically forwarded discussion-group
+shapes are refused. Anonymous `sender_chat` messages under ordinary group `message`
+updates remain outside this extension. No NyxID/relay observer changes are included.
+
+`edited_channel_post` uses the same encrypted seven-day locator and committed original
+routing as other message edits. It must match the exact channel, channel actor,
+message creation time and message identity, with a valid edit time and no topic.
+Edits cannot switch update kind, channel or original consumers through new text or
+`/to` commands. Removing the opt-in or changing source credentials/admission revokes
+the retained context. Original mention evidence is preserved for edit admission.
+
+Ordinary replies stay bound to the sealed original channel and the channel's bot
+credential. They publish to that channel through the existing native send path and
+require Telegram's channel posting permission; this feature does not add that
+permission or prove it by an external send. No discussion-group/comment destination,
+channel direct-message topic, cross-chat reply or quoted-reply authority is inferred.
+Unknown channel actors do not receive human Telegram message-effect authority.
+
 ## Reaction representation
 
 The Bot API's `message_reaction` update supplies the exact chat, message ID,
@@ -98,10 +139,17 @@ Duplicate update IDs replay their exact admission; changed content under an
 already admitted ID conflicts. The existing `message_events` opt-in is required;
 channels without it retain their existing behavior.
 
+Reactions on a retained channel post additionally require `channel_posts: true`.
+The original channel author remains unknown and is rechecked with open sender
+and current channel admission. Human reactors retain human admission; anonymous
+reactors and aggregate counts retain the unknown-actor rules above. Original
+consumers, provider bindings and the channel destination remain unchanged.
+
 ## Setup and remaining limits
 
 New native webhook registrations request `message`, `edited_message`,
-`callback_query`, `message_reaction`, and `message_reaction_count`, preserving pending updates. Existing
+`channel_post`, `edited_channel_post`, `callback_query`, `message_reaction`, and
+`message_reaction_count`, preserving pending updates. Existing
 webhooks need an explicit registration refresh before Telegram sends the added
 update types. Telegram requires the bot to be a chat administrator and requires
 the respective reaction type explicitly in `allowed_updates`; it does not send reactions
@@ -111,7 +159,7 @@ set by bots. A production registration change is separate from this code change.
 | --- | --- |
 | Private/group message edit | Supported for a retained durably admitted original, with existing text/media and actor admission |
 | Attributable user reaction | Supported with the same original-message requirement and Telegram administrator/update subscription prerequisites |
-| `edited_channel_post` | Bot API supports it; current CMA original channel-post/sender-chat admission does not. Refused as `system_sender`; this is a CMA limitation |
+| `channel_post` / `edited_channel_post` | Native explicit `channel_posts` opt-in; unknown channel identity, current admission and retained original edit routing |
 | Anonymous `actor_chat` reaction | Supported for retained originals with open sender policy, preserving the represented chat and unknown human identity |
 | `message_reaction_count` | Supported as bounded aggregate facts for retained originals with open sender policy; no human or per-user delta is inferred |
 | Generic message deletion | No general Bot API deletion update exists. `deleted_business_messages` belongs to a separate business-connection contract and is not ordinary deletion coverage |
@@ -124,3 +172,12 @@ and [MessageReactionCountUpdated](https://core.telegram.org/bots/api#messagereac
 definitions captured on 2026-10-26. Local fixtures exercise authenticated webhook
 and encrypted-record behavior. No external Telegram send or production webhook
 change is part of this implementation.
+
+Channel-post source work was checked against the official Bot API `Update`, `Message`
+and `ReplyParameters` sections saved at
+`/private/tmp/cmaeg-received-reactions-evidence-20261028/telegram-bot-api.html`
+(SHA-256 `9b615d3c0826b0fe166bddde53ebc9519dfa13252e73e4d0664fea6376b1cfc1`).
+Local tests cover channel identity, explicit opt-in, human/chat allowlists, media gating,
+wrong topics/forward shapes, sealed original destination, durable webhook admission
+and retained edit routing. Source preparation has not registered a webhook or sent a
+Telegram message; live channel acceptance remains separate.

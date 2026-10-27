@@ -163,15 +163,38 @@ export function SourceFields({
                 value.message_events !== true
               }
               onChange={(enabled) =>
-                onChange(optional(value, 'message_events', enabled || undefined))
+                onChange(
+                  optional(
+                    optional(value, 'message_events', enabled || undefined),
+                    'channel_posts',
+                    enabled ? value.channel_posts : undefined,
+                  ),
+                )
               }
             />
             <p className="channel-field-hint">
               Private and group message edits and reactions from identifiable users reach the agents
               that received the original message. Refresh the bot webhook after enabling this
               setting. Reaction updates require bot administrator access. CMA does not yet support
-              channel-post edits or anonymous reaction counts. Telegram does not provide general
-              message deletion events.
+              anonymous reaction counts. Telegram does not provide general message deletion events.
+            </p>
+            <Toggle
+              label="Receive channel posts and edits"
+              value={value.channel_posts}
+              disabled={
+                value.message_events !== true ||
+                (discovery.authoring?.native_telegram_message_events_enabled !== true &&
+                  value.channel_posts !== true)
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'channel_posts', enabled || undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Requires message events and open sender admission. Channel posts identify the channel,
+              not a human publisher; chat allowlists and addressing rules still apply. Channel edits
+              reach the original agents. Discussion-group forwards and channel direct-message topics
+              are not included. Refresh the bot webhook to receive these updates.
             </p>
             {discovery.authoring?.native_telegram_message_events_enabled !== true ? (
               <p className="channel-field-hint">

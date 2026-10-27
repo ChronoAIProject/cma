@@ -93,3 +93,19 @@ fn separate_native_lark_source_and_credentials_round_trip_without_relay_authorit
         serde_json::from_value(value.clone()).unwrap();
     assert_eq!(serde_json::to_value(credentials).unwrap(), value);
 }
+
+#[test]
+fn native_telegram_channel_posts_are_an_independent_optional_source_opt_in() {
+    let original = json!({"type":"telegram","bot_id":"77","admission":{"type":"all"}});
+    for opted in [false, true] {
+        let mut value = original.clone();
+        if opted {
+            value["message_events"] = true.into();
+            value["channel_posts"] = true.into();
+        }
+        let source: Source = serde_json::from_value(value.clone()).unwrap();
+        let request: SourceRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(source).unwrap(), value);
+        assert_eq!(serde_json::to_value(request).unwrap(), value);
+    }
+}

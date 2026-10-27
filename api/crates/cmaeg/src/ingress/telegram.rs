@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 use std::{sync::Arc, time::Instant};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+pub(crate) mod channel_posts;
 pub(crate) mod events;
 mod message_context;
 
@@ -31,6 +32,30 @@ pub struct Observed {
 pub enum Outcome {
     Admitted(Box<Observed>),
     Refused(super::admission::Refusal),
+}
+/// The channel-post extension is native-only and requires an explicit source opt-in.
+pub(crate) fn observe_source(
+    raw: Value,
+    bot_id: &str,
+    bot_username: Option<&str>,
+    media_enabled: bool,
+    admission: &cmaeg_core::channel::AdmissionPolicy,
+    channel_posts: bool,
+) -> Result<Outcome, VerificationError> {
+    if raw.get("channel_post").is_some() {
+        return if channel_posts {
+            self::channel_posts::observe(raw, bot_id, bot_username, media_enabled)
+        } else {
+            Ok(Outcome::Refused(super::admission::Refusal::SystemSender))
+        };
+    }
+    observe(
+        raw,
+        bot_id,
+        bot_username,
+        media_enabled,
+        admission.native_bot_mentions(),
+    )
 }
 /// Normalize one authenticated update. `media_enabled` is the operator's inbound
 /// media switch; off, media updates are refused exactly as before.
@@ -151,7 +176,12 @@ pub(crate) fn launch(
         update_id,
         message_id,
     } = observed;
-    let telegram_admission = effects_enabled.then(|| cmaeg_core::seal::TelegramAdmissionProof {
+    let telegram_admission = (effects_enabled
+        && matches!(
+            facts.actor,
+            cmaeg_core::activity::ActorKind::Human | cmaeg_core::activity::ActorKind::Bot
+        ))
+    .then(|| cmaeg_core::seal::TelegramAdmissionProof {
         actor_id: payload.sender.platform_id.clone(),
         actor_kind: facts.actor,
         conversation_kind: facts.conversation,
