@@ -97,7 +97,7 @@ impl SandboxRuntimeUpdateService {
     }
 
     /// Automatic repair is available once per unresolved recovery incident after
-    /// ordinary retries park/fail. Its existing target must still be current;
+    /// ordinary retries stall or park/fail. Its existing target must still be current;
     /// obsolete pinned targets require an explicit owner/operator update.
     pub async fn recover_failed_unpublished(
         &self,
@@ -110,12 +110,7 @@ impl SandboxRuntimeUpdateService {
             .map_err(store_error)?
             .ok_or(SandboxRuntimeUpdateError::NotFound)?;
         let target = sandbox
-            .admitted_runtime_update_target()
-            .or_else(|| {
-                sandbox
-                    .retained_runtime_binding()
-                    .map(|runtime| runtime.runtime_version.as_str())
-            })
+            .automatic_unpublished_recovery_target()
             .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
         if target != self.latest_version
             || sandbox.lifecycle.unpublished_recovery_attempted

@@ -12,6 +12,9 @@ mod lifecycle;
 #[path = "unpublished_recovery_history_tests.rs"]
 mod history;
 
+#[path = "unpublished_recovery_stalled_tests.rs"]
+mod stalled;
+
 fn snapshot(parked_update: bool) -> SandboxUnpublishedRecoverySnapshot {
     let mut sandbox = native();
     let mut held = agent("agt_recovery", "native-original", 0);

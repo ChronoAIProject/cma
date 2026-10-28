@@ -74,6 +74,174 @@ fn proof(snapshot: &SandboxUnpublishedRecoverySnapshot) -> SandboxUnpublishedRec
     }
 }
 
+fn stalled_reopen_fixture() -> (InMemorySandboxStore, SandboxId) {
+    use crate::sandbox::{SandboxLifecycleOperation, SandboxReviveCause, SandboxRevivePhase};
+    let (store, id) = fixture();
+    {
+        let mut state = store.lock();
+        let sandbox = state.sandboxes.get_mut(&id).unwrap();
+        sandbox
+            .lifecycle
+            .start_revive(&id, NOW.into(), SandboxReviveCause::RuntimeLost)
+            .unwrap();
+        sandbox.status = SandboxStatus::Reviving;
+        sandbox.failure = None;
+        let Some(SandboxLifecycleOperation::Revive { phase, .. }) =
+            &mut sandbox.lifecycle.operation
+        else {
+            panic!()
+        };
+        *phase = SandboxRevivePhase::ConversationReopen;
+        sandbox.lifecycle.runtime_generation_high_water = 16;
+        sandbox.runtime.as_mut().unwrap().provision_generation = Some(16);
+        sandbox.lifecycle.runtime_update = Some(crate::sandbox::SandboxRuntimeUpdateState {
+            checked_at: NOW.into(),
+            observed_version: "image-queued".into(),
+            request: Some(crate::sandbox::SandboxRuntimeUpdateRequest {
+                target_version: "image-queued".into(),
+                requested_at: NOW.into(),
+                automatic: false,
+                started_at: None,
+                completed_at: None,
+                failure: None,
+            }),
+        });
+        sandbox
+            .work
+            .schedule(SandboxWorkStep::RunLifecycleOperation, NOW.into());
+        sandbox.work.attempts = 4036;
+        sandbox.validate().unwrap();
+        let agent = state.agents.values_mut().next().unwrap();
+        agent.conversation.runtime_generation = Some(15);
+        agent.work.receipts.clear();
+        agent
+            .conversation
+            .queued_messages
+            .push(QueuedAgentMessage::new(2, "preserved input".into(), NOW.into()).unwrap());
+    }
+    (store, id)
+}
+
+#[tokio::test]
+async fn explicit_stalled_reopen_update_supersedes_old_queue_through_owner_and_operator_service() {
+    for operator in [false, true] {
+        let (store, id) = stalled_reopen_fixture();
+        let store = Arc::new(store);
+        let before = store
+            .unpublished_runtime_recovery_snapshot(&id)
+            .await
+            .unwrap();
+        let logs = store.lock().agent_logs.clone();
+        let service = SandboxRuntimeUpdateService::new(store.clone(), "image-latest".into())
+            .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
+        // The public runtime_update projection delegates its can_update field here,
+        // even while it reports the older request as queued.
+        assert!(service.can_update(&before.sandbox));
+        assert!(before
+            .sandbox
+            .runtime_update_request()
+            .unwrap()
+            .started_at
+            .is_none());
+        let after = if operator {
+            let caller = crate::Caller {
+                subject: crate::SubjectId("operator".into()),
+                authorization: crate::Authorization::new([crate::Capability::ControlAnySandbox]),
+            };
+            service
+                .request_as_operator(&caller, &id, "image-latest")
+                .await
+                .unwrap()
+        } else {
+            let caller = crate::Caller {
+                subject: before.sandbox.owner.clone(),
+                authorization: crate::Authorization::new([crate::Capability::UseOwnSandboxes]),
+            };
+            service.request(&caller, &id, "image-latest").await.unwrap()
+        };
+        assert_eq!(after.admitted_runtime_update_target(), Some("image-latest"));
+        assert_eq!(after.lifecycle.home, before.sandbox.lifecycle.home);
+        assert_eq!(
+            after.lifecycle.suspended_runtime.as_deref(),
+            before.sandbox.runtime.as_ref()
+        );
+        assert_eq!(
+            after.retained_home_recovery().unwrap().source_generation,
+            16
+        );
+        assert_eq!(
+            store.lock().agents.values().cloned().collect::<Vec<_>>(),
+            before.agents
+        );
+        assert_eq!(store.lock().agent_logs, logs);
+        assert!(after.require_unpublished_runtime_quiescence().is_err());
+    }
+}
+
+#[tokio::test]
+async fn automatic_stalled_reopen_keeps_queued_target_and_refuses_a_new_released_image() {
+    for released in ["image-latest", "image-v1", "image-queued"] {
+        let (store, id) = stalled_reopen_fixture();
+        let store = Arc::new(store);
+        let before = store.get_sandbox(&id).await.unwrap().unwrap();
+        let service = SandboxRuntimeUpdateService::new(store.clone(), released.into())
+            .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
+        let result = service.recover_failed_unpublished(&id).await;
+        if released == "image-queued" {
+            let after = result.unwrap();
+            assert_eq!(after.admitted_runtime_update_target(), Some("image-queued"));
+            assert!(after.runtime_update_request().unwrap().automatic);
+        } else {
+            assert!(matches!(
+                result,
+                Err(crate::sandbox::SandboxRuntimeUpdateError::NotAvailable)
+            ));
+            assert_eq!(store.get_sandbox(&id).await.unwrap().unwrap(), before);
+            assert!(!store.lock().sandbox_events.contains_key(&id));
+        }
+    }
+}
+
+#[tokio::test]
+async fn stalled_reopen_service_refuses_current_generation_log_publication_and_native_failure() {
+    for case in 0..3 {
+        let (store, id) = stalled_reopen_fixture();
+        let store = Arc::new(store);
+        let before = store.get_sandbox(&id).await.unwrap().unwrap();
+        if case < 2 {
+            let mut state = store.lock();
+            state.agent_logs.values_mut().next().unwrap()[0].kind = if case == 0 {
+                AgentLogKind::ConversationOpened {
+                    conversation_id: "native-original".into(),
+                    runtime_generation: 16,
+                }
+            } else {
+                AgentLogKind::RuntimeGenerationRetired {
+                    previous_generation: 15,
+                    runtime_generation: 16,
+                }
+            };
+        }
+        let verifier: Arc<dyn SandboxUnpublishedRecoveryVerifier> = if case == 2 {
+            Arc::new(RefuseUnverifiableProcess)
+        } else {
+            Arc::new(VerifyOriginalProcesses)
+        };
+        let service = SandboxRuntimeUpdateService::new(store.clone(), "image-latest".into())
+            .with_unpublished_recovery(verifier);
+        let caller = crate::Caller {
+            subject: crate::SubjectId("operator".into()),
+            authorization: crate::Authorization::new([crate::Capability::ControlAnySandbox]),
+        };
+        assert!(service
+            .request_as_operator(&caller, &id, "image-latest")
+            .await
+            .is_err());
+        assert_eq!(store.get_sandbox(&id).await.unwrap().unwrap(), before);
+        assert!(!store.lock().sandbox_events.contains_key(&id));
+    }
+}
+
 #[tokio::test]
 async fn recovery_commit_preserves_admitted_queue_logs_and_original_child_rows() {
     let (store, id) = fixture();
