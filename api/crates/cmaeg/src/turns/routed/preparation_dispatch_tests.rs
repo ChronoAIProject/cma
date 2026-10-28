@@ -13,16 +13,17 @@ use std::{
     },
 };
 
-struct PreparingPort {
-    base: Port,
-    inspect_count: AtomicUsize,
-    reservations: Mutex<Vec<PreparationIntent>>,
+pub(super) struct PreparingPort {
+    pub(super) base: Port,
+    pub(super) inspect_count: AtomicUsize,
+    pub(super) reservations: Mutex<Vec<PreparationIntent>>,
+    pub(super) on_inspect: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     lose_reply: AtomicBool,
     corrupt_receipt: bool,
     healthy: bool,
 }
 impl PreparingPort {
-    fn new(healthy: bool, lose_reply: bool, corrupt_receipt: bool) -> Arc<Self> {
+    pub(super) fn new(healthy: bool, lose_reply: bool, corrupt_receipt: bool) -> Arc<Self> {
         Arc::new(Self {
             base: Port {
                 starts: Mutex::new(vec![]),
@@ -33,6 +34,7 @@ impl PreparingPort {
             },
             inspect_count: AtomicUsize::new(0),
             reservations: Mutex::new(vec![]),
+            on_inspect: Mutex::new(None),
             lose_reply: AtomicBool::new(lose_reply),
             corrupt_receipt,
             healthy,
@@ -72,6 +74,9 @@ impl ExecutionPort for PreparingPort {
     ) -> BoxFuture<'a, Result<BindingPreparation, ExecutionError>> {
         Box::pin(async move {
             self.inspect_count.fetch_add(1, Ordering::SeqCst);
+            if let Some(callback) = self.on_inspect.lock().unwrap().as_ref() {
+                callback();
+            }
             if self.healthy {
                 return Ok(BindingPreparation::Pinned {
                     version: 1,

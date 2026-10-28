@@ -91,6 +91,9 @@ pub struct AdmittedPlan {
     /// Reader-first; no legacy admission can acquire replacement authority.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_preparation_version: Option<u8>,
+    /// Server-keyed producer custody; absent on legacy and non-replacement plans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) binding_custom_source: Option<super::preparation_source::CustomSourceCustody>,
     pub activity: Activity,
     pub source: Source,
     pub targets: Vec<StoredTarget>,
@@ -127,11 +130,11 @@ impl AdmittedPlan {
     }
     pub(crate) fn permits_binding_preparation(&self) -> bool {
         self.kind == PAYLOAD_KIND
-            && matches!(
-                self.activity.kind,
-                cmaeg_core::activity::ActivityKind::Message { .. }
-            )
-            && self.activity.actor.kind == cmaeg_core::activity::ActorKind::Human
+            && super::preparation_source::eligible(&self.activity, &self.source)
+            && (!matches!(
+                self.activity.source,
+                cmaeg_core::activity::SourceKind::Custom
+            ) || self.binding_custom_source.is_some())
     }
 }
 
