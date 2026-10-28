@@ -35,6 +35,15 @@ pub(crate) struct UploadedMedia {
     kind: &'static str,
     key: String,
 }
+impl UploadedMedia {
+    /// Only a confirmed image uploaded for this exact app/chat/thread may enter a card.
+    pub(crate) fn card_image_key(self, reply: &NativeLarkReply) -> Result<String, Error> {
+        if self.destination != *reply || self.kind != "image" {
+            return Err(Error::Invalid);
+        }
+        Ok(self.key)
+    }
+}
 impl Client {
     /// All items are prepared before a token request or platform write. The provider
     /// validates payload decodability; this enforces the advertised structural subset.
