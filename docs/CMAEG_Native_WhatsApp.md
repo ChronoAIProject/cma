@@ -251,3 +251,10 @@ replays without resending. No edit reference, owner-initiated native send or
 interactive callback authority is added. Local fake-transport and composed routed
 tests cover the contract, revocation and receipt replay; connected Meta acceptance
 remains outstanding before rollout.
+
+## Native reply and context data
+
+The default-off native context writer exposes bounded data through Activity and
+authenticated context reads. See [native quoted-message context](CMAEG_Native_Quoted_Context.md)
+for exact per-platform fields, reference-only limits, replay compatibility and
+reader-first rollout requirements.

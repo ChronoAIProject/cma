@@ -22,6 +22,9 @@ pub struct ActivityPage {
 pub struct ChannelActivity {
     /// Source event identifier.
     pub event_id: String,
+    /// Availability metadata only; never quoted text or parent IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted_context: Option<QuotedContextSummary>,
     /// Payload category only; absent on historical receipts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
@@ -43,6 +46,19 @@ pub struct ChannelActivity {
     pub received_at: String,
     /// Consumer execution and delivery observations.
     pub consumers: Vec<ActivityConsumer>,
+}
+
+/// Availability of authenticated native context; excludes its text and parent ID.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuotedContextSummary {
+    /// Explicit reply versus a native context reference.
+    pub relation: super::QuoteRelation,
+    /// A bounded excerpt is present in authorized event context.
+    pub text_available: bool,
+    /// The supplied excerpt was shortened at the UTF-8 byte bound.
+    pub text_truncated: bool,
+    /// Descriptive content kinds, without media locators.
+    pub content_kinds: Vec<super::QuotedContentKind>,
 }
 
 /// Persisted consumer processing state; completion alone does not prove delivery.

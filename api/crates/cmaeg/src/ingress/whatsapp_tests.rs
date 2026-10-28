@@ -1,3 +1,5 @@
+#[path = "whatsapp_quote_tests.rs"]
+mod quote_tests;
 use super::{
     launch::{LaunchOutcome, UnavailableLauncher},
     routed::RoutedIngress,

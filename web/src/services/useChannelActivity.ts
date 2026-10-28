@@ -55,6 +55,12 @@ export interface ActivityConsumer {
 }
 export interface ChannelActivityEvent {
   event_id: string;
+  quoted_context?: {
+    relation: 'reply' | 'context';
+    text_available: boolean;
+    text_truncated: boolean;
+    content_kinds: string[];
+  } | null;
   kind?: string | null;
   event_type?: string | null;
   source_occurred_at?: string | null;
