@@ -871,7 +871,8 @@
           "archive",
           "reopen",
           "join",
-          "leave"
+          "leave",
+          "rename"
         ],
         "expires_at": 1800000600
       },
@@ -3340,7 +3341,8 @@
             "archive",
             "reopen",
             "join",
-            "leave"
+            "leave",
+            "rename"
           ],
           "expires_at": 1800000600
         },
@@ -3582,7 +3584,8 @@
             "archive",
             "reopen",
             "join",
-            "leave"
+            "leave",
+            "rename"
           ],
           "expires_at": 1800000600
         },
@@ -7296,7 +7299,8 @@
     "archive",
     "reopen",
     "join",
-    "leave"
+    "leave",
+    "rename"
   ],
   "ThreadTarget": [
     {
@@ -7314,7 +7318,8 @@
         "type": "thread",
         "thread_ref": "cmaeg1.tr.fixture"
       },
-      "action": "archive"
+      "action": "rename",
+      "name": "Incident triage"
     }
   ],
   "ThreadSummary": [
@@ -7395,7 +7400,8 @@
         "archive",
         "reopen",
         "join",
-        "leave"
+        "leave",
+        "rename"
       ],
       "expires_at": 1800000600
     }
