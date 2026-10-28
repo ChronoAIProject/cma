@@ -717,3 +717,9 @@ Check the optional `capabilities.native_media.controls` object before combining
 send capability. The gated Telegram and Discord combinations each use one upload and one
 native message/card. Its `update: false` excludes media-card edits. Existing
 attachment bounds and event/consumer authority still apply.
+
+For native Discord, `native_media.controls.update` is true only with the separate
+media-card-edit gates. It permits changing message content/controls while keeping
+the exact confirmed upload. It does not grant binary/caption replacement or
+media/form combinations. Historical cards without a retained native file proof
+remain callback-only.

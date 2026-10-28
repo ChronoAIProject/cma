@@ -3082,7 +3082,10 @@ Native Discord advertises one upload with buttons/choices only for verified
 eligible human context when its media-controls and interaction issuance gates
 are enabled (plus the named-consumer gate when applicable). It uses the existing
 `native_attachments` and `blocks` request fields and one delivered card/message;
-`update: false` explicitly excludes media-card edits. See
+`update: false` excludes media-card edits. With its separate media-card-edit
+and ordinary card-edit gates, `update: true` permits content/control edits while
+preserving the exact confirmed upload; binary/caption replacement remains
+unsupported. Historical cards do not acquire new authority. See
 [native Discord controls](CMAEG_Native_Discord_Interactions.md). Historical context
 serialization omits this optional capability; no existing wire field is removed.
 
