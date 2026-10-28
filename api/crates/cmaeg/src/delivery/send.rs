@@ -135,7 +135,7 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
-        if message.native_media_update.is_some() {
+        if message.native_media_update.is_some() || message.clear_native_attachments {
             return (unsupported(), SendEffects::default());
         }
         if matches!(event.reply, ReplyAddress::NativeLark(_)) {
