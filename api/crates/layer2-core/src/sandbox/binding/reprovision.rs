@@ -152,7 +152,34 @@ impl ProviderBinding {
         credential: &ProvidedCredential,
         at: String,
     ) -> Result<BindingPreparationReceipt, CoreError> {
-        let now = unix_seconds(&at).ok_or_else(invalid)?;
+        self.require_retired_hierarchy(intent, sandbox, workspace, credential, &at)?;
+        let receipt = BindingPreparationReceipt {
+            version: 1,
+            operation_id: intent.operation_id()?,
+            intent: intent.clone(),
+            previous: self.clone(),
+            reserved: reserve(
+                self,
+                intent,
+                SandboxId::generate(),
+                WorkspaceId::generate(),
+                at.clone(),
+            )?,
+            reserved_at: at,
+        };
+        receipt.validate()?;
+        Ok(receipt)
+    }
+
+    pub(super) fn require_retired_hierarchy(
+        &self,
+        intent: &BindingPreparationIntent,
+        sandbox: &Sandbox,
+        workspace: &Workspace,
+        credential: &ProvidedCredential,
+        at: &str,
+    ) -> Result<(), CoreError> {
+        let now = unix_seconds(at).ok_or_else(invalid)?;
         intent.require_current(now)?;
         self.validate().map_err(|_| invalid())?;
         let retired_at = sandbox
@@ -210,22 +237,7 @@ impl ProviderBinding {
         {
             return Err(conflict());
         }
-        let receipt = BindingPreparationReceipt {
-            version: 1,
-            operation_id: intent.operation_id()?,
-            intent: intent.clone(),
-            previous: self.clone(),
-            reserved: reserve(
-                self,
-                intent,
-                SandboxId::generate(),
-                WorkspaceId::generate(),
-                at.clone(),
-            )?,
-            reserved_at: at,
-        };
-        receipt.validate()?;
-        Ok(receipt)
+        Ok(())
     }
 
     pub fn require_generation(&self, expected: Option<u64>) -> Result<(), CoreError> {
@@ -272,14 +284,14 @@ fn eligible_binding(binding: &ProviderBinding) -> bool {
         && binding.previous.is_none()
         && binding.profile.environment.is_some()
 }
-fn bounded_id(value: &str) -> bool {
+pub(super) fn bounded_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 512
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"_-:.".contains(&byte))
 }
-fn valid_hash(value: &str) -> bool {
+pub(super) fn valid_hash(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()

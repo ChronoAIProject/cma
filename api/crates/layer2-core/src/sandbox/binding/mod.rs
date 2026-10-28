@@ -6,9 +6,11 @@ mod existing;
 pub use access::{BindingAccessService, BindingConversationAuthority, BindingPrincipal};
 mod fence;
 mod model;
+mod preparation_service;
 mod profile;
 mod profile_input;
 mod profiles;
+pub use preparation_service::{BindingPreparationEvent, BindingPreparationInspection};
 mod readiness;
 mod reprovision;
 pub use reprovision::{

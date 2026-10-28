@@ -362,8 +362,8 @@ async fn mongo_preparation_distinct_events_cannot_allocate_twice_for_one_generat
             .unwrap(),
         1
     );
-    let (winner, loser) = if a.is_ok() {
-        (a.unwrap(), &other)
+    let (winner, loser) = if let Ok(winner) = a {
+        (winner, &other)
     } else {
         (b.unwrap(), &data.intent)
     };
