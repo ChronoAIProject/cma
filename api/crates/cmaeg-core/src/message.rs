@@ -43,7 +43,8 @@ pub struct OutboundMessage {
     /// Explicit native media delivery. Legacy attachment blocks remain links.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub native_attachments: Vec<NativeAttachment>,
-    /// Request the verified source thread; never fall back when unavailable.
+    /// Request the verified source thread; native Lark may start the exact admitted
+    /// group root thread with one text reply when explicitly advertised. Never fall back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thread_reply: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

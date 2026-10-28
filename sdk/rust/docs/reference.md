@@ -18,7 +18,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `profile_authoring()` | `bounds`, `services`, `search_skills`, read-only `resolve_repository` |
 | `marketplace::<C>()` | `list`, `read`, `fork` |
 | `sandboxes()` | `list`, `read`, `create`, `delete`, `pause`, `revive`, `events` |
-| `workspaces()` | `list`, `read`, `create`, `delete` |
+| `workspaces()` | `list`, `read`, `create`, `recover_prepare`, `delete` |
 | `worktrees()` | `list`, `read` |
 | `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `update_settings`, `skills`, `install_skill`, `access_requests`, `approve_access_request`, `deny_access_request`, `update_service_access` |
 | `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
@@ -31,6 +31,11 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
 | Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a` |
+
+`workspaces().recover_prepare(id, &key)` sends a keyed, bodyless command for the same failed,
+never-ready Workspace. HTTP 202 confirms recovery admission; read the original
+Workspace for readiness. Reuse the same key after an uncertain response; a new
+key cannot bypass active work and is eligible only after a terminal failed attempt.
 
 `C` is one of `AgentProfileContent`, `WorkspaceProfileContent`, or
 `SandboxProfileContent` from `cma_sdk::profiles`. Profile drafts and immutable
@@ -664,8 +669,12 @@ and status use a two-second total deadline; commit retains eight seconds.
 
 The source's independent `topic_lifecycle: true` consent and the gateway's
 separate default-off topic gate enable exact original non-General forum-topic
-close/reopen. Check `context.capabilities.topic_lifecycle` for
-`manage_original_topic`, `actions` and `expires_at`. Both default and named
+rename/close/reopen. Rename uses the existing manage-thread request with `action: "rename"`
+and a required `name` of 1–100 printable characters. It changes only the original
+topic name, preserving its icon and open/closed state. Check `context.capabilities.topic_lifecycle` for
+`manage_original_topic`, `actions` and `expires_at`. The action list stays the
+conservative `["close", "reopen"]` subset for strict older readers; it is not an
+exhaustive operation list. Both default and named
 consumers retain only their original admitted authority. Enabling consent
 transparently enrolls a previously unrouted channel in default-only durable
 routing when authoring prerequisites are available; it does not enable incoming
@@ -725,17 +734,51 @@ consent. Use the same method for each cursor page; mode mismatches return 400
 before platform I/O. This does not provide media downloads. See
 [native history](../../../docs/CMAEG_Native_Lark_History.md).
 
+### Native Lark and Feishu document files
+
+Use the existing `native_attachments` `file` kind for TXT/PDF, DOC/DOCX,
+XLS/XLSX, PPT/PPTX, ZIP and generic binary files when the event's native media
+capability advertises the corresponding MIME. Typed documents are checked from
+complete bytes; opaque `application/octet-stream` files preserve arbitrary bytes
+and safe filenames. Legacy Office uses native `doc`/`xls`/`ppt`; modern Office,
+ZIP and opaque files use native `stream`. The existing four-attachment, 64 KiB
+inline and 8 MiB aggregate transport limits still apply. Files are never converted
+or re-encoded; this grants no new source, recipient or consumer authority.
+See [native file profiles](../../../docs/CMAEG_Native_Lark_Outbound_Media.md).
+
 ### Native media with controls
 
 Check the optional `capabilities.native_media.controls` object before combining
 `native_attachments` with buttons or choices. It declares `max_attachments`,
-`buttons`, `choices`, `caption_max_chars` and `update`; absence grants no combined
-send capability. The gated Telegram and Discord combinations each use one upload and one
+`buttons`, `choices`, `caption_max_chars` and `update`. Optional `kinds` restricts
+the combination to those attachment kinds; when absent, the parent kinds apply.
+Absence of `controls` grants no combined send capability. The gated Telegram and Discord combinations each use one upload and one
 native message/card. Its `update: false` excludes media-card edits. Existing
 attachment bounds and event/consumer authority still apply.
 
+Native private WhatsApp media headers advertise `kinds: ["image", "file", "video"]`,
+`buttons: true`, `choices: false`, `max_attachments: 1`, `caption_max_chars: 0`,
+and `update: false` only with the independent native media-controls gate and
+existing media/interactions/consumer authority. Use one captionless attachment
+and one buttons block, with explanation text in the body. Lists, audio/sticker
+headers, groups, relay, albums and media/form mixtures remain unsupported.
+
 For native Discord, `native_media.controls.update` is true only with the separate
 media-card-edit gates. It permits changing message content/controls while keeping
-the exact confirmed upload. It does not grant binary/caption replacement or
-media/form combinations. Historical cards without a retained native file proof
+the exact confirmed upload. Its independent replacement gate may additionally
+advertise `replace_media: true` for one same-card upload replacement with complete
+content/controls. Media/form combinations remain unsupported. Historical cards without a retained native file proof
 remain callback-only.
+
+For native Lark/Feishu, the separate image-card issuance gate adds
+`native_media.controls.kinds: ["image"]`, `max_attachments: 1`,
+`caption_max_chars: 0` and `update: true`. This narrows the combination to one
+PNG/JPEG even when ordinary media lists file/audio/video. Supply explanatory
+message text instead of an attachment caption. Content/control edits retain the
+confirmed image; binary replacement, image removal and forms are not supported.
+The optional `kinds` field remains absent for older responses. See
+[native Lark image controls](../../../docs/CMAEG_Native_Lark_Image_Controls.md).
+
+### Native Lark / Feishu thread starts
+
+When verified context advertises `capabilities.native_thread_start: true`, `replyToEvent` may send one plain-text reply with `thread_reply: true` to start the exact originally admitted group message thread. The text must contain 1–4,000 characters and no blocks, attachments or explicit reply target. Only that root can be selected; no caller-selected chat, message or thread ID is accepted. The operation may continue that same root’s thread if it already exists, confirms the returned root/parent/chat/thread identity, and never falls back to top-level delivery. The feature is independently default-off; existing retained-thread replies keep their behavior. This is not the Discord `createThread` name/archive operation and grants no list/manage authority. See [native thread starts](../../../docs/CMAEG_Native_Lark_Thread_Start.md).

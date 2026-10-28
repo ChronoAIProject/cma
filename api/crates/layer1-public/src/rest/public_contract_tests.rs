@@ -54,6 +54,7 @@ mod state_cases;
 mod symbols;
 mod trigger_cases;
 mod warm_pool_cases;
+mod workspace_prepare_recovery_cases;
 
 use symbols::Symbols;
 
@@ -153,6 +154,9 @@ fn paths() -> Vec<PathBuf> {
 
 async fn scenario(name: &str) -> Scenario {
     if let Some(scenario) = Box::pin(desktop_cases::scenario(name)).await {
+        return scenario;
+    }
+    if let Some(scenario) = workspace_prepare_recovery_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = document_cases::scenario(name).await {

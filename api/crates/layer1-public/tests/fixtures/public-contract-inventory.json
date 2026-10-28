@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 229,
+  "openapi_operations": 230,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -3250,6 +3250,28 @@
       "non_problem_statuses": {
         "400": "api/crates/layer1-public/src/rest/desktop.rs# The Axum extractor refuses a request without an HTTP WebSocket upgrade.",
         "403": "api/crates/layer1-public/src/rest/desktop.rs# Origin checks refuse foreign origins and cookie requests without Origin before runtime access."
+      }
+    },
+    "POST /api/v1/workspaces/{id}/recover-prepare": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Exact original Workspace prepare recovery is a required-key empty command with guarded durable admission.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "workspace_not_found",
+        "workspace_prepare_recovery_conflict"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
       }
     }
   }

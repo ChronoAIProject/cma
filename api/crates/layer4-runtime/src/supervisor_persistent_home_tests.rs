@@ -13,6 +13,8 @@ use super::{Phase, RuntimeConfig, Supervisor, SupervisorBoundary};
 mod process_generation;
 #[path = "supervisor_workspace_preparation_tests.rs"]
 mod workspace_preparation;
+#[path = "supervisor_workspace_recovery_tests.rs"]
+mod workspace_recovery;
 
 struct Fixture {
     root: PathBuf,

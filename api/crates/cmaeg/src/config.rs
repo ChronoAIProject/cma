@@ -178,8 +178,12 @@ pub struct Config {
     pub native_whatsapp_writes_enabled: bool,
     pub native_whatsapp_media_enabled: bool,
     pub native_lark_outbound_media_enabled: bool,
+    pub native_lark_media_controls_enabled: bool,
+    /// Start an exact admitted root thread with one explicit text reply.
+    pub native_lark_thread_start_enabled: bool,
     pub native_whatsapp_outbound_media_enabled: bool,
     pub native_whatsapp_interactions_enabled: bool,
+    pub native_whatsapp_media_controls_enabled: bool,
     pub native_whatsapp_reactions_enabled: bool,
     pub native_telegram_received_reactions_enabled: bool,
     pub native_discord_received_reactions_enabled: bool,
@@ -377,6 +381,12 @@ impl Config {
             native_whatsapp_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED",
             )?,
+            native_lark_thread_start_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_THREAD_START_ENABLED",
+            )?,
+            native_lark_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED",
+            )?,
             native_lark_outbound_media_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED",
             )?,
@@ -385,6 +395,9 @@ impl Config {
             )?,
             native_whatsapp_interactions_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED",
+            )?,
+            native_whatsapp_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_WHATSAPP_MEDIA_CONTROLS_ENABLED",
             )?,
             native_whatsapp_reactions_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED",

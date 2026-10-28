@@ -7,6 +7,7 @@ use super::SandboxModelError;
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceWorkStep {
     Prepare,
+    RecoverPrepare,
     Setup,
     Remove,
     None,
@@ -20,6 +21,7 @@ impl WorkspaceWorkStep {
     pub const fn operation_name(self) -> &'static str {
         match self {
             Self::Prepare => "prepare",
+            Self::RecoverPrepare => "recover-prepare",
             Self::Setup => "setup",
             Self::Remove => "remove",
             Self::None => "none",
@@ -41,6 +43,8 @@ pub struct WorkspaceWorkLease {
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceWorkState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepare_recovery: Option<Box<super::WorkspacePrepareRecovery>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<super::ProvisioningExecution>,
     pub step: WorkspaceWorkStep,
     pub ready_at: String,
@@ -53,6 +57,7 @@ pub struct WorkspaceWorkState {
 impl WorkspaceWorkState {
     pub fn new(step: WorkspaceWorkStep, ready_at: String) -> Self {
         Self {
+            prepare_recovery: None,
             execution: None,
             step,
             ready_at,

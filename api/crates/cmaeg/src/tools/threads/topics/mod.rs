@@ -1,7 +1,7 @@
 //! Event-only Telegram topic management, sharing the neutral REST/MCP entry point.
 mod authority;
 use super::*;
-use crate::telegram::{Error as TelegramError, TelegramClient};
+use crate::telegram::{topics::Mutation, Error as TelegramError, TelegramClient};
 use cmaeg_core::thread_lifecycle::{TopicAction, TopicLifecycleCapabilities};
 
 pub struct TelegramTopics {
@@ -76,12 +76,18 @@ impl ToolsState {
         caller: AgentCaller,
         event: EventRefPayload,
         action: ThreadAction,
+        name: Option<&str>,
         key: &str,
     ) -> Result<ThreadReceipt, Problem> {
         super::super::validate_reply_key(Some(key))?;
         let action = match action {
-            ThreadAction::Close => TopicAction::Close,
-            ThreadAction::Reopen => TopicAction::Reopen,
+            ThreadAction::Close => Mutation::Close,
+            ThreadAction::Reopen => Mutation::Reopen,
+            ThreadAction::Rename => Mutation::Rename {
+                name: name.ok_or_else(|| {
+                    Problem::new(ProblemCode::InvalidRequest, 400, "rename_name_required")
+                })?,
+            },
             _ => {
                 return Ok(receipt(ThreadOutcome::Unsupported {
                     reason: "telegram_topic_action_unsupported".into(),
@@ -111,7 +117,7 @@ impl ToolsState {
         &self,
         caller: AgentCaller,
         event: EventRefPayload,
-        action: TopicAction,
+        action: Mutation<'_>,
         key: &str,
         budget: &Budget,
     ) -> Result<ThreadReceipt, Problem> {
@@ -183,7 +189,7 @@ impl ToolsState {
         caller: AgentCaller,
         channel: &ResolvedChannel,
         authority: &authority::Authority,
-        action: TopicAction,
+        action: Mutation<'_>,
         client: &TelegramTopics,
         budget: &Budget,
     ) -> Result<(), ThreadOutcome> {

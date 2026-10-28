@@ -1,10 +1,20 @@
 //! Exact forum-topic operations. No caller-selected chat or topic reaches this adapter.
 use super::{Error, TelegramClient};
-use cmaeg_core::{channel::Secret, thread_lifecycle::TopicAction};
+use cmaeg_core::channel::Secret;
 use serde_json::json;
 
+/// Keep unit-variant bytes stable: existing close/reopen ledger hashes use them.
+/// Rename includes the exact name, so reusing its key with another name conflicts.
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Mutation<'a> {
+    Close,
+    Reopen,
+    Rename { name: &'a str },
+}
+
 impl TelegramClient {
-    /// The first increment requires administrator rights even for a creator-owned topic.
+    /// Requires administrator rights even for a creator-owned topic.
     /// Reads are completed before the shared tool performs its final custody check.
     pub(crate) async fn topic_permissions(
         &self,
@@ -55,16 +65,28 @@ impl TelegramClient {
         bot: &str,
         chat: &str,
         topic: &str,
-        action: TopicAction,
+        action: Mutation<'_>,
     ) -> Result<(), Error> {
         if !super::media_token_matches(token, bot) || !valid_chat(chat) || !valid_topic(topic) {
             return Err(Error::Rejected);
         }
+        let mut body = json!({"chat_id":chat,"message_thread_id":topic.parse::<i64>().map_err(|_| Error::Rejected)?});
         let method = match action {
-            TopicAction::Close => "closeForumTopic",
-            TopicAction::Reopen => "reopenForumTopic",
+            Mutation::Close => "closeForumTopic",
+            Mutation::Reopen => "reopenForumTopic",
+            Mutation::Rename { name } => {
+                // Telegram accepts 128 characters; the shared public contract is 100.
+                if name.trim().is_empty()
+                    || name.chars().count() > 100
+                    || name.chars().any(cmaeg_core::activity::forbidden_text_char)
+                {
+                    return Err(Error::Rejected);
+                }
+                body["name"] = json!(name);
+                "editForumTopic"
+            }
         };
-        let result = self.call(token, method, &json!({"chat_id":chat,"message_thread_id":topic.parse::<i64>().map_err(|_| Error::Rejected)?})).await?;
+        let result = self.call(token, method, &body).await?;
         if result != true {
             return Err(Error::Unconfirmed);
         }
