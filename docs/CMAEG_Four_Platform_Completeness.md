@@ -324,18 +324,22 @@ Activation requires the following release sequence:
    source `conversation_history` consent. WhatsApp Forms separately require owner
    `forms_enabled` consent, `CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED` and
    `CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED`; Ready preparation is not delivery.
-5. After compatible rollout and fresh Custom verification, install/review the two
+5. Complete compatible rollout and drain old readers, then install/review the two
    optional persistent stores: `eg_thread_fence_records` and
    `eg_whatsapp_flow_records`, with their `thread_fences:1` and `whatsapp_forms:1`
    markers in the migrations collection. Verify their effective runtime privileges
    under the configured isolated or shared-schema mode; preserve existing grants.
-   Restart compatible readers and verify marker/grant/non-TTL index readiness
-   before enabling issuance. Preserve base schema:2, the existing Interaction
-   validator and its `expires_at` TTL index with `expireAfterSeconds:0`; ordinary
+   Obtain direct marker/grant/non-TTL index metadata proof, run fresh Custom
+   verification, then perform one activation reload that recomputes readiness
+   and enables the locally validated supported features. Preserve base schema:2,
+   the existing Interaction validator and its `expires_at` TTL index with
+   `expireAfterSeconds:0`; ordinary
    seven-day write admission and the private WhatsApp 30-day retention class do
    not imply a Mongo seven-day schema maximum. Preserve all mutation tombstones.
-6. Verify each enabled feature against a specifically authorized test source and
-   the actual provider contract. Local fixtures and code flags are not permission
+6. Reserve native acceptance for owner testing against a specifically authorized
+   test source and the actual provider contract; external sends are not a
+   prerequisite for enabling locally validated supported features. Local fixtures
+   and code flags are not permission
    to send messages to external recipients. No external sends are authorized in
    the current work. Native control issuance separately requires
    `CMAEG_DISCORD_INTERACTIONS_ENABLED`; named-consumer controls also require
