@@ -37,17 +37,21 @@ docker run --detach --name "$contract_name" --label "$contract_label" \
   --tmpfs /data/db:rw,size=1073741824 --tmpfs /data/configdb:rw,size=16777216 \
   --env MONGO_INITDB_ROOT_USERNAME --env MONGO_INITDB_ROOT_PASSWORD --env CMA_IM_REPLICA_KEY \
   --entrypoint sh "$mongo_image" -c 'umask 077; printf "%s" "$CMA_IM_REPLICA_KEY" > /tmp/replica-key; chown mongodb:mongodb /tmp/replica-key; exec docker-entrypoint.sh mongod --replSet cma-im-contract --keyFile /tmp/replica-key --wiredTigerCacheSizeGB 0.25' >/dev/null
+readiness_script=$(cat "$script_directory/authenticated-mongo-readiness.js")
 for attempt in $(seq 1 60); do
-  if docker exec "$contract_name" mongosh --quiet admin --eval \
-    'db.auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD); if (db.runCommand({connectionStatus:1}).authInfo.authenticatedUsers.length !== 1) quit(1)' \
+  if docker exec "$contract_name" mongosh --quiet \
+    'mongodb://127.0.0.1:27017/admin?serverSelectionTimeoutMS=1000&connectTimeoutMS=1000' \
+    --eval "$readiness_script" \
       >/dev/null 2>&1; then
     break
   fi
-  [[ "$attempt" -lt 60 ]] || exit 1
+  if [[ "$attempt" -eq 60 ]]; then
+    echo 'Authenticated Mongo replica set did not become writable within the startup budget' >&2
+    docker inspect --format 'State={{.State.Status}} OOMKilled={{.State.OOMKilled}} ExitCode={{.State.ExitCode}}' "$contract_name" >&2 || true
+    exit 1
+  fi
   sleep 1
 done
-docker exec "$contract_name" mongosh --quiet admin --eval \
-  'db.auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD); rs.initiate({_id:"cma-im-contract",members:[{_id:0,host:"127.0.0.1:27017"}]}); while (!db.hello().isWritablePrimary) sleep(200)' >/dev/null
 endpoint=$(docker port "$contract_name" 27017/tcp)
 [[ "$endpoint" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
 export CMA_IM_TEST_MONGODB_URI="mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@${endpoint}/admin?directConnection=true"
