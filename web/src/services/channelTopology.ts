@@ -137,8 +137,8 @@ export function channelNodes(channel: Channel) {
     selection: { kind: 'toolsets' },
     identity: 'toolsets',
     title: 'Agent toolsets',
-    subtitle: 'Messaging and event tools',
-    detail: 'Explore tools and availability',
+    subtitle: 'Gateway tool catalog',
+    detail: 'Review tools and channel setup',
   };
   return { producers, consumers, toolsets };
 }
