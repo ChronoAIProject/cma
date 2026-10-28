@@ -113,7 +113,7 @@ module CIContract
     step(gate, "Release contract mutation regressions", "ruby .github/scripts/ci-contract-tests.rb release")
     step(gate, "Runtime image evidence and provenance regressions", "node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs")
     images = job(ci, "images", "Images")
-    require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime cmaeg image-manager], "all image gates must execute")
+    require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime runtime-desktop cmaeg image-manager], "all image gates must execute")
     %w[images image-exports].each do |id|
       require!(publish.dig("jobs", id, "strategy", "matrix", "component") == %w[api web runtime cmaeg image-manager], "release #{id} must include every service image")
     end
@@ -121,6 +121,10 @@ module CIContract
     step(images, "Require passing runtime image evidence", 'node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"', "always() && matrix.component == 'runtime'")
     artifact(images, "always() && matrix.component == 'runtime'", "runtime-image-evidence")
     order(images, ["Load native image for scanning", "Vulnerability scan", "Execute built runtime image contract", "Retain runtime image evidence", "Require passing runtime image evidence"])
+    step(images, "Execute desktop image contract", 'node .github/scripts/desktop-runtime-evidence.mjs cma-runtime-desktop:ci "$GITHUB_SHA" "$RUNNER_TEMP/desktop-runtime-evidence.json"', "matrix.component == 'runtime-desktop'")
+    desktop = step(images, "Retain desktop image evidence", nil, "always() && matrix.component == 'runtime-desktop'")
+    require!(desktop["uses"] == "actions/upload-artifact@v4" && desktop.dig("with", "if-no-files-found") == "error", "desktop execution evidence must be retained")
+    order(images, ["Load native image for scanning", "Vulnerability scan", "Execute desktop image contract", "Retain desktop image evidence", "Export tested native image"])
     native_image_artifacts(images)
     api_cargo_cache(ci, images)
     runtime = job(publish, "runtime-image-gate", "Runtime image evidence")
