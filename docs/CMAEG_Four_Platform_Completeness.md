@@ -8,15 +8,16 @@ single-media edits, bounded native Discord thread lifecycle and conversation-his
 pages, native Lark/Feishu chat and exact-thread history scans, and native WhatsApp
 static Forms, bounded native Lark/WhatsApp shared facts, and WhatsApp coexistence
 incoming edits/revokes. New source-specific
-gates remain independent. The [accepted PR #1157 activation](CMAEG_Operations.md#native-lark-and-whatsapp-owner-testing-activation-2026-10-28) enables native Lark intake/media and WhatsApp private controls, reactions, templates and existing-group testing. Connected native acceptance remains unverified. The [accepted PR #1158 activation](CMAEG_Operations.md#native-received-reactions-and-lark-mediaeffects-activation-2026-10-28) subsequently enabled native received-message reactions and Lark media/effects after fresh Custom and production UI verification; connected native acceptance remains unverified. This combined source adds eleven separate default-off gates: native Lark controls/forms/conversation history, Telegram/Discord media edit issuance, Telegram topic lifecycle, Discord thread lifecycle/conversation history, and WhatsApp Forms/Flow management writes/incoming message changes. All eleven remain false in the checked-in configuration; this source checkpoint does not establish their production rollout, optional-store migration or activation.
+gates remain independent. The [accepted PR #1157 activation](CMAEG_Operations.md#native-lark-and-whatsapp-owner-testing-activation-2026-10-28) enables native Lark intake/media and WhatsApp private controls, reactions, templates and existing-group testing. Connected native acceptance remains unverified. The [accepted PR #1158 activation](CMAEG_Operations.md#native-received-reactions-and-lark-mediaeffects-activation-2026-10-28) subsequently enabled native received-message reactions and Lark media/effects after fresh Custom and production UI verification; connected native acceptance remains unverified. This combined source adds eleven separate default-off gates: native Lark controls/forms/conversation history, Telegram/Discord media edit issuance, Telegram topic lifecycle, Discord thread lifecycle/conversation history, and WhatsApp Forms/Flow management writes/incoming message changes. The checked-in rollout enables the seven gates whose readers and existing-storage prerequisites are verified: Lark controls/forms/history, Telegram/Discord media edits, Discord history and WhatsApp incoming changes. Telegram topic lifecycle, Discord thread lifecycle, and WhatsApp Forms/Flow writes remain false pending their persistent-storage checks; connected native acceptance remains unverified.
 This document replaces the historical transport-only descriptions; it does not
 claim complete four-platform support or that every implemented feature is live.
 
 “Implemented” means a composed CMA code path with local contract coverage.
 Feature gates, source credentials, provider permissions and external verification
 are separate requirements. “Default-off” describes the code default; the accepted
-operator activations linked above are separate historical evidence. The eleven new
-gates named above remain disabled in the checked-in configuration. The NyxID contract was inspected read-only at
+operator activations linked above are separate historical evidence. Seven of the eleven
+gates named above are enabled for the compatible-reader rollout; four remain disabled
+pending their persistent-storage checks. The NyxID contract was inspected read-only at
 `2ab239cecbda8e3fb9f69ae4fa84fd7a801d7e4f`; that pin is not proof that every
 currently serving NyxID replica has the same behavior. No NyxID code change or
 external platform send is authorized by this review.
