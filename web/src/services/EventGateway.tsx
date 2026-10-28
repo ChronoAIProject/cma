@@ -160,7 +160,7 @@ function EventGatewayBody({
   const content = (
     <div className="gateway-content">
       {createStarted ? (
-        <section className="gateway-detail" hidden={!creating}>
+        <section className="gateway-detail gateway-detail--create" hidden={!creating}>
           <PageHeader
             breadcrumb={[{ label: 'Event Gateway' }, { label: 'New channel' }]}
             title="New channel"
