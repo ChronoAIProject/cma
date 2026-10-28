@@ -110,8 +110,9 @@ pub use runtime::{
 };
 pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
 pub use runtime_recovery::{
-    RecoveryConversation, RecoveryConversationHistory, RuntimeRecovery, RuntimeRecoveryInspection,
-    RuntimeRecoveryInspectionRequest, RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
+    NonexecutingRecoveryVerification, RecoveryConversation, RecoveryConversationHistory,
+    RuntimeRecovery, RuntimeRecoveryInspection, RuntimeRecoveryInspectionRequest,
+    RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
 };
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};

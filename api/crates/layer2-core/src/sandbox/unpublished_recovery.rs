@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use super::store::SandboxStoreError;
 use super::{
-    Agent, AgentStatus, AgentWorkStep, FirstMessageDelivery, QueuedMessageState, Sandbox,
-    SandboxEventKind, SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxRevivePhase,
-    SandboxStatus, SandboxWorkStep, Workspace, WorkspaceWorkStep,
+    Agent, AgentStatus, AgentWorkStep, FirstMessageDelivery, QueuedMessageState, RuntimeBinding,
+    Sandbox, SandboxEventKind, SandboxImageRotationPhase, SandboxLifecycleOperation,
+    SandboxReviveCause, SandboxRevivePhase, SandboxStatus, SandboxWorkStep, Workspace,
+    WorkspaceWorkStep,
 };
 use crate::{AgentId, SandboxId};
 
@@ -82,14 +83,61 @@ pub struct SandboxUnpublishedRecoveryMutation {
 }
 
 impl Sandbox {
+    /// Exact persisted source; a stalled revival keeps its source suspended even
+    /// when the provider has not completed the previous generation reservation.
+    pub fn unpublished_recovery_binding(&self) -> Option<&RuntimeBinding> {
+        self.runtime.as_ref().or_else(|| {
+            if self.stalled_unpublished_revival() {
+                self.lifecycle.suspended_runtime.as_deref()
+            } else {
+                None
+            }
+        })
+    }
+
+    fn stalled_unpublished_revival(&self) -> bool {
+        self.status == SandboxStatus::Reviving
+            && self.runtime.is_none()
+            && self.work.step == SandboxWorkStep::RunLifecycleOperation
+            && self.work.attempts > 0
+            && matches!(
+                self.lifecycle.operation,
+                Some(SandboxLifecycleOperation::Revive {
+                    phase: SandboxRevivePhase::RuntimeProvisioning,
+                    cause: SandboxReviveCause::RuntimeLost,
+                    ..
+                })
+            )
+            && self
+                .lifecycle
+                .runtime_provision
+                .as_ref()
+                .is_some_and(|reservation| {
+                    self.lifecycle
+                        .suspended_runtime
+                        .as_ref()
+                        .and_then(|binding| binding.provision_generation)
+                        .is_some_and(|source| {
+                            source > 0
+                                && source < reservation.generation
+                                && self
+                                    .retained_home_recovery()
+                                    .is_some_and(|home| home.source_generation == source)
+                        })
+                        && reservation.generation == self.lifecycle.runtime_generation_high_water
+                })
+            && self.lifecycle.unpublished_recovery.is_none()
+            && !self.lifecycle.unpublished_recovery_attempted
+    }
+
     /// Cheap preselection only; complete child and native proof is still required.
     pub fn unpublished_recovery_candidate(&self) -> bool {
         if !self.supports_retained_runtime_update()
-            || self.runtime.is_none()
+            || self.unpublished_recovery_binding().is_none()
             || self.work.lease.is_some()
-            || self.work.step != SandboxWorkStep::None
+            || (self.work.step != SandboxWorkStep::None && !self.stalled_unpublished_revival())
             || self.lifecycle.checkpoint_capture.is_some()
-            || self.lifecycle.runtime_provision.is_some()
+            || (self.lifecycle.runtime_provision.is_some() && !self.stalled_unpublished_revival())
             || self
                 .lifecycle
                 .unpublished_recovery
@@ -107,6 +155,9 @@ impl Sandbox {
             || self.credential.current.is_none()
         {
             return false;
+        }
+        if self.stalled_unpublished_revival() {
+            return true;
         }
         match &self.lifecycle.operation {
             Some(SandboxLifecycleOperation::ImageRotation {
@@ -148,8 +199,7 @@ impl SandboxUnpublishedRecoverySnapshot {
 
     pub fn runtime_generation(&self) -> Result<u64, SandboxStoreError> {
         self.sandbox
-            .runtime
-            .as_ref()
+            .unpublished_recovery_binding()
             .and_then(|binding| binding.provision_generation)
             .filter(|generation| *generation > 0)
             .ok_or_else(refused)
@@ -159,7 +209,9 @@ impl SandboxUnpublishedRecoverySnapshot {
     pub fn validate(&self) -> Result<(), SandboxStoreError> {
         self.sandbox.validate().map_err(|_| refused())?;
         if !self.sandbox.unpublished_recovery_candidate()
-            || self.runtime_generation()? != self.sandbox.lifecycle.runtime_generation_high_water
+            || (self.runtime_generation()? != self.sandbox.lifecycle.runtime_generation_high_water
+                && !self.sandbox.stalled_unpublished_revival())
+            || (self.sandbox.stalled_unpublished_revival() && !self.agents.is_empty())
         {
             return Err(refused());
         }
@@ -256,13 +308,18 @@ impl SandboxUnpublishedRecoveryProof {
     ) -> Result<(), SandboxStoreError> {
         snapshot.validate()?;
         self.validate_provider_plan().map_err(|_| refused())?;
-        let runtime = snapshot.sandbox.runtime.as_ref().ok_or_else(refused)?;
+        let runtime = snapshot
+            .sandbox
+            .unpublished_recovery_binding()
+            .ok_or_else(refused)?;
         if self.sandbox_id != snapshot.sandbox.id
             || self.runtime_id != runtime.runtime_id
             || self.runtime_generation != snapshot.runtime_generation()?
             || self.home_identity != snapshot.home_identity()?
             || self.boot_id.as_ref().is_some_and(|boot| !hex(boot, 32))
             || (!snapshot.agents.is_empty() && self.boot_id.is_none())
+            || (self.boot_id.is_none() && !self.runtime_process_absent)
+            || (snapshot.sandbox.stalled_unpublished_revival() && self.boot_id.is_some())
             || self
                 .boot_id
                 .as_ref()
@@ -327,8 +384,7 @@ pub fn apply_unpublished_runtime_recovery(
                 .or_else(|| {
                     current
                         .sandbox
-                        .runtime
-                        .as_ref()
+                        .unpublished_recovery_binding()
                         .map(|binding| binding.runtime_version.as_str())
                 })
                 != Some(request.target_runtime_version.as_str()))

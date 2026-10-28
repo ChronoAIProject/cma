@@ -298,3 +298,107 @@ fn home(id: &layer2_core::SandboxId) -> SandboxHome {
     .unwrap();
     home
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_generation_floor() {
+    use layer2_core::sandbox::store::{
+        SandboxReconciliationStore, SandboxRuntimeLossRequest, SandboxWorkerStore,
+    };
+    let (client, name, store) = database().await;
+    let mut sandbox = active_sandbox("sbx_empty_stalled_revival");
+    sandbox.lifecycle.home = Some(Box::new(home(&sandbox.id)));
+    let binding = sandbox.runtime.as_mut().unwrap();
+    binding.runtime_id = "agent-sandbox:member:sandbox-uid".into();
+    binding.boot_id = Some("b".repeat(32));
+    sandbox.validate().unwrap();
+    store.create_sandbox(sandbox.clone()).await.unwrap();
+    store
+        .recover_runtime_loss(SandboxRuntimeLossRequest {
+            sandbox_id: sandbox.id.clone(),
+            expected_revision: sandbox.revision,
+            expected_runtime: sandbox.runtime.clone(),
+            retain_runtime: true,
+            interruption_cause: Default::default(),
+            observed_at: NOW.into(),
+        })
+        .await
+        .unwrap();
+    for phase in 0..3 {
+        let claimed = store
+            .claim_sandbox_work(
+                &sandbox.id,
+                "fixture",
+                NOW.into(),
+                "2026-09-05T01:00:00Z".into(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let fence = claimed.work.lease.as_ref().unwrap().fence;
+        let mut next = claimed.clone();
+        match phase {
+            0 => next
+                .complete_lifecycle_home_verification(
+                    claimed.retained_home_recovery().unwrap(),
+                    "fixture",
+                    fence,
+                    NOW.into(),
+                )
+                .unwrap(),
+            1 => {
+                next.reserve_lifecycle_runtime_generation(2, "fixture", fence, NOW.into())
+                    .unwrap();
+            }
+            _ => next
+                .retry_lifecycle(NOW.into(), "fixture", fence, NOW.into())
+                .unwrap(),
+        }
+        store.save_sandbox(claimed.revision, next).await.unwrap();
+    }
+    let snapshot = store
+        .unpublished_runtime_recovery_snapshot(&sandbox.id)
+        .await
+        .unwrap();
+    snapshot.validate().unwrap();
+    let provider_plan = serde_json::json!({"original": "nonexecuting-provider-proof"});
+    let proof = SandboxUnpublishedRecoveryProof {
+        sandbox_id: sandbox.id.clone(),
+        runtime_id: sandbox.runtime.as_ref().unwrap().runtime_id.clone(),
+        runtime_generation: 1,
+        home_identity: snapshot.home_identity().unwrap(),
+        boot_id: None,
+        runtime_process_absent: true,
+        requires_native_quiescence: true,
+        provider_plan_sha256: SandboxUnpublishedRecoveryProof::provider_plan_digest(&provider_plan)
+            .unwrap(),
+        provider_plan,
+        conversations: vec![],
+    };
+    let admitted = store
+        .admit_unpublished_runtime_recovery(SandboxUnpublishedRecoveryRequest {
+            snapshot,
+            proof,
+            target_runtime_version: "released-image".into(),
+            automatic: false,
+            requested_at: NOW.into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        admitted.lifecycle.suspended_runtime.as_deref(),
+        sandbox.runtime.as_ref()
+    );
+    assert_eq!(admitted.lifecycle.home, sandbox.lifecycle.home);
+    assert_eq!(admitted.lifecycle.runtime_generation_high_water, 2);
+    assert_eq!(
+        admitted.retained_home_recovery().unwrap().source_generation,
+        1
+    );
+    assert!(admitted.lifecycle.runtime_provision.is_none());
+    assert_eq!(
+        store.get_sandbox(&sandbox.id).await.unwrap().unwrap(),
+        admitted
+    );
+    client.database(&name).drop().await.unwrap();
+}

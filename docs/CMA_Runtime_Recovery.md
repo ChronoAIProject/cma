@@ -85,3 +85,46 @@ verify EOF shutdown, reopen the same conversation and send a subsequent prompt.
 The Python process/journal tests run in Linux CI; GitHub CI builds and scans the
 deployment images. Production recovery still requires checking the original
 home, original conversation and resulting runtime independently for each sandbox.
+
+## Recovery before any Agent exists
+
+An original runtime that cannot run its supervisor uses a separate, read-only
+provider proof. This path requires the complete Agent set to be empty, including
+stopped and deleted records. A preparing Workspace may retain its pending Prepare
+step; its identity, home and all stored bytes remain unchanged. A live-conversation
+recovery continues to require the normal boot-bound history and graceful drain.
+
+The provider inspects the exact original Claim, native Sandbox, PVC and owned Pod.
+It verifies the original rendered request, image, mounts and completed initializers,
+and requires the sole runtime container to be stopped after an error or waiting in
+CrashLoopBackOff after that exact error. Running, ready, replaced, signaled or
+ambiguous containers are refused. This inspection does not exec, bind, signal,
+allocate or delete anything. The bounded opaque proof pins resource versions,
+container identity, restart count and a digest of the complete Pod execution state.
+
+A stalled RuntimeLost revival may retain generation 1 while generation 2 is only a
+reserved attempt. An explicit update can supersede that revival only between worker
+leases, after a retry, with the complete empty-Agent snapshot and exact provider
+proof of the retained generation. Admission preserves the original binding, home,
+preparing Workspaces and generation high-water mark. It replaces the old reservation
+with a new lifecycle operation; the next allocation reserves above the old high-water
+mark. It never rebinds the retained runtime to an invented generation. If the provider
+has already advanced to the reserved generation, the old-source proof is refused.
+
+The worker rechecks the full empty-Agent set and source proof, then commits a separate
+quiescence receipt. Immediately before suspension it checks authority and the complete
+Agent set again and refreshes the stopped-container witness while keeping the
+admitted runtime, request and home identities fixed. The provider then rechecks that exact fresh
+witness immediately before a suspension CAS using its observed Sandbox UID and
+resource version. Running or changed evidence at that final boundary retains the
+original runtime and home; a later safely stopped retry may refresh the witness.
+A lost suspension reply is reconciled only by verifying the exact retained provider object is already suspended. No process command
+or graceful-drain journal is needed for this branch. The lifecycle transaction also
+refuses to advance this recovery if any Agent has appeared since admission.
+
+After runtime recovery, the original Workspace Prepare executes under its original
+operation identity. An incomplete staged clone without its completion marker keeps
+its files and returns terminal `workspace_prepare_outcome_unknown`; the Workspace
+worker records Failed and clears pending work, rather than retrying indefinitely.
+The Sandbox remains Active. That incomplete Workspace requires explicit recovery;
+it is not marked Ready and does not admit an Agent as a usable workspace.

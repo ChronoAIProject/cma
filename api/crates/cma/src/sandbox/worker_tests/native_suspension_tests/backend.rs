@@ -22,6 +22,11 @@ pub(super) struct NativeBackend {
     pub lose_delete: Arc<AtomicBool>,
     pub reject_credential: Arc<AtomicBool>,
     pub status_override: Arc<Mutex<Option<layer3_adapter::RuntimeStatus>>>,
+    pub nonexecuting: Arc<AtomicBool>,
+    pub proof_revision: Arc<AtomicU64>,
+    pub change_before_suspend: Arc<AtomicBool>,
+    pub run_before_suspend: Arc<AtomicBool>,
+    pub interrupted_workspace: Arc<AtomicBool>,
     pub calls: ActionLog,
 }
 
@@ -63,6 +68,52 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    async fn suspend_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &layer3_adapter::HomeVolumeAttachment,
+        proof: &layer3_adapter::hosted::NonexecutingRuntimeProof,
+    ) -> layer3_adapter::Result<()> {
+        if self.change_before_suspend.swap(false, Ordering::SeqCst) {
+            self.proof_revision.fetch_add(1, Ordering::SeqCst);
+        }
+        if self.run_before_suspend.swap(false, Ordering::SeqCst) {
+            self.nonexecuting.store(false, Ordering::SeqCst);
+        }
+        self.verify_nonexecuting_runtime(handle, request, home, proof)
+            .await?;
+        self.suspend(handle, request).await
+    }
+
+    async fn inspect_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &layer3_adapter::HomeVolumeAttachment,
+    ) -> layer3_adapter::Result<Option<layer3_adapter::hosted::NonexecutingRuntimeProof>> {
+        use sha2::{Digest, Sha256};
+        let rows = self.row.lock().await;
+        let row = rows.as_ref().ok_or_else(absent)?;
+        if !self.nonexecuting.load(Ordering::SeqCst) || row.pod.is_none() {
+            return Ok(None);
+        }
+        if row.observation.handle != *handle || row.request != *request {
+            return Err(absent());
+        }
+        self.calls.push("inspect-nonexecuting");
+        Ok(Some(serde_json::from_value(serde_json::json!({
+            "version": 1, "handle": handle,
+            "request_sha256": format!("{:x}", Sha256::digest(serde_json::to_vec(request).unwrap())),
+            "home_identity": home.identity().unwrap(),
+            "sandbox_generation": 1, "sandbox_resource_version": "1",
+            "pod_name": "original-pod", "pod_uid": "original-pod-uid",
+            "pod_resource_version": self.proof_revision.load(Ordering::SeqCst).to_string(),
+            "runtime_container_id": "containerd://original", "runtime_restart_count": 691,
+            "state_sha256": "a".repeat(64),
+        })).unwrap()))
+    }
+
     async fn reserve_home_request(
         &self,
         _: &ProviderSandboxRequest,
@@ -183,7 +234,9 @@ impl HostedBackend for NativeBackend {
         let row = rows.as_ref().ok_or_else(absent)?;
         assert_eq!(row.observation.handle, *handle);
         assert_eq!(row.request, *request);
-        assert!(row.pod.is_none());
+        if row.pod.is_some() {
+            return Err(absent());
+        }
         self.calls.push("verify-suspended");
         Ok(())
     }
@@ -227,6 +280,17 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
+        if matches!(request, RequestFrame::PrepareWorkspace(_))
+            && self.interrupted_workspace.load(Ordering::SeqCst)
+        {
+            self.calls.push("workspace-indeterminate");
+            return Ok(ResponseFrame::Failure(layer3_adapter::wire::WireFailure {
+                operation: WireOperation::PrepareWorkspace,
+                code: "workspace_prepare_outcome_unknown".into(),
+                detail: "staged preparation has no completed identity metadata".into(),
+                retryable: false,
+            }));
+        }
         if matches!(request, RequestFrame::Credential(_))
             && self.reject_credential.load(Ordering::SeqCst)
         {

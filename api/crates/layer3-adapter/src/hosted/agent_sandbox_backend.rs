@@ -209,6 +209,18 @@ impl HostedBackend for AgentSandboxBackend {
             .await
     }
 
+    async fn suspend_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        proof: &super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        self.client
+            .suspend_nonexecuting_runtime(handle, request, home, proof)
+            .await
+    }
+
     async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,

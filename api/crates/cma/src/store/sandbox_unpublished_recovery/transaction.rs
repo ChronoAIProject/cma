@@ -84,8 +84,7 @@ pub(super) async fn load(
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?;
     let agents = load_sandbox_agents(store, id, session).await?;
     let generation = sandbox
-        .runtime
-        .as_ref()
+        .unpublished_recovery_binding()
         .and_then(|binding| binding.provision_generation)
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     for agent in &agents {

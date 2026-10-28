@@ -250,6 +250,20 @@ pub trait HostedBackend: Send + Sync {
         Ok(())
     }
 
+    /// Revalidate the complete fresh observation immediately before a suspension
+    /// CAS using its original object UID/resourceVersion. No generic fallback.
+    async fn suspend_nonexecuting_runtime(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+        _proof: &super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "nonexecuting runtime suspension".into(),
+        ))
+    }
+
     /// Internal bounded provider maintenance on the exact existing runtime.
     /// Only the lifecycle adapter may authorize the provider-rendered command.
     /// Implementations must fence resource identity, bound I/O and duration,
