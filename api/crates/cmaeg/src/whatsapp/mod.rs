@@ -10,6 +10,7 @@ pub(crate) mod message_context;
 pub(crate) mod outbound;
 mod reaction;
 pub mod receipts;
+pub(crate) mod shared_facts;
 pub(crate) mod status;
 pub(crate) mod templates;
 pub mod webhook;
@@ -60,6 +61,8 @@ pub(crate) mod media_tests;
 
 #[cfg(test)]
 mod interactive_tests;
+#[cfg(test)]
+mod shared_facts_webhook_tests;
 /// Bound only into the new group address; legacy private reply bytes remain stable.
 pub(crate) fn group_revision(
     source: &cmaeg_core::channel::Source,

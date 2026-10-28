@@ -13,6 +13,8 @@ pub(super) fn extract(raw: &Value, kind: &str, id: &str) -> Result<Content, Erro
         "sticker",
         "reaction",
         "interactive",
+        "contacts",
+        "location",
     ] {
         if raw.get(field).is_some() {
             return Err(Error::Message);
@@ -62,6 +64,8 @@ pub(super) fn extract(raw: &Value, kind: &str, id: &str) -> Result<Content, Erro
         "sticker",
         "reaction",
         "interactive",
+        "contacts",
+        "location",
         "edit",
         "revoke",
     ] {
