@@ -168,6 +168,7 @@ class Quiesce(Fixture):
         self.signals = []
         self.finish = True
         patch.dict(m.__dict__, inventory=lambda: copy.deepcopy(self.live),
+                   services=lambda _: [],
                    proc_identity=lambda pid: copy.deepcopy(self.live[pid]),
                    digest_file=lambda path, proc=False: m.LAUNCHER if path == "/fixture-launcher" else self.topology["bridgeSha256"],
                    stdin_owner=lambda *_: self.pipe).start()
@@ -316,6 +317,13 @@ class Quiesce(Fixture):
 
 
 class Proc(unittest.TestCase):
+    def test_only_exact_supervisor_relay_source_and_argv_are_allowed(self):
+        source = (SOURCE.parent / "agent_sandbox/runtime_exec_relay.py").read_bytes()
+        argv = [b"/usr/bin/python3", b"-I", b"-u", b"-c", source]
+        self.assertTrue(m.relay_command(b"\0".join(argv) + b"\0"))
+        for changed in (argv + [b"extra"], [b"python3", *argv[1:]], [*argv[:-1], source + b"\n"], [*argv[:-1], b"print('unrelated')"]):
+            self.assertFalse(m.relay_command(b"\0".join(changed) + b"\0"))
+
     def test_source_stdio_refuses_missing_extra_shared_or_named_endpoints(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
