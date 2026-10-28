@@ -46,6 +46,14 @@ pub(crate) fn custody(
     event: &EventRefPayload,
     activity: &Activity,
 ) -> Option<String> {
+    custody_with_routing(channel, event, activity, &channel.definition.routing)
+}
+fn custody_with_routing(
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+    activity: &Activity,
+    routing: &Option<cmaeg_core::channel::RoutingPolicy>,
+) -> Option<String> {
     let destination = destination(event)?;
     let consumer = channel.consumer(event.consumer.as_ref())?;
     let source = channel.definition.sources.iter().find(|s| matches!((s,&destination),
@@ -104,11 +112,21 @@ pub(crate) fn custody(
     Some(hash(
         &serde_json::json!({"domain":"cmaeg.native-media-custody.v1",
         "channel":channel.id,"record":channel.pointer.record_id,"owner":channel.definition.owner,
-        "source":source,"routing":channel.definition.routing,"consumer":event.consumer,
+        "source":crate::telegram::messaging_source(source),"routing":routing,"consumer":event.consumer,
         "provider":consumer.provider,"consumer_key":channel.consumer_key_hash(event.consumer.as_ref())?,
         "consumer_credential":crate::channels::definition::hash_secret(consumer.credential?.as_str()),
         "event":event,"activity":activity}),
     ))
+}
+fn custody_matches(channel: &ResolvedChannel, original: &Original, expected: &str) -> bool {
+    custody(channel, &original.event, &original.activity).as_deref() == Some(expected)
+        || (matches!(original.event.reply, ReplyAddress::Telegram { .. })
+            && crate::telegram::messaging_compat::accepts_unrouted_default(
+                &channel.definition,
+                original.event.consumer.as_ref(),
+            )
+            && custody_with_routing(channel, &original.event, &original.activity, &None).as_deref()
+                == Some(expected))
 }
 pub(crate) fn token<'a>(
     channel: &'a ResolvedChannel,
@@ -145,8 +163,7 @@ pub(crate) fn check(
         || a.issued_at != original.confirmed_at
         || a.expires_at != original.expires_at
         || a.authority_sha256 != original.authority_sha256
-        || custody(channel, &original.event, &original.activity).as_ref()
-            != Some(&a.authority_sha256)
+        || !custody_matches(channel, original, &a.authority_sha256)
     {
         return Err(denied());
     }

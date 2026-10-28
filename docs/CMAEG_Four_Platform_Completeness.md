@@ -5,15 +5,16 @@ self-service and message effects, separate-app Lark/Feishu intake and inbound
 media, native WhatsApp video, templates, private controls and existing-group
 messaging, separate-app native Lark controls/forms, confirmed Telegram/Discord
 single-media edits, bounded native Discord thread lifecycle and conversation-history
-pages, and native WhatsApp static Forms. New source-specific
-gates remain independent. The [accepted PR #1157 activation](CMAEG_Operations.md#native-lark-and-whatsapp-owner-testing-activation-2026-10-28) enables native Lark intake/media and WhatsApp private controls, reactions, templates and existing-group testing. Connected native acceptance remains unverified. The [accepted PR #1158 activation](CMAEG_Operations.md#native-received-reactions-and-lark-mediaeffects-activation-2026-10-28) subsequently enabled native received-message reactions and Lark media/effects after fresh Custom and production UI verification; connected native acceptance remains unverified. This combined source adds eight separate default-off gates: native Lark controls/forms, Telegram/Discord media edit issuance, Discord thread lifecycle/conversation history, and WhatsApp Forms/Flow management writes. All eight remain false in the checked-in configuration; this source checkpoint does not establish their production rollout, optional-store migration or activation.
+pages, native Lark/Feishu chat and exact-thread history scans, and native WhatsApp
+static Forms. New source-specific
+gates remain independent. The [accepted PR #1157 activation](CMAEG_Operations.md#native-lark-and-whatsapp-owner-testing-activation-2026-10-28) enables native Lark intake/media and WhatsApp private controls, reactions, templates and existing-group testing. Connected native acceptance remains unverified. The [accepted PR #1158 activation](CMAEG_Operations.md#native-received-reactions-and-lark-mediaeffects-activation-2026-10-28) subsequently enabled native received-message reactions and Lark media/effects after fresh Custom and production UI verification; connected native acceptance remains unverified. This combined source adds nine separate default-off gates: native Lark controls/forms/conversation history, Telegram/Discord media edit issuance, Discord thread lifecycle/conversation history, and WhatsApp Forms/Flow management writes. All nine remain false in the checked-in configuration; this source checkpoint does not establish their production rollout, optional-store migration or activation.
 This document replaces the historical transport-only descriptions; it does not
 claim complete four-platform support or that every implemented feature is live.
 
 “Implemented” means a composed CMA code path with local contract coverage.
 Feature gates, source credentials, provider permissions and external verification
 are separate requirements. “Default-off” describes the code default; the accepted
-operator activations linked above are separate historical evidence. The eight new
+operator activations linked above are separate historical evidence. The nine new
 gates named above remain disabled in the checked-in configuration. The NyxID contract was inspected read-only at
 `2ab239cecbda8e3fb9f69ae4fa84fd7a801d7e4f`; that pin is not proof that every
 currently serving NyxID replica has the same behavior. No NyxID code change or
@@ -27,13 +28,13 @@ external platform send is authorized by this review.
 | Inbound media | Source-bound image/file/audio/video retrieval, voice/sticker facts and album identity | Source-bound image/file/audio/video retrieval; voice/sticker, contact/location and quote facts; native retrieval uses authenticated metadata and the signed media digest | Relay standalone media and opt-in exact-source rich-post resources; independently gated native image/file/audio/video and rich-post image/video retrieval, bound to the original regional app and message | Native exact-message metadata and attachment-bound official CDN retrieval; correlated relay media |
 | Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Independently gated native JPEG/PNG, TXT/PDF/DOC/XLS/PPT/DOCX/XLSX/PPTX documents and bounded AAC/AMR/MP3/M4A/mono Opus Ogg audio plus static/animated WebP stickers and bounded Baseline H.264 MP4/3GPP video; gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads; independently gated native JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and bounded Baseline H.264 MP4 replies | Native multipart REST uploads; gated relay uploads |
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
-| Thread lifecycle | No additional lifecycle contract | No group/thread management | Retained existing-thread replies; no creation or lifecycle management | New default-off source-consented public creation from the original message, bounded public listing, exact archive/reopen and current-bot join/leave; private/forum creation and private sibling enumeration remain unsupported |
+| Thread lifecycle | Default-off exact original non-General forum-topic close/reopen with independent source consent; no list/create/private/General topic support | No group/thread management | Retained existing-thread replies; no creation or lifecycle management | New default-off source-consented public creation from the original message, bounded public listing, exact rename/archive/reopen and current-bot join/leave; private/forum creation and private sibling enumeration remain unsupported |
 | Edit a sent message | Native text/control updates; gated relay text edits; new default-off explicit revisioned authority for one confirmed native attachment supports same-kind replacement and caption | Unsupported by the current CMA relay contract | Gated ordinary relay text edits and issued-card updates; independently gated exact confirmed native text edits and separate-app native card replacement | Gated native single-part text/link edits and native card replacement; new default-off explicit revisioned authority for one confirmed attachment supports same-kind replacement, description and visible content; gated relay text edits |
 | Delete/react to a sent message | Gated effects on confirmed bot messages; a separate default-off gate adds effects-only references for one individual native upload. Subject to permissions, age and reaction limits | No CMA relay operation | Separate opt-in CMA adapter through the existing NyxID bot-service proxy: exact confirmed text/cards, own retained reaction ID, durable uncertainty fences. Independent default-off native app effects grant recall and own reactions for one confirmed text/media message; live acceptance unverified | Gated native effects on confirmed single-part bot text/link replies; separately gated effects-only uploads contained in one exact native message. Durable idempotency and per-message serialization; no arbitrary message IDs or relay effects |
 | React to the received user message | Independent default-off reaction-only scope for the exact retained native human message, including topics; albums excluded; no edit/delete authority | Independent native reaction gate for exact retained private received messages; relay unchanged | Independent default-off reaction-only scope for the exact retained native human message; separate regional app authority | Independent default-off reaction-only scope for the exact retained native human message/thread; verifies original author and changes only the bot's own ordinary reactions |
 | Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated relay controls and independently gated native private buttons/single-choice lists with signed durable callbacks; approved templates have separate relay and native reply gates. Groups do not gain controls | Gated JSON 2.0 cards and durable verified callbacks through the existing relay connection; separately gated typed Form submissions. Separate native app sources now have independently default-off direct cards/buttons/choices and typed Forms, with signed encrypted v2 callbacks, exact original-actor custody and durable routed recovery | Gated native buttons/single-select controls, separately gated multi-select and modal Forms, and durable type-3/type-5 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
 | Forms | Plain-text Form rendering; no native multi-field submission contract | New default-off native private static Flows: one Form with 1–12 text/number/date/single-choice fields, explicit prepare/status/commit, original-recipient callbacks and no group/media/template mixtures | Gated relay Forms and separate default-off native app Forms, each bounded to 1–12 typed fields; native app callbacks retain original actor/conversation custody | Separately gated native modal Forms with up to five fields; Number/Date use validated text with reported degradation |
-| Earlier conversation history | No CMA native conversation-history read contract | No CMA native conversation-history read contract | No CMA native conversation-history read contract | Existing optional 20-text-message same-thread context; new default-off `readEventHistory` reads at most 25 earlier visible messages per page in the exact original DM, supported guild channel or admitted thread, with independent source consent and original-expiry cursors; metadata only for attachments, no complete-export claim |
+| Earlier conversation history | No CMA native conversation-history read contract | No CMA native conversation-history read contract | New default-off native `readEventHistory` scans one page of at most 25 raw rows in the exact original chat/thread, with separate source consent and original-expiry cursors. Threads may require empty scan pages; text/media-free posts only, no attachment facts or complete-export claim | Existing optional 20-text-message same-thread context; new default-off `readEventHistory` reads at most 25 earlier visible messages per page in the exact original DM, supported guild channel or admitted thread, with independent source consent and original-expiry cursors; metadata only for attachments, no complete-export claim |
 | Incoming edits/deletes/reactions | Owner-opted-in native retained private/group edits and attributable user reactions notify the original agents through durable admission. Anonymous actor-chat reactions and aggregate counts retain unknown actors and require an open sender policy. Separate `channel_posts` opt-in admits native posts and retained edits with unknown channel actors and open sender admission; Bot API has no generic deletion update. See [native message events](CMAEG_Native_Telegram_Message_Events.md) | Native opt-in supports private text and reactions on retained incoming and confirmed outgoing messages; existing relay status/system/reaction input remains refused | Pinned relay filters recall and reaction events. A separate default-off native app source retains recall notifications with unknown actors and human reaction add/remove deltas on admitted incoming and confirmed outgoing targets; incoming edit propagation remains unverified. See the [native source](CMAEG_Native_Lark.md) and preserved [incoming-event audit](CMAEG_Lark_Incoming_Message_Events.md) | Default-off durable edits/deletes retain original consumers; separate owner reaction-intent opt-in supports add/remove/all/emoji-clear deltas on retained inbound and confirmed outbound messages, with exact original routing and bounded durable wait for confirming receipts and explicit expired-target refusals |
 
 The [received-message reaction implementation](CMAEG_Received_Message_Reactions.md)
@@ -46,13 +47,14 @@ separate capabilities.
 The new default-off [native Discord thread lifecycle](CMAEG_Protocol.md#bounded-native-discord-thread-lifecycle)
 requires independent source `thread_lifecycle` consent. It creates a public thread
 from the exact original human message in a guild text or announcement parent,
-lists at most 25 public children of that original parent, and archives/reopens or
+lists at most 25 public children of that original parent, and renames, archives/reopens or
 joins/leaves an exact admitted or list/create-derived thread as the current bot.
 An event already in a thread remains confined to that same thread, including an
 admitted private thread. References retain original actor/consumer custody and
 expiry. Private standalone creation, forum/media posts, private sibling listing,
-other-user membership changes, deletion, renaming, locking and pagination remain
-unsupported. Unknown mutations retain a persistent exact-thread fence.
+other-user membership changes, deletion, locking and pagination remain
+unsupported. Renaming requires an active thread, changes only its name, and never
+implicitly reopens it. Unknown mutations retain a persistent exact-thread fence.
 
 The existing `readEventContext` / `thread_history` opt-in remains a bounded read
 of at most 20 preceding text messages in the same thread, without pagination.
@@ -123,9 +125,12 @@ gate grants reaction-only references to retained routed human messages. The exis
 relay's webhook and capabilities remain independent. The new independently
 default-off [native controls/forms gates](CMAEG_Native_Lark_Controls.md) add direct
 interactive cards and bounded typed Forms for exact private/group conversations
-and retained existing group threads. Native thread history and incoming edits
-remain unsupported. Local encrypted-callback, resource-read, upload and regional
-API tests do not establish live permission, subscription or client acceptance. The
+and retained existing group threads. Independent default-off
+[native history](CMAEG_Native_Lark_History.md) reads the exact original chat or
+thread through caller-requested bounded scan pages; only content strictly before
+the original timestamp is returned. Threads may need empty progress pages and
+never fall back to the parent chat. Incoming edits remain unsupported. Local
+encrypted-callback, resource-read, upload and regional API tests do not establish live permission, subscription or client acceptance. The
 [original gap audit](CMAEG_Lark_Incoming_Message_Events.md) remains the record of
 the pinned relay limitations and the separate-app provisioning constraint.
 
@@ -281,8 +286,8 @@ native source, template, reaction, private-control and group additions still had
 independent false gates. The later accepted PR #1157 activation enabled the eight
 exact Lark/WhatsApp owner-testing flags recorded in Operations. PR #1158 then
 enabled native Telegram/Discord received reactions and native Lark outbound media,
-message effects and received reactions. The eight new gates for native Lark
-controls/forms, Telegram/Discord media edits, Discord lifecycle/history and
+message effects and received reactions. The nine new gates for native Lark
+controls/forms/history, Telegram/Discord media edits, Discord lifecycle/history and
 WhatsApp Forms/Flow writes are newer source increments; none is established as
 activated by those historical receipts. The pinned NyxID catalog/source inspection
 establishes only the documented relay contracts; actual platform delivery/callback
@@ -321,21 +326,27 @@ Activation requires the following release sequence:
    independently of thread metadata/history. Disabling the lifecycle gate revokes
    lifecycle execution, including retained thread references. Conversation history
    independently requires `CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` and
-   source `conversation_history` consent. WhatsApp Forms separately require owner
+   source `conversation_history` consent. Native Lark/Feishu chat/thread history
+   independently requires `CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` and
+   the same explicit source-consent field. WhatsApp Forms separately require owner
    `forms_enabled` consent, `CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED` and
    `CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED`; Ready preparation is not delivery.
-5. After compatible rollout and fresh Custom verification, install/review the two
+5. Complete compatible rollout and drain old readers, then install/review the two
    optional persistent stores: `eg_thread_fence_records` and
    `eg_whatsapp_flow_records`, with their `thread_fences:1` and `whatsapp_forms:1`
    markers in the migrations collection. Verify their effective runtime privileges
    under the configured isolated or shared-schema mode; preserve existing grants.
-   Restart compatible readers and verify marker/grant/non-TTL index readiness
-   before enabling issuance. Preserve base schema:2, the existing Interaction
-   validator and its `expires_at` TTL index with `expireAfterSeconds:0`; ordinary
+   Obtain direct marker/grant/non-TTL index metadata proof, run fresh Custom
+   verification, then perform one activation reload that recomputes readiness
+   and enables the locally validated supported features. Preserve base schema:2,
+   the existing Interaction validator and its `expires_at` TTL index with
+   `expireAfterSeconds:0`; ordinary
    seven-day write admission and the private WhatsApp 30-day retention class do
    not imply a Mongo seven-day schema maximum. Preserve all mutation tombstones.
-6. Verify each enabled feature against a specifically authorized test source and
-   the actual provider contract. Local fixtures and code flags are not permission
+6. Reserve native acceptance for owner testing against a specifically authorized
+   test source and the actual provider contract; external sends are not a
+   prerequisite for enabling locally validated supported features. Local fixtures
+   and code flags are not permission
    to send messages to external recipients. No external sends are authorized in
    the current work. Native control issuance separately requires
    `CMAEG_DISCORD_INTERACTIONS_ENABLED`; named-consumer controls also require
@@ -451,3 +462,10 @@ acceptance work; no claim of four-platform completion follows from this result.
 ## Native WhatsApp static Forms
 
 The optional native WhatsApp Form increment compiles one neutral Form to managed static Flow JSON 7.3. It has an explicit prepare/status/commit protocol, separate owner consent and operator flags, and a dedicated persistent custody collection. One form per event/consumer, 64 generations/source, bounded field types and no media/group/template mixtures remain explicit gaps. Deploy compatible readers first, drain their predecessors, migrate and directly verify optional storage, then perform fresh Custom checks before the feature-activation reload. Native platform acceptance remains false pending user tests. See [native WhatsApp Forms](CMAEG_Native_WhatsApp_Forms.md).
+
+
+The subsequent isolated [Telegram topic lifecycle](CMAEG_Native_Telegram_Topics.md)
+source increment adds one independent default-off gate. It uses the original
+admitted event and the existing neutral manageThread operation, with persistent
+bot/chat/topic uncertainty fences. This source support does not establish
+production activation or connected Telegram native acceptance.

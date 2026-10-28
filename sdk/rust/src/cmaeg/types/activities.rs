@@ -279,6 +279,9 @@ pub struct Capabilities {
     /// Bounded lifecycle scope, independent of actual bot permissions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_lifecycle: Option<super::ThreadCapabilities>,
+    /// Exact admitted Telegram forum topic, with no listing/creation authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_lifecycle: Option<super::TopicLifecycleCapabilities>,
     /// Independent exact-conversation history scope and limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_history: Option<super::ConversationHistoryCapabilities>,

@@ -1,7 +1,7 @@
 import { nativeLarkUnavailable, useRelayCapabilities } from '../RelayCapabilities';
 import { AdmissionFields } from './AdmissionFields';
 import { Choice, Section, TextField, Toggle } from './Fields';
-import { object, type Fields } from './model';
+import { object, optional, type Fields } from './model';
 
 export function NativeLarkSourceFields({
   value,
@@ -76,6 +76,28 @@ export function NativeLarkSourceFields({
             ? 'Form submissions are enabled for the original person in the same conversation or existing group thread.'
             : 'Form replies are disabled.'}
         </p>
+        {discovery.authoring?.native_lark_conversation_history_enabled === true ||
+        value.conversation_history === true ? (
+          <div>
+            <Toggle
+              label="Allow original conversation history"
+              value={value.conversation_history === true}
+              onChange={(enabled) =>
+                onChange(optional(value, 'conversation_history', enabled ? true : undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Allow earlier messages from other participants and apps in the original chat or exact
+              thread, according to this bot’s visibility. Thread reads may need several empty scan
+              pages. Grant im:message:readonly and, for groups, im:message.group_msg. Enabling
+              applies to newly received events.
+            </p>
+          </div>
+        ) : (
+          <p className="channel-field-hint">
+            Original conversation history is disabled on this gateway.
+          </p>
+        )}
         {unavailable ? (
           <p className="channel-field-hint">{unavailable} Saved settings are retained.</p>
         ) : null}

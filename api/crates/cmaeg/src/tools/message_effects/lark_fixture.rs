@@ -225,7 +225,9 @@ impl App {
         let (sender, _) = mpsc::channel(16);
         let state = ToolsState {
             discord_thread_history: None,
+            telegram_topics: None,
             discord_threads: None,
+            native_lark_conversation_history: None,
             discord_conversation_history: None,
             complete_replies_enabled: true,
             telegram_effects_issuance_enabled: false,

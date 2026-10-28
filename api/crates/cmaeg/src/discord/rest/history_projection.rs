@@ -250,7 +250,7 @@ fn metadata(value: &str, cap: usize, budget: &mut usize, truncated: &mut bool) -
     *truncated |= clipped;
     text
 }
-fn clip(value: &str, cap: usize) -> (String, bool) {
+pub(crate) fn clip(value: &str, cap: usize) -> (String, bool) {
     let mut text = String::new();
     let mut changed = false;
     for ch in value.chars() {

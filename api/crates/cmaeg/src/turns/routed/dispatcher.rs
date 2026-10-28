@@ -436,8 +436,11 @@ pub(super) fn validate_current(
                 {
                     crate::whatsapp::legacy_source(source)
                         == crate::whatsapp::legacy_source(&plan.source)
+                } else if matches!(source, cmaeg_core::channel::Source::Telegram { .. }) {
+                    crate::telegram::messaging_source(source)
+                        == crate::telegram::messaging_source(&plan.source)
                 } else {
-                    source == &plan.source
+                    crate::native_lark::same_messaging_source(source, &plan.source)
                 }
             })
         || current

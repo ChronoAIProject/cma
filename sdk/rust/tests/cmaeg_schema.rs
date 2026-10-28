@@ -135,6 +135,8 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ThreadOutcome,
         ThreadReceipt,
         ThreadCapabilities,
+        TopicAction,
+        TopicLifecycleCapabilities,
         HistoryCursor,
         HistoryAttachmentFacts,
         HistoryOmittedContent,

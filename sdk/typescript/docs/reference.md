@@ -901,6 +901,13 @@ addresses only the thread containing that event. References preserve original
 consumer custody and expiry. Unknown outcomes must not be retried under a new
 key. Private/forum creation and private sibling enumeration are unsupported.
 
+Rename an active exact thread with
+`client.manageThread(key, { target: { type: 'thread', thread_ref }, action: 'rename', name: 'Incident triage' })`.
+The name must contain 1–100 printable characters and must be omitted for every
+other action. Rename never reopens an archived thread or changes its lock;
+Discord enforces the bot's permission. An unknown rename result keeps the same
+persistent fence as every other thread mutation.
+
 Native WhatsApp Forms use `prepareFormReply(eventRef, message, stablePreparationKey)`,
 then `readFormPreparation(eventRef)`. Poll Pending after `retry_after_ms`. Ready has
 not sent a customer message. Commit the exact message with
@@ -912,3 +919,39 @@ and status have a two-second total gateway deadline; explicit commit remains eig
 seconds. Source `forms_enabled` is separate owner consent; operator discovery uses
 `native_whatsapp_forms_enabled` and `native_whatsapp_flow_writes_enabled`.
 See `docs/CMAEG_Native_WhatsApp_Forms.md` for the supported subset and retained gaps.
+
+### Native Telegram forum topic lifecycle
+
+The source's independent `topic_lifecycle: true` consent and the gateway's
+separate default-off topic gate enable exact original non-General forum-topic
+close/reopen. Check `context.capabilities.topic_lifecycle` for
+`manage_original_topic`, `actions` and `expires_at`. Both default and named
+consumers retain only their original admitted authority. Enabling consent
+transparently enrolls a previously unrouted channel in default-only durable
+routing when authoring prerequisites are available; it does not enable incoming
+edit/reaction retention.
+
+Use the existing method:
+
+```ts
+import { Cmaeg } from '@chronoai/cma-sdk';
+
+export function closeOriginalTopic(client: Cmaeg, eventRef: string) {
+  return client.manageThread('stable-close', {
+    target: { type: 'event', event_ref: eventRef },
+    action: 'close',
+  });
+}
+```
+
+Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the
+original Event target and issues no `thread_ref`. There is no list, create,
+private-chat or General-topic operation. Discord rejects the additive Close
+action before platform IO. A confirmed receipt can omit `thread`.
+
+Keep a stable idempotency key. Same-key replay returns the saved outcome;
+conflicting action reuse fails. An unknown write keeps a permanent bot/chat/topic
+fence across process restart, different keys and event expiry. Never retry an
+unknown result with a new key. Discovery describes scope; current Telegram bot
+administrator topic permissions are checked at execution. Source support and
+local tests do not establish connected-account native acceptance.

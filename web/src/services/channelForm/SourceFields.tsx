@@ -156,6 +156,22 @@ export function SourceFields({
         {value.type === 'telegram' ? (
           <>
             <Toggle
+              label="Manage the original forum topic"
+              value={value.topic_lifecycle === true}
+              disabled={
+                discovery.authoring?.native_telegram_topic_lifecycle_enabled !== true &&
+                value.topic_lifecycle !== true
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'topic_lifecycle', enabled || undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Agents may close or reopen the forum topic containing an admitted message. Requires a
+              forum supergroup and bot administrator permission to manage topics. General topics,
+              private chats, topic creation and browsing are excluded.
+            </p>
+            <Toggle
               label="Receive message edits and reactions"
               value={value.message_events}
               disabled={

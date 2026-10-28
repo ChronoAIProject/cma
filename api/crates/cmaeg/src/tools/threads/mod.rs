@@ -1,7 +1,9 @@
 //! Bounded original-event thread lifecycle, shared by REST and MCP.
 mod budget;
+mod errors;
 mod execute;
 mod ledger;
+mod topics;
 use super::ToolsState;
 use crate::discord::mutation::hash;
 use crate::{
@@ -23,10 +25,12 @@ use cmaeg_core::{
         ThreadListScope, ThreadListView, ThreadOutcome, ThreadReceipt, ThreadSummary, ThreadTarget,
     },
 };
+use errors::*;
 use serde::Serialize;
 use std::sync::Arc;
 use thread_authority::{denied, unavailable};
 use tokio::sync::Semaphore;
+pub use topics::TelegramTopics;
 
 pub struct DiscordThreads {
     api: DiscordRest,
@@ -46,8 +50,15 @@ impl DiscordThreads {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Operation {
-    Create { request: CreateThreadRequest },
-    Manage { action: ThreadAction },
+    Create {
+        request: CreateThreadRequest,
+    },
+    Manage {
+        action: ThreadAction,
+        // Preserve every pre-rename operation's serialized bytes and durable claim hash.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
 }
 
 impl ToolsState {
@@ -126,6 +137,7 @@ impl ToolsState {
                 ThreadAction::Reopen,
                 ThreadAction::Join,
                 ThreadAction::Leave,
+                ThreadAction::Rename,
             ],
             expires_at: event.expires_at,
         })
@@ -232,6 +244,27 @@ impl ToolsState {
         request: ManageThreadRequest,
         key: &str,
     ) -> Result<ThreadReceipt, Problem> {
+        super::validate_reply_key(Some(key))?;
+        request
+            .validate()
+            .map_err(|e| Problem::new(ProblemCode::InvalidRequest, 400, e.to_string()))?;
+        if let ThreadTarget::Event { event_ref } = &request.target {
+            let event = event_ref
+                .open(&self.keys, now())
+                .map_err(|_| invalid_reference())?
+                .payload;
+            if matches!(event.reply, ReplyAddress::Telegram { .. }) {
+                return self
+                    .manage_telegram_topic(caller, event, request.action, key)
+                    .await;
+            }
+        }
+        // Reject Telegram-only close before Discord metadata reads or mutations.
+        if request.action == ThreadAction::Close {
+            return Ok(receipt(ThreadOutcome::Unsupported {
+                reason: "close_requires_telegram_topic_event".into(),
+            }));
+        }
         let budget = Budget::new(self.thread_client()?.budget);
         tokio::time::timeout_at(
             budget.end,
@@ -281,6 +314,7 @@ impl ToolsState {
             target,
             Operation::Manage {
                 action: request.action,
+                name: request.name,
             },
             key,
             budget,
@@ -436,50 +470,10 @@ fn receipt(outcome: ThreadOutcome) -> ThreadReceipt {
 fn now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
-fn invalid_reference() -> Problem {
-    Problem::new(
-        ProblemCode::EventRefInvalid,
-        400,
-        "thread_reference_invalid_or_expired",
-    )
-}
-fn busy() -> Problem {
-    Problem::new(ProblemCode::RateLimited, 429, "thread_lifecycle_busy")
-}
-fn revoked() -> ThreadOutcome {
-    ThreadOutcome::Rejected {
-        reason: "thread_authority_revoked".into(),
-    }
-}
-fn outcome(error: RestError) -> ThreadOutcome {
-    match error {
-        RestError::RateLimited(retry_after) => ThreadOutcome::RateLimited { retry_after },
-        RestError::Unknown => ThreadOutcome::Unknown {
-            reason: "thread_write_unconfirmed".into(),
-        },
-        RestError::Unavailable => ThreadOutcome::Rejected {
-            reason: "thread_preflight_unavailable".into(),
-        },
-        RestError::Rejected | RestError::NotFound => ThreadOutcome::Rejected {
-            reason: "thread_permission_or_target_unavailable".into(),
-        },
-    }
-}
-fn read_problem(error: RestError) -> Problem {
-    match error {
-        RestError::RateLimited(_) => {
-            Problem::new(ProblemCode::RateLimited, 429, "thread_read_rate_limited")
-        }
-        RestError::Rejected | RestError::NotFound => Problem::new(
-            ProblemCode::Forbidden,
-            403,
-            "thread_permission_or_target_unavailable",
-        ),
-        _ => unavailable(),
-    }
-}
 
 #[cfg(test)]
 mod fixture;
+#[cfg(test)]
+mod rename_tests;
 #[cfg(test)]
 mod tests;

@@ -56,6 +56,9 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// Exact admitted Telegram forum topic; no creation or enumeration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_lifecycle: Option<cmaeg_core::thread_lifecycle::TopicLifecycleCapabilities>,
     /// Derived from retained native evidence; actual platform permissions are checked per call.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_lifecycle: Option<cmaeg_core::thread_lifecycle::ThreadCapabilities>,
