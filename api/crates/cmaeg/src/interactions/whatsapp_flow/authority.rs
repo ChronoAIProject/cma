@@ -185,7 +185,7 @@ impl Authority {
             .filter(|c| !c.pending)?;
         Some(hash(
             &serde_json::json!({"kind":"native_whatsapp_flow_custody_v1", "original":self.original,
-            "activity":self.activity,"source_version":channel.version,"source":source(channel,&self.original)?,
+            "activity":self.activity,"source_version":channel.version,"source":crate::whatsapp::without_message_events(source(channel,&self.original)?),
             "source_credentials":crate::whatsapp::group_revision(source(channel,&self.original)?,credentials),
             "channel":channel.id,"record":channel.pointer.record_id,"owner":channel.definition.owner,
             "consumer":self.owner,"provider":consumer.provider,"key":channel.consumer_key_hash(card.consumer.as_ref())?,

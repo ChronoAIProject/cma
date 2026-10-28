@@ -6,6 +6,8 @@ use super::{
     whatsapp::VerifiedWhatsappMessage,
     IngressState,
 };
+#[path = "whatsapp_changes_tests.rs"]
+mod changes_tests;
 #[path = "whatsapp_group_tests.rs"]
 mod group_tests;
 #[path = "whatsapp_http_tests.rs"]

@@ -37,6 +37,14 @@ pub enum Content {
         caption: String,
         attachment: Box<cmaeg_core::activity::Attachment>,
     },
+    Edit {
+        target: String,
+        text: String,
+        media: Option<Box<cmaeg_core::activity::Attachment>>,
+    },
+    Revoke {
+        target: String,
+    },
     Reaction {
         target: String,
         emoji: String,
@@ -146,9 +154,21 @@ fn parse(raw: &Value, groups: &[String]) -> Result<Option<Message>, Error> {
     let kind = raw["type"].as_str().ok_or(Error::Message)?;
     if !matches!(
         kind,
-        "text" | "reaction" | "interactive" | "image" | "document" | "audio" | "video" | "sticker"
+        "text"
+            | "edit"
+            | "revoke"
+            | "reaction"
+            | "interactive"
+            | "image"
+            | "document"
+            | "audio"
+            | "video"
+            | "sticker"
     ) {
         return Ok(None);
+    }
+    if matches!(kind, "edit" | "revoke") && !private_shape(raw) {
+        return Err(Error::Message);
     }
     let group_id = match raw.get("group_id") {
         Some(value) => {
@@ -197,6 +217,8 @@ fn parse(raw: &Value, groups: &[String]) -> Result<Option<Message>, Error> {
         Content::Text {
             text: text.to_owned(),
         }
+    } else if matches!(kind, "edit" | "revoke") {
+        super::message_changes::extract(raw, kind, id)?
     } else if kind == "interactive" {
         super::interactive::extract(raw)?
     } else if kind == "reaction" {
@@ -230,7 +252,7 @@ fn parse(raw: &Value, groups: &[String]) -> Result<Option<Message>, Error> {
     }))
 }
 
-fn private_shape(value: &Value) -> bool {
+pub(super) fn private_shape(value: &Value) -> bool {
     ["group_id", "group", "participant"]
         .iter()
         .all(|field| value.get(field).is_none())
