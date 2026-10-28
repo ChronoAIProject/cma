@@ -8241,6 +8241,26 @@
       }
     }
   ],
+  "NativeAlbumCapabilities": [
+    {
+      "min_attachments": 2,
+      "max_attachments": 4,
+      "kind_groups": [
+        [
+          "image",
+          "video"
+        ],
+        [
+          "file"
+        ],
+        [
+          "audio"
+        ]
+      ],
+      "controls": false,
+      "message_operations": false
+    }
+  ],
   "NativeAttachment": [
     {
       "caption": "Image",
@@ -8306,6 +8326,24 @@
         "choices": true,
         "max_attachments": 1,
         "update": false
+      },
+      "albums": {
+        "min_attachments": 2,
+        "max_attachments": 4,
+        "kind_groups": [
+          [
+            "image",
+            "video"
+          ],
+          [
+            "file"
+          ],
+          [
+            "audio"
+          ]
+        ],
+        "controls": false,
+        "message_operations": false
       }
     },
     {

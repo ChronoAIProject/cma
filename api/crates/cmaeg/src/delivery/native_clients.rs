@@ -3,6 +3,11 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    pub fn with_native_telegram_albums(mut self, enabled: bool) -> Self {
+        self.native_telegram_albums = enabled;
+        self
+    }
+
     pub fn with_native_lark_thread_start(mut self, enabled: bool) -> Self {
         self.native_lark_thread_start = enabled;
         self

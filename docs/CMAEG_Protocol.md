@@ -4562,3 +4562,18 @@ authority; gate-off retained edits, callbacks and recovery continue.
 ### Native Lark / Feishu thread starts
 
 When verified context advertises `capabilities.native_thread_start: true`, `replyToEvent` may send one plain-text reply with `thread_reply: true` to start the exact originally admitted group message thread. The text must contain 1–4,000 characters and no blocks, attachments or explicit reply target. Only that root can be selected; no caller-selected chat, message or thread ID is accepted. The operation may continue that same root’s thread if it already exists, confirms the returned root/parent/chat/thread identity, and never falls back to top-level delivery. The feature is independently default-off; existing retained-thread replies keep their behavior. This is not the Discord `createThread` name/archive operation and grants no list/manage authority. See [native thread starts](CMAEG_Native_Lark_Thread_Start.md).
+
+### Native Telegram album delivery
+
+When advertised in `native_media.albums`, two to four ordered native attachments
+use one album request if all kinds belong to a declared `kind_groups` entry:
+`["image", "video"]`, `["file"]`, or `["audio"]`. `min_attachments` is two and
+`max_attachments` is four. `controls` and `message_operations` are false. The
+existing `native_attachments` request wire format is unchanged; per-item captions
+stay with their attachments and top-level text remains separate. Incompatible
+kind combinations retain individual uploads. An uncertain album never falls
+back to individual uploads or automatic retry. Multi-attachment delivery still
+issues no message operation references, while single-upload behavior is unchanged.
+This optional capability is absent when its default-false
+`CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED` gate is disabled or the original native
+Telegram destination is not verified. See [album delivery](CMAEG_Native_Telegram_Albums.md).
