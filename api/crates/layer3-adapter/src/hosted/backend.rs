@@ -7,11 +7,12 @@ use crate::{
     ConversationUpdate, Result, RuntimeHandle, RuntimeObservation,
 };
 
-/// Trusted provider-rendered, read-only inspection; never user-supplied exec.
+/// Trusted provider-rendered maintenance command; never user-supplied exec.
+/// The lifecycle adapter supplies authority for inspection or admitted recovery.
 /// Configuration belongs on stdin, not in Kubernetes command arguments.
 /// Fields are crate-private to keep command construction inside the adapter.
 #[doc(hidden)]
-pub struct RuntimeInspectionCommand {
+pub struct RuntimeRecoveryCommand {
     pub(crate) program: String,
     pub(crate) args: Vec<String>,
     pub(crate) input: Vec<u8>,
@@ -216,16 +217,17 @@ pub trait HostedBackend: Send + Sync {
         Ok(None)
     }
 
-    /// Internal bounded read-only inspection of the exact existing runtime.
+    /// Internal bounded provider maintenance on the exact existing runtime.
+    /// Only the lifecycle adapter may authorize the provider-rendered command.
     /// Implementations must fence resource identity, bound I/O and duration,
     /// and require successful termination before returning stdout.
-    async fn inspect_runtime(
+    async fn run_recovery_command(
         &self,
         _handle: &RuntimeHandle,
-        _command: &RuntimeInspectionCommand,
+        _command: &RuntimeRecoveryCommand,
     ) -> Result<Vec<u8>> {
         Err(crate::AdapterError::Unsupported(
-            "runtime inspection is not supported".into(),
+            "runtime recovery commands are not supported".into(),
         ))
     }
 

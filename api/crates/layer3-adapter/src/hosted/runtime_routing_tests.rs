@@ -14,14 +14,14 @@ impl RuntimeRoutingStore for Routes {
     }
 }
 
-struct InspectionBackend(&'static str);
+struct RecoveryBackend(&'static str);
 
 #[async_trait::async_trait]
-impl HostedBackend for InspectionBackend {
-    async fn inspect_runtime(
+impl HostedBackend for RecoveryBackend {
+    async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,
-        command: &super::super::RuntimeInspectionCommand,
+        command: &super::super::RuntimeRecoveryCommand,
     ) -> Result<Vec<u8>> {
         assert_eq!(command.program, "/usr/bin/python3");
         assert_eq!(command.args, ["-I"]);
@@ -50,16 +50,16 @@ impl HostedBackend for InspectionBackend {
 }
 
 #[tokio::test]
-async fn inspection_keeps_exact_runtime_route_and_never_falls_back_or_allocates() {
+async fn recovery_command_keeps_exact_runtime_route_and_never_falls_back_or_allocates() {
     let routes = Arc::new(Routes::default());
     let mut backend = RuntimeBackends {
         home_routes: None,
-        agent_sandbox: Some(Arc::new(InspectionBackend("native"))),
-        opensandbox: Some(Arc::new(InspectionBackend("legacy"))),
+        agent_sandbox: Some(Arc::new(RecoveryBackend("native"))),
+        opensandbox: Some(Arc::new(RecoveryBackend("legacy"))),
         allocate_agent_sandbox: true,
         routing: routes.clone(),
     };
-    let command = super::super::RuntimeInspectionCommand {
+    let command = super::super::RuntimeRecoveryCommand {
         program: "/usr/bin/python3".into(),
         args: vec!["-I".into()],
         input: b"private-input".to_vec(),
@@ -70,19 +70,22 @@ async fn inspection_keeps_exact_runtime_route_and_never_falls_back_or_allocates(
         backend.allocate_agent_sandbox = default_new;
         for (handle, provider) in [(&native, "native"), (&legacy, "legacy")] {
             assert_eq!(
-                backend.inspect_runtime(handle, &command).await.unwrap(),
+                backend
+                    .run_recovery_command(handle, &command)
+                    .await
+                    .unwrap(),
                 format!("{provider}:{}", handle.0).into_bytes()
             );
         }
     }
     backend.agent_sandbox = None;
     assert!(matches!(
-        backend.inspect_runtime(&native, &command).await,
+        backend.run_recovery_command(&native, &command).await,
         Err(AdapterError::Unavailable(_))
     ));
     backend.agent_sandbox = Some(Arc::new(super::super::InMemoryHostedBackend::default()));
     assert!(matches!(
-        backend.inspect_runtime(&native, &command).await,
+        backend.run_recovery_command(&native, &command).await,
         Err(AdapterError::Unsupported(_))
     ));
     assert!(routes.0.lock().await.is_empty());

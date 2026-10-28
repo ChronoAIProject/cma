@@ -61,8 +61,8 @@ impl Drop for Fixture {
 fn handle() -> RuntimeHandle {
     RuntimeHandle::new("agent-sandbox:claimed:sandbox-uid")
 }
-fn command() -> RuntimeInspectionCommand {
-    RuntimeInspectionCommand {
+fn command() -> RuntimeRecoveryCommand {
+    RuntimeRecoveryCommand {
         program: "/usr/bin/python3".into(),
         args: ["-I", "-u", "-c", SCRIPT].map(String::from).to_vec(),
         input: INPUT.to_vec(),
@@ -124,10 +124,10 @@ impl Fixture {
         }
     }
 
-    async fn inspect(&self, command: &RuntimeInspectionCommand) -> Result<Vec<u8>> {
+    async fn inspect(&self, command: &RuntimeRecoveryCommand) -> Result<Vec<u8>> {
         tokio::time::timeout(
             Duration::from_secs(3),
-            self.client.inspect_runtime(&handle(), command),
+            self.client.run_recovery_command(&handle(), command),
         )
         .await
         .expect("inspection must finish within test deadline")
@@ -286,7 +286,7 @@ async fn serve(mut socket: tokio::net::TcpStream, mode: Mode, state: Arc<State>)
 }
 
 #[tokio::test]
-async fn inspection_uses_exact_argv_private_stdin_and_owned_identity_before_and_after() {
+async fn recovery_command_uses_exact_argv_private_stdin_and_owned_identity_before_and_after() {
     let fixture = Fixture::start(Mode::Success).await;
     assert_eq!(fixture.inspect(&command()).await.unwrap(), OUTPUT);
     assert_eq!(fixture.state.calls.load(Ordering::SeqCst), 5);
@@ -295,7 +295,7 @@ async fn inspection_uses_exact_argv_private_stdin_and_owned_identity_before_and_
     let fixture = Fixture::start(Mode::EmptyInput).await;
     assert_eq!(
         fixture
-            .inspect(&RuntimeInspectionCommand {
+            .inspect(&RuntimeRecoveryCommand {
                 input: vec![],
                 ..command()
             })
@@ -315,7 +315,7 @@ async fn inspection_uses_exact_argv_private_stdin_and_owned_identity_before_and_
 }
 
 #[tokio::test]
-async fn inspection_rejects_exit_output_and_identity_failures_without_private_diagnostics() {
+async fn recovery_command_rejects_exit_output_and_identity_failures_without_private_diagnostics() {
     for mode in [
         Mode::Failure,
         Mode::MissingStatus,
@@ -339,7 +339,7 @@ async fn inspection_rejects_exit_output_and_identity_failures_without_private_di
 }
 
 #[tokio::test]
-async fn inspection_refuses_missing_incarnation_or_foreign_owner_before_exec() {
+async fn recovery_command_refuses_missing_incarnation_or_foreign_owner_before_exec() {
     for mode in [Mode::MissingIncarnation, Mode::ForeignOwner] {
         let fixture = Fixture::start(mode).await;
         assert!(fixture.inspect(&command()).await.is_err());
@@ -350,22 +350,22 @@ async fn inspection_refuses_missing_incarnation_or_foreign_owner_before_exec() {
 }
 
 #[tokio::test]
-async fn inspection_bounds_input_and_argv_and_refuses_capacity_without_kubernetes_requests() {
+async fn recovery_command_bounds_input_and_argv_and_refuses_capacity_without_kubernetes_requests() {
     let fixture = Fixture::start(Mode::Success).await;
     for invalid in [
-        RuntimeInspectionCommand {
+        RuntimeRecoveryCommand {
             input: vec![0; IO_LIMIT + 1],
             ..command()
         },
-        RuntimeInspectionCommand {
+        RuntimeRecoveryCommand {
             program: "python3".into(),
             ..command()
         },
-        RuntimeInspectionCommand {
+        RuntimeRecoveryCommand {
             args: vec!["nul\0argument".into()],
             ..command()
         },
-        RuntimeInspectionCommand {
+        RuntimeRecoveryCommand {
             args: vec!["x".repeat(ARGUMENT_LIMIT)],
             ..command()
         },
@@ -384,7 +384,7 @@ async fn inspection_bounds_input_and_argv_and_refuses_capacity_without_kubernete
         .unwrap();
     let clone = fixture.client.clone();
     assert!(matches!(
-        clone.inspect_runtime(&handle(), &command()).await,
+        clone.run_recovery_command(&handle(), &command()).await,
         Err(AdapterError::AtCapacity(_))
     ));
     assert_eq!(fixture.state.calls.load(Ordering::SeqCst), 0);
@@ -393,10 +393,11 @@ async fn inspection_bounds_input_and_argv_and_refuses_capacity_without_kubernete
 }
 
 #[tokio::test]
-async fn inspection_cancellation_aborts_exec_and_returns_shared_request_capacity() {
+async fn recovery_command_cancellation_aborts_exec_and_returns_shared_request_capacity() {
     let fixture = Fixture::start(Mode::Stall).await;
     let client = fixture.client.clone();
-    let task = tokio::spawn(async move { client.inspect_runtime(&handle(), &command()).await });
+    let task =
+        tokio::spawn(async move { client.run_recovery_command(&handle(), &command()).await });
     fixture.wait_for(&fixture.state.executions).await;
     assert_eq!(fixture.client.runtime_requests.available_permits(), 31);
     task.abort();
@@ -405,11 +406,12 @@ async fn inspection_cancellation_aborts_exec_and_returns_shared_request_capacity
 }
 
 #[tokio::test]
-async fn inspection_deadline_covers_discovery_and_exec_and_releases_capacity() {
+async fn recovery_command_deadline_covers_discovery_and_exec_and_releases_capacity() {
     for mode in [Mode::StallDiscovery, Mode::Stall] {
         let fixture = Fixture::start(mode).await;
         let client = fixture.client.clone();
-        let task = tokio::spawn(async move { client.inspect_runtime(&handle(), &command()).await });
+        let task =
+            tokio::spawn(async move { client.run_recovery_command(&handle(), &command()).await });
         fixture
             .wait_for(if matches!(mode, Mode::Stall) {
                 &fixture.state.executions
@@ -418,11 +420,11 @@ async fn inspection_deadline_covers_discovery_and_exec_and_releases_capacity() {
             })
             .await;
         tokio::time::pause();
-        tokio::time::advance(INSPECTION_TIMEOUT + Duration::from_secs(1)).await;
+        tokio::time::advance(RECOVERY_TIMEOUT + Duration::from_secs(1)).await;
         let error = task.await.unwrap().unwrap_err();
         tokio::time::resume();
         assert!(
-            matches!(error, AdapterError::Unavailable(ref message) if message == "runtime inspection timed out")
+            matches!(error, AdapterError::Unavailable(ref message) if message == "runtime recovery command timed out")
         );
         fixture.drained().await;
     }
