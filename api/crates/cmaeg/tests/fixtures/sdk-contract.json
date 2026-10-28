@@ -1,6 +1,11 @@
 {
-  "AcceptedStatus": ["accepted"],
-  "ActionMode": ["guarded", "autonomous"],
+  "AcceptedStatus": [
+    "accepted"
+  ],
+  "ActionMode": [
+    "guarded",
+    "autonomous"
+  ],
   "Activity": [
     {
       "actor": {
@@ -314,13 +319,20 @@
       "kind": "human"
     }
   ],
-  "ActorKind": ["human", "bot", "system", "unknown"],
+  "ActorKind": [
+    "human",
+    "bot",
+    "system",
+    "unknown"
+  ],
   "AdmissionPolicy": [
     {
       "type": "all"
     },
     {
-      "sender_ids": ["fixture"],
+      "sender_ids": [
+        "fixture"
+      ],
       "type": "allowlist"
     },
     {
@@ -385,12 +397,17 @@
       },
       "permission": {
         "action_mode": "guarded",
-        "service_scope": ["fixture"]
+        "service_scope": [
+          "fixture"
+        ]
       },
       "schema_version": 1
     }
   ],
-  "ApiType": ["responses", "chat_completions"],
+  "ApiType": [
+    "responses",
+    "chat_completions"
+  ],
   "Attachment": [
     {
       "duration_seconds": 1,
@@ -441,7 +458,13 @@
       "width": 1
     }
   ],
-  "AttachmentKind": ["image", "file", "audio", "video", "other"],
+  "AttachmentKind": [
+    "image",
+    "file",
+    "audio",
+    "video",
+    "other"
+  ],
   "AttachmentSource": [
     {
       "index": 0,
@@ -503,8 +526,16 @@
       "width": 1
     }
   ],
-  "AttachmentImageOrigin": ["normalized", "platform_thumbnail", "keyframe"],
-  "AttachmentStatus": ["ready", "pending", "unavailable"],
+  "AttachmentImageOrigin": [
+    "normalized",
+    "platform_thumbnail",
+    "keyframe"
+  ],
+  "AttachmentStatus": [
+    "ready",
+    "pending",
+    "unavailable"
+  ],
   "AttachmentText": [
     {
       "content": "fixture",
@@ -514,7 +545,10 @@
       "truncated": true
     }
   ],
-  "AttachmentTextSource": ["transcript", "document"],
+  "AttachmentTextSource": [
+    "transcript",
+    "document"
+  ],
   "AttachmentUnavailableReason": [
     "not_retrievable",
     "not_found",
@@ -575,8 +609,16 @@
       "width": 1
     }
   ],
-  "AttachmentViewKind": ["auto", "image", "text", "frames", "download"],
-  "BindingId": ["fixture"],
+  "AttachmentViewKind": [
+    "auto",
+    "image",
+    "text",
+    "frames",
+    "download"
+  ],
+  "BindingId": [
+    "fixture"
+  ],
   "Block": [
     {
       "text": "fixture",
@@ -751,10 +793,18 @@
       "max_text_chars": 1,
       "typing": true,
       "native_media": {
-        "kinds": ["image", "file", "audio", "video"],
+        "kinds": [
+          "image",
+          "file",
+          "audio",
+          "video"
+        ],
         "max_attachments": 4,
         "max_inline_bytes": 65536,
-        "sources": ["url", "base64"],
+        "sources": [
+          "url",
+          "base64"
+        ],
         "mime_types": [
           "image/jpeg",
           "image/png",
@@ -803,16 +853,27 @@
           "idempotency_key_required": true,
           "max_attachments": 1,
           "max_bytes": 8388608,
-          "replacement_kinds": ["file"]
+          "replacement_kinds": [
+            "file"
+          ]
         }
       },
       "thread_history": true,
-      "whatsapp_template_components": ["header", "body"],
+      "whatsapp_template_components": [
+        "header",
+        "body"
+      ],
       "thread_lifecycle": {
         "create_from_original_message": true,
         "list": "public_children_of_original_parent",
         "manage_original_thread": false,
-        "actions": ["archive", "reopen", "join", "leave", "rename"],
+        "actions": [
+          "archive",
+          "reopen",
+          "join",
+          "leave",
+          "rename"
+        ],
         "expires_at": 1800000600
       },
       "native_media_edits": {
@@ -822,7 +883,9 @@
         "idempotency_key_required": true,
         "max_attachments": 1,
         "max_bytes": 8388608,
-        "replacement_kinds": ["file"]
+        "replacement_kinds": [
+          "file"
+        ]
       },
       "forms": false,
       "conversation_history": {
@@ -836,7 +899,10 @@
       },
       "topic_lifecycle": {
         "manage_original_topic": true,
-        "actions": ["close", "reopen"],
+        "actions": [
+          "close",
+          "reopen"
+        ],
         "expires_at": 1800000600
       }
     }
@@ -910,7 +976,9 @@
         },
         "permission": {
           "action_mode": "guarded",
-          "service_scope": ["fixture"]
+          "service_scope": [
+            "fixture"
+          ]
         },
         "schema_version": 1
       },
@@ -931,7 +999,9 @@
           }
         ],
         "thread_contract": {
-          "follow_chat_ids": ["fixture"],
+          "follow_chat_ids": [
+            "fixture"
+          ],
           "version": 1
         }
       },
@@ -946,7 +1016,9 @@
           "issuer": "fixture",
           "key_id": "fixture",
           "platform": "lark",
-          "route_ids": ["fixture"],
+          "route_ids": [
+            "fixture"
+          ],
           "trust_normalized": false,
           "type": "nyxid_relay",
           "verify_raw_event": false,
@@ -1087,7 +1159,9 @@
       "source_occurred_at": "2026-10-27T03:00:00Z"
     }
   ],
-  "ChannelId": ["fixture"],
+  "ChannelId": [
+    "fixture"
+  ],
   "ChannelListItem": [
     {
       "channel_id": "fixture",
@@ -1146,7 +1220,9 @@
           },
           "permission": {
             "action_mode": "guarded",
-            "service_scope": ["fixture"]
+            "service_scope": [
+              "fixture"
+            ]
           },
           "schema_version": 1
         },
@@ -1170,7 +1246,9 @@
             }
           ],
           "thread_contract": {
-            "follow_chat_ids": ["fixture"],
+            "follow_chat_ids": [
+              "fixture"
+            ],
             "version": 1
           }
         },
@@ -1189,7 +1267,9 @@
             "jwks_url": "fixture",
             "key_id": "fixture",
             "platform": "lark",
-            "route_ids": ["fixture"],
+            "route_ids": [
+              "fixture"
+            ],
             "trust_normalized": false,
             "type": "nyxid_relay",
             "verify_raw_event": false,
@@ -1224,7 +1304,9 @@
             },
             "publish": {
               "enabled": true,
-              "targets": ["csm_00000000000a"]
+              "targets": [
+                "csm_00000000000a"
+              ]
             }
           },
           "consumers": [
@@ -1270,7 +1352,9 @@
                 },
                 "permission": {
                   "action_mode": "guarded",
-                  "service_scope": ["fixture"]
+                  "service_scope": [
+                    "fixture"
+                  ]
                 },
                 "schema_version": 1
               },
@@ -1292,7 +1376,9 @@
               },
               "publish": {
                 "enabled": true,
-                "targets": ["default"]
+                "targets": [
+                  "default"
+                ]
               },
               "pending": true,
               "created_at": "fixture"
@@ -1302,17 +1388,35 @@
             {
               "id": "lark-ops",
               "when": {
-                "sources": ["relay_lark"],
-                "kinds": ["message", "event"],
-                "chats": ["fixture"],
-                "senders": ["fixture"],
-                "event_types": ["com.example.*"],
-                "event_sources": ["urn:fixture"]
+                "sources": [
+                  "relay_lark"
+                ],
+                "kinds": [
+                  "message",
+                  "event"
+                ],
+                "chats": [
+                  "fixture"
+                ],
+                "senders": [
+                  "fixture"
+                ],
+                "event_types": [
+                  "com.example.*"
+                ],
+                "event_sources": [
+                  "urn:fixture"
+                ]
               },
-              "targets": ["default", "csm_00000000000a"]
+              "targets": [
+                "default",
+                "csm_00000000000a"
+              ]
             }
           ],
-          "default_targets": ["default"],
+          "default_targets": [
+            "default"
+          ],
           "addressing": {
             "mentions": true,
             "command": false,
@@ -1343,7 +1447,9 @@
       },
       "provider": {
         "binding_id": "fixture",
-        "honoured": ["fixture"],
+        "honoured": [
+          "fixture"
+        ],
         "level": "l1",
         "refused": [
           {
@@ -1419,7 +1525,9 @@
           },
           "permission": {
             "action_mode": "guarded",
-            "service_scope": ["fixture"]
+            "service_scope": [
+              "fixture"
+            ]
           },
           "schema_version": 1
         },
@@ -1443,7 +1551,9 @@
             }
           ],
           "thread_contract": {
-            "follow_chat_ids": ["fixture"],
+            "follow_chat_ids": [
+              "fixture"
+            ],
             "version": 1
           }
         },
@@ -1462,7 +1572,9 @@
             "jwks_url": "fixture",
             "key_id": "fixture",
             "platform": "lark",
-            "route_ids": ["fixture"],
+            "route_ids": [
+              "fixture"
+            ],
             "trust_normalized": false,
             "type": "nyxid_relay",
             "verify_raw_event": false,
@@ -1497,7 +1609,9 @@
             },
             "publish": {
               "enabled": true,
-              "targets": ["csm_00000000000a"]
+              "targets": [
+                "csm_00000000000a"
+              ]
             }
           },
           "consumers": [
@@ -1543,7 +1657,9 @@
                 },
                 "permission": {
                   "action_mode": "guarded",
-                  "service_scope": ["fixture"]
+                  "service_scope": [
+                    "fixture"
+                  ]
                 },
                 "schema_version": 1
               },
@@ -1565,7 +1681,9 @@
               },
               "publish": {
                 "enabled": true,
-                "targets": ["default"]
+                "targets": [
+                  "default"
+                ]
               },
               "pending": true,
               "created_at": "fixture"
@@ -1575,17 +1693,35 @@
             {
               "id": "lark-ops",
               "when": {
-                "sources": ["relay_lark"],
-                "kinds": ["message", "event"],
-                "chats": ["fixture"],
-                "senders": ["fixture"],
-                "event_types": ["com.example.*"],
-                "event_sources": ["urn:fixture"]
+                "sources": [
+                  "relay_lark"
+                ],
+                "kinds": [
+                  "message",
+                  "event"
+                ],
+                "chats": [
+                  "fixture"
+                ],
+                "senders": [
+                  "fixture"
+                ],
+                "event_types": [
+                  "com.example.*"
+                ],
+                "event_sources": [
+                  "urn:fixture"
+                ]
               },
-              "targets": ["default", "csm_00000000000a"]
+              "targets": [
+                "default",
+                "csm_00000000000a"
+              ]
             }
           ],
-          "default_targets": ["default"],
+          "default_targets": [
+            "default"
+          ],
           "addressing": {
             "mentions": true,
             "command": false,
@@ -1613,7 +1749,9 @@
       },
       "provider": {
         "binding_id": "fixture",
-        "honoured": ["fixture"],
+        "honoured": [
+          "fixture"
+        ],
         "level": "l1",
         "refused": [
           {
@@ -1693,7 +1831,9 @@
               },
               "permission": {
                 "action_mode": "guarded",
-                "service_scope": ["fixture"]
+                "service_scope": [
+                  "fixture"
+                ]
               },
               "schema_version": 1
             },
@@ -1717,7 +1857,9 @@
                 }
               ],
               "thread_contract": {
-                "follow_chat_ids": ["fixture"],
+                "follow_chat_ids": [
+                  "fixture"
+                ],
                 "version": 1
               }
             },
@@ -1736,7 +1878,9 @@
                 "jwks_url": "fixture",
                 "key_id": "fixture",
                 "platform": "lark",
-                "route_ids": ["fixture"],
+                "route_ids": [
+                  "fixture"
+                ],
                 "trust_normalized": false,
                 "type": "nyxid_relay",
                 "verify_raw_event": false,
@@ -1771,7 +1915,9 @@
                 },
                 "publish": {
                   "enabled": true,
-                  "targets": ["csm_00000000000a"]
+                  "targets": [
+                    "csm_00000000000a"
+                  ]
                 }
               },
               "consumers": [
@@ -1817,7 +1963,9 @@
                     },
                     "permission": {
                       "action_mode": "guarded",
-                      "service_scope": ["fixture"]
+                      "service_scope": [
+                        "fixture"
+                      ]
                     },
                     "schema_version": 1
                   },
@@ -1839,7 +1987,9 @@
                   },
                   "publish": {
                     "enabled": true,
-                    "targets": ["default"]
+                    "targets": [
+                      "default"
+                    ]
                   },
                   "pending": true,
                   "created_at": "fixture"
@@ -1849,17 +1999,35 @@
                 {
                   "id": "lark-ops",
                   "when": {
-                    "sources": ["relay_lark"],
-                    "kinds": ["message", "event"],
-                    "chats": ["fixture"],
-                    "senders": ["fixture"],
-                    "event_types": ["com.example.*"],
-                    "event_sources": ["urn:fixture"]
+                    "sources": [
+                      "relay_lark"
+                    ],
+                    "kinds": [
+                      "message",
+                      "event"
+                    ],
+                    "chats": [
+                      "fixture"
+                    ],
+                    "senders": [
+                      "fixture"
+                    ],
+                    "event_types": [
+                      "com.example.*"
+                    ],
+                    "event_sources": [
+                      "urn:fixture"
+                    ]
                   },
-                  "targets": ["default", "csm_00000000000a"]
+                  "targets": [
+                    "default",
+                    "csm_00000000000a"
+                  ]
                 }
               ],
-              "default_targets": ["default"],
+              "default_targets": [
+                "default"
+              ],
               "addressing": {
                 "mentions": true,
                 "command": false,
@@ -1890,7 +2058,9 @@
           },
           "provider": {
             "binding_id": "fixture",
-            "honoured": ["fixture"],
+            "honoured": [
+              "fixture"
+            ],
             "level": "l1",
             "refused": [
               {
@@ -1966,7 +2136,9 @@
               },
               "permission": {
                 "action_mode": "guarded",
-                "service_scope": ["fixture"]
+                "service_scope": [
+                  "fixture"
+                ]
               },
               "schema_version": 1
             },
@@ -1990,7 +2162,9 @@
                 }
               ],
               "thread_contract": {
-                "follow_chat_ids": ["fixture"],
+                "follow_chat_ids": [
+                  "fixture"
+                ],
                 "version": 1
               }
             },
@@ -2009,7 +2183,9 @@
                 "jwks_url": "fixture",
                 "key_id": "fixture",
                 "platform": "lark",
-                "route_ids": ["fixture"],
+                "route_ids": [
+                  "fixture"
+                ],
                 "trust_normalized": false,
                 "type": "nyxid_relay",
                 "verify_raw_event": false,
@@ -2044,7 +2220,9 @@
                 },
                 "publish": {
                   "enabled": true,
-                  "targets": ["csm_00000000000a"]
+                  "targets": [
+                    "csm_00000000000a"
+                  ]
                 }
               },
               "consumers": [
@@ -2090,7 +2268,9 @@
                     },
                     "permission": {
                       "action_mode": "guarded",
-                      "service_scope": ["fixture"]
+                      "service_scope": [
+                        "fixture"
+                      ]
                     },
                     "schema_version": 1
                   },
@@ -2112,7 +2292,9 @@
                   },
                   "publish": {
                     "enabled": true,
-                    "targets": ["default"]
+                    "targets": [
+                      "default"
+                    ]
                   },
                   "pending": true,
                   "created_at": "fixture"
@@ -2122,17 +2304,35 @@
                 {
                   "id": "lark-ops",
                   "when": {
-                    "sources": ["relay_lark"],
-                    "kinds": ["message", "event"],
-                    "chats": ["fixture"],
-                    "senders": ["fixture"],
-                    "event_types": ["com.example.*"],
-                    "event_sources": ["urn:fixture"]
+                    "sources": [
+                      "relay_lark"
+                    ],
+                    "kinds": [
+                      "message",
+                      "event"
+                    ],
+                    "chats": [
+                      "fixture"
+                    ],
+                    "senders": [
+                      "fixture"
+                    ],
+                    "event_types": [
+                      "com.example.*"
+                    ],
+                    "event_sources": [
+                      "urn:fixture"
+                    ]
                   },
-                  "targets": ["default", "csm_00000000000a"]
+                  "targets": [
+                    "default",
+                    "csm_00000000000a"
+                  ]
                 }
               ],
-              "default_targets": ["default"],
+              "default_targets": [
+                "default"
+              ],
               "addressing": {
                 "mentions": true,
                 "command": false,
@@ -2160,7 +2360,9 @@
           },
           "provider": {
             "binding_id": "fixture",
-            "honoured": ["fixture"],
+            "honoured": [
+              "fixture"
+            ],
             "level": "l1",
             "refused": [
               {
@@ -2241,7 +2443,9 @@
           },
           "permission": {
             "action_mode": "guarded",
-            "service_scope": ["fixture"]
+            "service_scope": [
+              "fixture"
+            ]
           },
           "schema_version": 1
         },
@@ -2265,7 +2469,9 @@
             }
           ],
           "thread_contract": {
-            "follow_chat_ids": ["fixture"],
+            "follow_chat_ids": [
+              "fixture"
+            ],
             "version": 1
           }
         },
@@ -2284,7 +2490,9 @@
             "jwks_url": "fixture",
             "key_id": "fixture",
             "platform": "lark",
-            "route_ids": ["fixture"],
+            "route_ids": [
+              "fixture"
+            ],
             "trust_normalized": false,
             "type": "nyxid_relay",
             "verify_raw_event": false,
@@ -2319,7 +2527,9 @@
             },
             "publish": {
               "enabled": true,
-              "targets": ["csm_00000000000a"]
+              "targets": [
+                "csm_00000000000a"
+              ]
             }
           },
           "consumers": [
@@ -2365,7 +2575,9 @@
                 },
                 "permission": {
                   "action_mode": "guarded",
-                  "service_scope": ["fixture"]
+                  "service_scope": [
+                    "fixture"
+                  ]
                 },
                 "schema_version": 1
               },
@@ -2387,7 +2599,9 @@
               },
               "publish": {
                 "enabled": true,
-                "targets": ["default"]
+                "targets": [
+                  "default"
+                ]
               },
               "pending": true,
               "created_at": "fixture"
@@ -2397,17 +2611,35 @@
             {
               "id": "lark-ops",
               "when": {
-                "sources": ["relay_lark"],
-                "kinds": ["message", "event"],
-                "chats": ["fixture"],
-                "senders": ["fixture"],
-                "event_types": ["com.example.*"],
-                "event_sources": ["urn:fixture"]
+                "sources": [
+                  "relay_lark"
+                ],
+                "kinds": [
+                  "message",
+                  "event"
+                ],
+                "chats": [
+                  "fixture"
+                ],
+                "senders": [
+                  "fixture"
+                ],
+                "event_types": [
+                  "com.example.*"
+                ],
+                "event_sources": [
+                  "urn:fixture"
+                ]
               },
-              "targets": ["default", "csm_00000000000a"]
+              "targets": [
+                "default",
+                "csm_00000000000a"
+              ]
             }
           ],
-          "default_targets": ["default"],
+          "default_targets": [
+            "default"
+          ],
           "addressing": {
             "mentions": true,
             "command": false,
@@ -2438,7 +2670,9 @@
       },
       "provider": {
         "binding_id": "fixture",
-        "honoured": ["fixture"],
+        "honoured": [
+          "fixture"
+        ],
         "level": "l1",
         "refused": [
           {
@@ -2450,7 +2684,9 @@
       },
       "record_id": "fixture",
       "version": 1,
-      "thread_contract_versions": [1],
+      "thread_contract_versions": [
+        1
+      ],
       "native_discord_activation": {
         "state": "selected",
         "detail": "Selected for native Discord intake; connection health is unconfirmed.",
@@ -2515,7 +2751,9 @@
           },
           "permission": {
             "action_mode": "guarded",
-            "service_scope": ["fixture"]
+            "service_scope": [
+              "fixture"
+            ]
           },
           "schema_version": 1
         },
@@ -2539,7 +2777,9 @@
             }
           ],
           "thread_contract": {
-            "follow_chat_ids": ["fixture"],
+            "follow_chat_ids": [
+              "fixture"
+            ],
             "version": 1
           }
         },
@@ -2558,7 +2798,9 @@
             "jwks_url": "fixture",
             "key_id": "fixture",
             "platform": "lark",
-            "route_ids": ["fixture"],
+            "route_ids": [
+              "fixture"
+            ],
             "trust_normalized": false,
             "type": "nyxid_relay",
             "verify_raw_event": false,
@@ -2593,7 +2835,9 @@
             },
             "publish": {
               "enabled": true,
-              "targets": ["csm_00000000000a"]
+              "targets": [
+                "csm_00000000000a"
+              ]
             }
           },
           "consumers": [
@@ -2639,7 +2883,9 @@
                 },
                 "permission": {
                   "action_mode": "guarded",
-                  "service_scope": ["fixture"]
+                  "service_scope": [
+                    "fixture"
+                  ]
                 },
                 "schema_version": 1
               },
@@ -2661,7 +2907,9 @@
               },
               "publish": {
                 "enabled": true,
-                "targets": ["default"]
+                "targets": [
+                  "default"
+                ]
               },
               "pending": true,
               "created_at": "fixture"
@@ -2671,17 +2919,35 @@
             {
               "id": "lark-ops",
               "when": {
-                "sources": ["relay_lark"],
-                "kinds": ["message", "event"],
-                "chats": ["fixture"],
-                "senders": ["fixture"],
-                "event_types": ["com.example.*"],
-                "event_sources": ["urn:fixture"]
+                "sources": [
+                  "relay_lark"
+                ],
+                "kinds": [
+                  "message",
+                  "event"
+                ],
+                "chats": [
+                  "fixture"
+                ],
+                "senders": [
+                  "fixture"
+                ],
+                "event_types": [
+                  "com.example.*"
+                ],
+                "event_sources": [
+                  "urn:fixture"
+                ]
               },
-              "targets": ["default", "csm_00000000000a"]
+              "targets": [
+                "default",
+                "csm_00000000000a"
+              ]
             }
           ],
-          "default_targets": ["default"],
+          "default_targets": [
+            "default"
+          ],
           "addressing": {
             "mentions": true,
             "command": false,
@@ -2709,7 +2975,9 @@
       },
       "provider": {
         "binding_id": "fixture",
-        "honoured": ["fixture"],
+        "honoured": [
+          "fixture"
+        ],
         "level": "l1",
         "refused": [
           {
@@ -2721,7 +2989,9 @@
       },
       "record_id": "fixture",
       "version": 1,
-      "thread_contract_versions": [1],
+      "thread_contract_versions": [
+        1
+      ],
       "native_discord_activation": {
         "state": "selected",
         "detail": "Selected for native Discord intake; connection health is unconfirmed.",
@@ -2800,7 +3070,9 @@
         },
         "permission": {
           "action_mode": "guarded",
-          "service_scope": ["fixture"]
+          "service_scope": [
+            "fixture"
+          ]
         },
         "schema_version": 1
       },
@@ -2820,7 +3092,9 @@
           }
         ],
         "thread_contract": {
-          "follow_chat_ids": ["fixture"],
+          "follow_chat_ids": [
+            "fixture"
+          ],
           "version": 1
         }
       },
@@ -2835,7 +3109,9 @@
           "issuer": "fixture",
           "key_id": "fixture",
           "platform": "lark",
-          "route_ids": ["fixture"],
+          "route_ids": [
+            "fixture"
+          ],
           "trust_normalized": false,
           "type": "nyxid_relay",
           "verify_raw_event": false,
@@ -2883,7 +3159,13 @@
       "exampleextension": true
     }
   ],
-  "ConformanceLevel": ["l1", "l2", "l3", "l4", "l5"],
+  "ConformanceLevel": [
+    "l1",
+    "l2",
+    "l3",
+    "l4",
+    "l5"
+  ],
   "ContextConfig": [
     {
       "mcp_servers": [
@@ -2989,10 +3271,18 @@
         "max_text_chars": 1,
         "typing": true,
         "native_media": {
-          "kinds": ["image", "file", "audio", "video"],
+          "kinds": [
+            "image",
+            "file",
+            "audio",
+            "video"
+          ],
           "max_attachments": 4,
           "max_inline_bytes": 65536,
-          "sources": ["url", "base64"],
+          "sources": [
+            "url",
+            "base64"
+          ],
           "mime_types": [
             "image/jpeg",
             "image/png",
@@ -3041,16 +3331,27 @@
             "idempotency_key_required": true,
             "max_attachments": 1,
             "max_bytes": 8388608,
-            "replacement_kinds": ["file"]
+            "replacement_kinds": [
+              "file"
+            ]
           }
         },
         "thread_history": true,
-        "whatsapp_template_components": ["header", "body"],
+        "whatsapp_template_components": [
+          "header",
+          "body"
+        ],
         "thread_lifecycle": {
           "create_from_original_message": true,
           "list": "public_children_of_original_parent",
           "manage_original_thread": false,
-          "actions": ["archive", "reopen", "join", "leave", "rename"],
+          "actions": [
+            "archive",
+            "reopen",
+            "join",
+            "leave",
+            "rename"
+          ],
           "expires_at": 1800000600
         },
         "native_media_edits": {
@@ -3060,7 +3361,9 @@
           "idempotency_key_required": true,
           "max_attachments": 1,
           "max_bytes": 8388608,
-          "replacement_kinds": ["file"]
+          "replacement_kinds": [
+            "file"
+          ]
         },
         "forms": false,
         "conversation_history": {
@@ -3074,7 +3377,10 @@
         },
         "topic_lifecycle": {
           "manage_original_topic": true,
-          "actions": ["close", "reopen"],
+          "actions": [
+            "close",
+            "reopen"
+          ],
           "expires_at": 1800000600
         }
       },
@@ -3125,7 +3431,9 @@
             "idempotency_key_required": true,
             "max_attachments": 1,
             "max_bytes": 8388608,
-            "replacement_kinds": ["file"]
+            "replacement_kinds": [
+              "file"
+            ]
           }
         }
       }
@@ -3214,10 +3522,18 @@
         "max_text_chars": 1,
         "typing": true,
         "native_media": {
-          "kinds": ["image", "file", "audio", "video"],
+          "kinds": [
+            "image",
+            "file",
+            "audio",
+            "video"
+          ],
           "max_attachments": 4,
           "max_inline_bytes": 65536,
-          "sources": ["url", "base64"],
+          "sources": [
+            "url",
+            "base64"
+          ],
           "mime_types": [
             "image/jpeg",
             "image/png",
@@ -3266,16 +3582,27 @@
             "idempotency_key_required": true,
             "max_attachments": 1,
             "max_bytes": 8388608,
-            "replacement_kinds": ["file"]
+            "replacement_kinds": [
+              "file"
+            ]
           }
         },
         "thread_history": true,
-        "whatsapp_template_components": ["header", "body"],
+        "whatsapp_template_components": [
+          "header",
+          "body"
+        ],
         "thread_lifecycle": {
           "create_from_original_message": true,
           "list": "public_children_of_original_parent",
           "manage_original_thread": false,
-          "actions": ["archive", "reopen", "join", "leave", "rename"],
+          "actions": [
+            "archive",
+            "reopen",
+            "join",
+            "leave",
+            "rename"
+          ],
           "expires_at": 1800000600
         },
         "native_media_edits": {
@@ -3285,7 +3612,9 @@
           "idempotency_key_required": true,
           "max_attachments": 1,
           "max_bytes": 8388608,
-          "replacement_kinds": ["file"]
+          "replacement_kinds": [
+            "file"
+          ]
         },
         "forms": false,
         "conversation_history": {
@@ -3299,7 +3628,10 @@
         },
         "topic_lifecycle": {
           "manage_original_topic": true,
-          "actions": ["close", "reopen"],
+          "actions": [
+            "close",
+            "reopen"
+          ],
           "expires_at": 1800000600
         }
       },
@@ -3350,14 +3682,24 @@
             "idempotency_key_required": true,
             "max_attachments": 1,
             "max_bytes": 8388608,
-            "replacement_kinds": ["file"]
+            "replacement_kinds": [
+              "file"
+            ]
           }
         }
       }
     }
   ],
-  "ConversationId": ["fixture"],
-  "ConversationKind": ["private", "group", "channel", "thread", "custom"],
+  "ConversationId": [
+    "fixture"
+  ],
+  "ConversationKind": [
+    "private",
+    "group",
+    "channel",
+    "thread",
+    "custom"
+  ],
   "CredentialPatch": [
     {
       "agent_key": "fixture",
@@ -3410,7 +3752,9 @@
   ],
   "CustomAttachments": [
     {
-      "origins": ["https://fixture.example"],
+      "origins": [
+        "https://fixture.example"
+      ],
       "pointer": "/attachments"
     }
   ],
@@ -3420,7 +3764,9 @@
       "type": "hmac"
     },
     {
-      "key_hashes": ["fixture"],
+      "key_hashes": [
+        "fixture"
+      ],
       "type": "nyxid_key"
     }
   ],
@@ -3556,8 +3902,12 @@
       "schema_version": 1
     }
   ],
-  "EventId": ["fixture"],
-  "EventRef": ["fixture"],
+  "EventId": [
+    "fixture"
+  ],
+  "EventRef": [
+    "fixture"
+  ],
   "Field": [
     {
       "label": "fixture",
@@ -3623,7 +3973,9 @@
       "type": "open"
     },
     {
-      "ids": ["fixture"],
+      "ids": [
+        "fixture"
+      ],
       "type": "allowlist"
     }
   ],
@@ -3703,8 +4055,13 @@
     "media",
     "embedded"
   ],
-  "MessageRef": ["fixture"],
-  "ModelAccess": ["managed", "custom"],
+  "MessageRef": [
+    "fixture"
+  ],
+  "ModelAccess": [
+    "managed",
+    "custom"
+  ],
   "ModelConfig": [
     {
       "access": "managed",
@@ -3720,8 +4077,16 @@
       "subject": "fixture"
     }
   ],
-  "NyxIdIdentityKind": ["human", "service_account", "agent_key"],
-  "OptionStyle": ["default", "primary", "danger"],
+  "NyxIdIdentityKind": [
+    "human",
+    "service_account",
+    "agent_key"
+  ],
+  "OptionStyle": [
+    "default",
+    "primary",
+    "danger"
+  ],
   "OutboundMessage": [
     {
       "blocks": [
@@ -3795,10 +4160,19 @@
   "PermissionConfig": [
     {
       "action_mode": "guarded",
-      "service_scope": ["fixture"]
+      "service_scope": [
+        "fixture"
+      ]
     }
   ],
-  "Platform": ["telegram", "lark", "feishu", "discord", "slack", "whatsapp"],
+  "Platform": [
+    "telegram",
+    "lark",
+    "feishu",
+    "discord",
+    "slack",
+    "whatsapp"
+  ],
   "Problem": [
     {
       "code": "invalid_request",
@@ -3880,7 +4254,9 @@
   "ProviderResponse": [
     {
       "binding_id": "fixture",
-      "honoured": ["fixture"],
+      "honoured": [
+        "fixture"
+      ],
       "level": "l1",
       "refused": [
         {
@@ -3891,7 +4267,9 @@
       "slug": "fixture"
     }
   ],
-  "ProviderSlug": ["fixture"],
+  "ProviderSlug": [
+    "fixture"
+  ],
   "PublicActivity": [
     {
       "actor": {
@@ -4018,7 +4396,9 @@
         },
         "permission": {
           "action_mode": "guarded",
-          "service_scope": ["fixture"]
+          "service_scope": [
+            "fixture"
+          ]
         },
         "schema_version": 1
       },
@@ -4042,7 +4422,9 @@
           }
         ],
         "thread_contract": {
-          "follow_chat_ids": ["fixture"],
+          "follow_chat_ids": [
+            "fixture"
+          ],
           "version": 1
         }
       },
@@ -4061,7 +4443,9 @@
           "jwks_url": "fixture",
           "key_id": "fixture",
           "platform": "lark",
-          "route_ids": ["fixture"],
+          "route_ids": [
+            "fixture"
+          ],
           "trust_normalized": false,
           "type": "nyxid_relay",
           "verify_raw_event": false,
@@ -4096,7 +4480,9 @@
           },
           "publish": {
             "enabled": true,
-            "targets": ["csm_00000000000a"]
+            "targets": [
+              "csm_00000000000a"
+            ]
           }
         },
         "consumers": [
@@ -4142,7 +4528,9 @@
               },
               "permission": {
                 "action_mode": "guarded",
-                "service_scope": ["fixture"]
+                "service_scope": [
+                  "fixture"
+                ]
               },
               "schema_version": 1
             },
@@ -4164,7 +4552,9 @@
             },
             "publish": {
               "enabled": true,
-              "targets": ["default"]
+              "targets": [
+                "default"
+              ]
             },
             "pending": true,
             "created_at": "fixture"
@@ -4174,17 +4564,35 @@
           {
             "id": "lark-ops",
             "when": {
-              "sources": ["relay_lark"],
-              "kinds": ["message", "event"],
-              "chats": ["fixture"],
-              "senders": ["fixture"],
-              "event_types": ["com.example.*"],
-              "event_sources": ["urn:fixture"]
+              "sources": [
+                "relay_lark"
+              ],
+              "kinds": [
+                "message",
+                "event"
+              ],
+              "chats": [
+                "fixture"
+              ],
+              "senders": [
+                "fixture"
+              ],
+              "event_types": [
+                "com.example.*"
+              ],
+              "event_sources": [
+                "urn:fixture"
+              ]
             },
-            "targets": ["default", "csm_00000000000a"]
+            "targets": [
+              "default",
+              "csm_00000000000a"
+            ]
           }
         ],
-        "default_targets": ["default"],
+        "default_targets": [
+          "default"
+        ],
         "addressing": {
           "mentions": true,
           "command": false,
@@ -4211,7 +4619,9 @@
       "agent_key_hash": "fixture"
     }
   ],
-  "RecordId": ["fixture"],
+  "RecordId": [
+    "fixture"
+  ],
   "Refusal": [
     "bot_sender",
     "system_sender",
@@ -4286,7 +4696,11 @@
       "platform_id": "fixture"
     }
   ],
-  "RenderingOutcome": ["rendered", "degraded", "unsupported"],
+  "RenderingOutcome": [
+    "rendered",
+    "degraded",
+    "unsupported"
+  ],
   "RenderingReport": [
     {
       "blocks": [
@@ -4310,19 +4724,25 @@
         }
       ],
       "thread_contract": {
-        "follow_chat_ids": ["fixture"],
+        "follow_chat_ids": [
+          "fixture"
+        ],
         "version": 1
       }
     }
   ],
-  "ReplyTargetRef": ["fixture"],
+  "ReplyTargetRef": [
+    "fixture"
+  ],
   "ReplyTargetResponse": [
     {
       "expires_at": 1,
       "reply_target_ref": "fixture"
     }
   ],
-  "Secret": ["fixture"],
+  "Secret": [
+    "fixture"
+  ],
   "Sink": [
     {
       "type": "source"
@@ -4343,7 +4763,9 @@
       "version": "fixture"
     }
   ],
-  "SkillSource": ["ornn"],
+  "SkillSource": [
+    "ornn"
+  ],
   "Source": [
     {
       "admission": {
@@ -4355,7 +4777,9 @@
       "jwks_url": "fixture",
       "key_id": "fixture",
       "platform": "lark",
-      "route_ids": ["fixture"],
+      "route_ids": [
+        "fixture"
+      ],
       "trust_normalized": false,
       "type": "nyxid_relay",
       "verify_raw_event": false,
@@ -4384,7 +4808,9 @@
       "jwks_url": "fixture",
       "key_id": "fixture",
       "platform": "feishu",
-      "route_ids": ["fixture"],
+      "route_ids": [
+        "fixture"
+      ],
       "trust_normalized": false,
       "type": "nyxid_relay",
       "verify_raw_event": false,
@@ -4413,7 +4839,9 @@
       "jwks_url": "fixture",
       "key_id": "fixture",
       "platform": "lark",
-      "route_ids": ["fixture"],
+      "route_ids": [
+        "fixture"
+      ],
       "trust_normalized": false,
       "type": "nyxid_relay",
       "verify_raw_event": false,
@@ -4434,7 +4862,9 @@
     },
     {
       "attachments": {
-        "origins": ["https://fixture.example"],
+        "origins": [
+          "https://fixture.example"
+        ],
         "pointer": "/attachments"
       },
       "auth": {
@@ -4475,7 +4905,9 @@
       "admission": {
         "type": "all"
       },
-      "group_ids": ["opaque+group/id=="],
+      "group_ids": [
+        "opaque+group/id=="
+      ],
       "forms_enabled": true
     },
     {
@@ -4565,7 +4997,9 @@
       "issuer": "fixture",
       "key_id": "fixture",
       "platform": "lark",
-      "route_ids": ["fixture"],
+      "route_ids": [
+        "fixture"
+      ],
       "trust_normalized": false,
       "type": "nyxid_relay",
       "verify_raw_event": false,
@@ -4593,7 +5027,9 @@
       "issuer": "fixture",
       "key_id": "fixture",
       "platform": "feishu",
-      "route_ids": ["fixture"],
+      "route_ids": [
+        "fixture"
+      ],
       "trust_normalized": false,
       "type": "nyxid_relay",
       "verify_raw_event": false,
@@ -4621,7 +5057,9 @@
       "issuer": "fixture",
       "key_id": "fixture",
       "platform": "lark",
-      "route_ids": ["fixture"],
+      "route_ids": [
+        "fixture"
+      ],
       "trust_normalized": false,
       "type": "nyxid_relay",
       "verify_raw_event": false,
@@ -4642,7 +5080,9 @@
     },
     {
       "attachments": {
-        "origins": ["https://fixture.example"],
+        "origins": [
+          "https://fixture.example"
+        ],
         "pointer": "/attachments"
       },
       "auth": {
@@ -4683,7 +5123,9 @@
       "admission": {
         "type": "all"
       },
-      "group_ids": ["opaque+group/id=="],
+      "group_ids": [
+        "opaque+group/id=="
+      ],
       "forms_enabled": true
     },
     {
@@ -4733,8 +5175,17 @@
       "level": "l1"
     }
   ],
-  "ThinkingEffort": ["minimal", "low", "medium", "high", "very_high"],
-  "TypingOutcome": ["sent", "unsupported"],
+  "ThinkingEffort": [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "very_high"
+  ],
+  "TypingOutcome": [
+    "sent",
+    "unsupported"
+  ],
   "TypingReceipt": [
     {
       "outcome": "sent"
@@ -4779,7 +5230,9 @@
       },
       "permission": {
         "action_mode": "guarded",
-        "service_scope": ["fixture"]
+        "service_scope": [
+          "fixture"
+        ]
       },
       "schema_version": 1
     }
@@ -4797,13 +5250,19 @@
     {
       "platforms": [
         {
-          "connection_methods": ["fixture"],
+          "connection_methods": [
+            "fixture"
+          ],
           "id": "fixture",
           "label": "fixture",
-          "optional_capabilities": ["fixture"]
+          "optional_capabilities": [
+            "fixture"
+          ]
         }
       ],
-      "source_features": ["native_bot_mentions_v1"],
+      "source_features": [
+        "native_bot_mentions_v1"
+      ],
       "relay_authoring": {
         "dynamic_sources_writes_enabled": false,
         "multi_consumer_writes_enabled": false,
@@ -4862,7 +5321,9 @@
       ]
     },
     {
-      "source_features": ["native_bot_mentions_v1"],
+      "source_features": [
+        "native_bot_mentions_v1"
+      ],
       "platforms": [],
       "relay_authoring": {
         "dynamic_sources_writes_enabled": false,
@@ -4926,8 +5387,13 @@
         {
           "id": "telegram",
           "label": "Telegram",
-          "connection_methods": ["existing_credential", "managed_create"],
-          "optional_capabilities": ["manage_bots"]
+          "connection_methods": [
+            "existing_credential",
+            "managed_create"
+          ],
+          "optional_capabilities": [
+            "manage_bots"
+          ]
         }
       ],
       "relay_authoring": {
@@ -4976,7 +5442,9 @@
         "native_lark_conversation_history_enabled": false,
         "native_telegram_topic_lifecycle_enabled": true
       },
-      "source_features": ["native_bot_mentions_v1"],
+      "source_features": [
+        "native_bot_mentions_v1"
+      ],
       "agent_tools": [
         {
           "name": "readEventContext",
@@ -5021,15 +5489,34 @@
   ],
   "PlatformCapability": [
     {
-      "connection_methods": ["fixture"],
+      "connection_methods": [
+        "fixture"
+      ],
       "id": "fixture",
       "label": "fixture",
-      "optional_capabilities": ["fixture"]
+      "optional_capabilities": [
+        "fixture"
+      ]
     }
   ],
-  "Status": ["draft", "awaiting_platform", "ready", "cancelled", "expired"],
-  "VisualSupport": ["none", "platform_thumbnail", "keyframes"],
-  "ActivityKindName": ["message", "command", "interaction", "event"],
+  "Status": [
+    "draft",
+    "awaiting_platform",
+    "ready",
+    "cancelled",
+    "expired"
+  ],
+  "VisualSupport": [
+    "none",
+    "platform_thumbnail",
+    "keyframes"
+  ],
+  "ActivityKindName": [
+    "message",
+    "command",
+    "interaction",
+    "event"
+  ],
   "Addressing": [
     {
       "mentions": true,
@@ -5088,7 +5575,9 @@
         },
         "permission": {
           "action_mode": "guarded",
-          "service_scope": ["fixture"]
+          "service_scope": [
+            "fixture"
+          ]
         },
         "schema_version": 1
       },
@@ -5110,7 +5599,9 @@
       },
       "publish": {
         "enabled": true,
-        "targets": ["default"]
+        "targets": [
+          "default"
+        ]
       },
       "pending": true,
       "created_at": "fixture"
@@ -5127,8 +5618,13 @@
     "failed",
     "unknown"
   ],
-  "ConsumerId": ["default", "csm_00000000000a"],
-  "ConsumerName": ["reviewer"],
+  "ConsumerId": [
+    "default",
+    "csm_00000000000a"
+  ],
+  "ConsumerName": [
+    "reviewer"
+  ],
   "ConsumerReply": [
     {
       "auto_final": false,
@@ -5147,7 +5643,9 @@
       },
       "publish": {
         "enabled": true,
-        "targets": ["csm_00000000000a"]
+        "targets": [
+          "csm_00000000000a"
+        ]
       }
     }
   ],
@@ -5167,15 +5665,27 @@
       "type": "sinks"
     }
   ],
-  "Pattern": ["com.example.*", "urn:fixture"],
+  "Pattern": [
+    "com.example.*",
+    "urn:fixture"
+  ],
   "PublishPolicy": [
     {
       "enabled": true,
-      "targets": ["default"]
+      "targets": [
+        "default"
+      ]
     }
   ],
-  "ReplyChoice": ["origin", "default"],
-  "ReplyLabel": ["auto", "always", "never"],
+  "ReplyChoice": [
+    "origin",
+    "default"
+  ],
+  "ReplyLabel": [
+    "auto",
+    "always",
+    "never"
+  ],
   "RoutingPolicy": [
     {
       "version": 1,
@@ -5190,7 +5700,9 @@
         },
         "publish": {
           "enabled": true,
-          "targets": ["csm_00000000000a"]
+          "targets": [
+            "csm_00000000000a"
+          ]
         }
       },
       "consumers": [
@@ -5236,7 +5748,9 @@
             },
             "permission": {
               "action_mode": "guarded",
-              "service_scope": ["fixture"]
+              "service_scope": [
+                "fixture"
+              ]
             },
             "schema_version": 1
           },
@@ -5258,7 +5772,9 @@
           },
           "publish": {
             "enabled": true,
-            "targets": ["default"]
+            "targets": [
+              "default"
+            ]
           },
           "pending": true,
           "created_at": "fixture"
@@ -5268,17 +5784,35 @@
         {
           "id": "lark-ops",
           "when": {
-            "sources": ["relay_lark"],
-            "kinds": ["message", "event"],
-            "chats": ["fixture"],
-            "senders": ["fixture"],
-            "event_types": ["com.example.*"],
-            "event_sources": ["urn:fixture"]
+            "sources": [
+              "relay_lark"
+            ],
+            "kinds": [
+              "message",
+              "event"
+            ],
+            "chats": [
+              "fixture"
+            ],
+            "senders": [
+              "fixture"
+            ],
+            "event_types": [
+              "com.example.*"
+            ],
+            "event_sources": [
+              "urn:fixture"
+            ]
           },
-          "targets": ["default", "csm_00000000000a"]
+          "targets": [
+            "default",
+            "csm_00000000000a"
+          ]
         }
       ],
-      "default_targets": ["default"],
+      "default_targets": [
+        "default"
+      ],
       "addressing": {
         "mentions": true,
         "command": false,
@@ -5312,7 +5846,9 @@
         },
         "publish": {
           "enabled": true,
-          "targets": ["csm_00000000000a"]
+          "targets": [
+            "csm_00000000000a"
+          ]
         }
       },
       "consumers": [
@@ -5358,7 +5894,9 @@
             },
             "permission": {
               "action_mode": "guarded",
-              "service_scope": ["fixture"]
+              "service_scope": [
+                "fixture"
+              ]
             },
             "schema_version": 1
           },
@@ -5380,7 +5918,9 @@
           },
           "publish": {
             "enabled": true,
-            "targets": ["default"]
+            "targets": [
+              "default"
+            ]
           },
           "pending": true,
           "created_at": "fixture"
@@ -5390,17 +5930,35 @@
         {
           "id": "lark-ops",
           "when": {
-            "sources": ["relay_lark"],
-            "kinds": ["message", "event"],
-            "chats": ["fixture"],
-            "senders": ["fixture"],
-            "event_types": ["com.example.*"],
-            "event_sources": ["urn:fixture"]
+            "sources": [
+              "relay_lark"
+            ],
+            "kinds": [
+              "message",
+              "event"
+            ],
+            "chats": [
+              "fixture"
+            ],
+            "senders": [
+              "fixture"
+            ],
+            "event_types": [
+              "com.example.*"
+            ],
+            "event_sources": [
+              "urn:fixture"
+            ]
           },
-          "targets": ["default", "csm_00000000000a"]
+          "targets": [
+            "default",
+            "csm_00000000000a"
+          ]
         }
       ],
-      "default_targets": ["default"],
+      "default_targets": [
+        "default"
+      ],
       "addressing": {
         "mentions": true,
         "command": false,
@@ -5433,7 +5991,9 @@
         },
         "publish": {
           "enabled": true,
-          "targets": ["csm_00000000000a"]
+          "targets": [
+            "csm_00000000000a"
+          ]
         }
       },
       "consumers": [
@@ -5479,7 +6039,9 @@
             },
             "permission": {
               "action_mode": "guarded",
-              "service_scope": ["fixture"]
+              "service_scope": [
+                "fixture"
+              ]
             },
             "schema_version": 1
           },
@@ -5501,7 +6063,9 @@
           },
           "publish": {
             "enabled": true,
-            "targets": ["default"]
+            "targets": [
+              "default"
+            ]
           },
           "pending": true,
           "created_at": "fixture"
@@ -5511,17 +6075,35 @@
         {
           "id": "lark-ops",
           "when": {
-            "sources": ["relay_lark"],
-            "kinds": ["message", "event"],
-            "chats": ["fixture"],
-            "senders": ["fixture"],
-            "event_types": ["com.example.*"],
-            "event_sources": ["urn:fixture"]
+            "sources": [
+              "relay_lark"
+            ],
+            "kinds": [
+              "message",
+              "event"
+            ],
+            "chats": [
+              "fixture"
+            ],
+            "senders": [
+              "fixture"
+            ],
+            "event_types": [
+              "com.example.*"
+            ],
+            "event_sources": [
+              "urn:fixture"
+            ]
           },
-          "targets": ["default", "csm_00000000000a"]
+          "targets": [
+            "default",
+            "csm_00000000000a"
+          ]
         }
       ],
-      "default_targets": ["default"],
+      "default_targets": [
+        "default"
+      ],
       "addressing": {
         "mentions": true,
         "command": false,
@@ -5544,28 +6126,64 @@
     {
       "id": "lark-ops",
       "when": {
-        "sources": ["relay_lark"],
-        "kinds": ["message", "event"],
-        "chats": ["fixture"],
-        "senders": ["fixture"],
-        "event_types": ["com.example.*"],
-        "event_sources": ["urn:fixture"]
+        "sources": [
+          "relay_lark"
+        ],
+        "kinds": [
+          "message",
+          "event"
+        ],
+        "chats": [
+          "fixture"
+        ],
+        "senders": [
+          "fixture"
+        ],
+        "event_types": [
+          "com.example.*"
+        ],
+        "event_sources": [
+          "urn:fixture"
+        ]
       },
-      "targets": ["default", "csm_00000000000a"]
+      "targets": [
+        "default",
+        "csm_00000000000a"
+      ]
     }
   ],
-  "RuleId": ["lark-ops"],
+  "RuleId": [
+    "lark-ops"
+  ],
   "RuleMatch": [
     {
-      "sources": ["relay_lark"],
-      "kinds": ["message", "event"],
-      "chats": ["fixture"],
-      "senders": ["fixture"],
-      "event_types": ["com.example.*"],
-      "event_sources": ["urn:fixture"]
+      "sources": [
+        "relay_lark"
+      ],
+      "kinds": [
+        "message",
+        "event"
+      ],
+      "chats": [
+        "fixture"
+      ],
+      "senders": [
+        "fixture"
+      ],
+      "event_types": [
+        "com.example.*"
+      ],
+      "event_sources": [
+        "urn:fixture"
+      ]
     }
   ],
-  "SourceId": ["telegram", "relay_lark", "custom", "agent"],
+  "SourceId": [
+    "telegram",
+    "relay_lark",
+    "custom",
+    "agent"
+  ],
   "ActivityRouting": [
     {
       "addressing_bytes": 3,
@@ -5633,11 +6251,21 @@
     "interaction",
     "agent_event"
   ],
-  "BotMessageAdmission": ["deny", "native_mentions"],
-  "ThreadAddress": ["mention", "reply_to_bot", "not_addressed", "unknown"],
+  "BotMessageAdmission": [
+    "deny",
+    "native_mentions"
+  ],
+  "ThreadAddress": [
+    "mention",
+    "reply_to_bot",
+    "not_addressed",
+    "unknown"
+  ],
   "ThreadContract": [
     {
-      "follow_chat_ids": ["fixture"],
+      "follow_chat_ids": [
+        "fixture"
+      ],
       "version": 1
     }
   ],
@@ -5655,7 +6283,9 @@
       "version": 1
     }
   ],
-  "ThreadKind": ["native"],
+  "ThreadKind": [
+    "native"
+  ],
   "ConsumerPolicyRequest": [
     {
       "id": "csm_00000000000a",
@@ -5665,7 +6295,9 @@
       "non_human": true,
       "publish": {
         "enabled": true,
-        "targets": ["default"]
+        "targets": [
+          "default"
+        ]
       },
       "reply": {
         "auto_final": false,
@@ -5687,10 +6319,18 @@
   ],
   "NativeMediaCapabilities": [
     {
-      "kinds": ["image", "file", "audio", "video"],
+      "kinds": [
+        "image",
+        "file",
+        "audio",
+        "video"
+      ],
       "max_attachments": 4,
       "max_inline_bytes": 65536,
-      "sources": ["url", "base64"],
+      "sources": [
+        "url",
+        "base64"
+      ],
       "mime_types": [
         "image/jpeg",
         "image/png",
@@ -5726,10 +6366,19 @@
       }
     },
     {
-      "kinds": ["image", "file", "audio", "sticker", "video"],
+      "kinds": [
+        "image",
+        "file",
+        "audio",
+        "sticker",
+        "video"
+      ],
       "max_attachments": 4,
       "max_inline_bytes": 65536,
-      "sources": ["url", "base64"],
+      "sources": [
+        "url",
+        "base64"
+      ],
       "mime_types": [
         "image/jpeg",
         "image/png",
@@ -5771,7 +6420,13 @@
       }
     }
   ],
-  "NativeMediaKind": ["image", "file", "audio", "video", "sticker"],
+  "NativeMediaKind": [
+    "image",
+    "file",
+    "audio",
+    "video",
+    "sticker"
+  ],
   "NativeMediaSource": [
     {
       "type": "url",
@@ -5804,7 +6459,9 @@
           "non_human": true,
           "publish": {
             "enabled": true,
-            "targets": ["default"]
+            "targets": [
+              "default"
+            ]
           },
           "reply": {
             "auto_final": false,
@@ -5819,7 +6476,9 @@
         "non_human": true,
         "publish": {
           "enabled": true,
-          "targets": ["csm_00000000000a"]
+          "targets": [
+            "csm_00000000000a"
+          ]
         },
         "reply": {
           "auto_final": true,
@@ -5832,20 +6491,38 @@
         "thread_id": "7",
         "type": "telegram_chat"
       },
-      "default_targets": ["default"],
+      "default_targets": [
+        "default"
+      ],
       "max_targets": 2,
       "reply_label": "always",
       "rules": [
         {
           "id": "lark-ops",
-          "targets": ["default", "csm_00000000000a"],
+          "targets": [
+            "default",
+            "csm_00000000000a"
+          ],
           "when": {
-            "chats": ["fixture"],
-            "event_sources": ["urn:fixture"],
-            "event_types": ["com.example.*"],
-            "kinds": ["message", "event"],
-            "senders": ["fixture"],
-            "sources": ["relay_lark"]
+            "chats": [
+              "fixture"
+            ],
+            "event_sources": [
+              "urn:fixture"
+            ],
+            "event_types": [
+              "com.example.*"
+            ],
+            "kinds": [
+              "message",
+              "event"
+            ],
+            "senders": [
+              "fixture"
+            ],
+            "sources": [
+              "relay_lark"
+            ]
           }
         }
       ],
@@ -5876,7 +6553,9 @@
             "non_human": true,
             "publish": {
               "enabled": true,
-              "targets": ["default"]
+              "targets": [
+                "default"
+              ]
             },
             "reply": {
               "auto_final": false,
@@ -5891,7 +6570,9 @@
           "non_human": true,
           "publish": {
             "enabled": true,
-            "targets": ["csm_00000000000a"]
+            "targets": [
+              "csm_00000000000a"
+            ]
           },
           "reply": {
             "auto_final": true,
@@ -5904,20 +6585,38 @@
           "thread_id": "7",
           "type": "telegram_chat"
         },
-        "default_targets": ["default"],
+        "default_targets": [
+          "default"
+        ],
         "max_targets": 2,
         "reply_label": "always",
         "rules": [
           {
             "id": "lark-ops",
-            "targets": ["default", "csm_00000000000a"],
+            "targets": [
+              "default",
+              "csm_00000000000a"
+            ],
             "when": {
-              "chats": ["fixture"],
-              "event_sources": ["urn:fixture"],
-              "event_types": ["com.example.*"],
-              "kinds": ["message", "event"],
-              "senders": ["fixture"],
-              "sources": ["relay_lark"]
+              "chats": [
+                "fixture"
+              ],
+              "event_sources": [
+                "urn:fixture"
+              ],
+              "event_types": [
+                "com.example.*"
+              ],
+              "kinds": [
+                "message",
+                "event"
+              ],
+              "senders": [
+                "fixture"
+              ],
+              "sources": [
+                "relay_lark"
+              ]
             }
           }
         ],
@@ -5949,7 +6648,10 @@
       "source_index": 0
     }
   ],
-  "SourceCheckStatus": ["passed", "unavailable"],
+  "SourceCheckStatus": [
+    "passed",
+    "unavailable"
+  ],
   "WhatsappTemplate": [
     {
       "name": "order_update",
@@ -6027,7 +6729,9 @@
       }
     }
   ],
-  "WhatsappTemplateButtonType": ["url"],
+  "WhatsappTemplateButtonType": [
+    "url"
+  ],
   "WhatsappTemplateComponent": [
     {
       "type": "header",
@@ -6330,7 +7034,11 @@
       }
     }
   ],
-  "OutboundStatus": ["prepared", "committed", "cancelled"],
+  "OutboundStatus": [
+    "prepared",
+    "committed",
+    "cancelled"
+  ],
   "OutboundReceipt": [
     {
       "delivery_id": "91000000-0000-4000-8000-000000000002",
@@ -6381,7 +7089,9 @@
       "fallback_value": "26 October 2026"
     }
   ],
-  "EmptyEffectRequest": [{}],
+  "EmptyEffectRequest": [
+    {}
+  ],
   "MessageEffectReceipt": [
     {
       "delivery": {
@@ -6410,7 +7120,9 @@
         "idempotency_key_required": true,
         "max_attachments": 1,
         "max_bytes": 8388608,
-        "replacement_kinds": ["file"]
+        "replacement_kinds": [
+          "file"
+        ]
       }
     }
   ],
@@ -6454,7 +7166,10 @@
       "app_id": "cli_source"
     }
   ],
-  "LarkResourceKind": ["image", "file"],
+  "LarkResourceKind": [
+    "image",
+    "file"
+  ],
   "ThreadHistory": [
     {
       "thread_id": "99",
@@ -6490,7 +7205,10 @@
       "attachment_count": 0
     }
   ],
-  "ResourcePlatform": ["lark", "feishu"],
+  "ResourcePlatform": [
+    "lark",
+    "feishu"
+  ],
   "ResourceConnection": [
     {
       "user_service_id": "fixture",
@@ -6513,7 +7231,10 @@
       ]
     }
   ],
-  "ResourceConnectionSource": ["personal", "organization"],
+  "ResourceConnectionSource": [
+    "personal",
+    "organization"
+  ],
   "WhatsappCredentials": [
     {
       "app_secret": "fixture-app-secret",
@@ -6559,7 +7280,10 @@
       "min_frame_duration_ms": 8
     }
   ],
-  "LarkRegion": ["lark", "feishu"],
+  "LarkRegion": [
+    "lark",
+    "feishu"
+  ],
   "NativeLarkCredentials": [
     {
       "app_secret": "fixture-native-app-secret",
@@ -6635,20 +7359,34 @@
           "idempotency_key_required": true,
           "max_attachments": 1,
           "max_bytes": 8388608,
-          "replacement_kinds": ["file"]
+          "replacement_kinds": [
+            "file"
+          ]
         }
       }
     }
   ],
-  "ThreadRef": ["cmaeg1.tr.fixture"],
-  "ThreadListView": ["active", "archived"],
+  "ThreadRef": [
+    "cmaeg1.tr.fixture"
+  ],
+  "ThreadListView": [
+    "active",
+    "archived"
+  ],
   "CreateThreadRequest": [
     {
       "name": "Review",
       "auto_archive_duration": 1440
     }
   ],
-  "ThreadAction": ["archive", "reopen", "join", "leave", "close", "rename"],
+  "ThreadAction": [
+    "archive",
+    "reopen",
+    "join",
+    "leave",
+    "close",
+    "rename"
+  ],
   "ThreadTarget": [
     {
       "type": "event",
@@ -6680,7 +7418,10 @@
       "expires_at": 1800000600
     }
   ],
-  "ThreadListScope": ["original_thread", "public_children_of_original_parent"],
+  "ThreadListScope": [
+    "original_thread",
+    "public_children_of_original_parent"
+  ],
   "ThreadList": [
     {
       "threads": [
@@ -6740,7 +7481,13 @@
       "create_from_original_message": true,
       "list": "public_children_of_original_parent",
       "manage_original_thread": false,
-      "actions": ["archive", "reopen", "join", "leave", "rename"],
+      "actions": [
+        "archive",
+        "reopen",
+        "join",
+        "leave",
+        "rename"
+      ],
       "expires_at": 1800000600
     }
   ],
@@ -6778,10 +7525,15 @@
       "idempotency_key_required": true,
       "max_attachments": 1,
       "max_bytes": 8388608,
-      "replacement_kinds": ["file"]
+      "replacement_kinds": [
+        "file"
+      ]
     }
   ],
-  "FormCustomerMessage": ["not_sent", "attempted"],
+  "FormCustomerMessage": [
+    "not_sent",
+    "attempted"
+  ],
   "FormPreparationReceipt": [
     {
       "preparation_id": "fixture",
@@ -6886,7 +7638,9 @@
       }
     }
   ],
-  "HistoryCursor": ["cmaeg1.hc.fixture"],
+  "HistoryCursor": [
+    "cmaeg1.hc.fixture"
+  ],
   "HistoryAttachmentFacts": [
     {
       "attachment_id": "66",
@@ -6951,7 +7705,9 @@
       "status": "end_of_visible_history"
     }
   ],
-  "HistoryContentCoverage": ["platform_returned_only"],
+  "HistoryContentCoverage": [
+    "platform_returned_only"
+  ],
   "ConversationHistoryPage": [
     {
       "conversation": {
@@ -7050,7 +7806,9 @@
       }
     }
   ],
-  "HistoryDirection": ["backward"],
+  "HistoryDirection": [
+    "backward"
+  ],
   "ConversationHistoryCapabilities": [
     {
       "page_size": 25,
@@ -7062,11 +7820,17 @@
       "expires_at": 1793179800
     }
   ],
-  "TopicAction": ["close", "reopen"],
+  "TopicAction": [
+    "close",
+    "reopen"
+  ],
   "TopicLifecycleCapabilities": [
     {
       "manage_original_topic": true,
-      "actions": ["close", "reopen"],
+      "actions": [
+        "close",
+        "reopen"
+      ],
       "expires_at": 1800000600
     }
   ]
