@@ -672,3 +672,12 @@ fn native_media_control_capabilities_round_trip_without_changing_legacy_shape() 
     assert!(!decoded.controls.as_ref().unwrap().update);
     assert_eq!(serde_json::to_value(decoded).unwrap(), value);
 }
+
+#[test]
+fn lark_multi_image_controls_preserve_bound_without_inventing_replacement_authority() {
+    let value = json!({"kinds":["image"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "controls":{"kinds":["image"],"max_attachments":4,"buttons":true,"choices":true,"caption_max_chars":0,"update":true}});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(decoded.controls.as_ref().unwrap().max_attachments, 4);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}

@@ -56,6 +56,7 @@ data:
   # Native Lark/Feishu cards, buttons and choices are enabled for opted-in sources.
   CMAEG_NATIVE_LARK_CONTROLS_ENABLED: "true"
   CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED: "false"
+  CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED: "false"
   CMAEG_NATIVE_LARK_THREAD_START_ENABLED: "false"
   # Native Lark/Feishu forms require the native controls gate and source consent.
   CMAEG_NATIVE_LARK_FORMS_ENABLED: "true"
