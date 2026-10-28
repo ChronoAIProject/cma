@@ -315,3 +315,29 @@ async fn native_lark_upload_retains_documented_bare_and_bounded_resource_keys() 
         assert_eq!(body["content"], json!({"file_key":key}).to_string());
     }
 }
+
+#[tokio::test]
+async fn native_lark_card_image_extraction_requires_exact_confirmed_upload_destination_and_kind() {
+    for case in 0..4 {
+        let destination = reply();
+        let image = case != 3;
+        let item = attachment(if image { "image/png" } else { "text/plain" });
+        let io = Api::new(vec![uploaded(image)]);
+        let client = Client::production().unwrap().with_transport(io);
+        let token = client
+            .verified_token(&destination.identity, &credentials())
+            .await
+            .unwrap();
+        let uploaded = client
+            .upload_media(&token, &destination, prepared(&item).await.unwrap())
+            .await
+            .unwrap();
+        let mut target = destination;
+        match case {
+            1 => target.chat_id = "oc_foreign".into(),
+            2 => target.identity.app_id = "cli_foreign".into(),
+            _ => {}
+        }
+        assert_eq!(uploaded.card_image_key(&target).is_ok(), case == 0);
+    }
+}
