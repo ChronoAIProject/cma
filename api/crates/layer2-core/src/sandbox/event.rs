@@ -249,6 +249,9 @@ pub enum SandboxEventKind {
         target_runtime_version: String,
         proof: Box<super::SandboxUnpublishedRecoveryProof>,
     },
+    RuntimeRecoveryQuiesced {
+        receipt: Box<super::SandboxUnpublishedRecoveryQuiescence>,
+    },
     Revived,
     Rotated {
         runtime_version: String,
