@@ -1,6 +1,6 @@
 //! Reader-first journal contract for explicit fresh-event binding preparation.
 //! No production caller writes these checkpoints until the provider handshake
-//! and ordinary-admission gate have been enabled together.
+//! and eligible ordinary-admission gate have been enabled together.
 use super::{storage, ExecutionError, Journal, Lease, Phase};
 use crate::ingress::routing_store::{AdmittedPlan, StoredTarget};
 use serde::{Deserialize, Serialize};

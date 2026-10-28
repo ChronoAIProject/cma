@@ -11,6 +11,7 @@ fn custom(size: usize) -> (LaunchRequest, Vec<u8>) {
     source["data"] = "x".repeat(size.saturating_sub(overhead)).into();
     let raw = serde_json::to_vec(&source).unwrap();
     let mut activity = fixture::custom(None);
+    activity.actor.id = source["source"].as_str().unwrap().to_string();
     activity.kind = serde_json::from_value(json!({"type":"event","ce":source})).unwrap();
     (fixture::request(fixture::targets, activity), raw)
 }
@@ -26,7 +27,8 @@ fn candidate(request: &LaunchRequest, raw: &[u8]) -> Candidate {
 }
 
 #[tokio::test]
-async fn generation_preparation_enrollment_is_new_admission_only_and_nonhuman_cannot_replace() {
+async fn generation_preparation_enrollment_is_new_admission_only_and_authenticated_custom_can_replace(
+) {
     let server = Server::start().await;
     let request = fixture::request(fixture::targets, fixture::message("hello"));
     let routed = fixture::routed(&request);
@@ -70,11 +72,16 @@ async fn generation_preparation_enrollment_is_new_admission_only_and_nonhuman_ca
     .unwrap();
     let plan = server.store().admit(&enabled).await.unwrap();
     assert_eq!(plan.binding_preparation_version, Some(1));
-    assert!(!plan.permits_binding_preparation());
+    assert!(plan.permits_binding_preparation());
+    assert!(plan.binding_custom_source.is_some());
+    let mut missing_custody = plan.clone();
+    missing_custody.binding_custom_source = None;
+    assert_eq!(missing_custody.validate(), Err(AdmissionError::Corrupt));
     assert!(plan
         .targets
         .iter()
-        .all(|t| t.binding_replacement_version.is_none()));
+        .filter(|t| plan.prepares_binding(t))
+        .all(|t| t.binding_replacement_version == Some(1)));
     assert!(plan
         .targets
         .iter()

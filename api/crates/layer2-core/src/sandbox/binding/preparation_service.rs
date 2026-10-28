@@ -5,7 +5,7 @@ use super::{
 use crate::{profiles::content_digest, Caller, SubjectId};
 
 /// Authenticated Gateway admission facts. The Gateway creates these from its
-/// committed ordinary-message plan, never from producer-supplied opt-in JSON.
+/// committed eligible ordinary-event plan, never from producer-supplied opt-in JSON.
 #[derive(Debug, Clone)]
 pub struct BindingPreparationEvent {
     pub admission_id: String,

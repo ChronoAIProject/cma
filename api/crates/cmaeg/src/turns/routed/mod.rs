@@ -22,6 +22,10 @@ mod model;
 mod preparation;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
 #[cfg(test)]
+mod custom_preparation_fixture;
+#[cfg(test)]
+mod custom_preparation_tests;
+#[cfg(test)]
 mod preparation_dispatch_tests;
 #[cfg(test)]
 mod preparation_tests;
