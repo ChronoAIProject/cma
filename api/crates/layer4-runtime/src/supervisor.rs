@@ -93,6 +93,27 @@ impl Supervisor {
         writer_boundary: SupervisorBoundary,
     ) -> Result<Arc<Self>> {
         let supervisor = Self::new(config, writer_boundary)?;
+        if supervisor.config.machine_included {
+            let ready = async {
+                loop {
+                    if tokio::net::TcpStream::connect("127.0.0.1:6080")
+                        .await
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(30), ready)
+                .await
+                .map_err(|_| {
+                    RuntimeError::unavailable(
+                        "desktop_start_failed",
+                        "desktop did not become ready",
+                    )
+                })?;
+        }
         supervisor.recover_journals().await?;
         Ok(supervisor)
     }
@@ -141,6 +162,9 @@ impl Supervisor {
         let desktop_process = if config.machine_included {
             Some(
                 tokio::process::Command::new("/usr/local/bin/cma-desktop-session")
+                    .env_clear()
+                    .envs(&config.install_env)
+                    .current_dir(&config.home)
                     .kill_on_drop(true)
                     .spawn()
                     .map_err(|error| {

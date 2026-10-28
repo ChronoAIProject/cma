@@ -20,9 +20,9 @@ impl HostedAgentRuntime for CodexRuntime {
             crate::PermissionLevel::Autonomous => "agent-full-access",
         };
         Ok(HostedAgentOpenSettings {
-            // ACP 1.4.0 wraps the native ResponseError using its internal-error
-            // envelope. Other initialize errors are not evidence of a retained
-            // bridge, even when they share that outer code.
+            // ACP 1.4.0 wraps Codex 0.147.0's native ResponseError using its
+            // internal-error envelope. Other initialize errors are not evidence
+            // of a retained bridge, even when they share that outer code.
             already_initialized_error: Some(serde_json::json!({
                 "code": -32603,
                 "message": "Internal error",

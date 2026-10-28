@@ -192,16 +192,14 @@ impl crate::DesktopConnection for TungsteniteDesktopConnection {
         use futures_util::SinkExt as _;
         let message = match frame {
             crate::DesktopFrame::Binary(bytes) => {
-                tokio_tungstenite::tungstenite::Message::Binary(bytes.into())
+                tokio_tungstenite::tungstenite::Message::Binary(bytes)
             }
-            crate::DesktopFrame::Text(text) => {
-                tokio_tungstenite::tungstenite::Message::Text(text.into())
-            }
+            crate::DesktopFrame::Text(text) => tokio_tungstenite::tungstenite::Message::Text(text),
             crate::DesktopFrame::Ping(bytes) => {
-                tokio_tungstenite::tungstenite::Message::Ping(bytes.into())
+                tokio_tungstenite::tungstenite::Message::Ping(bytes)
             }
             crate::DesktopFrame::Pong(bytes) => {
-                tokio_tungstenite::tungstenite::Message::Pong(bytes.into())
+                tokio_tungstenite::tungstenite::Message::Pong(bytes)
             }
             crate::DesktopFrame::Close => tokio_tungstenite::tungstenite::Message::Close(None),
         };
