@@ -4893,7 +4893,8 @@
       },
       "admission": {
         "type": "all"
-      }
+      },
+      "conversation_history": false
     },
     {
       "type": "discord",
@@ -5109,7 +5110,8 @@
       },
       "admission": {
         "type": "all"
-      }
+      },
+      "conversation_history": false
     },
     {
       "type": "discord",
@@ -5274,7 +5276,8 @@
         "native_lark_forms_enabled": false,
         "native_whatsapp_forms_enabled": false,
         "native_whatsapp_flow_writes_enabled": false,
-        "native_discord_conversation_history_enabled": false
+        "native_discord_conversation_history_enabled": false,
+        "native_lark_conversation_history_enabled": false
       },
       "agent_tools": [
         {
@@ -5334,7 +5337,8 @@
         "native_lark_forms_enabled": false,
         "native_whatsapp_forms_enabled": false,
         "native_whatsapp_flow_writes_enabled": false,
-        "native_discord_conversation_history_enabled": false
+        "native_discord_conversation_history_enabled": false,
+        "native_lark_conversation_history_enabled": false
       },
       "agent_tools": [
         {
@@ -5403,7 +5407,8 @@
         "native_lark_forms_enabled": false,
         "native_whatsapp_forms_enabled": false,
         "native_whatsapp_flow_writes_enabled": false,
-        "native_discord_conversation_history_enabled": false
+        "native_discord_conversation_history_enabled": false,
+        "native_lark_conversation_history_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -7269,7 +7274,8 @@
       },
       "admission": {
         "type": "all"
-      }
+      },
+      "conversation_history": false
     },
     {
       "separate_app": true,
@@ -7757,40 +7763,6 @@
       "continuation": {
         "status": "more_visible_rows",
         "cursor": "cmaeg1.hc.native_scan_fixture"
-      }
-    },
-    {
-      "conversation": {
-        "id": "oc_history",
-        "kind": "group",
-        "thread_id": "omt_history"
-      },
-      "anchor_message_id": "om_original",
-      "before_message_id": "om_original",
-      "fetched_at": "2026-10-28T00:02:00Z",
-      "expires_at": 1793179800,
-      "messages": [
-        {
-          "message_id": "om_earlier",
-          "author": {
-            "id": "ou_human",
-            "kind": "human"
-          },
-          "text": "Earlier thread context",
-          "occurred_at": "2026-10-28T00:00:00Z",
-          "attachments": [],
-          "omitted_content": [],
-          "text_truncated": false,
-          "metadata_truncated": false
-        }
-      ],
-      "scanned_messages": 1,
-      "omitted_message_count": 0,
-      "text_truncated": false,
-      "metadata_truncated": false,
-      "content_coverage": "platform_returned_only",
-      "continuation": {
-        "status": "end_of_visible_history"
       }
     }
   ],

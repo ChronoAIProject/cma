@@ -532,3 +532,48 @@ it('retains uncertain native rotation bytes across selection changes and retries
   rerender(view({ kind: 'producer', index: 0 }));
   expect(screen.getByLabelText('Encrypt Key')).toHaveValue('');
 });
+
+it('offers explicit native history consent and permits revocation while authoring is disabled', () => {
+  const onChange = vi.fn();
+  const enabled = {
+    ...available,
+    authoring: { ...available.authoring!, native_lark_conversation_history_enabled: true },
+  };
+  const view = render(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={source} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  expect(
+    screen.queryByRole('checkbox', { name: 'Allow original conversation history' }),
+  ).not.toBeInTheDocument();
+  view.rerender(
+    <RelayCapabilitiesContext value={enabled}>
+      <SourceFields value={source} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Allow original conversation history' }));
+  const consented = { ...source, conversation_history: true };
+  expect(onChange).toHaveBeenLastCalledWith(consented);
+  expect(screen.getByText(/Thread reads may need several empty scan pages/)).toBeInTheDocument();
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [consented] }, { sources: [source] }),
+  ).toThrow('history consent');
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [consented] }, { sources: [consented] }),
+  ).not.toThrow();
+  const paused = {
+    ...available,
+    authoring: { ...available.authoring!, native_lark_writes_enabled: false },
+  };
+  view.rerender(
+    <RelayCapabilitiesContext value={paused}>
+      <SourceFields value={consented} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Allow original conversation history' }));
+  expect(onChange).toHaveBeenLastCalledWith(source);
+  expect(() =>
+    validateRelayAuthoring(paused, { sources: [source] }, { sources: [consented] }),
+  ).not.toThrow();
+});
