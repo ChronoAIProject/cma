@@ -724,7 +724,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: desktop-runtime-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/desktop-runtime-evidence.json
+          path: ${{ runner.temp }}/desktop-runtime-evidence.json*
           if-no-files-found: error
           retention-days: 90
       # Preserve the exact native bytes that passed this job. PR artifacts keep
