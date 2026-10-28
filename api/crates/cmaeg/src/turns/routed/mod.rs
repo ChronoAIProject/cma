@@ -10,6 +10,7 @@ mod custom_delivery;
 mod custom_state;
 mod delivery;
 mod delivery_gate;
+mod delivery_receipts;
 mod delivery_state;
 mod destinations;
 mod dispatcher;
