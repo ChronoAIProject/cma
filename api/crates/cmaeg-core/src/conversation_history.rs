@@ -39,6 +39,8 @@ pub enum HistoryOmittedContent {
     Stickers,
     Poll,
     ForwardedSnapshot,
+    /// Media bytes and metadata omitted where complete attachment facts are unavailable.
+    Media,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
