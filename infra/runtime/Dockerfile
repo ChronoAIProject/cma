@@ -136,6 +136,10 @@ ARG CODEX_VERSION=0.147.0
 ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
 ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
+ARG DESKTOP_CODEX_VERSION=0.165.0
+ARG DESKTOP_CODEX_NATIVE_SHA256_AMD64=c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5
+ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f
+ARG DESKTOP_CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
 ARG CODEX_ACP_SHA256=ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66
@@ -146,6 +150,7 @@ ARG NODE_VERSION=24.19.0
 ARG NODE_SHA256_AMD64=14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647
 ARG NODE_SHA256_ARM64=01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc
 ARG TARGETARCH
+ARG RUNTIME_DESKTOP=0
 
 # The root filesystem is read-only in production and the runtime user is not
 # privileged. User-space installers therefore write under /home/cma. Python
@@ -175,6 +180,7 @@ RUN apt-get update \
         xz-utils \
         zlib1g \
         zstd \
+    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation novnc openbox scrot wmctrl x11vnc xdotool xvfb websockify; else test "${RUNTIME_DESKTOP}" = "0"; fi \
     && git --version \
     && rm -rf /var/lib/apt/lists/*
 
@@ -223,6 +229,14 @@ RUN set -eux; \
 # metadata, launcher, bridge source, and architecture-specific native binary
 # are all checked against the reviewed pinned artifacts.
 RUN set -eux; \
+    if [ "${RUNTIME_DESKTOP}" = "1" ]; then \
+      CODEX_VERSION="${DESKTOP_CODEX_VERSION}"; \
+      CODEX_NATIVE_SHA256_AMD64="${DESKTOP_CODEX_NATIVE_SHA256_AMD64}"; \
+      CODEX_NATIVE_SHA256_ARM64="${DESKTOP_CODEX_NATIVE_SHA256_ARM64}"; \
+      CODEX_LAUNCHER_SHA256="${DESKTOP_CODEX_LAUNCHER_SHA256}"; \
+      mkdir -p /etc/codex; \
+      printf '[features]\ncomputer_use = true\n' > /etc/codex/config.toml; \
+    fi; \
     npm install -g "@openai/codex@${CODEX_VERSION}" \
         "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}"; \
     npm cache clean --force; \
@@ -237,6 +251,10 @@ RUN set -eux; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     echo "${want}  ${native}" | sha256sum -c -
+
+# ACP's dependency can retain an older CLI. Always execute the verified global
+# CLI selected above; this does not alter persisted Agent launch requests.
+ENV CODEX_PATH=/usr/local/bin/codex
 
 # Install the platform CLI from its pinned release and verify the published
 # checksum before placing the binary on PATH.
@@ -314,6 +332,12 @@ RUN set -eux; \
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 
+# A Machine Included Sandbox starts this rootless desktop session from the
+# supervisor.  noVNC is bound to loopback; CMA must relay it through the
+# authenticated control plane before a browser can reach the screen.
+COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /usr/local/bin/cma-desktop-session
+COPY api/crates/layer4-runtime/src/desktop-menu.xml /etc/xdg/openbox/menu.xml
+
 # Native SandboxTemplates use this same image as a non-root init container:
 # --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
 # home mounts at /home, with separate persistent state/transfer directories.
@@ -337,6 +361,7 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
     && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs \
     && python3 /tmp/cma-codex-source/recovery_test.py \
+    && python3 /tmp/cma-codex-source/recovery_desktop_test.py \
     && node --test /tmp/cma-codex-source/recovery_native.test.cjs \
     && test ! -e /tmp/cma-checkpoints
 
@@ -407,5 +432,6 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}" \
       dev.chrono.cma.runtime-contract="3" \
+      dev.chrono.cma.runtime-desktop="${RUNTIME_DESKTOP}" \
       dev.chrono.cma.runtime-bootstrap="1" \
       dev.chrono.cma.home-layout="2"

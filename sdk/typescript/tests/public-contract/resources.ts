@@ -3,6 +3,7 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/agents/{id}/desktop': ({ client, param }) => client.agents.desktop(param('id')),
   'GET /api/v1/agents/{id}/files/tree': ({ client, param, query }) =>
     client.agentFiles.list(param('id'), query.get('path') ?? ''),
   'GET /api/v1/agents/{id}/files/content': ({ client, param, query }) =>

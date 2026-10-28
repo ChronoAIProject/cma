@@ -2,6 +2,73 @@
 
 ## Current Runtime Contract
 
+### Machine Included prototype
+
+The lifecycle request accepts `machine_included: true` for a new Sandbox. CMA
+resolves `CHRONO_MACHINE_SANDBOX_IMAGE`, records the immutable image and the
+`CMA_MACHINE_INCLUDED=1` marker in the Sandbox profile, and keeps the existing
+2,000 millicore / 8,192 MiB reservation. The option remains disabled when that
+image setting is empty. Only the image built with `RUNTIME_DESKTOP=1` installs
+Chromium, Xvfb, Openbox, x11vnc, websockify, scrot, wmctrl and xdotool. Its rootless desktop
+starts on display `:99` before runtime readiness. Ports 5900 and 6080 bind to
+loopback; `/runtime/desktop` uses the supervisor's control authentication.
+The local WebSocket listener also requires a fresh boot token supplied by the
+supervisor in its Host header, so a page in Chromium cannot bypass CMA through
+localhost. The credential is absent from request paths and child browser env.
+Closing Chromium keeps the desktop alive; its right-click menu reopens the same
+browser profile at `~/.cma/chrome`.
+
+The public owner-authenticated `GET /api/v1/agents/{id}/desktop` returns the
+WebSocket URL. `/desktop/ws` opens a bounded runtime connection before upgrading,
+refuses a second browser connection to the same Sandbox, checks browser Origin,
+and rechecks owner lineage and runtime identity every 30 seconds. Connections
+expire after 30 minutes and can reconnect. CMA bundles the pinned noVNC 1.7.0
+client with the web application. The viewer offers full screen, explicit user
+input and reconnect. It pauses user input while the current Agent is working;
+this UI behavior is not an input lock against commands from other Agents in the
+same Sandbox. Isolated Agents cannot access the shared desktop.
+
+Codex runs beside Chromium and uses its existing shell and image tools. A
+computer-use feature flag does not prove a Linux screenshot/click/type driver.
+A clean CLI 0.165.0 tool-inventory check exposed shell and image tools but no
+computer-use tool. Official OpenAI documentation describes the desktop Computer
+Use plugin on macOS and Windows, not a bundled Linux CLI driver:
+https://learn.chatgpt.com/docs/computer-use . The desktop variant pins CLI 0.165.0
+(the current stable registry version checked on 2026-10-29), while the ordinary
+headless runtime keeps CLI 0.147.0. Both use the source-pinned ACP 1.4.0 bridge.
+The desktop image enables `features.computer_use` in its system configuration
+and uses the verified global CLI instead of ACP's older nested dependency.
+The feature flag is checked separately from actual desktop execution. An Agent can take a screenshot with
+`scrot /tmp/desktop.png`, inspect it with `view_image`, and click/type through
+`xdotool` on `DISPLAY=:99`; no additional computer-use MCP server is involved.
+New Machine Included Agents receive this display and tool guidance in their
+durably captured setup message, and wait for a user task before using the desktop.
+
+CI builds a separate desktop image and executes its shared display contract
+using a loopback model fixture: real Codex shell click/type, `view_image` delivery,
+authenticated framebuffer transfer, and subsequent user input in the same
+browser. This is tool execution evidence, not a live model task or production
+provider acceptance. The image must pass that check and a disposable production
+Sandbox demonstration before the prototype is declared ready. Audio and video
+playback are outside this prototype. The desktop launcher owns a separate
+session and is a Linux child subreaper, so detached browser helpers stay in its
+process tree. Recovery admits only the source-pinned launcher directly under
+the runtime and its descendants, rechecks the launcher identity, and continues
+to reject unrelated processes. Unit checks cover replacement/refusal cases;
+the Linux image must also exercise this against real Chromium processes.
+Acceptance closes the browser without losing the display, restarts the runtime
+with its retained home, and checks Chromium localStorage through the browser.
+
+Actions run `40737301164` established the earlier startup failure: Docker's
+default seccomp policy denied Chromium's namespace sandbox. A disposable probe
+in the production `kata-clh` runtime successfully created nested user and network
+namespaces with the production non-root policy; that probe was removed. CI uses
+a hash-pinned Moby default profile with only Chromium's user/PID/network namespace
+creation and chroot added. Chromium's sandbox stays enabled; the acceptance
+requires a renderer with PID namespace and seccomp isolation. Deploy only the
+tested immutable desktop digest, and retain its complete CI and disposable
+production acceptance evidence with the rollout record.
+
 The Sandbox/Agent implementation requires runtime contract **3**, declared by
 the image label `dev.chrono.cma.runtime-contract`. The control plane provisions
 one isolated runtime per Sandbox, with Workspaces, dedicated Worktrees and

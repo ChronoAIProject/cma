@@ -135,6 +135,10 @@ impl RuntimeEndpoint {
         self.with_path(&["runtime", "agents", agent_id, "history"], false)
     }
 
+    pub(super) fn desktop(&self) -> crate::Result<Url> {
+        self.with_path(&["runtime", "desktop"], true)
+    }
+
     pub(super) fn checkpoint(&self, reference: &str) -> crate::Result<Url> {
         self.with_path(&["runtime", "checkpoints", reference], false)
     }

@@ -118,14 +118,17 @@ function complete(response, id, output) {
 const message = (id, text) => ({ id, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] });
 
 test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted turn, stops shell, and preserves same conversation', { timeout: 120000 }, async () => {
-  assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
+  assert.match(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   assert(['113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4',
     '4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888',
     '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c',
     'ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66'].includes(sha(fs.readFileSync(bridgeProgram))), 'bridge must match reviewed source');
   assert(['cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40',
     'e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2',
-    '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37'].includes(sha(fs.readFileSync(binary))), 'native must match pinned 0.147.0 binary');
+    '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37',
+    'c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5',
+    'b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f',
+    'a45099154d7fb4a5ed8a56f40966a95deb938e508bab23e6985035c709e9a85a'].includes(sha(fs.readFileSync(binary))), 'native must match a pinned 0.147.0 or 0.165.0 binary');
   const directory = fs.mkdtempSync(join(evidence, 'cma-graceful-eof-'));
   const home = join(directory, 'home'); fs.mkdirSync(home);
   const dirtyPath = join(directory, 'dirty.txt');
@@ -248,10 +251,13 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
 });
 
 test('cold load preserves a crashed previous process turn without restarting it or inventing a terminal event', { timeout: 180000 }, async () => {
-  assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
+  assert.match(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   assert(['cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40',
     'e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2',
-    '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37'].includes(sha(fs.readFileSync(binary))));
+    '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37',
+    'c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5',
+    'b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f',
+    'a45099154d7fb4a5ed8a56f40966a95deb938e508bab23e6985035c709e9a85a'].includes(sha(fs.readFileSync(binary))));
   assert(['113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4',
     '4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888',
     '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c',
@@ -296,6 +302,15 @@ test('cold load preserves a crashed previous process turn without restarting it 
     if (alive(bridge.child.pid)) process.kill(bridge.child.pid, 'SIGTERM');
     await bridge.exited; await pending.catch(() => {});
     const original = history(home, sessionId);
+    const retainsOriginalWithoutNewTurns = (current, label) => {
+      assert(current.bytes.subarray(0, original.bytes.length).equals(original.bytes), label + ': original bytes changed');
+      // CLI 0.165 records settings on resume. Those metadata events are not
+      // user/assistant messages, started turns, or invented terminal events.
+      const added = current.records.slice(original.records.length);
+      assert(added.every(record => record.type === 'event_msg' && record.payload.type === 'thread_settings_applied'
+        && record.payload.thread_id === sessionId), label + ': unexpected appended records');
+      assert.deepEqual(turns(current), turns(original), label + ': turn history changed');
+    };
     const started = turns(original).find(r => r.payload.type === 'task_started');
     assert.equal(turns(original).length, 1, 'crash leaves an actual unmatched start');
     const startAt = Date.parse(started.timestamp);
@@ -306,10 +321,10 @@ test('cold load preserves a crashed previous process turn without restarting it 
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
     await bridge.call('session/load', { sessionId, cwd: directory, mcpServers: [] });
     assert.equal(modelCalls, 1, 'loading an unmatched previous-process turn does not resume model work');
-    assert(history(home, sessionId).bytes.equals(original.bytes), 'cold load retains the exact original transcript');
+    retainsOriginalWithoutNewTurns(history(home, sessionId), 'cold load');
     const shutdown = await bridge.stopBridgeOnly();
     const drained = history(home, sessionId);
-    assert(drained.bytes.equals(original.bytes), 'idle native EOF cannot append a terminal for a previous process');
+    retainsOriginalWithoutNewTurns(drained, 'idle native EOF');
     assert(!alive(Number(fs.readFileSync(bridge.native.pidPath, 'utf8'))));
     bridge = connect(directory, home, 'continued');
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
@@ -325,7 +340,7 @@ test('cold load preserves a crashed previous process turn without restarting it 
     const receipt = { directory, sessionId, turnId: started.payload.turn_id, startAt, coldLaunchLowerBound,
       prebootMarginMs: coldLaunchLowerBound - startAt, originalHistorySha256: sha(original.bytes),
       originalHistoryBytes: original.bytes.length, coldLoadStartedNoWork: true,
-      drainedHistoryUnchanged: true, continuedOriginalPrefix: true, modelCalls, shutdown };
+      drainedAddedNoTurns: true, originalHistoryExactPrefix: true, continuedOriginalPrefix: true, modelCalls, shutdown };
     fs.writeFileSync(join(directory, 'receipt.json'), JSON.stringify(receipt, null, 2));
     console.log(JSON.stringify(receipt));
   } finally {

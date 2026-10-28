@@ -31,6 +31,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/agents/{id}/desktop" => c.check(client.agents().desktop(c.param("id")).await),
         "GET /api/v1/agents/{id}/files/tree" => c.check(
             client
                 .agent_files()
