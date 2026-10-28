@@ -37,6 +37,7 @@ pub struct ConsoleOn {
 }
 
 pub struct App {
+    pub batch_gate: Arc<super::batch_gate::BatchGate>,
     pub console: Option<ConsoleOn>,
     pub cma: FakeCma,
     pub identity: Identity,
@@ -190,8 +191,9 @@ impl App {
             media: None,
             downloads: Default::default(),
         };
+        let batch_gate = super::batch_gate::BatchGate::new(cma.get_gate.clone());
         let router = cmaeg::router_with_state(state.clone())
-            .merge(http::callbacks::router(ingress))
+            .merge(super::batch_gate::router(ingress, batch_gate.clone()))
             .merge(http::tools::router(tools.clone()))
             .merge(cmaeg::mcp::router(tools));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -250,6 +252,7 @@ impl App {
             None => None,
         };
         Self {
+            batch_gate,
             console,
             cma,
             identity,
@@ -274,10 +277,12 @@ impl App {
     ) -> Vec<reqwest::RequestBuilder> {
         // Signing is synchronous. Finish every envelope before invalidating so
         // later callers do not sign while the first caller's restore completes.
+        let events: Vec<_> = events.into_iter().collect();
         let requests = events
-            .into_iter()
-            .map(|(id, lane)| self.callback_request(&id, lane))
+            .iter()
+            .map(|(id, lane)| self.callback_request(id, *lane))
             .collect();
+        self.batch_gate.arm(events.into_iter().map(|(id, _)| id));
         self.state.resolver.invalidate(&self.channel);
         requests
     }
