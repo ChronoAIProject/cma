@@ -213,6 +213,7 @@ pub(crate) fn activity(event_id: &str) -> Activity {
             attachments: Vec::new(),
             mentions_bot: true,
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         },
         actor: Actor {

@@ -3,6 +3,7 @@
 
 mod assignment;
 mod connection;
+mod idle_bootstrap;
 mod lifecycle;
 mod model;
 mod native_assignment;

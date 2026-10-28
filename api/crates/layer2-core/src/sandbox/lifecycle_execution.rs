@@ -1,5 +1,4 @@
 //! Model-owned transitions for one claimed sandbox lifecycle phase.
-
 use super::lifecycle_execution_support::{
     invalid_execution, lifecycle_failure_class, queued_message_phase, valid_runtime_binding,
 };
@@ -456,7 +455,7 @@ impl Sandbox {
         })
     }
 
-    /// Fail the current lifecycle with a stable phase-derived class.
+    /// Fail with a phase-derived class, preserving uncompleted retained allocation evidence.
     pub fn fail_lifecycle(
         &mut self,
         detail: String,
@@ -482,6 +481,7 @@ impl Sandbox {
                 .ok_or_else(invalid_execution)?,
         );
         let failure = class.typed_failure(detail);
+        let failed_provision = self.failed_provision_evidence();
         self.apply_claimed_with_step(
             holder,
             fence,
@@ -490,6 +490,7 @@ impl Sandbox {
             at.clone(),
             |next| {
                 next.lifecycle.cancel_operation();
+                next.lifecycle.failed_provision = failed_provision;
                 next.transition(SandboxStatus::Failed, at, Some(failure.clone()))?;
                 Ok(())
             },

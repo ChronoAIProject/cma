@@ -58,3 +58,6 @@ mod whatsapp_templates;
 
 #[path = "tools/reply_idempotency.rs"]
 mod reply_idempotency;
+
+#[path = "tools/quoted_context.rs"]
+mod quoted_context;

@@ -19,7 +19,14 @@ pub(super) fn client(fixture: &Fixture, changed: bool) -> AgentSandboxClient {
 }
 
 pub(super) fn request(home: &HomeVolumeAttachment, generation: u64) -> ProviderSandboxRequest {
-    let spec = super::tests::spec();
+    request_with_spec(home, generation, &super::tests::spec())
+}
+
+pub(super) fn request_with_spec(
+    home: &HomeVolumeAttachment,
+    generation: u64,
+    spec: &super::NativePoolSpec,
+) -> ProviderSandboxRequest {
     HostedDeployment {
         image: spec.image.clone(),
         ..HostedDeployment::default()
@@ -27,7 +34,7 @@ pub(super) fn request(home: &HomeVolumeAttachment, generation: u64) -> ProviderS
     .render_runtime(
         &SandboxSpec {
             sandbox_id: home.request.sandbox_id.clone(),
-            runtime_image: Some(spec.image.uri),
+            runtime_image: Some(spec.image.uri.clone()),
             created_by: Some("cma-test".into()),
             home_volume: Some(Box::new(home.clone())),
             capacity: SandboxCapacity {
