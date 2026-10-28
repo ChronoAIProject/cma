@@ -6,7 +6,7 @@ mod media;
 pub(crate) mod media_card_edit;
 pub(crate) mod media_edit;
 mod media_presentation;
-pub(crate) use media::{media_token_matches, MediaUpload};
+pub(crate) use media::{album_supported, media_token_matches, AlbumUpload, MediaUpload};
 #[cfg(test)]
 mod media_edit_tests;
 #[cfg(test)]
