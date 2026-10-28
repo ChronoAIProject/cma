@@ -3,6 +3,10 @@
 set -euo pipefail
 export DISPLAY=:99
 mkdir -p "$HOME/.cma/chrome"
+# /tmp is an empty writable mount. Xvfb cannot create the conventional socket
+# directory itself as a non-root user, but accepts an existing shared directory.
+mkdir -p /tmp/.X11-unix
+chmod 1777 /tmp/.X11-unix
 # Retained Chromium profiles carry singleton symlinks naming the previous Pod.
 # Admit one supervisor and prove no live browser owns this exact profile before
 # removing those three stale links; profile contents and cookies remain intact.

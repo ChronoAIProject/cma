@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { desktopSeccomp } from './desktop-seccomp.mjs';
 
 const [imageRef, revision, destination] = process.argv.slice(2);
 assert(imageRef && /^[0-9a-f]{40}$/.test(revision) && destination);
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', timeout: 90000, maxBuffer: 2 * 1024 * 1024 });
 const name = 'cma-desktop-test-' + randomUUID();
 const token = randomBytes(32).toString('hex');
+const temporary = mkdtempSync(resolve(tmpdir(), 'cma-desktop-seccomp-'));
 let startupDiagnostics = '';
 const result = { schema: 'cma-desktop-evidence-v1', revision, image: null, result: 'fail', cleanup: false };
 try {
@@ -18,12 +21,15 @@ try {
   assert.equal(inspected.Config.Labels['dev.chrono.cma.runtime-desktop'], '1');
   assert.equal(inspected.Config.User, '10001:10001');
   result.image = inspected.Id;
+  const seccomp = resolve(temporary, 'seccomp.json');
+  await desktopSeccomp(seccomp);
   const mounts = [
     ['.github/scripts/desktop-native-probe.cjs', '/opt/desktop-native-probe.cjs'],
     ['.github/scripts/desktop-vnc-probe.py', '/opt/desktop-vnc-probe.py'],
     ['api/crates/layer3-adapter/src/codex', '/opt/codex-fixtures'],
   ].flatMap(([source, target]) => ['--mount', `type=bind,source=${resolve(source)},target=${target},readonly`]);
   docker(['create', '--name', name, '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+    '--security-opt', `seccomp=${seccomp}`,
     '--security-opt', 'no-new-privileges=true', '--pids-limit', '512', '--memory', '8g', '--cpus', '2',
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=1073741824,mode=1777',
     '--tmpfs', '/home/cma:rw,nosuid,nodev,size=1073741824,uid=10001,gid=10001,mode=700',
@@ -63,6 +69,7 @@ try {
   } catch { /* The container may already have stopped. */ }
 } finally {
   try { docker(['rm', '--force', name]); result.cleanup = true; } catch { /* Retain failure. */ }
+  rmSync(temporary, { recursive: true, force: true });
   writeFileSync(destination, JSON.stringify(result, null, 2) + '\n');
 }
 assert.equal(result.result, 'pass');
