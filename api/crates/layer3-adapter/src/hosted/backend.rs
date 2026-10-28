@@ -13,6 +13,8 @@ pub struct HostedAgentOpenSettings {
     /// Exact provider-proved initialize error for an already initialized bridge.
     /// This permits reattachment only; it never supplies conversation/tool authority.
     pub already_initialized_error: Option<serde_json::Value>,
+    /// Provider-proved read-only evidence of an exact completed conversation open.
+    pub open_completion: Option<super::HostedOpenCompletionProtocol>,
     /// Trusted control-plane binding; never supplied by a provider renderer.
     pub context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub permission_mode: Option<String>,
@@ -32,6 +34,7 @@ pub trait HostedAgentRuntime: Send + Sync {
     fn open_settings(&self, request: &AgentOpenRequest) -> Result<HostedAgentOpenSettings> {
         Ok(HostedAgentOpenSettings {
             already_initialized_error: None,
+            open_completion: None,
             context_refresh: None,
             permission_mode: None,
             own_credential: request.options.own_credential,

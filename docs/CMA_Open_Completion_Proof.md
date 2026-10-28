@@ -1,6 +1,6 @@
 # Native ACP open-completion proof
 
-This prototype adds a read-only `cma/open-completion` extension to the pinned
+The runtime adds a read-only `cma/open-completion` extension to the pinned
 Codex ACP bridge. A positive receipt means that this bridge observed a complete,
 successful ACP `session/new`, `session/load`, or `session/resume` setup for the
 exact original working directory and MCP descriptors. The receipt is equivalent
@@ -8,10 +8,12 @@ to that successful setup, including the outer load's history streaming. It does
 not establish installed tool names, schemas, readiness, credential validity,
 provider authority, or successful persistence of an API confirmation.
 
-The implementation is confined to Layer 3's native-provider patch and runtime
-image build inputs. There is no API caller, recovery selector, image promotion,
-or runtime replacement in this increment. It remains separate from bounded
-confirmation retries after a successful handshake.
+Layer 3 opts into this pinned protocol when rendering Codex open settings. After
+the exact already-initialized response, a missing tool-open confirmation can be
+recovered only from an exact positive receipt. Fresh opens and already confirmed
+reattachments retain their normal behavior. This is separate from bounded
+confirmation retries after a successful handshake, and does not replace old
+runtime processes or promote an image.
 
 ## Wire contract
 
@@ -42,8 +44,10 @@ JavaScript string order, object values use JSON encoding, and arrays preserve
 order. No whitespace is inserted. Absent `mcpServers` becomes `[]`. Prefix the
 SHA-256 lowercase hex result with `v1:`. Cwd is the original absolute string,
 without symlink resolution or path normalization, and must exactly equal the
-native returned cwd and current ACP state cwd. A caller must retain this original
-snapshot; descriptors newly assembled during recovery cannot substitute for it.
+native returned cwd and current ACP state cwd. The native bridge retains its
+original immutable snapshot. The API derives the expected descriptors from the
+same fenced original request and immutable tool authority and compares them to
+that snapshot's digest; it cannot substitute changed descriptors or authority.
 
 Snapshots are cloned before the first await, deeply frozen and capped at 64 KiB
 with at most 32 descriptors. Names must be unique ASCII letters, digits,
@@ -72,7 +76,7 @@ status. They perform no native discovery, MCP or model calls, file writes,
 close/load/resume, turn creation, or recovery action. Raw descriptors, headers,
 URLs and native errors never enter the receipt.
 
-## Canonical vectors for later Rust integration
+## Canonical vectors and API verification
 
 `api/crates/layer3-adapter/src/codex/open_completion_vectors.json` contains eleven
 fixed test vectors with `input`, exact `canonical` UTF-8 text, and `bindingDigest`.
@@ -93,10 +97,22 @@ headers, normalize URLs or cwd, omit an empty `headers` array, or add absent
 metadata. The current normal constructors contain only objects, arrays and
 strings; an extension introducing numeric metadata must also match ECMAScript
 number serialization rather than assuming Rust's default formatting is identical.
-A later API caller must restrict its supported descriptor subset to the current
-typed constructors until broader metadata has separate interoperability evidence.
-These fixtures provide an interoperability contract without adding a Rust caller
-or claiming Rust execution in this increment.
+The API only supplies descriptors from the current typed binding constructors.
+Its canonical encoder rejects numeric values rather than assuming compatible
+number formatting. Rust tests verify all eleven native canonical/digest vectors,
+including Unicode object-key ordering, and refuse oversized snapshots.
+
+The API reads twice over the same authenticated runtime socket: before accepting
+the missing confirmation and after applying the ordinary handshake settings.
+Each read has a fresh challenge and a three-second deadline. The conversation,
+digest, protocol version, process/open UUIDs and session generation must match;
+the two reads must identify the same completion. Missing support, negative or
+malformed evidence and an intervening close/replacement all refuse the open.
+No close, session load or prompt is issued to manufacture substitute evidence.
+The ordinary backend launch receipt and source confirmation transactions still
+validate the original request, runtime/boot, conversation, creation provenance
+and current lineage. Native evidence is not an atomic database transaction and
+does not waive those fences or turn an unknown commit into success.
 
 ## Evidence and invalidation
 
@@ -165,15 +181,14 @@ even resubmitting the old descriptor snapshot to that loaded native thread canno
 reconstruct it. An incomplete original open likewise cannot acquire a receipt
 through this read-only method.
 
-A future API integration may use a matching retained receipt to finish the
-original confirmation transaction after rechecking all current authority. It
-must preserve the original exact binding, validate a fresh challenge response and
-the current runtime/process/generation fences, and fail closed on missing proof.
+The API uses a matching retained receipt to finish the original confirmation
+transaction after rechecking all current authority. It preserves the original
+exact binding and fails closed on missing proof.
 The provider descriptor is a constant loopback endpoint with no authorization
 header, so its digest does not encode the proxy's upstream URL or credential
 custody generation. The caller must separately validate the current provider
-binding and exact runtime/proxy observation. This increment does not implement or
-authorize that path.
+binding and exact runtime/proxy observation; a positive native receipt does not
+replace either check.
 
 Affected old processes need a separately reviewed and authorized lifecycle
 migration/recovery: preserve the Agent home, worktree, persisted conversation and
@@ -181,8 +196,8 @@ user files; validate the replacement runtime and original request authority;
 retire the old process through existing lifecycle fencing; and perform an
 observed cold setup of the same conversation in the new native process before
 confirmation. A supported image, checkpoint progress, or new public generation
-alone cannot authorize the transition. No reset, conversation deletion, synthetic
-success, automatic recovery, or deployment is part of this prototype.
+alone cannot authorize the transition. This receipt mechanism performs no reset,
+conversation deletion, synthetic success, runtime replacement or deployment.
 
 ## Pinned validation
 
