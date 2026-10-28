@@ -29,7 +29,21 @@ impl DesktopProcess {
         // A group belongs only to this desktop. Killing just the launcher
         // bypasses its shell trap and leaves its browser/display children alive.
         #[cfg(unix)]
-        command.process_group(0);
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                // Browser helpers may double-fork or start their own session.
+                // Keep them under the desktop launcher, rather than adopting
+                // them into the runtime beside unrelated Agent processes.
+                #[cfg(target_os = "linux")]
+                if libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
         let permit = ManagedSpawnPermit::begin();
         let child = command.kill_on_drop(true).spawn()?;
         let managed = permit.register(child.id());
