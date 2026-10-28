@@ -92,14 +92,15 @@ impl MongoAgentAccessToolSource {
     }
 
     async fn run(&self, operation: Operation<'_>) -> layer3_adapter::Result<Outcome> {
-        for _ in 0..TRANSACTION_ATTEMPTS {
-            let mut session = self
-                .store
-                .client
-                .start_session()
-                .await
-                .map_err(unavailable)?;
-            start_transaction(&mut session).await.map_err(unavailable)?;
+        for attempt in 0..TRANSACTION_ATTEMPTS {
+            let mut session = self.store.client.start_session().await.map_err(|error| {
+                operation.diagnostic("start_session", driver_category(&error), attempt);
+                unavailable(())
+            })?;
+            start_transaction(&mut session).await.map_err(|error| {
+                operation.diagnostic("start_transaction", driver_category(&error), attempt);
+                unavailable(())
+            })?;
             let result = match operation {
                 Operation::Resolve(runtime, request, fence) => self
                     .resolve_in(runtime, request, fence, &mut session)
@@ -123,23 +124,41 @@ impl MongoAgentAccessToolSource {
                 Err(error) => {
                     let _ = session.abort_transaction().await;
                     match error {
-                        Error::Driver(error)
-                            if is_transient(&error) || is_duplicate_key(&error) =>
-                        {
-                            continue
+                        Error::Driver(error) => {
+                            operation.diagnostic("read_write", driver_category(&error), attempt);
+                            if is_transient(&error) || is_duplicate_key(&error) {
+                                continue;
+                            }
+                            return Err(unavailable(()));
                         }
-                        Error::Driver(_) => return Err(unavailable(())),
-                        Error::Refused => return Err(refused()),
-                        Error::Unavailable => return Err(unavailable(())),
+                        Error::Refused => {
+                            operation.diagnostic("read_write", "authority_rejected", attempt);
+                            return Err(refused());
+                        }
+                        Error::Unavailable => {
+                            operation.diagnostic("read_write", "storage_unavailable", attempt);
+                            return Err(unavailable(()));
+                        }
                     }
                 }
             };
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(result),
-                CommitOutcome::Retry(_) => continue,
-                _ => return Err(unavailable(())),
+                CommitOutcome::Retry(_) => {
+                    operation.diagnostic("commit", "transient_transaction", attempt);
+                    continue;
+                }
+                CommitOutcome::Unknown(_) => {
+                    operation.diagnostic("commit", "unknown_commit", attempt);
+                    return Err(unavailable(()));
+                }
+                CommitOutcome::Failed(_) => {
+                    operation.diagnostic("commit", "driver_failure", attempt);
+                    return Err(unavailable(()));
+                }
             }
         }
+        operation.diagnostic("retry", "retry_exhausted", TRANSACTION_ATTEMPTS - 1);
         Err(unavailable(()))
     }
 }
@@ -180,6 +199,48 @@ enum Operation<'a> {
     Authenticate(&'a str),
     Setup(&'a str),
 }
+
+impl Operation<'_> {
+    fn diagnostic(&self, stage: &'static str, category: &'static str, attempt: usize) {
+        let (operation, agent_id) = match self {
+            Self::Resolve(_, request, _) => ("resolve", Some(request.options.slot.as_str())),
+            Self::Confirm(binding, _) => ("confirm_open", Some(binding.scope().1.as_str())),
+            Self::Authenticate(_) => ("authenticate", None),
+            Self::Setup(_) => ("setup", None),
+        };
+        // Bearer-only operations have no safe Agent identity at this boundary.
+        // Never log their input, bindings, driver text or stored documents.
+        if let Some(agent_id) = agent_id {
+            tracing::warn!(
+                operation,
+                stage,
+                category,
+                attempt = attempt + 1,
+                agent_id,
+                "Agent access tool authority transaction did not complete"
+            );
+        } else {
+            tracing::warn!(
+                operation,
+                stage,
+                category,
+                attempt = attempt + 1,
+                "Agent access tool authority transaction did not complete"
+            );
+        }
+    }
+}
+
+fn driver_category(error: &mongodb::error::Error) -> &'static str {
+    if is_transient(error) {
+        "transient_transaction"
+    } else if is_duplicate_key(error) {
+        "duplicate_key"
+    } else {
+        "driver_failure"
+    }
+}
+
 enum Outcome {
     Resolved(Option<HostedAccessToolBinding>),
     Confirmed,
