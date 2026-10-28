@@ -353,7 +353,7 @@ pub struct MediaControlsCapabilities {
     pub choices: bool,
     /// Caption character limit; metadata byte bounds also apply.
     pub caption_max_chars: u32,
-    /// Whether this specific media/control message supports replacement.
+    /// Whether content/control edits may preserve this message's confirmed upload.
     pub update: bool,
 }
 

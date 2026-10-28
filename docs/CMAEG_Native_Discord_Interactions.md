@@ -177,7 +177,7 @@ returns `unsupported`; no separate control message is silently sent.
 
 `context.capabilities.native_media.controls`, when present for the verified
 human/source/consumer destination, reports `max_attachments: 1`, `buttons: true`,
-`choices: true`, `caption_max_chars: 1024` and `update: false`. Shared attachment
+`choices: true` and `caption_max_chars: 1024`. `update` is false unless the separate media-card edit gate and ordinary card-edit gate are enabled. Shared attachment
 metadata byte limits, inline 64 KiB, downloaded aggregate 8 MiB, URL protection,
 text limits and mention suppression still apply. Discord attachment captions
 are attachment descriptions; the ordinary text remains message content.
@@ -190,9 +190,36 @@ retain source URLs or base64 file bytes, so ordinary uploads cannot overflow the
 The same actor/source/consumer/thread/message authority checks govern clicks.
 Unknown or lost send receipts leave the card unbound and do not cause a resend.
 
-Media-bearing cards currently refuse text/card `updateMessage` before mutation;
-no media-edit authority is issued. Disabling the media-controls flag stops new
+Media-bearing cards without a retained confirmed upload proof refuse text/card
+`updateMessage` before mutation; no standalone media-edit authority is issued. Disabling the media-controls flag stops new
 issuance but leaves retained clicks and recovery available. An older reader that
 rejects the native identity's `media` field cannot serve as a rollback after
 issuance. Local multipart, callback replay, authority and uncertain-send fixtures
 prove this contract; external Discord activation and live proof are separate.
+
+## Preserve an upload while editing its controls
+
+`CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED` defaults to `false` and also
+requires `CMAEG_DISCORD_CARD_EDITS_ENABLED`. Deploy all retained readers before
+enabling it. New media-control sends then verify the native message/control echo
+and one uploaded file's exact filename, MIME, size and caption before binding the
+card. Its compact `media.confirmed` proof contains the native attachment ID and a
+hash of bounded normalized file/presentation facts, never a source URL or bytes.
+Historical cards without that proof remain callback-readable and do not acquire
+edit authority from a later lookup.
+
+`updateMessage` can revise content and buttons/choices, including removing all
+controls, while preserving that one upload. It uses the existing destination
+lock, card CAS and successor/replay chain. A fresh native read verifies the current
+text, controls and exact upload before the card revision changes. The one PATCH
+omits `attachments` and rich-embed fields; the response must confirm unchanged
+file identity/metadata/presentation plus the new content and controls. A mismatch
+before admission refuses the edit; an ambiguous write or mismatched write echo
+keeps the revision fenced and never blindly resends. Retained replay and subsequent
+revisions remain readable when issuance gates are disabled.
+
+For this contract `native_media.controls.update: true` means content/control
+edits that preserve the upload. It does not authorize binary replacement, caption
+replacement, multiple uploads, adding uploads to text-only cards, or forms mixed
+with uploads. Those remain explicitly unavailable. Current source/consumer
+custody, original actor, exact destination/thread and expiry checks still apply.

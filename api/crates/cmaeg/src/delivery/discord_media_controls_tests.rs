@@ -14,7 +14,7 @@ use cmaeg_core::message::OutboundMessage;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-fn media(select: bool, kind: &str, bytes: &[u8]) -> OutboundMessage {
+pub(super) fn media(select: bool, kind: &str, bytes: &[u8]) -> OutboundMessage {
     let mut body = serde_json::to_value(message(select)).unwrap();
     body["native_attachments"] = json!([{"kind":kind,"source":{"type":"base64","data":STANDARD.encode(bytes)},"filename":"report.bin","mime_type":"application/octet-stream","caption":"Review this upload"}]);
     serde_json::from_value(body).unwrap()
@@ -31,7 +31,7 @@ fn ready(f: &FixtureState) {
         json!({"id":"800","channel_id":"99","author":{"id":"77","bot":true}}),
     );
 }
-async fn send(
+pub(super) async fn send(
     f: &FixtureState,
     sender: &Sender,
     message: &OutboundMessage,
