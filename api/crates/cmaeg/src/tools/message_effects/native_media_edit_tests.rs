@@ -852,3 +852,28 @@ async fn telegram_topic_enrollment_keeps_legacy_media_edits_and_exact_effect_cus
     );
     assert_eq!(platform.calls().len(), 4);
 }
+
+#[tokio::test]
+async fn explicit_card_attachment_clear_refuses_standalone_media_references_before_native_io() {
+    let (app, reference) = media_app().await;
+    let response = app
+        .effect(
+            &reference,
+            "update",
+            "clear-unsupported",
+            json!({
+                "text":"Remove files", "clear_native_attachments":true
+            }),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    assert!(response
+        .json::<Value>()
+        .await
+        .unwrap()
+        .to_string()
+        .contains("native_attachment_clear_unsupported"));
+    assert!(app.platform.memory.lock().unwrap().writes.is_empty());
+}

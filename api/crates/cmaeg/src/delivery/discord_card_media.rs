@@ -4,7 +4,7 @@ use super::{
     send::Sender,
 };
 use crate::{
-    discord::{rest::media_card_snapshot, RestError},
+    discord::{rest::media_card_snapshots, RestError},
     interactions::{discord, discord_edit::Candidate, PreparedCard},
     tools::Capabilities,
 };
@@ -15,12 +15,13 @@ impl Sender {
         &self,
         candidate: &Candidate,
         credential: &Secret,
-    ) -> Result<Option<crate::native_media::model::Snapshot>, RestError> {
+    ) -> Result<Option<Vec<crate::native_media::model::Snapshot>>, RestError> {
         let card = &candidate.card;
         let identity = card.discord.as_ref().ok_or(RestError::Rejected)?;
-        let Some(media) = identity.media.as_ref() else {
+        let media = identity.media_items().map_err(|_| RestError::Rejected)?;
+        if media.is_empty() {
             return Ok(None);
-        };
+        }
         let destination = card.destination.as_ref().ok_or(RestError::Rejected)?;
         let capabilities = Capabilities {
             buttons: "inline_keyboard".into(),
@@ -42,16 +43,21 @@ impl Sender {
         )
         .await
         .map_err(|_| RestError::Unavailable)??;
-        let snapshot = media_card_snapshot(
+        let snapshot = media_card_snapshots(
             &body,
             &identity.bot_id,
             &candidate.conversation.id,
             &destination.platform_id,
-            media.kind,
+            &media.iter().map(|item| item.kind).collect::<Vec<_>>(),
             &parts[0].text,
             &markup,
         )?;
-        if !media.matches_snapshot(&snapshot) {
+        if media.len() != snapshot.len()
+            || !media
+                .iter()
+                .zip(&snapshot)
+                .all(|(item, snapshot)| item.matches_snapshot(snapshot))
+        {
             return Err(RestError::Rejected);
         }
         Ok(Some(snapshot))
@@ -66,7 +72,7 @@ impl Sender {
     ) -> Result<(), RestError> {
         let card = &prepared.card;
         let identity = card.discord.as_ref().ok_or(RestError::Rejected)?;
-        let media = identity.media.as_ref().ok_or(RestError::Rejected)?;
+        let media = identity.media_items().map_err(|_| RestError::Rejected)?;
         let destination = card.destination.as_ref().ok_or(RestError::Rejected)?;
         // Omit attachments entirely: Discord keeps the existing attachment set.
         // The successful echo must prove that exact set before a successor binds.
@@ -82,16 +88,21 @@ impl Sender {
                 &prepared.markup,
             )
             .await?;
-        let snapshot = media_card_snapshot(
+        let snapshot = media_card_snapshots(
             &body,
             &identity.bot_id,
             channel,
             &destination.platform_id,
-            media.kind,
+            &media.iter().map(|item| item.kind).collect::<Vec<_>>(),
             text,
             &prepared.markup,
         )?;
-        if !media.matches_snapshot(&snapshot) {
+        if media.len() != snapshot.len()
+            || !media
+                .iter()
+                .zip(&snapshot)
+                .all(|(item, snapshot)| item.matches_snapshot(snapshot))
+        {
             return Err(RestError::Unknown);
         }
         Ok(())

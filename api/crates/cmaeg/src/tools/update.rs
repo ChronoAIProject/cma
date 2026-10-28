@@ -38,6 +38,16 @@ impl ToolsState {
             let (channel, message_ref, _) = self
                 .authorize_message(caller, reference, "updateMessage")
                 .await?;
+            if message.clear_native_attachments
+                && !(message_ref.interaction_record_id.is_some()
+                    && message_ref.route_id.starts_with("discord:"))
+            {
+                return Err(Problem::new(
+                    ProblemCode::InvalidRequest,
+                    400,
+                    "native_attachment_clear_unsupported",
+                ));
+            }
             if let Some(patch) = &message.native_media_update {
                 return self
                     .native_media_update(caller, reference, patch, idempotency_key)

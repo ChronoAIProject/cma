@@ -31,7 +31,6 @@ use std::{
 };
 use tokio::{sync::mpsc, task::JoinHandle};
 pub const DEFAULT_KEY: &str = "nyx_fixture_thread_default";
-
 pub struct Memory {
     pub calls: Vec<(String, String, Value)>,
     pub channels: BTreeMap<String, Value>,
@@ -302,6 +301,7 @@ impl App {
             native_discord_media_controls_enabled: false,
             native_discord_media_card_edits_enabled: false,
             native_discord_media_card_replacements_enabled: false,
+            native_discord_media_card_sets_enabled: false,
             whatsapp_interactions_enabled: false,
             native_whatsapp_interactions_enabled: false,
             native_whatsapp_media_controls_enabled: false,

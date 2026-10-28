@@ -26,6 +26,9 @@ impl Sender {
         if !message.native_attachments.is_empty() && !self.relay.discord_media_controls_enabled() {
             return (unsupported(), effects);
         }
+        if message.native_attachments.len() > 1 && !self.relay.discord_media_card_sets {
+            return (unsupported(), effects);
+        }
         let form = self.relay.discord_forms_enabled()
             && interactions::discord_form::schema(message).is_ok();
         if interactions::discord::multiselect_requested(message)
@@ -116,9 +119,9 @@ impl Sender {
             Ok(thread) => thread,
             Err(error) => return (refused(rendering, super::discord::outcome(error)), effects),
         };
-        let prepared = if let [file] = files.as_slice() {
+        let prepared = if !files.is_empty() {
             store
-                .prepare_discord_media(ctx.channel, event, message, context, thread, file)
+                .prepare_discord_media(ctx.channel, event, message, context, thread, &files)
                 .await
         } else if form {
             store
@@ -161,18 +164,26 @@ impl Sender {
                     .expect("REST confirmed message ID")
                     .to_owned();
                 if self.relay.discord_media_card_edits_enabled() {
-                    if let Some(media) = card.card.discord.as_mut().and_then(|i| i.media.as_mut()) {
-                        let confirmed = crate::discord::rest::media_card_snapshot(
+                    if let Some(identity) = card.card.discord.as_mut().filter(|identity| {
+                        identity.media_items().is_ok_and(|items| !items.is_empty())
+                    }) {
+                        let kinds: Vec<_> = identity
+                            .media_items()
+                            .unwrap()
+                            .iter()
+                            .map(|media| media.kind)
+                            .collect();
+                        let confirmed = crate::discord::rest::media_card_snapshots(
                             &body,
                             bot_id,
                             channel_id,
                             &id,
-                            media.kind,
+                            &kinds,
                             &parts[0].text,
                             &card.markup,
                         )
                         .ok()
-                        .is_some_and(|snapshot| media.confirm(&snapshot).is_ok());
+                        .is_some_and(|snapshots| identity.confirm_media(&snapshots).is_ok());
                         if !confirmed {
                             return (
                                 refused(

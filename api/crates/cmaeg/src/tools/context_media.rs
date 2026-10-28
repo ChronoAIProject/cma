@@ -63,6 +63,9 @@ pub struct MediaControlsCapabilities {
     /// Replace the supported upload set on the same durable card through a confirmed PATCH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replace_media: Option<bool>,
+    /// Explicit clear_native_attachments removes every upload on a confirmed card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clear_media: Option<bool>,
 }
 impl MediaControlsCapabilities {
     pub(super) fn single(caption_max_chars: u32) -> Self {
@@ -74,6 +77,7 @@ impl MediaControlsCapabilities {
             caption_max_chars,
             update: false,
             replace_media: None,
+            clear_media: None,
         }
     }
 }
@@ -161,6 +165,9 @@ impl NativeMediaCapabilities {
                         && (discord_controls || telegram_controls)
                     {
                         let mut controls = MediaControlsCapabilities::single(1024);
+                        if discord_controls && state.native_discord_media_card_sets_enabled {
+                            controls.max_attachments = cmaeg_core::message::MAX_NATIVE_ATTACHMENTS;
+                        }
                         controls.update = (discord_controls
                             && state.native_discord_media_card_edits_enabled)
                             || (telegram_controls
@@ -169,6 +176,10 @@ impl NativeMediaCapabilities {
                             && state.native_discord_media_card_edits_enabled
                             && state.native_discord_media_card_replacements_enabled)
                             .then_some(true);
+                        controls.clear_media = (discord_controls
+                            && state.native_discord_media_card_sets_enabled
+                            && controls.replace_media == Some(true))
+                        .then_some(true);
                         capabilities.controls = Some(controls);
                     }
                     capabilities

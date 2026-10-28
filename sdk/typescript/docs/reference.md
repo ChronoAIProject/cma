@@ -1039,6 +1039,17 @@ advertise `replace_media: true` for one same-card upload replacement with comple
 content/controls. Media/form combinations remain unsupported. Historical cards without a retained native file proof
 remain callback-only.
 
+The additional Discord attachment-set gate can raise `controls.max_attachments`
+to four. Send the complete new set to replace all previous files on one confirmed
+card. When `controls.clear_media` is true, `updateMessage` also accepts
+`clear_native_attachments: true` with complete replacement text/controls to remove
+every upload. Clear plus nonempty attachments is invalid; omitted/false clear and
+empty attachments retain the previous set. Ordinary sends and unsupported
+platforms reject clear intent. A confirmed clear returns an ordinary card reference
+with no media authority; uncertain results must not be replayed as a new write.
+New-card issuance gates do not revoke retained edits or otherwise enabled
+replacements. See [Discord attachment sets](../../../docs/CMAEG_Native_Discord_Card_Edits.md#complete-attachment-sets-and-explicit-removal).
+
 For native Lark/Feishu, the separate image-card issuance gate adds
 `native_media.controls.kinds: ["image"]`, `max_attachments: 1`,
 `caption_max_chars: 0` and `update: true`. This narrows the combination to one

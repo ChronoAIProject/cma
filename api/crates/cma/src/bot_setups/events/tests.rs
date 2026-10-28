@@ -197,6 +197,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         native_discord_media_controls_enabled: false,
         native_discord_media_card_edits_enabled: false,
         native_discord_media_card_replacements_enabled: false,
+        native_discord_media_card_sets_enabled: false,
         native_telegram_media_control_edits_enabled: false,
         native_media_edits: None,
         native_lark_effects: None,
