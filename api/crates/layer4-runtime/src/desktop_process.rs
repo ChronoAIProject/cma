@@ -8,6 +8,7 @@ use crate::writer_fence::{ManagedChild, ManagedSpawnPermit};
 pub(crate) struct DesktopProcess {
     child: Child,
     _managed: ManagedChild,
+    token: String,
 }
 
 impl DesktopProcess {
@@ -26,6 +27,8 @@ impl DesktopProcess {
     }
 
     fn spawn(mut command: Command) -> std::io::Result<Self> {
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        command.env("CMA_DESKTOP_TOKEN", &token);
         // A group belongs only to this desktop. Killing just the launcher
         // bypasses its shell trap and leaves its browser/display children alive.
         #[cfg(unix)]
@@ -50,7 +53,12 @@ impl DesktopProcess {
         Ok(Self {
             child,
             _managed: managed,
+            token,
         })
+    }
+
+    pub(crate) fn websocket_token(&self) -> &str {
+        &self.token
     }
 }
 

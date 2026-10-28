@@ -12,6 +12,9 @@ image setting is empty. Only the image built with `RUNTIME_DESKTOP=1` installs
 Chromium, Xvfb, Openbox, x11vnc, websockify, scrot, wmctrl and xdotool. Its rootless desktop
 starts on display `:99` before runtime readiness. Ports 5900 and 6080 bind to
 loopback; `/runtime/desktop` uses the supervisor's control authentication.
+The local WebSocket listener also requires a fresh boot token supplied by the
+supervisor in its Host header, so a page in Chromium cannot bypass CMA through
+localhost. The credential is absent from request paths and child browser env.
 Closing Chromium keeps the desktop alive; its right-click menu reopens the same
 browser profile at `~/.cma/chrome`.
 
