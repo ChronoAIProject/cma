@@ -15,6 +15,7 @@ const screenshot = directory + '/screen.png';
 const calls = [];
 let failure;
 let command;
+let retainedProfile;
 function output(response, index, item) {
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   const id = 'resp_desktop_' + index;
@@ -37,8 +38,13 @@ function call(value, index, name, args) {
 const server = createServer(async (request, response) => {
   try {
     if (request.method === 'GET') {
+      if (request.url.startsWith('/profile?value=')) {
+        retainedProfile = decodeURIComponent(request.url.slice('/profile?value='.length));
+        response.writeHead(204).end();
+        return;
+      }
       response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
-      response.end('<!doctype html><title>cma-desktop-ready</title><body style="margin:0;background:#234"><input id="field" style="position:absolute;left:80px;top:100px;width:300px;height:40px"><button style="position:absolute;left:80px;top:200px;width:250px;height:40px" onclick="document.title=\'cma-ui:\'+document.getElementById(\'field\').value">Verify input</button>');
+      response.end('<!doctype html><title>cma-desktop-ready</title><body style="margin:0;background:#234"><input id="field" style="position:absolute;left:80px;top:100px;width:300px;height:40px"><button style="position:absolute;left:80px;top:200px;width:250px;height:40px" onclick="localStorage.setItem(\'cma-desktop-proof\',document.getElementById(\'field\').value);document.title=\'cma-ui:\'+document.getElementById(\'field\').value">Verify input</button><script>fetch(\'/profile?value=\'+encodeURIComponent(localStorage.getItem(\'cma-desktop-proof\')||\'\'))</script>');
       return;
     }
     assert.equal(request.url, '/v1/responses');
@@ -71,7 +77,8 @@ const server = createServer(async (request, response) => {
   assert.equal(process.env.DISPLAY, ':99');
   assert.equal(execFileSync('/usr/local/bin/codex', ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.165.0');
   assert.match(execFileSync('/usr/local/bin/codex', ['features', 'list'], { encoding: 'utf8' }), /^computer_use\s+stable\s+true$/m);
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  // A stable loopback origin proves real Chromium profile storage after restart.
+  await new Promise(resolve => server.listen(8877, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
   writeFileSync(home + '/config.toml', [
     'model="gpt-6"', 'model_provider="fixture"', 'web_search="disabled"',
@@ -88,7 +95,7 @@ const server = createServer(async (request, response) => {
     "xdotool type --clearmodifiers '" + origin + "/desktop-test'",
     'xdotool key Return',
     "for i in $(seq 1 30); do xdotool getactivewindow getwindowname | grep -q cma-desktop-ready && break; sleep 0.1; done",
-    'xdotool key F11', 'sleep 0.3',
+    'wmctrl -i -r ' + window + ' -b add,fullscreen', 'sleep 0.3',
     'xdotool mousemove 120 120 click 1', 'xdotool type --clearmodifiers cma-codex',
     'xdotool mousemove 120 220 click 1', 'sleep 0.1',
     'scrot ' + screenshot,
@@ -104,6 +111,8 @@ const server = createServer(async (request, response) => {
     await bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Use the desktop, enter cma-codex, click Verify input, then inspect a screenshot.' }] });
     if (failure) throw failure;
     assert.equal(calls.length, 3);
+    for (let i = 0; retainedProfile === undefined && i < 30; i++) await delay(100);
+    assert.equal(retainedProfile, process.env.CMA_DESKTOP_EXPECT_RETAINED === '1' ? 'cma-user' : '');
     const bytes = readFileSync(screenshot);
     assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
     assert(bytes.length > 1000);
