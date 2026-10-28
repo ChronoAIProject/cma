@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 228,
+  "openapi_operations": 230,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -3229,6 +3229,28 @@
         "sandbox_checkpoint_in_progress",
         "store_failed"
       ]
+    },
+    "GET /api/v1/agents/{id}/desktop": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/desktop.rs# Owner desktop availability and same-origin stream discovery.",
+      "required_problems": [
+        "not_authenticated",
+        "desktop_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/desktop/ws": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/desktop.rs# Owner-authenticated desktop WebSocket admission and binary relay.",
+      "required_problems": [
+        "not_authenticated",
+        "desktop_unavailable",
+        "desktop_busy",
+        "desktop_runtime_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/desktop.rs# The Axum extractor refuses a request without an HTTP WebSocket upgrade.",
+        "403": "api/crates/layer1-public/src/rest/desktop.rs# Origin checks refuse foreign origins and cookie requests without Origin before runtime access."
+      }
     },
     "POST /api/v1/workspaces/{id}/recover-prepare": {
       "classification": "openapi",

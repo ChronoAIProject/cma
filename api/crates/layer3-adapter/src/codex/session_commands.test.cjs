@@ -55,7 +55,7 @@ function connect(program, directory, home, binary) {
 
 test("pinned session advertises real commands, refreshes skills and executes native goal and skill semantics", { timeout: 120000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   const directory = mkdtempSync(join(tmpdir(), "cma-session-commands-"));
   const home = join(directory, "agent-home"); mkdirSync(home); mkdirSync(join(home, "skills"));
   const calls = []; let error, sessionId, pauseGoal = false;
@@ -139,6 +139,6 @@ test("pinned session advertises real commands, refreshes skills and executes nat
     if (error) throw error;
   } finally {
     await bridge.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

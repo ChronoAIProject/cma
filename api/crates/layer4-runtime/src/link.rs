@@ -1,4 +1,5 @@
 mod conversation;
+mod desktop;
 use conversation::conversation;
 
 use std::path::PathBuf;
@@ -36,6 +37,7 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             post(control).layer(DefaultBodyLimit::max(CONTROL_BODY_BYTES)),
         )
         .route("/runtime/agents/{agent_id}/conversation", get(conversation))
+        .route("/runtime/desktop", get(desktop::websocket))
         .route("/runtime/agents/{agent_id}/history", get(history))
         .route(
             "/runtime/checkpoints/{reference}",

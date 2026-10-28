@@ -53,6 +53,10 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
+        self.for_handle(handle)?.open_desktop(handle).await
+    }
+
     async fn inspect_nonexecuting_runtime(
         &self,
         handle: &RuntimeHandle,
