@@ -217,6 +217,39 @@ pub trait HostedBackend: Send + Sync {
         Ok(None)
     }
 
+    /// Fresh observation only; this must never bind or start a runtime process.
+    async fn inspect_nonexecuting_runtime(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<Option<super::NonexecutingRuntimeProof>> {
+        Err(crate::AdapterError::Unsupported(
+            "nonexecuting runtime inspection".into(),
+        ))
+    }
+
+    /// Replay the complete provider proof immediately before the admitted action.
+    async fn verify_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        proof: &super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        if self
+            .inspect_nonexecuting_runtime(handle, request, home)
+            .await?
+            .as_ref()
+            != Some(proof)
+        {
+            return Err(crate::AdapterError::Rejected(
+                "nonexecuting runtime evidence changed".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Internal bounded provider maintenance on the exact existing runtime.
     /// Only the lifecycle adapter may authorize the provider-rendered command.
     /// Implementations must fence resource identity, bound I/O and duration,
