@@ -277,6 +277,7 @@ impl App {
             native_whatsapp_forms: None,
             native_media_edits: None,
             discord_threads: None,
+            native_lark_conversation_history: None,
             discord_conversation_history: Some(Arc::new(DiscordConversationHistory::new(
                 DiscordRest::fixture(&format!("{platform_base}/api/v10/")),
             ))),

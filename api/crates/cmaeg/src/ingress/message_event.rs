@@ -145,6 +145,7 @@ fn bind_selected(
         next.conversation_id = retained.event.conversation_id.clone();
         next.consumer = (!retained.consumer.is_default()).then(|| retained.consumer.clone());
         targets.push(ConsumerLaunch {
+            history_custody: None,
             consumer: retained.consumer.clone(),
             provider: consumer.provider.clone(),
             idempotency_key: if retained.consumer.is_default() {

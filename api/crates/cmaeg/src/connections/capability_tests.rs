@@ -15,6 +15,7 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
         service
             .management
             .native_discord_conversation_history_enabled = enabled;
+        service.management.native_lark_conversation_history_enabled = !enabled;
         service.management.native_discord_reactions_enabled = enabled;
         service.management.multi_consumer_writes_enabled = !enabled;
         service.management.native_bot_mentions_writes_enabled = enabled;
@@ -48,6 +49,7 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
             relay["native_discord_conversation_history_enabled"],
             enabled
         );
+        assert_eq!(relay["native_lark_conversation_history_enabled"], !enabled);
         assert_eq!(relay["native_discord_reactions_enabled"], enabled);
         assert_eq!(relay["multi_consumer_writes_enabled"], !enabled);
         assert_eq!(relay["native_bot_mentions_writes_enabled"], enabled);
