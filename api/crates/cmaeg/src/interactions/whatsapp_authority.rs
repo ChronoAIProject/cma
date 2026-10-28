@@ -21,7 +21,8 @@ pub struct Authority {
 }
 fn source_revision(channel: &ResolvedChannel, source: &SourceKind) -> Result<String, Error> {
     let source = channel.definition.source_of(source).ok_or(Error::Denied)?;
-    let value = crate::whatsapp::legacy_source(source);
+    let value =
+        serde_json::to_value(crate::whatsapp::legacy_source(source)).map_err(|_| Error::Denied)?;
     Ok(crate::channels::definition::hash_secret(
         &cmaeg_core::profile::canonical_json(value),
     ))
@@ -148,4 +149,65 @@ pub(super) fn valid(card: &Card) -> bool {
             (None, None) => true,
             _ => false,
         }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ingress::routing_plan::fixture;
+    use cmaeg_core::channel::{AdmissionPolicy, Source};
+    use serde_json::json;
+
+    #[test]
+    fn control_source_revision_retains_pre_forms_canonical_hashes() {
+        let kind = SourceKind::Whatsapp {
+            app_id: "12345".into(),
+            waba_id: "23456".into(),
+            phone_number_id: "34567".into(),
+        };
+        for (groups, old_revision) in [
+            (
+                vec![],
+                "sha256:d20768feef83755f681e4c8d63eff3fdd2c6827d538ed251378731807fe71428",
+            ),
+            (
+                vec!["group_A+/==".to_owned()],
+                "sha256:effdc559b59a9b8b54fd4c493cff1c82d653291cf38f5b6de610520c68393029",
+            ),
+        ] {
+            for enabled in [false, true] {
+                let source = Source::Whatsapp {
+                    forms_enabled: enabled,
+                    group_ids: groups.clone(),
+                    app_id: "12345".into(),
+                    waba_id: "23456".into(),
+                    phone_number_id: "34567".into(),
+                    admission: AdmissionPolicy::All {},
+                };
+                let mut channel = fixture::request(
+                    |definition| {
+                        definition["sources"] = json!([source]);
+                        let credentials = crate::whatsapp::tests::credentials();
+                        definition["secrets"]["whatsapp"] = json!({
+                            "app_secret": credentials.app_secret.as_str(),
+                            "access_token": credentials.access_token.as_str(),
+                            "verify_token": credentials.verify_token.as_str(),
+                        });
+                    },
+                    fixture::message("control-hash-fixture"),
+                )
+                .channel;
+                assert_eq!(source_revision(&channel, &kind).unwrap(), old_revision);
+                let Source::Whatsapp { admission, .. } =
+                    &mut std::sync::Arc::make_mut(&mut channel).definition.sources[0]
+                else {
+                    panic!()
+                };
+                *admission = AdmissionPolicy::Allowlist {
+                    sender_ids: vec!["447700900123".into()],
+                };
+                assert_ne!(source_revision(&channel, &kind).unwrap(), old_revision);
+            }
+        }
+    }
 }
