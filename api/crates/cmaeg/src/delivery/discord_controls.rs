@@ -23,6 +23,9 @@ impl Sender {
         context: Option<crate::providers::EventContextSnapshot>,
     ) -> (IntentReceipt, SendEffects) {
         let effects = SendEffects::default();
+        if !message.native_attachments.is_empty() && !self.relay.discord_media_controls_enabled() {
+            return (unsupported(), effects);
+        }
         let form = self.relay.discord_forms_enabled()
             && interactions::discord_form::schema(message).is_ok();
         if interactions::discord::multiselect_requested(message)
@@ -88,6 +91,13 @@ impl Sender {
             Ok(receipt) => receipt,
             Err(_) => return (rejected("reaction_target_custody_unavailable"), effects),
         };
+        // Prepare the bounded upload before committing delivery or creating a card.
+        // It is sent in the same native request as the opaque controls.
+        let files = match crate::discord::outbound_media::prepare(&message.native_attachments).await
+        {
+            Ok(files) => files,
+            Err(_) => return (rejected("attachment_preparation_failed"), effects),
+        };
         let route = interactions::discord::route(bot_id, channel_id);
         let _ticket = match ctx.gate.enter_route(&route).await {
             Ok(ticket) => ticket,
@@ -105,7 +115,11 @@ impl Sender {
             Ok(thread) => thread,
             Err(error) => return (refused(rendering, super::discord::outcome(error)), effects),
         };
-        let prepared = if form {
+        let prepared = if let [file] = files.as_slice() {
+            store
+                .prepare_discord_media(ctx.channel, event, message, context, thread, file)
+                .await
+        } else if form {
             store
                 .prepare_discord_form(ctx.channel, event, message, context, thread)
                 .await
@@ -133,7 +147,7 @@ impl Sender {
                 channel_id,
                 Some(message_id),
                 &parts[0].text,
-                &[],
+                &files,
                 Some(&card.markup),
             )
             .await;

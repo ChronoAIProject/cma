@@ -200,6 +200,7 @@ impl App {
                 crate::discord::DiscordRest::fixture(&format!("{platform_base}/api/v10/")),
             ))),
             discord_interactions_enabled: false,
+            native_discord_media_controls_enabled: false,
             telegram_effects_issuance_enabled: false,
             native_media_edits: None,
             native_whatsapp_forms: None,
