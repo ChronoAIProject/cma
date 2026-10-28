@@ -100,7 +100,9 @@ async function fixture(family = "cma_access") {
     bridge.call("cma/open-completion", { action: "read", sessionId, bindingDigest: digest(binding), challenge });
   const prompt = (bridge, sessionId) => bridge.call("session/prompt", { sessionId,
     prompt: [{ type: "text", text: "Remember OPEN_COMPLETION_HISTORY_MARKER. Reply briefly without using tools." }] });
-  const history = () => Object.fromEntries(readdirSync(home, { recursive: true, withFileTypes: true })
+  // Native plugin downloads create/remove private .tmp directories concurrently.
+  // Conversation persistence assertions read only the provider's history tree.
+  const history = () => Object.fromEntries(readdirSync(join(home, "sessions"), { recursive: true, withFileTypes: true })
     .filter(entry => entry.isFile() && entry.name.endsWith(".jsonl"))
     .map(entry => { const path = join(entry.parentPath, entry.name); return [path, readFileSync(path, "utf8")]; }));
   return { binary, program, directory, home, params, server, connect, read, prompt, history,
