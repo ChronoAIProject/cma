@@ -244,6 +244,11 @@ pub enum SandboxEventKind {
     CheckpointSealed {
         object_reference: String,
     },
+    RuntimeRecoveryAdmitted {
+        previous_status: SandboxStatus,
+        target_runtime_version: String,
+        proof: Box<super::SandboxUnpublishedRecoveryProof>,
+    },
     Revived,
     Rotated {
         runtime_version: String,

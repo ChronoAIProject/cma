@@ -25,6 +25,7 @@ impl Sandbox {
         at: String,
     ) -> Result<u64, SandboxModelError> {
         self.require_lifecycle_authority(holder, fence)?;
+        self.require_unpublished_runtime_quiescence()?;
         if !runtime_provisioning(self) || self.runtime.is_some() {
             return Err(invalid_generation());
         }
@@ -97,6 +98,7 @@ impl Sandbox {
         &self,
         next: &Sandbox,
     ) -> Result<(), SandboxModelError> {
+        self.validate_unpublished_recovery_successor(next)?;
         next.validate_runtime_generation()?;
         if next.lifecycle.runtime_generation_high_water
             < self.lifecycle.runtime_generation_high_water
