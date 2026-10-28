@@ -2,12 +2,15 @@ use super::*;
 use crate::sandbox::lifecycle_test_support::{agent, NOW};
 use crate::sandbox::runtime_update_test_support::native;
 use crate::sandbox::{
-    AgentOperationIntent, AgentOperationRecord, AgentWorkReceipt, SandboxRotationIdentity,
-    SandboxUnpublishedRecoveryQuiescence, TypedFailure,
+    AgentOperationIntent, AgentOperationRecord, AgentWorkReceipt, AgentWorkStep,
+    SandboxRotationIdentity, SandboxUnpublishedRecoveryQuiescence, TypedFailure,
 };
 
 #[path = "unpublished_recovery_lifecycle_tests.rs"]
 mod lifecycle;
+
+#[path = "unpublished_recovery_history_tests.rs"]
+mod history;
 
 fn snapshot(parked_update: bool) -> SandboxUnpublishedRecoverySnapshot {
     let mut sandbox = native();
@@ -164,7 +167,13 @@ fn no_current_generation_turn_or_publication_can_enter_recovery() {
             4 => agent
                 .work
                 .schedule(AgentWorkStep::DispatchFirstMessage, NOW.into()),
-            5 => agent.work.receipts.clear(),
+            5 => {
+                agent.work.lease = Some(crate::sandbox::AgentWorkLease {
+                    holder: HOLDER.into(),
+                    fence: 6,
+                    expires_at: END.into(),
+                });
+            }
             6 => agent.conversation.conversation_id = None,
             7 => agent.requested_stop_reason = Some(crate::sandbox::AgentStopReason::Owner),
             8 => {
@@ -183,7 +192,7 @@ fn no_current_generation_turn_or_publication_can_enter_recovery() {
                 let mut first =
                     crate::sandbox::FirstMessageRecord::new("recovery-test", "pending", NOW)
                         .unwrap();
-                first.dispatch_generation = 2;
+                first.fence_dispatch_for(1, 1, 6, NOW.into()).unwrap();
                 agent.conversation.first_message = Some(first);
             }
             10 => held

@@ -62,6 +62,36 @@ fn finish(value: &mut Sandbox) {
 }
 
 #[test]
+fn terminal_only_recovery_finishes_without_reopening_deleted_agents() {
+    let held = history::terminal_snapshot();
+    let requested = request(held.clone());
+    let original_agents = held.agents.clone();
+    let mut value = apply_unpublished_runtime_recovery(&held, &requested)
+        .unwrap()
+        .sandbox;
+    reach_reopen(&mut value);
+    let Some(SandboxLifecycleOperation::ImageRotation { identity, .. }) =
+        &value.lifecycle.operation
+    else {
+        panic!();
+    };
+    assert!(identity.agents.is_empty());
+    finish(&mut value);
+    assert_eq!(value.status, SandboxStatus::Active);
+    assert_eq!(
+        value.runtime.as_ref().unwrap().provision_generation,
+        Some(4)
+    );
+    assert_eq!(value.lifecycle.home, held.sandbox.lifecycle.home);
+    assert_eq!(requested.snapshot.agents, original_agents);
+    assert!(requested
+        .snapshot
+        .agents
+        .iter()
+        .all(|agent| agent.status == AgentStatus::Deleted));
+}
+
+#[test]
 fn recovery_completes_all_phases_and_allows_future_pause_update_and_retirement() {
     let mut value = admitted();
     let home = value.lifecycle.home.clone();

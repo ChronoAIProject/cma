@@ -11,12 +11,11 @@ use serde::{Deserialize, Serialize};
 
 use super::store::SandboxStoreError;
 use super::{
-    Agent, AgentStatus, AgentWorkStep, FirstMessageDelivery, QueuedMessageState, RuntimeBinding,
-    Sandbox, SandboxEventKind, SandboxImageRotationPhase, SandboxLifecycleOperation,
-    SandboxReviveCause, SandboxRevivePhase, SandboxStatus, SandboxWorkStep, Workspace,
-    WorkspaceWorkStep,
+    Agent, AgentStatus, FirstMessageDelivery, QueuedMessageState, RuntimeBinding, Sandbox,
+    SandboxEventKind, SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxReviveCause,
+    SandboxRevivePhase, SandboxStatus, SandboxWorkStep, Workspace, WorkspaceWorkStep,
 };
-use crate::{AgentId, SandboxId};
+use crate::{seconds_from_rfc3339, AgentId, SandboxId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxUnpublishedRecoverySnapshot {
@@ -220,11 +219,25 @@ impl SandboxUnpublishedRecoverySnapshot {
         let mut ids = BTreeSet::new();
         for agent in &self.agents {
             agent.validate_conversation().map_err(|_| refused())?;
+            // Deletion may retain an interrupted turn or delivery record as
+            // history. Only completed deletion with no remaining obligations
+            // makes that history incapable of dispatch; the work, operation and
+            // runtime-publication fences below still apply to every Agent.
+            let deleted = agent.status == AgentStatus::Deleted;
             if !ids.insert(&agent.id)
                 || agent.sandbox_id != self.sandbox.id
                 || agent.owner != self.sandbox.owner
                 || agent.work.step.is_pending()
                 || agent.work.lease.is_some()
+                || (deleted
+                    && (agent
+                        .deleted_at
+                        .as_deref()
+                        .and_then(seconds_from_rfc3339)
+                        .is_none()
+                        || !agent.work.cleanup_debt.is_empty()
+                        || agent.requested_stop_reason.is_some()
+                        || !agent.conversation.queued_messages.is_empty()))
                 || agent
                     .conversation
                     .runtime_generation
@@ -241,8 +254,11 @@ impl SandboxUnpublishedRecoverySnapshot {
                     .first_message
                     .as_ref()
                     .is_some_and(|first| {
-                        first.dispatch_generation >= generation
-                            || (!first.is_terminal() && first.state != FirstMessageDelivery::Queued)
+                        // dispatch_generation is an Agent work-authority fence,
+                        // not a Sandbox runtime generation.
+                        !deleted
+                            && !first.is_terminal()
+                            && first.state != FirstMessageDelivery::Queued
                     })
                 || agent
                     .conversation
@@ -252,6 +268,9 @@ impl SandboxUnpublishedRecoverySnapshot {
             {
                 return Err(refused());
             }
+            // Runtime loss clears process receipts, including OpenConversation.
+            // The original conversation identity, complete publication-log scan
+            // in the store, and native proof authorize reopening it instead.
             if agent.status.is_live()
                 && (agent.status != AgentStatus::Paused
                     || agent.conversation.active_turn.is_some()
@@ -261,12 +280,7 @@ impl SandboxUnpublishedRecoverySnapshot {
                         .conversation
                         .conversation_id
                         .as_ref()
-                        .is_none_or(|id| id.trim().is_empty())
-                    || !agent
-                        .work
-                        .receipts
-                        .iter()
-                        .any(|receipt| receipt.step == AgentWorkStep::OpenConversation))
+                        .is_none_or(|id| id.trim().is_empty()))
             {
                 return Err(refused());
             }
