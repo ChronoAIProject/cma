@@ -38,6 +38,8 @@ pub(crate) mod native_lark;
 pub(crate) mod owner;
 mod prepare;
 mod replacement;
+pub(crate) mod telegram_media;
+mod telegram_media_store;
 pub(crate) mod whatsapp;
 pub(crate) mod whatsapp_authority;
 mod whatsapp_binding;
@@ -136,6 +138,7 @@ impl InteractionStore {
             || card.expires_at <= now()
             || !native_lark::valid(&card, &self.keys)
             || card.native_whatsapp_flow.is_some()
+            || !telegram_media::valid(&card)
             || !owner::valid(&card)
             || !whatsapp::valid_record(&card)
             || !discord::valid(&card)

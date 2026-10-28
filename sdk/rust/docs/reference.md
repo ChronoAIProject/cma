@@ -699,3 +699,12 @@ accounts. Events use existing `cma.message.updated.v1` (`data.patch.text`) and
 consumer/conversation. Caption changes preserve original attachments; outgoing
 edit/delete and history import are outside this feature. See
 [the incoming-change contract](../../../docs/CMAEG_Native_WhatsApp_Message_Events.md).
+
+### Native media with controls
+
+Check the optional `capabilities.native_media.controls` object before combining
+`native_attachments` with buttons or choices. It declares `max_attachments`,
+`buttons`, `choices`, `caption_max_chars` and `update`; absence grants no combined
+send capability. Native Telegram's gated combination uses one upload and one
+native message/card. Its `update: false` excludes media-card edits. Existing
+attachment bounds and event/consumer authority still apply.

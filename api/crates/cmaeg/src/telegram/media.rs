@@ -26,6 +26,18 @@ impl TelegramClient {
         kind: NativeMediaKind,
         file: PreparedFile,
     ) -> Result<MediaUpload, Error> {
+        self.prepare_media_with_markup(chat, thread, kind, file, None)
+            .await
+    }
+
+    pub(crate) async fn prepare_media_with_markup(
+        &self,
+        chat: &str,
+        thread: Option<&str>,
+        kind: NativeMediaKind,
+        file: PreparedFile,
+        markup: Option<&Value>,
+    ) -> Result<MediaUpload, Error> {
         if !chat
             .parse::<i64>()
             .is_ok_and(|id| id != 0 && id.to_string() == chat)
@@ -57,6 +69,12 @@ impl TelegramClient {
         }
         if let Some(caption) = file.caption {
             form = form.text("caption", caption);
+        }
+        if let Some(markup) = markup {
+            form = form.text(
+                "reply_markup",
+                serde_json::to_string(markup).map_err(|_| Error::Rejected)?,
+            );
         }
         // The reqwest encoder escapes multipart metadata; collection is safe because
         // every part is an already bounded in-memory byte vector or validated string.

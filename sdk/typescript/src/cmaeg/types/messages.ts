@@ -167,7 +167,16 @@ export const NativeVideoCapabilitiesSchema = object({
   fast_start_required: boolean,
 });
 export type NativeVideoCapabilities = Output<typeof NativeVideoCapabilitiesSchema>;
+export const MediaControlsCapabilitiesSchema = object({
+  max_attachments: integer,
+  buttons: boolean,
+  choices: boolean,
+  caption_max_chars: integer,
+  update: boolean,
+});
+export type MediaControlsCapabilities = Output<typeof MediaControlsCapabilitiesSchema>;
 export const NativeMediaCapabilitiesSchema = object({
+  controls: optional(nullable(MediaControlsCapabilitiesSchema)),
   kinds: array(text),
   sources: array(text),
   max_attachments: integer,
