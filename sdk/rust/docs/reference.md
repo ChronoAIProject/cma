@@ -723,3 +723,12 @@ media-card-edit gates. It permits changing message content/controls while keepin
 the exact confirmed upload. It does not grant binary/caption replacement or
 media/form combinations. Historical cards without a retained native file proof
 remain callback-only.
+
+For native Lark/Feishu, the separate image-card issuance gate adds
+`native_media.controls.kinds: ["image"]`, `max_attachments: 1`,
+`caption_max_chars: 0` and `update: true`. This narrows the combination to one
+PNG/JPEG even when ordinary media lists file/audio/video. Supply explanatory
+message text instead of an attachment caption. Content/control edits retain the
+confirmed image; binary replacement, image removal and forms are not supported.
+The optional `kinds` field remains absent for older responses. See
+[native Lark image controls](../../../docs/CMAEG_Native_Lark_Image_Controls.md).

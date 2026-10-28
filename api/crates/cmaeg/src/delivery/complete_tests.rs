@@ -8,6 +8,8 @@ use super::{
 mod destinations;
 mod durable;
 mod native_lark_control_tests;
+mod native_lark_media_fixture;
+mod native_lark_media_tests;
 mod native_lark_tests;
 mod native_whatsapp_control_tests;
 mod native_whatsapp_document_tests;

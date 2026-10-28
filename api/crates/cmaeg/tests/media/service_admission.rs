@@ -250,6 +250,7 @@ fn config(media: MediaConfig) -> Config {
         native_whatsapp_flow_writes_enabled: false,
         native_whatsapp_media_enabled: false,
         native_lark_outbound_media_enabled: false,
+        native_lark_media_controls_enabled: false,
         native_whatsapp_outbound_media_enabled: false,
         native_whatsapp_interactions_enabled: false,
         native_whatsapp_reactions_enabled: false,

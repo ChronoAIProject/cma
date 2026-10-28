@@ -371,3 +371,49 @@ fn native_lark_media_discovery_is_independent_and_reports_bounded_subset() {
     assert!(capability.sticker.is_none());
     assert_eq!(capability.video.unwrap().max_duration_ms, 600_000);
 }
+
+#[tokio::test]
+async fn native_lark_image_control_discovery_is_image_only_and_requires_current_verified_custody() {
+    let mut app = crate::tools::message_effects::lark_fixture::App::new(Platform::Lark).await;
+    let f = crate::interactions::native_lark::fixture::Fixture::new(
+        true,
+        true,
+        cmaeg_core::channel::LarkRegion::Lark,
+    )
+    .await;
+    for media in [false, true] {
+        for controls in [false, true] {
+            for verified in [false, true] {
+                app.state.native_lark_outbound_media_enabled = media;
+                app.state.native_lark_media_controls_enabled = controls;
+                let caps = NativeMediaCapabilities::for_event(
+                    &app.state,
+                    &f.channel,
+                    &f.event,
+                    &f.context.activity,
+                    verified,
+                );
+                assert_eq!(caps.is_some(), media);
+                let combination = caps.and_then(|caps| caps.controls);
+                assert_eq!(combination.is_some(), media && controls && verified);
+                if let Some(combination) = combination {
+                    assert_eq!(combination.kinds, Some(vec!["image".into()]));
+                    assert_eq!(combination.max_attachments, 1);
+                    assert_eq!(combination.caption_max_chars, 0);
+                    assert!(combination.buttons && combination.choices && combination.update);
+                }
+            }
+        }
+    }
+    let mut channel = f.channel.as_ref().clone();
+    channel.definition.sources.clear();
+    let caps = NativeMediaCapabilities::for_event(
+        &app.state,
+        &channel,
+        &f.event,
+        &f.context.activity,
+        true,
+    )
+    .unwrap();
+    assert!(caps.controls.is_none());
+}

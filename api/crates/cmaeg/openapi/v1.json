@@ -4139,6 +4139,16 @@
           "choices": {
             "type": "boolean"
           },
+          "kinds": {
+            "description": "When present, only these media kinds can be combined with controls.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "max_attachments": {
             "minimum": 0,
             "type": "integer"
