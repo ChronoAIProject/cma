@@ -17,6 +17,31 @@ NATIVES = {
 }
 LAUNCHER = "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477"
 BRIDGE_PATH = "/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js"
+RELAY_SOURCE = "e595835b6314ff0770fdf97817d6920295ea384a5ac3bfdd0476b90c81b79a4f"
+
+
+def relay_command(command):
+    argv = command.rstrip(b"\0").split(b"\0")
+    return len(argv) == 5 and argv[:4] == [b"/usr/bin/python3", b"-I", b"-u", b"-c"] and sha(argv[4]) == RELAY_SOURCE
+
+
+def services(processes):
+    """Only the source-pinned, bounded supervisor transport relay may remain."""
+    result = []
+    for pid, item in processes.items():
+        if pid == os.getpid() or item["ppid"] != 0:
+            continue
+        try:
+            if not relay_command(read(f"{PROC}/{pid}/cmdline", 32768, True)):
+                continue
+            require(os.readlink(f"{PROC}/{pid}/exe") == os.path.realpath("/usr/bin/python3")
+                    and b"CODEX_HOME" not in environment(pid)
+                    and not any(p["ppid"] == pid for p in processes.values()), "relay_identity")
+            result.append(proc_identity(pid))
+        except FileNotFoundError:
+            pass
+    require(len(result) <= 16, "relay_limit")
+    return result
 
 
 def validate(request):
@@ -159,7 +184,8 @@ def inspect(request):
         supervisor = proc_identity(supervisors[0])
         require(supervisor["pid"] == 1 and supervisor["ppid"] == 0, "supervisor_topology")
         agents = [topology(a, processes, supervisor) for a in request["agents"]]
-        permitted = {1, os.getpid()} | {p["pid"] for a in agents for p in a["processes"]}
+        relays = services(processes)
+        permitted = {1, os.getpid()} | {p["pid"] for a in agents for p in a["processes"]} | {p["pid"] for p in relays}
         require(set(processes) <= permitted, "unowned_process")
         history = [history_summary(a) for a in request["agents"]]
         for item, tree in zip(history, agents):
@@ -167,7 +193,7 @@ def inspect(request):
             for file in item["files"]:
                 file["historicalOpenTurns"] = historical_turns(file, tree)
         plan = {"version": 1, "processesAbsent": False, "runtime": request["runtime"], "agents": request["agents"],
-                "supervisor": supervisor, "topology": agents,
+                "supervisor": supervisor, "topology": agents, "services": relays,
                 "baseline": [{"pid": p["pid"], "start": p["start"]} for p in processes.values() if p["pid"] != os.getpid()],
                 "histories": history}
         require(len(encode(plan)) <= 56 * 1024, "plan_limit")
@@ -217,7 +243,8 @@ def validate_live(plan, allow_missing):
             require(digest_file(BRIDGE_PATH) == item["bridgeSha256"] and digest_file(item["launcherPath"]) == LAUNCHER, "binary_changed")
             require(stdin_owner(item["nativePid"], item["bridgePid"], processes, item["launcherPid"]) == item["stdin"], "stdin_owner_mismatch")
     owned = {p["pid"] for a in plan["topology"] for p in a["processes"]}
-    require(set(processes) <= descendants(owned, processes) | {plan["supervisor"]["pid"], os.getpid()}, "unowned_process")
+    permitted = descendants(owned, processes) | {plan["supervisor"]["pid"], os.getpid()} | {p["pid"] for p in services(processes)}
+    require(set(processes) <= permitted, "unowned_process")
     return processes
 
 
@@ -259,7 +286,8 @@ def absent(plan, current):
     if owned.keys() & current.keys():
         return False
     supervisor = plan["supervisor"]
-    require(all(pid == os.getpid() or (pid == supervisor["pid"] and p["start"] == supervisor["start"]) for pid, p in current.items()), "untracked_process")
+    relays = {p["pid"] for p in services(current)}
+    require(all(pid == os.getpid() or pid in relays or (pid == supervisor["pid"] and p["start"] == supervisor["start"]) for pid, p in current.items()), "untracked_process")
     return True
 
 
