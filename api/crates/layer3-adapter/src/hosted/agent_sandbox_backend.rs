@@ -198,6 +198,17 @@ impl HostedBackend for AgentSandboxBackend {
         self.inspect_native_context(handle, request, home).await
     }
 
+    async fn inspect_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<super::NonexecutingRuntimeProof>> {
+        self.client
+            .inspect_nonexecuting_runtime(handle, request, home)
+            .await
+    }
+
     async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,
