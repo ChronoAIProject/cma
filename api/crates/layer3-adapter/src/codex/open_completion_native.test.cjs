@@ -30,7 +30,8 @@ async function localFixture() {
       if (request.url.startsWith("/mcp")) {
         if (request.url === "/mcp-unavailable") { response.writeHead(503).end(); return; }
         const changed = request.url === "/mcp-changed";
-        assert.equal(request.headers.authorization, "Bearer " + (changed ? "changed-open-fixture" : "original-open-fixture"));
+        assert.equal(request.headers.authorization, request.url === "/mcp-provider" ? undefined
+          : "Bearer " + (changed ? "changed-open-fixture" : "original-open-fixture"));
         if (!Object.hasOwn(value, "id")) { response.writeHead(202).end(); return; }
         let result;
         if (value.method === "initialize") {
@@ -68,7 +69,7 @@ async function localFixture() {
     async close() { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
 }
 
-async function fixture() {
+async function fixture(family = "cma_access") {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
   assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
   const program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
@@ -83,8 +84,9 @@ async function fixture() {
     'base_url = "' + server.origin + '/v1"', 'wire_api = "responses"', 'requires_openai_auth = false',
   ].join("\n"));
   writeFileSync(join(directory, "dirty-work.txt"), "preserved user work");
-  const params = { cwd: directory, mcpServers: [{ type: "http", name: "cma_access", url: server.origin + "/mcp",
-    headers: [{ name: "Authorization", value: "Bearer original-open-fixture" }] }] };
+  const params = { cwd: directory, mcpServers: [{ type: "http", name: family,
+    url: server.origin + (family === "cmaeg" ? "/mcp-provider" : "/mcp"),
+    headers: family === "cmaeg" ? [] : [{ name: "Authorization", value: "Bearer original-open-fixture" }] }] };
   const bridges = [];
   async function connect(nativePath = binary) {
     const bridge = processRpc(process.execPath, [program], {
@@ -109,8 +111,9 @@ async function fixture() {
     } };
 }
 
-test("pinned native new, exact cached load/resume, and cold restart expose only completed setup", { timeout: 120000 }, async () => {
-  const f = await fixture();
+for (const family of ["cma_access", "cmaeg", "cma_channel"]) test(
+  "pinned native " + family + " alone proves new, cached load/resume, and cold setup", { timeout: 120000 }, async () => {
+  const f = await fixture(family);
   try {
     const bridge = await f.connect();
     assert.deepEqual(await bridge.call("cma/open-completion", { action: "support" }), { supported: true, version: 1 });
@@ -155,8 +158,9 @@ test("pinned native new, exact cached load/resume, and cold restart expose only 
   } finally { await f.close(); }
 });
 
-test("pinned native cached resume ignores changed descriptors and cannot mint a matching receipt", { timeout: 60000 }, async () => {
-  const f = await fixture();
+for (const family of ["cma_access", "cmaeg"]) test(
+  "pinned native cached " + family + " resume ignores changed descriptors without matching proof", { timeout: 60000 }, async () => {
+  const f = await fixture(family);
   try {
     const bridge = await f.connect();
     const { sessionId } = await bridge.call("session/new", f.params);
@@ -164,7 +168,7 @@ test("pinned native cached resume ignores changed descriptors and cannot mint a 
     await f.prompt(bridge, sessionId);
     const changed = structuredClone(f.params);
     changed.mcpServers[0].url = f.server.origin + "/mcp-changed";
-    changed.mcpServers[0].headers[0].value = "Bearer changed-open-fixture";
+    changed.mcpServers[0].headers = [{ name: "Authorization", value: "Bearer changed-open-fixture" }];
     await bridge.call("session/load", { ...changed, sessionId });
     assert.equal((await f.read(bridge, sessionId, changed)).complete, false);
     assert.equal((await f.read(bridge, sessionId)).complete, false);
@@ -190,6 +194,10 @@ test("pinned native unknown loaded state stays unprovable and optional MCP failu
     const created = await bridge.call("session/new", optional);
     assert.equal((await f.read(bridge, created.sessionId, optional)).complete, true,
       "successful ACP setup does not assert optional cmaeg tool availability");
+    const providerOnly = { ...f.params, mcpServers: [optional.mcpServers[1]] };
+    const provider = await bridge.call("session/new", providerOnly);
+    assert.equal((await f.read(bridge, provider.sessionId, providerOnly)).complete, true,
+      "provider-only setup remains optional and does not require an access binding");
   } finally { await f.close(); }
 });
 
