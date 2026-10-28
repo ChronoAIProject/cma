@@ -193,7 +193,12 @@ pub async fn callback(
     };
     // Establish ordinary-message authority first when a batch contains both the
     // original and its reaction. Distinct reactions retain provider timestamps.
-    messages.sort_by_key(|message| matches!(message.content, Content::Reaction { .. }));
+    messages.sort_by_key(|message| {
+        matches!(
+            message.content,
+            Content::Reaction { .. } | Content::Edit { .. } | Content::Revoke { .. }
+        )
+    });
     let mut result = WhatsappWebhookResponse {
         accepted: 0,
         refused: 0,
