@@ -165,6 +165,25 @@ impl Sandbox {
         &self,
         next: &Self,
     ) -> Result<(), SandboxModelError> {
+        let finishes_incident = matches!(
+            next.status,
+            super::SandboxStatus::Retiring | super::SandboxStatus::Retired
+        ) || (matches!(
+            self.lifecycle.operation,
+            Some(SandboxLifecycleOperation::ImageRotation {
+                phase: SandboxImageRotationPhase::PublishActive,
+                ..
+            })
+        ) && matches!(
+            next.status,
+            super::SandboxStatus::Active | super::SandboxStatus::Pausing
+        ));
+        if self.lifecycle.unpublished_recovery_attempted
+            && !next.lifecycle.unpublished_recovery_attempted
+            && !finishes_incident
+        {
+            return Err(invalid());
+        }
         let Some(current) = &self.lifecycle.unpublished_recovery else {
             return Ok(());
         };
@@ -179,11 +198,16 @@ impl Sandbox {
             {
                 Ok(())
             }
-            None if current.quiescence.is_some()
-                || matches!(
-                    next.status,
-                    super::SandboxStatus::Retiring | super::SandboxStatus::Retired
-                ) =>
+            None if finishes_incident
+                || (current.quiescence.is_some()
+                    && next.lifecycle.unpublished_recovery_attempted
+                    && next
+                        .runtime
+                        .as_ref()
+                        .and_then(|binding| binding.provision_generation)
+                        .is_some_and(|generation| {
+                            generation > current.proof.runtime_generation
+                        })) =>
             {
                 Ok(())
             }

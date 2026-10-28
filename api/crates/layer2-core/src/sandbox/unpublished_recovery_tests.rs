@@ -6,6 +6,9 @@ use crate::sandbox::{
     SandboxUnpublishedRecoveryQuiescence, TypedFailure,
 };
 
+#[path = "unpublished_recovery_lifecycle_tests.rs"]
+mod lifecycle;
+
 fn snapshot(parked_update: bool) -> SandboxUnpublishedRecoverySnapshot {
     let mut sandbox = native();
     let mut held = agent("agt_recovery", "native-original", 0);
@@ -290,9 +293,23 @@ fn admission_cannot_suspend_or_advance_until_quiescence_is_durable() {
         agents: vec![],
         agent_scope: crate::sandbox::store::SandboxLifecycleAgentScope::Touched,
         appended_at: NOW.into(),
-        events: vec![SandboxEventKind::WorkStepCompleted {
-            step: SandboxWorkStep::RunLifecycleOperation,
-        }],
+        events: vec![
+            SandboxEventKind::RuntimeRecoveryQuiesced {
+                receipt: Box::new(
+                    sandbox
+                        .lifecycle
+                        .unpublished_recovery
+                        .as_ref()
+                        .unwrap()
+                        .quiescence
+                        .clone()
+                        .unwrap(),
+                ),
+            },
+            SandboxEventKind::WorkStepCompleted {
+                step: SandboxWorkStep::RunLifecycleOperation,
+            },
+        ],
     };
     crate::sandbox::store::validate_lifecycle_mutation(&before, &[], &mutation).unwrap();
     assert!(sandbox.work.lease.is_none());

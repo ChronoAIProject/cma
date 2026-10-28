@@ -162,6 +162,11 @@ impl Sandbox {
                 _ => return Err(invalid_execution()),
             }
             next.runtime = Some(binding);
+            if next.lifecycle.unpublished_recovery.is_some() {
+                next.require_unpublished_runtime_quiescence()?;
+                next.lifecycle.unpublished_recovery = None;
+                next.lifecycle.unpublished_recovery_attempted = true;
+            }
             next.lifecycle.suspended_runtime = None;
             next.lifecycle.runtime_provision = None;
             Ok(())
@@ -438,6 +443,7 @@ impl Sandbox {
             next.lifecycle.operation = None;
             next.lifecycle.home_recovery = None;
             next.lifecycle.unpublished_recovery = None;
+            next.lifecycle.unpublished_recovery_attempted = false;
             next.lifecycle.paused_notice = None;
             if let Some(pause) = resume_pause {
                 next.lifecycle
@@ -458,7 +464,11 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<TypedFailure, SandboxModelError> {
-        self.require_unpublished_runtime_quiescence()?;
+        if self.lifecycle.unpublished_recovery_attempted
+            || self.lifecycle.unpublished_recovery.is_some()
+        {
+            return Err(invalid_execution());
+        }
         if detail.trim().is_empty()
             || detail.len() > MAX_FAILURE_DETAIL_BYTES
             || detail.chars().any(char::is_control)
