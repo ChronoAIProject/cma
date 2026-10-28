@@ -66,17 +66,34 @@ inode numbers. Missing, extra, named or shared endpoints are refused.
 
 ## Final history proof and limits
 
-Success requires all original native processes and descendants to disappear.
+Inspection permits only PID 1's verified supervisor, the current inspector and
+the exact requested Agent process trees. An orphan or unrequested Agent, or an
+unrelated user daemon, is a refusal. Such a process is never exempted merely
+because its PID appeared in the inspection baseline. Success requires all
+original native processes and descendants to disappear.
 Surviving new or detached processes are refused, including processes that escaped
 the original parent tree by reparenting. PID reuse and a changed supervisor boot
 are refusals, never reasons to retarget recovery.
 
 After exit, the helper streams complete JSONL histories, checks each native
 identity, proves every original byte remains an exact prefix, and requires all
-observed native turns to have terminal completion or abort markers. It checks
+current native turns to have terminal completion or abort markers. It checks
 process absence again after reading history. Existing history files, SQLite
 databases, dirty Worktree files, configuration and the retained home are not
 rewritten or deleted. Only the recovery journal is written.
+
+Some retained histories contain abandoned start markers from an earlier native
+process. Inspection records an explicit `historicalOpenTurns` baseline only when
+the marker's timestamp is more than 60 seconds before the current native start,
+derived from checked Linux boot time and process start ticks. In a currently open
+history file, a later terminal turn marker must also follow the abandoned start
+in both timestamp and file order. The pinned native implementation starts a cold
+resume with no active old turn; the later terminal turn also establishes a
+serial-turn boundary within an open conversation. Closed historical files need
+the pre-incarnation timestamp proof. Missing timestamps and current-incarnation
+turns receive no exemption. Final proof permits only those exact old start IDs
+and positions, so reusing an old ID in a new start cannot bypass the terminal
+requirement. It leaves abandoned markers untouched and invents no completion.
 
 Process disappearance alone is insufficient: native can log shutdown timeout or
 persistence errors and still exit normally. The helper therefore refuses missing,
