@@ -14,6 +14,8 @@ mod group_tests;
 mod http_tests;
 #[path = "whatsapp_media_tests.rs"]
 mod media_tests;
+#[path = "whatsapp_shared_facts_tests.rs"]
+mod shared_facts_tests;
 use crate::{
     channels::resolver::ChannelResolver,
     turns::routed::scheduler::{Disposition, ScheduleConfig, Scheduler, TargetExecutor, WorkItem},

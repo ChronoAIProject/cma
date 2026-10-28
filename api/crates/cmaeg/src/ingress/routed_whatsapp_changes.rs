@@ -1,7 +1,7 @@
 //! Admission binds coexistence changes only to a retained incoming message.
 use super::{refusal, *};
 use crate::ingress::routing_store::AdmittedPlan;
-use crate::whatsapp::{message_context, webhook::Content};
+use crate::whatsapp::message_context;
 
 impl IngressState {
     pub(super) async fn whatsapp_change_original(
@@ -41,8 +41,8 @@ impl IngressState {
             Ok(None) => return Err(refusal(422, "native_whatsapp_target_unavailable")),
             Err(_) => return Err(refusal(503, "native_whatsapp_original_unavailable")),
         };
-        let same =
-            webhook::extract(&verified.source, &original.source_body).is_ok_and(|messages| {
+        let same = webhook::change_originals(&verified.source, &original.source_body).is_ok_and(
+            |messages| {
                 messages.iter().any(|message| {
                     message.id == target
                         && message.sender == verified.message.sender
@@ -52,7 +52,8 @@ impl IngressState {
                             &message.content,
                         )
                 })
-            });
+            },
+        );
         if !same || !matches!(original.activity.kind, ActivityKind::Message { .. }) {
             return Err(refusal(403, "native_whatsapp_target_authority_unavailable"));
         }
@@ -89,10 +90,8 @@ impl IngressState {
             || !message_context::opted_in(&verified.source)
             || verified.message.group_id.is_some()
             || verified.message.timestamp <= now - message_context::TTL
-            || !matches!(
-                verified.message.content,
-                Content::Text { .. } | Content::Media { .. }
-            )
+            || !webhook::change_originals(&verified.source, &verified.body)
+                .is_ok_and(|messages| messages.contains(&verified.message))
         {
             return Ok(());
         }

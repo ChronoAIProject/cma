@@ -99,6 +99,8 @@ impl Context {
             || verified.message.group_id.is_some()
             || expires_at <= now
             || verified.message.timestamp > now + 300
+            || !super::webhook::change_originals(&verified.source, &verified.body)
+                .is_ok_and(|messages| messages.contains(&verified.message))
         {
             return Err(Error::Denied);
         }
@@ -206,8 +208,8 @@ pub(crate) async fn check(
     {
         return Err(Error::Denied);
     }
-    let messages =
-        super::webhook::extract(source, &original.source_body).map_err(|_| Error::Denied)?;
+    let messages = super::webhook::change_originals(source, &original.source_body)
+        .map_err(|_| Error::Denied)?;
     let original = messages
         .iter()
         .find(|value| {

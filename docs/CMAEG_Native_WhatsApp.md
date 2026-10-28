@@ -6,7 +6,7 @@ definitions, callbacks and sends keep their existing behavior. The pinned relay
 currently discards reactions before CMA receives them; see
 [the upstream audit](CMAEG_WhatsApp_Incoming_Reactions.md).
 
-This implementation supports private text messages, gated [inbound media](CMAEG_Native_WhatsApp_Media.md), incoming reaction updates
+This implementation supports private text messages, bounded [shared contacts and locations](#private-shared-contacts-and-locations), gated [inbound media](CMAEG_Native_WhatsApp_Media.md), incoming reaction updates
 on retained incoming messages and confirmed CMA replies, gated [reply buttons and single-choice lists](CMAEG_Native_WhatsApp_Controls.md), and actual native
 text, separately gated [JPEG/PNG/document/audio/sticker/video replies](CMAEG_Native_WhatsApp_Outbound_Media.md)
 and [approved-template replies](#approved-template-replies) through Graph API `v25.0`.
@@ -112,6 +112,48 @@ than five minutes in the future are refused. Admission policies use the raw
 sender as the private conversation. Authenticated policy/target refusals increment
 the webhook `refused` count and create owner Activity refusal diagnostics;
 temporary durable-admission failures return a retryable HTTP error.
+
+## Private shared contacts and locations
+
+Signed native `contacts` and `location` messages use ordinary private-message
+admission and the existing text Activity representation. They require no media
+retrieval or additional feature gate. App signature, configured WABA and phone,
+raw sender admission, timestamp limits and durable routing remain authoritative.
+The actor and private conversation come from the message's `from`, never a shared
+contact's `wa_id`, phone number or name. Actor kind remains `unknown`.
+
+Contacts project 1–10 entries. Each requires a nonempty `name.formatted_name` of
+at most 256 UTF-8 bytes and may contain up to five `phones` entries. Each phone
+entry requires a display `phone` of at most 80 bytes, containing at least one
+ASCII digit and only ASCII digits, spaces or `+().-`. A contact without phone
+entries is supported; `wa_id` never substitutes for a missing `phone`.
+Locations require numeric finite latitude in `[-90, 90]` and longitude in
+`[-180, 180]`; optional `name` and `address` are limited to 256 and 1024 UTF-8
+bytes. Display fields must be nonblank, single-line text without control or bidi
+formatting characters. Values are quoted and escaped to distinguish them from
+the generated labels.
+
+The generated text starts with `Shared contacts:` or `Shared location:` and is
+limited to 8192 bytes after escaping. Malformed consumed fields or exceeded
+bounds reject the callback before any message in its batch is admitted; values
+are never silently truncated. Contact emails, organizations, addresses, nested
+name components, `wa_id`, provider URLs and all other unprojected fields are
+ignored. URLs are never fetched or used as attachment locators. This is bounded
+display information, not a complete contact export or a map preview.
+
+The first authenticated raw envelope is retained. Rebatched duplicates preserve
+its routing and consumers; a changed projected field or provider message type
+under the same native ID conflicts. Ignored fields do not change the projection.
+Legacy message serialization, hashes and event IDs remain unchanged. Contact and
+location originals do not acquire incoming edit or revoke authority from their
+text representation. Owner-selected groups remain excluded. Native received
+quote/context projection remains a separate gap; relay contact/location/quote
+facts use the independent relay adapter.
+
+The payload shapes follow Meta's [contacts webhook reference](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/contacts/)
+and [location webhook reference](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/location/).
+Local signed HTTP and retained-plan fixtures verify the bounded intake contract;
+connected WhatsApp client acceptance remains unverified.
 
 ## Reaction authority and replay
 
