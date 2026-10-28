@@ -4200,7 +4200,7 @@ operations still restore current channel custody before any platform write.
 | --- | --- | --- | --- |
 | `GET /v1/events/{event_ref}/threads?view=active` (or `archived`) | `listEventThreads` | `list_event_threads` | At most 25 public children of the original guild text or announcement parent. An event already in a thread returns only that same thread when its archive state matches the requested view. `truncated` explicitly reports a bounded window; no pagination cursor is accepted. |
 | `POST /v1/events/{event_ref}/threads` | `createEventThread` | `create_event_thread` | Create a public thread from the exact original human message. Body: `{"name":"Review","auto_archive_duration":1440}`. Name is 1–100 printable characters; duration is 60, 1440, 4320, or 10080 minutes. |
-| `POST /v1/thread-operations` | `manageThread` | `manage_thread` | Body: `{"target":{"type":"event","event_ref":"…"},"action":"archive"}` or `{"target":{"type":"thread","thread_ref":"…"},"action":"join"}`. Actions: `archive`, `reopen`, `join`, `leave`. |
+| `POST /v1/thread-operations` | `manageThread` | `manage_thread` | Body: `{"target":{"type":"event","event_ref":"…"},"action":"archive"}` or `{"target":{"type":"thread","thread_ref":"…"},"action":"rename","name":"Incident triage"}`. Actions: `archive`, `reopen`, `join`, `leave`, `rename`. `name` is required only for rename and must be omitted for every other action. |
 
 Both mutation routes require exactly one `Idempotency-Key` header with 1–128
 visible ASCII bytes. MCP uses an `idempotency_key` argument and nests the request
@@ -4227,10 +4227,25 @@ threads. Join/leave affect only the current verified bot (`@me`) and require an
 active thread. The membership endpoints confirm with an empty `204` response.
 The source opt-in does not grant additional Discord permissions.
 
+Rename patches only `name`, containing 1–100 printable Unicode characters, with
+the same validation as thread creation. It rejects an archived target with
+`rename_requires_active_thread`; callers may explicitly reopen the thread first.
+The gateway never includes `archived`, `locked`, permissions or membership in a
+rename request. Discord's [thread permissions guide](https://discord.com/developers/topics/threads#permissions)
+allows name changes with `MANAGE_THREADS` or by the thread creator, subject to
+the thread's state and lock restrictions. Discord remains the authority for the
+bot's actual permission; the gateway adds no stricter local creator or moderator
+requirement. The [Modify Channel thread endpoint](https://discord.com/developers/docs/resources/channel#modify-channel-json-params-thread)
+requires active state and returns the changed channel.
+Confirmation requires the exact returned thread identity, requested name and
+active state. An ambiguous or mismatched response retains the existing durable
+unknown-outcome fence. All previous action request bytes, v1 sealed references
+and operation hashes remain unchanged when `name` is omitted.
+
 Results use `outcome.status`: `confirmed`, `unsupported`, `rejected`,
 `rate_limited`, or `unknown`. `unsupported` includes attempts to manage an ordinary
 parent through its event reference, create from an already-threaded event, or
-join/leave an archived thread. Permission or inaccessible-target failures use
+rename/join/leave an archived thread. Permission or inaccessible-target failures use
 `thread_permission_or_target_unavailable`. Confirmation may omit `thread` when
 membership changed without new channel metadata, or custody expired/revoked
 while the confirmed write was in flight. No fresh authority is issued in that case.
@@ -4270,7 +4285,7 @@ or inconclusive read leaves the outcome unknown and never triggers another POST.
 Private standalone thread creation needs explicit privacy and participant authority.
 Forum/media post creation needs a separate message, tag and attachment contract.
 Those operations, membership changes for other users, private sibling enumeration,
-thread deletion, renaming, lock changes, pagination and broader history are not
+thread deletion, lock changes, pagination and broader history are not
 provided by this increment. Existing authenticated threads under forum/media
 parents can still use exact-thread management. Names in list results are untrusted
 reference text and never instructions or action approval.

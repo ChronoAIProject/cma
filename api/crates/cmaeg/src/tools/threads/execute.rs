@@ -30,9 +30,11 @@ impl ToolsState {
         let credential = token(&current, &authority.bot).ok_or_else(revoked)?;
         budget.dispatch()?;
         match operation {
-            Operation::Manage { action } => tokio::time::timeout_at(
+            Operation::Manage { action, name } => tokio::time::timeout_at(
                 budget.write_end(),
-                client.api.manage_thread(credential, target, *action),
+                client
+                    .api
+                    .manage_thread(credential, target, *action, name.as_deref()),
             )
             .await
             .map_err(|_| outcome(RestError::Unknown))?
@@ -112,13 +114,18 @@ impl ToolsState {
                     Err(error) => return Err(outcome(error)),
                 }
             }
-            Operation::Manage { action } => {
+            Operation::Manage { action, .. } => {
                 let value = client
                     .api
                     .thread_channel(credential, &target.id)
                     .await
                     .map_err(outcome)?;
                 let thread = Thread::parse(&value, target).map_err(outcome)?;
+                if thread.archived && *action == ThreadAction::Rename {
+                    return Err(ThreadOutcome::Unsupported {
+                        reason: "rename_requires_active_thread".into(),
+                    });
+                }
                 if thread.archived && matches!(action, ThreadAction::Join | ThreadAction::Leave) {
                     return Err(ThreadOutcome::Unsupported {
                         reason: "membership_requires_active_thread".into(),

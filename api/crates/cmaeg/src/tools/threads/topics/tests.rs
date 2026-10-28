@@ -549,3 +549,31 @@ async fn topic_missing_custody_expiry_and_optional_store_refuse_before_platform_
         }
     }
 }
+
+#[tokio::test]
+async fn telegram_validates_names_before_dispatch_and_never_accepts_discord_rename() {
+    let (app, telegram) = fixture(false, -100, 123).await;
+    for action in ["close", "reopen"] {
+        for name in [json!("Not allowed"), Value::Null] {
+            let response = reqwest::Client::new()
+                .post(format!("{}/v1/thread-operations", app.base))
+                .bearer_auth(&app.key)
+                .header("idempotency-key", "invalid-name")
+                .json(&json!({"target":app.target(),"action":action,"name":name}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 400, "{action}");
+        }
+    }
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/thread-operations", app.base))
+        .bearer_auth(&app.key)
+        .header("idempotency-key", "rename")
+        .json(&json!({"target":app.target(),"action":"rename","name":"Valid Discord name"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(body(response).await["outcome"]["status"], "unsupported");
+    assert!(telegram.0.lock().unwrap().calls.is_empty());
+}
