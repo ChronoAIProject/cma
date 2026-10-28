@@ -25,6 +25,7 @@ class DesktopRecovery(unittest.TestCase):
         self.command = b"/bin/bash\0/usr/local/bin/cma-desktop-session\0"
         self.environment = {b"HOME": b"/home/cma", b"DISPLAY": b":99"}
         self.source = m.DESKTOP_SOURCE
+        self.real_readlink = m.os.readlink
         patch.dict(m.__dict__, read=self.read, environment=lambda _: self.environment,
                    digest_file=lambda _: self.source, inventory=lambda: copy.deepcopy(self.live),
                    proc_identity=lambda pid: copy.deepcopy(self.live[pid])).start()
@@ -38,13 +39,15 @@ class DesktopRecovery(unittest.TestCase):
     def readlink(self, path):
         if path == "/proc/20/exe":
             return m.os.path.realpath("/bin/bash")
+        if not str(path).startswith("/proc/"):
+            return self.real_readlink(path)
         self.fail("sandboxed browser processes must not require readable exe/environ: " + path)
 
     def plan(self):
         return {"services": m.services(self.live), "supervisor": self.live[1], "topology": []}
 
     def test_installed_launcher_matches_reviewed_source(self):
-        local = SOURCE.parents[2] / "layer4-runtime/src/desktop-session.sh"
+        local = SOURCE / "../../../layer4-runtime/src/desktop-session.sh"
         source = local if local.is_file() else Path(m.DESKTOP_PATH)
         self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), m.DESKTOP_SOURCE)
 
