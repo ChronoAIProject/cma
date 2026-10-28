@@ -1,7 +1,7 @@
 //! Provider-owned graceful recovery of an unpublished runtime incarnation.
 use serde::{Deserialize, Serialize};
 
-use crate::{Result, RuntimeHandle, RuntimeStatusRequest};
+use crate::{AdapterError, Result, RuntimeAdoptionRequest, RuntimeHandle, RuntimeStatusRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -49,8 +49,46 @@ pub struct RuntimeRecoveryQuiescence {
     pub histories: Vec<RecoveryConversationHistory>,
 }
 
+#[derive(Debug, Clone)]
+pub struct NonexecutingRecoveryVerification {
+    pub source: RuntimeAdoptionRequest,
+    pub provider_plan: serde_json::Value,
+    pub provider_plan_sha256: String,
+}
+
 #[async_trait::async_trait]
 pub trait RuntimeRecovery: Send + Sync {
+    /// Read-only provider proof for the complete, empty-Agent case. Callers must
+    /// establish that scope transactionally; this method grants no mutation authority.
+    async fn inspect_nonexecuting_recovery(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+    ) -> Result<Option<RuntimeRecoveryInspection>> {
+        Ok(None)
+    }
+
+    /// Refresh stopped-container evidence while retaining the admitted immutable
+    /// runtime/request/home source, then verify that exact fresh observation.
+    async fn verify_nonexecuting_recovery(
+        &self,
+        _request: &NonexecutingRecoveryVerification,
+    ) -> Result<()> {
+        Err(AdapterError::Rejected(
+            "nonexecuting runtime recovery is unsupported".into(),
+        ))
+    }
+
+    /// Final provider observation and suspension CAS under the same source proof.
+    /// The caller must already have committed the empty-Agent quiescence receipt.
+    async fn suspend_nonexecuting_recovery(
+        &self,
+        _request: &NonexecutingRecoveryVerification,
+    ) -> Result<()> {
+        Err(AdapterError::Rejected(
+            "nonexecuting runtime suspension is unsupported".into(),
+        ))
+    }
+
     /// Read only. This evidence does not itself authorize process termination.
     async fn inspect_recovery(
         &self,

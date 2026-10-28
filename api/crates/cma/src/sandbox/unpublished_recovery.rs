@@ -31,9 +31,44 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
         snapshot: &SandboxUnpublishedRecoverySnapshot,
     ) -> Result<SandboxUnpublishedRecoveryProof, SandboxStoreError> {
         snapshot.validate()?;
-        let binding = snapshot.sandbox.runtime.as_ref().ok_or_else(refused)?;
+        let binding = snapshot
+            .sandbox
+            .unpublished_recovery_binding()
+            .ok_or_else(refused)?;
         let generation = snapshot.runtime_generation()?;
         let home = snapshot.home_identity()?;
+        if snapshot.agents.is_empty() {
+            let source = super::runtime_attachment::retained_runtime_request(
+                &snapshot.sandbox,
+                binding,
+                &self.deployment,
+            )
+            .map_err(store_failure)?;
+            let recovery = self.adapter.runtime_recovery().ok_or_else(refused)?;
+            if let Some(evidence) = recovery
+                .inspect_nonexecuting_recovery(&source)
+                .await
+                .map_err(store_failure)?
+            {
+                if !evidence.runtime_process_absent || !evidence.histories.is_empty() {
+                    return Err(refused());
+                }
+                let proof = SandboxUnpublishedRecoveryProof {
+                    sandbox_id: snapshot.sandbox.id.clone(),
+                    runtime_id: binding.runtime_id.clone(),
+                    runtime_generation: generation,
+                    home_identity: home,
+                    boot_id: None,
+                    runtime_process_absent: true,
+                    requires_native_quiescence: true,
+                    provider_plan: evidence.provider_plan,
+                    provider_plan_sha256: evidence.provider_plan_sha256,
+                    conversations: vec![],
+                };
+                proof.validate_for(snapshot)?;
+                return Ok(proof);
+            }
+        }
         let boot = binding.boot_id.clone().ok_or_else(refused)?;
         let conversations = snapshot
             .agents

@@ -4,9 +4,10 @@ use std::collections::BTreeSet;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::hosted::RuntimeRecoveryCommand;
+use crate::hosted::{NonexecutingRuntimeProof, RuntimeRecoveryCommand};
 use crate::{
-    AdapterError, RecoveryConversationHistory, Result, RuntimeRecovery, RuntimeRecoveryInspection,
+    AdapterError, NonexecutingRecoveryVerification, RecoveryConversationHistory, Result,
+    RuntimeAdoptionRequest, RuntimeRecovery, RuntimeRecoveryInspection,
     RuntimeRecoveryInspectionRequest, RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
     SandboxAdapter,
 };
@@ -17,6 +18,42 @@ const LIMIT: usize = 64 * 1024;
 
 #[async_trait::async_trait]
 impl RuntimeRecovery for CodexAdapter {
+    async fn inspect_nonexecuting_recovery(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> Result<Option<RuntimeRecoveryInspection>> {
+        let Some(proof) = self.hosted.inspect_nonexecuting_runtime(request).await? else {
+            return Ok(None);
+        };
+        let provider_plan = serde_json::to_value(proof).map_err(|_| invalid())?;
+        Ok(Some(RuntimeRecoveryInspection {
+            provider_plan_sha256: plan_digest(&provider_plan)?,
+            provider_plan,
+            histories: vec![],
+            runtime_process_absent: true,
+        }))
+    }
+
+    async fn verify_nonexecuting_recovery(
+        &self,
+        request: &NonexecutingRecoveryVerification,
+    ) -> Result<()> {
+        let proof = self.fresh_nonexecuting_proof(request).await?;
+        self.hosted
+            .verify_nonexecuting_runtime(&request.source, &proof)
+            .await
+    }
+
+    async fn suspend_nonexecuting_recovery(
+        &self,
+        request: &NonexecutingRecoveryVerification,
+    ) -> Result<()> {
+        let proof = self.fresh_nonexecuting_proof(request).await?;
+        self.hosted
+            .suspend_nonexecuting_runtime(&request.source, &proof)
+            .await
+    }
+
     async fn inspect_recovery(
         &self,
         request: &RuntimeRecoveryInspectionRequest,
@@ -81,6 +118,30 @@ impl RuntimeRecovery for CodexAdapter {
 }
 
 impl CodexAdapter {
+    async fn fresh_nonexecuting_proof(
+        &self,
+        request: &NonexecutingRecoveryVerification,
+    ) -> Result<NonexecutingRuntimeProof> {
+        if plan_digest(&request.provider_plan)? != request.provider_plan_sha256 {
+            return Err(invalid());
+        }
+        let admitted: NonexecutingRuntimeProof =
+            serde_json::from_value(request.provider_plan.clone()).map_err(|_| invalid())?;
+        let fresh = self
+            .hosted
+            .inspect_nonexecuting_runtime(&request.source)
+            .await?
+            .ok_or_else(invalid)?;
+        if admitted.version != fresh.version
+            || admitted.handle != fresh.handle
+            || admitted.request_sha256 != fresh.request_sha256
+            || admitted.home_identity != fresh.home_identity
+        {
+            return Err(invalid());
+        }
+        Ok(fresh)
+    }
+
     async fn verify_recovery_identity(
         &self,
         request: &RuntimeRecoveryInspectionRequest,

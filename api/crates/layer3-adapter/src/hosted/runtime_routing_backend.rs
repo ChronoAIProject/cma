@@ -78,6 +78,19 @@ impl HostedBackend for RuntimeBackends {
             .await
     }
 
+    async fn suspend_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        proof: &super::super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .suspend_nonexecuting_runtime(handle, request, home, proof)
+            .await
+    }
+
     async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,

@@ -72,6 +72,8 @@ impl SandboxUnpublishedRecoveryState {
             || self.proof.sandbox_id != sandbox.id
             || self.proof.runtime_generation != source.source_generation
             || self.proof.home_identity != source.home_identity
+            || (self.proof.boot_id.is_none()
+                && (!self.proof.runtime_process_absent || !self.proof.conversations.is_empty()))
             || self.proof.conversations.len() != identity.agents.len()
             || self.proof.conversations.iter().any(|proof| {
                 identity
@@ -115,7 +117,10 @@ impl SandboxUnpublishedRecoveryState {
         ) || sandbox.runtime.is_some()
             || sandbox.lifecycle.suspended_runtime.is_none()
             || sandbox.lifecycle.runtime_provision.is_some()
-            || sandbox.lifecycle.runtime_generation_high_water != self.proof.runtime_generation
+            || (sandbox.lifecycle.runtime_generation_high_water != self.proof.runtime_generation
+                && (self.proof.boot_id.is_some()
+                    || sandbox.lifecycle.runtime_generation_high_water
+                        < self.proof.runtime_generation))
         {
             return Err(invalid());
         }

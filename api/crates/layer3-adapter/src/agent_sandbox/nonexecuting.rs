@@ -12,6 +12,40 @@ use crate::{
 };
 
 impl AgentSandboxClient {
+    pub(crate) async fn suspend_nonexecuting_runtime(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        proof: &NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        use kube::api::{Patch, PatchParams};
+        use serde_json::json;
+        let (name, uid) = parse_handle(runtime)?;
+        let mut desired = self.desired_at(request, name).await?;
+        // All request/home rendering happens before the final stopped-container
+        // observation. Never re-read a newer object and silently adopt its RV.
+        if self
+            .inspect_nonexecuting_runtime(runtime, request, home)
+            .await?
+            .as_ref()
+            != Some(proof)
+        {
+            return Err(rejected(
+                "nonexecuting runtime evidence changed before suspension",
+            ));
+        }
+        let patch = json!({"metadata": {"uid": uid,
+            "resourceVersion": proof.sandbox_resource_version},
+            "spec": {"operatingMode": "Suspended"}});
+        self.sandboxes
+            .patch(name, &PatchParams::default(), &Patch::Merge(patch))
+            .await
+            .map_err(api_error)?;
+        desired.data["spec"]["operatingMode"] = json!("Suspended");
+        self.wait_suspended(runtime, &desired).await
+    }
+
     pub(crate) async fn inspect_nonexecuting_runtime(
         &self,
         runtime: &RuntimeHandle,
