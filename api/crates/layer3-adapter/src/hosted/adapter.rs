@@ -36,6 +36,8 @@ mod exchange;
 mod filesystem;
 #[path = "adapter_install.rs"]
 mod install;
+#[path = "adapter_nonexecuting.rs"]
+mod nonexecuting;
 #[path = "adapter_provider_tools.rs"]
 mod provider_tools;
 #[path = "adapter_runtime.rs"]

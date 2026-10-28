@@ -3,6 +3,9 @@ use crate::agent_sandbox::NativePoolClaim;
 use crate::provider::ProviderSandboxRequest;
 use serde_json::json;
 
+#[path = "nonexecuting_tests.rs"]
+mod nonexecuting;
+
 #[path = "backend_provision_home_tests.rs"]
 mod provision_home_tests;
 
