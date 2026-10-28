@@ -43,6 +43,9 @@ pub struct MediaControlsCapabilities {
     pub choices: bool,
     pub caption_max_chars: u32,
     pub update: bool,
+    /// Replace one upload on the same durable card through a confirmed native PATCH.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace_media: Option<bool>,
 }
 impl MediaControlsCapabilities {
     pub(super) fn single(caption_max_chars: u32) -> Self {
@@ -52,6 +55,7 @@ impl MediaControlsCapabilities {
             choices: true,
             caption_max_chars,
             update: false,
+            replace_media: None,
         }
     }
 }
@@ -90,8 +94,14 @@ impl NativeMediaCapabilities {
                         && (discord_controls || telegram_controls)
                     {
                         let mut controls = MediaControlsCapabilities::single(1024);
-                        controls.update =
-                            discord_controls && state.native_discord_media_card_edits_enabled;
+                        controls.update = (discord_controls
+                            && state.native_discord_media_card_edits_enabled)
+                            || (telegram_controls
+                                && state.native_telegram_media_control_edits_enabled);
+                        controls.replace_media = (discord_controls
+                            && state.native_discord_media_card_edits_enabled
+                            && state.native_discord_media_card_replacements_enabled)
+                            .then_some(true);
                         capabilities.controls = Some(controls);
                     }
                     capabilities

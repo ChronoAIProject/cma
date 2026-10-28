@@ -10,6 +10,11 @@ mod discord_card_edit;
 #[cfg(test)]
 mod discord_card_edit_tests;
 mod discord_card_media;
+mod discord_card_replacement;
+#[cfg(test)]
+mod discord_card_replacement_fixture;
+#[cfg(test)]
+mod discord_card_replacement_tests;
 mod discord_controls;
 #[cfg(test)]
 mod discord_controls_tests;
@@ -42,12 +47,17 @@ mod native_lark_controls;
 mod pacing;
 pub mod relay_client;
 pub mod render;
+pub(crate) mod retained_receipt;
 pub mod router;
 mod send;
+mod split_text;
 mod step;
 pub mod sync;
 mod telegram;
 mod telegram_media;
+mod telegram_media_card_edit;
+#[cfg(test)]
+mod telegram_media_card_edit_tests;
 mod telegram_media_controls;
 #[cfg(test)]
 mod telegram_media_controls_fixture;
@@ -63,3 +73,6 @@ mod worker;
 mod lark_effects;
 
 mod native_media_ref;
+
+#[cfg(test)]
+mod split_text_tests;

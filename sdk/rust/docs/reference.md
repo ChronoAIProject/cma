@@ -268,6 +268,17 @@ When constructing these Rust types directly, add `native_attachments: None`,
 `native_media: None`, or `verify_raw_event: false` to the respective old literals.
 These are source-construction changes; existing JSON remains compatible.
 
+When native split-text receipt issuance is enabled, an ordinary Telegram or
+Discord reply can also return `message_parts`. Each entry has a zero-based
+rendered `index` and an opaque `message_ref` for one confirmed part. Older
+receipts omit the field. Keep the existing singular `message_ref` separately;
+its meaning is unchanged. An `unknown` / `partial_delivery` receipt can contain
+confirmed earlier parts, but those entries do not prove that the whole reply
+completed. Preserve the exact operation key and never resend an unknown reply.
+Retained receipt replay preserves the original part tokens and does not renew
+their authority or expiry. Existing edit/effect gates and consumer ownership
+still apply to each reference.
+
 An enabled native Discord upload can return an opaque `message_ref` for delete
 and own-reaction effects when the complete upload fits one confirmed Discord
 message. This reference does not authorize text or attachment updates. Query its
@@ -700,14 +711,19 @@ consumer/conversation. Caption changes preserve original attachments; outgoing
 edit/delete and history import are outside this feature. See
 [the incoming-change contract](../../../docs/CMAEG_Native_WhatsApp_Message_Events.md).
 
-`read_event_history(event_ref, cursor)` returns one bounded history page and never
-fetches a continuation automatically. Native Lark/Feishu mixed posts may preserve
+`read_event_history(event_ref, cursor)` returns one bounded legacy history page and never
+fetches a continuation automatically. Use
+`read_event_history_with_media(event_ref, cursor)` to explicitly opt in to native
+Lark/Feishu mixed posts, which may preserve
 their textual content with `HistoryOmittedContent::Media` and empty `attachments`;
 this marker conveys no media count, type, keys or download authority. Whole-row
 omission counts exclude retained mixed posts, while `text_truncated` independently
-reports clipped or sanitized text. Older SDK decoders reject `media`, so the gateway's separate
-`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag stays off until all consumers and
-rollback readers support this value. See [native history](../../../docs/CMAEG_Native_Lark_History.md).
+reports clipped or sanitized text. Original SDK calls retain whole-row omission
+even when the gateway's `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag is enabled,
+preserving old strict decoders. Opt-in requires that flag and original history
+consent. Use the same method for each cursor page; mode mismatches return 400
+before platform I/O. This does not provide media downloads. See
+[native history](../../../docs/CMAEG_Native_Lark_History.md).
 
 ### Native media with controls
 
