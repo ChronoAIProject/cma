@@ -4169,6 +4169,13 @@
             "minimum": 0,
             "type": "integer"
           },
+          "replace_media": {
+            "description": "Replace one upload on the same durable card through a confirmed native PATCH.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "update": {
             "type": "boolean"
           }
