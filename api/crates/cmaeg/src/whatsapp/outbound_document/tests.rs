@@ -164,21 +164,42 @@ fn text_checks_the_entire_encoding_and_refuses_binary_controls() {
 
 #[test]
 fn generic_archive_validation_is_bounded_and_does_not_expand_whatsapp_support() {
-    for parts in [vec![], vec![("note.txt".into(), b"Archive contents".to_vec())]] {
+    for parts in [
+        vec![],
+        vec![("note.txt".into(), b"Archive contents".to_vec())],
+    ] {
         let bytes = zip(&parts, zip::CompressionMethod::Stored);
         assert!(zip_archive(&bytes));
-        assert_eq!(inspect(&bytes), None, "WhatsApp still rejects generic archives");
+        assert_eq!(
+            inspect(&bytes),
+            None,
+            "WhatsApp still rejects generic archives"
+        );
         assert!(!zip_archive(&bytes[..bytes.len() - 1]));
     }
     let parts = vec![("note.txt".into(), b"Archive contents".to_vec())];
     let mut bad_crc = zip(&parts, zip::CompressionMethod::Stored);
-    let at = bad_crc.windows(16).position(|v| v == b"Archive contents").unwrap();
+    let at = bad_crc
+        .windows(16)
+        .position(|v| v == b"Archive contents")
+        .unwrap();
     bad_crc[at] ^= 1;
     assert!(!zip_archive(&bad_crc));
-    assert!(!zip_archive(&zip(&[("../outside".into(), b"content".to_vec())], zip::CompressionMethod::Stored)));
-    let too_many = (0..1025).map(|i| (format!("{i}.txt"), vec![])).collect::<Vec<_>>();
-    assert!(!zip_archive(&zip(&too_many, zip::CompressionMethod::Stored)));
-    let oversized = zip(&[("huge.txt".into(), vec![b'a'; 8 * 1024 * 1024 + 1])], zip::CompressionMethod::Deflated);
+    assert!(!zip_archive(&zip(
+        &[("../outside".into(), b"content".to_vec())],
+        zip::CompressionMethod::Stored
+    )));
+    let too_many = (0..1025)
+        .map(|i| (format!("{i}.txt"), vec![]))
+        .collect::<Vec<_>>();
+    assert!(!zip_archive(&zip(
+        &too_many,
+        zip::CompressionMethod::Stored
+    )));
+    let oversized = zip(
+        &[("huge.txt".into(), vec![b'a'; 8 * 1024 * 1024 + 1])],
+        zip::CompressionMethod::Deflated,
+    );
     assert!(!zip_archive(&oversized));
 }
 #[test]
