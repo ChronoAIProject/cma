@@ -23,9 +23,9 @@ pub struct AgentLifecycleCreateRequest {
     /// Provision a desktop-capable Linux runtime for this Agent.
     ///
     /// Desktop runtimes are immutable Sandbox configuration.  The option is
-    /// therefore supported when this request creates a new Sandbox; a request
-    /// targeting an existing Sandbox is rejected unless that Sandbox already
-    /// advertises the capability.
+    /// therefore supported only when this request creates a new Sandbox.
+    /// Omit the option when adding an Agent to an existing Sandbox or Workspace;
+    /// those requests retain the parent's immutable desktop configuration.
     #[serde(default)]
     pub machine_included: bool,
     /// Add an Agent to this owned, ready Workspace using its existing Sandbox.

@@ -8,10 +8,6 @@ use crate::{
 };
 
 pub const BRIDGE_PROGRAM: &str = "codex-acp";
-/// The ACP bridge must delegate to the runtime's reviewed Codex CLI. Without
-/// this explicit path, older ACP packages can silently start their nested
-/// dependency instead of the image's current native computer-use binary.
-pub(crate) const CODEX_PROGRAM: &str = "/usr/local/bin/codex";
 pub const SHARED_AUTH_PATH: &str = "/home/cma/.cma/provider/codex/auth.json";
 pub const AGENT_HOME_ROOT: &str = "/home/cma/.cma/agents";
 const HOME_ENVIRONMENT_NAME: &str = "CODEX_HOME";
@@ -35,7 +31,7 @@ pub fn checkpoint_exclusions(agents: &[crate::AgentSlot]) -> crate::Result<Vec<S
     let mut paths = BTreeSet::from([".codex/tmp/arg0".to_string()]);
     for agent in agents {
         validate_slot(agent)?;
-        // Codex creates disposable executable aliases here, not conversation data.
+        // Codex 0.147 creates disposable executable aliases here, not conversation data.
         paths.insert(format!(".cma/agents/{}/home/tmp/arg0", agent.0));
     }
     Ok(paths.into_iter().collect())
@@ -134,13 +130,10 @@ pub fn render_launch(request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
         ));
     }
 
-    let mut env = std::collections::BTreeMap::from([
-        (
-            HOME_ENVIRONMENT_NAME.to_string(),
-            request.options.home_directory.clone(),
-        ),
-        ("CODEX_PATH".into(), CODEX_PROGRAM.into()),
-    ]);
+    let mut env = std::collections::BTreeMap::from([(
+        HOME_ENVIRONMENT_NAME.to_string(),
+        request.options.home_directory.clone(),
+    )]);
     if !request.options.own_credential {
         env.insert(
             MANAGED_PROXY_ENVIRONMENT_NAME.into(),
