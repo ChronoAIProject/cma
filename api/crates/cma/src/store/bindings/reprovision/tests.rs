@@ -675,3 +675,6 @@ async fn mongo_preparation_and_binding_retirement_have_one_exact_revision_winner
     }
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "http_tests.rs"]
+mod http_tests;

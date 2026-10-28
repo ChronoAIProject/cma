@@ -26,6 +26,62 @@ fn candidate(request: &LaunchRequest, raw: &[u8]) -> Candidate {
 }
 
 #[tokio::test]
+async fn generation_preparation_enrollment_is_new_admission_only_and_nonhuman_cannot_replace() {
+    let server = Server::start().await;
+    let request = fixture::request(fixture::targets, fixture::message("hello"));
+    let routed = fixture::routed(&request);
+    let replacements = routed
+        .targets
+        .iter()
+        .map(|target| target.provider.binding_id.to_string())
+        .collect();
+    let legacy = candidate(&request, b"raw");
+    let original = server.store().admit(&legacy).await.unwrap();
+    let enabled = Candidate::prepare_with_binding_preparation(
+        &request,
+        &routed,
+        b"raw",
+        &fixture::keys(),
+        fixture::NOW,
+        None,
+        &replacements,
+    )
+    .unwrap();
+    // Retrying an old event after operator enrollment cannot gain new authority.
+    assert_eq!(server.store().admit(&enabled).await.unwrap(), original);
+    assert!(original.binding_preparation_version.is_none());
+    assert!(original
+        .targets
+        .iter()
+        .all(|t| t.binding_replacement_version.is_none()));
+
+    let server = Server::start().await;
+    let (request, raw) = custom(128);
+    let routed = fixture::routed(&request);
+    let enabled = Candidate::prepare_with_binding_preparation(
+        &request,
+        &routed,
+        &raw,
+        &fixture::keys(),
+        fixture::NOW,
+        None,
+        &replacements,
+    )
+    .unwrap();
+    let plan = server.store().admit(&enabled).await.unwrap();
+    assert_eq!(plan.binding_preparation_version, Some(1));
+    assert!(!plan.permits_binding_preparation());
+    assert!(plan
+        .targets
+        .iter()
+        .all(|t| t.binding_replacement_version.is_none()));
+    assert!(plan
+        .targets
+        .iter()
+        .any(|target| plan.prepares_binding(target)));
+}
+
+#[tokio::test]
 async fn large_and_full_custom_payloads_survive_restart_without_losing_source_bytes() {
     for size in [70 * 1024, MAX_SOURCE_BYTES] {
         let server = Server::start().await;

@@ -104,7 +104,7 @@ impl FrozenTurn {
             .payload;
         if self.conversation_id != target.launch.event.conversation_id
             || self.binding_generation == Some(0)
-            || self.binding_generation.is_some() != plan.prepares_binding(target)
+            || (self.binding_generation.is_some() && !plan.prepares_binding(target))
             || self.idempotency_key != target.launch.idempotency_key
             || self.event_context.channel_id != plan.identity.channel_id
             || self.event_context.conversation_id != self.conversation_id
