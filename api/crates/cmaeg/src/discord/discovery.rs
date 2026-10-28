@@ -27,6 +27,7 @@ pub struct DiscordApi {
     limits: DiscordRest,
     pub(super) thread_metadata: bool,
     pub(super) message_events: bool,
+    pub(super) quoted_context: bool,
     pub(super) reactions: bool,
 }
 impl DiscordApi {
@@ -45,11 +46,16 @@ impl DiscordApi {
             limits: DiscordRest::new().map_err(|_| GatewayError::Unavailable)?,
             thread_metadata: false,
             message_events: false,
+            quoted_context: false,
             reactions: false,
         })
     }
     pub(super) fn with_reactions(mut self, enabled: bool) -> Self {
         self.reactions = enabled;
+        self
+    }
+    pub(super) fn with_quoted_context(mut self, enabled: bool) -> Self {
+        self.quoted_context = enabled;
         self
     }
     pub(super) fn with_message_events(mut self, enabled: bool) -> Self {

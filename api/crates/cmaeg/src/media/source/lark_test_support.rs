@@ -174,6 +174,7 @@ impl Fixture {
             text: "post".into(),
             mentions_bot: false,
             reply_to: None,
+            quoted_message: None,
             album_id: None,
             attachments: vec![Attachment {
                 reference: "lark:img_resource".into(),
