@@ -191,6 +191,23 @@ impl Workspaces<'_> {
             )
             .await
     }
+    /// Retry original preparation only for a failed, never-ready Workspace.
+    /// The same key replays; use a new key only after a terminal failed attempt.
+    pub async fn recover_prepare(&self, id: &str, key: &IdempotencyKey) -> Result<Workspace> {
+        let value: Workspace = self
+            .client
+            .command::<_, ()>(
+                Method::POST,
+                &["workspaces", id, "recover-prepare"],
+                None,
+                key,
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        identity(&value.id, id)?;
+        Ok(value)
+    }
+
     /// List personal/shared summaries under current parent Sandbox access.
     pub async fn list_accessible(
         &self,

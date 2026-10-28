@@ -1,6 +1,7 @@
 //! Transactional Mongo admission and removal for workspace aggregates.
 
-mod retry;
+pub(super) mod retry;
+pub(super) use retry::ApplyError;
 use retry::{exhausted, retry_delay};
 
 use layer2_core::ids::{SubjectId, WorkspaceId};
@@ -23,13 +24,7 @@ use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::workspace_removal::apply_removal;
 use super::workspaces::{read_workspace, workspace_document};
 
-const TRANSACTION_ATTEMPTS: usize = 16;
-
-pub(super) enum ApplyError {
-    Domain(SandboxStoreError),
-    Driver(mongodb::error::Error),
-    Retry(mongodb::error::Error),
-}
+pub(super) const TRANSACTION_ATTEMPTS: usize = 16;
 
 enum AdmissionReceipt {
     Created {
@@ -121,6 +116,16 @@ impl WorkspaceAdmissionStore for MongoSandboxStore {
             }
         }
         Err(exhausted("workspace admission", last_transient))
+    }
+
+    async fn begin_workspace_prepare_recovery(
+        &self,
+        id: &WorkspaceId,
+        caller: &layer2_core::Caller,
+        operation_id: &str,
+        now: String,
+    ) -> Result<Workspace, SandboxStoreError> {
+        super::workspace_prepare_recovery::begin(self, id, caller, operation_id, now).await
     }
 
     async fn begin_workspace_removal(
@@ -477,7 +482,7 @@ async fn reconcile_admission(
     }
 }
 
-async fn reconcile_workspace(
+pub(super) async fn reconcile_workspace(
     store: &MongoSandboxStore,
     expected: &Workspace,
 ) -> Result<bool, SandboxStoreError> {

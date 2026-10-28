@@ -45,6 +45,8 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[path = "sandbox_lifecycle_view_tests.rs"]
 mod lifecycle_view_tests;
+#[path = "workspace_prepare_recovery_tests.rs"]
+pub(super) mod prepare_recovery_tests;
 #[path = "sandbox_provider_view_tests.rs"]
 mod provider_view_tests;
 #[path = "sandbox_runtime_update_tests.rs"]

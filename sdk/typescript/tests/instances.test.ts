@@ -13,6 +13,33 @@ import {
 } from './resource-fixtures.js';
 
 describe('Sandbox hierarchy resources', () => {
+  it('recovers original Workspace preparation with a keyed empty command and exact identity', async () => {
+    const test = transport();
+    const pending = { ...workspace, status: 'preparing' };
+    for (let replay = 0; replay < 2; replay += 1) {
+      test.answer(pending, 202);
+      expect(await test.client.workspaces.recoverPrepare(workspace.id, command)).toEqual(pending);
+      const sent = test.calls.at(-1)!;
+      expect(sent.url).toContain(`/api/v1/workspaces/${workspace.id}/recover-prepare`);
+      expect(sent.init.method).toBe('POST');
+      expect(sent.init.body).toBeUndefined();
+      expect(new Headers(sent.init.headers).get('idempotency-key')).toBe(command.idempotencyKey);
+    }
+    const count = test.calls.length;
+    expect(() =>
+      test.client.workspaces.recoverPrepare(workspace.id, { idempotencyKey: '' }),
+    ).toThrow(ValidationError);
+    expect(test.calls).toHaveLength(count);
+    test.answer({ ...pending, id: 'another-workspace' }, 202);
+    await expect(
+      test.client.workspaces.recoverPrepare(workspace.id, command),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    test.answer(pending, 200);
+    await expect(
+      test.client.workspaces.recoverPrepare(workspace.id, command),
+    ).rejects.toBeInstanceOf(ProtocolError);
+  });
+
   it('accepts optional pinned providers and rejects malformed provider projections', async () => {
     const test = transport();
     const detail = {

@@ -67,7 +67,8 @@ impl Supervisor {
             RequestFrame::Install(request) => self.install(request).await,
             RequestFrame::BootstrapRestore(request) => self.bootstrap_restore(request).await,
             RequestFrame::Credential(frame) => self.credential(frame).await,
-            RequestFrame::PrepareWorkspace(_)
+            RequestFrame::RecoverWorkspacePrepare(_)
+            | RequestFrame::PrepareWorkspace(_)
             | RequestFrame::WorkspaceSetup(_)
             | RequestFrame::RemoveWorkspace(_) => unreachable!("workspace requests detach first"),
             RequestFrame::AddWorktree(request) => {
