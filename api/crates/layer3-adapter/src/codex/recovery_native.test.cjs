@@ -246,3 +246,90 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
     else fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('cold load preserves a crashed previous process turn without restarting it or inventing a terminal event', { timeout: 180000 }, async () => {
+  assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
+  assert(['cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40',
+    'e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2',
+    '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37'].includes(sha(fs.readFileSync(binary))));
+  assert(['113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4',
+    '4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888',
+    '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c',
+    'ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66'].includes(sha(fs.readFileSync(bridgeProgram))));
+  const directory = fs.mkdtempSync(join(evidence, 'cma-preboot-history-'));
+  const home = join(directory, 'home'); fs.mkdirSync(home);
+  let modelCalls = 0, bridge;
+  const server = createServer(async (request, response) => {
+    for await (const _ of request) { /* Consume only the isolated fixture request. */ }
+    modelCalls++;
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    if (modelCalls === 1) {
+      response.write('data: ' + JSON.stringify({ type: 'response.created', response: {
+        id: 'resp_preboot_wait', status: 'in_progress', output: [],
+      } }) + '\n\n');
+    } else complete(response, 'resp_preboot_recovered', [message('msg_preboot_recovered', 'Original conversation recovered.')]);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  fs.writeFileSync(join(home, 'config.toml'), [
+    'model="gpt-5.6-sol"', 'model_provider="cma_preboot_fixture"', 'web_search="disabled"',
+    'approval_policy="never"', 'sandbox_mode="danger-full-access"',
+    '[model_providers.cma_preboot_fixture]', 'name="Offline previous process fixture"',
+    'base_url="http://127.0.0.1:' + server.address().port + '/v1"', 'wire_api="responses"', 'requires_openai_auth=false',
+  ].join('\n'));
+  const turns = h => h.records.filter(r => r.type === 'event_msg' && ['task_started', 'turn_started',
+    'task_complete', 'turn_complete', 'turn_aborted'].includes(r.payload.type));
+  try {
+    bridge = connect(directory, home, 'crashed');
+    await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    const { sessionId } = await bridge.call('session/new', { cwd: directory, mcpServers: [] });
+    const pending = bridge.call('session/prompt', { sessionId,
+      prompt: [{ type: 'text', text: 'Wait for the isolated fixture response.' }] });
+    void pending.catch(() => {});
+    await until(() => modelCalls === 1 && turns(history(home, sessionId)).some(r => r.payload.type === 'task_started'),
+      'real native unmatched start is persisted');
+    const nativePid = Number(fs.readFileSync(bridge.native.pidPath, 'utf8'));
+    // Only this disposable fixture is crashed to create genuine old history.
+    // Production recovery never sends a signal to native or fabricates records.
+    process.kill(nativePid, 'SIGKILL');
+    await until(() => exists(bridge.native.statusPath), 'fixture native crash receipt');
+    assert.equal(JSON.parse(fs.readFileSync(bridge.native.statusPath, 'utf8')).exitCode, -9);
+    if (alive(bridge.child.pid)) process.kill(bridge.child.pid, 'SIGTERM');
+    await bridge.exited; await pending.catch(() => {});
+    const original = history(home, sessionId);
+    const started = turns(original).find(r => r.payload.type === 'task_started');
+    assert.equal(turns(original).length, 1, 'crash leaves an actual unmatched start');
+    const startAt = Date.parse(started.timestamp);
+    assert(Number.isFinite(startAt));
+    await until(() => Date.now() - startAt > 61000, 'admitted preboot clock margin', 65000);
+    const coldLaunchLowerBound = Date.now();
+    bridge = connect(directory, home, 'cold');
+    await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    await bridge.call('session/load', { sessionId, cwd: directory, mcpServers: [] });
+    assert.equal(modelCalls, 1, 'loading an unmatched previous-process turn does not resume model work');
+    assert(history(home, sessionId).bytes.equals(original.bytes), 'cold load retains the exact original transcript');
+    const shutdown = await bridge.stopBridgeOnly();
+    const drained = history(home, sessionId);
+    assert(drained.bytes.equals(original.bytes), 'idle native EOF cannot append a terminal for a previous process');
+    assert(!alive(Number(fs.readFileSync(bridge.native.pidPath, 'utf8'))));
+    bridge = connect(directory, home, 'continued');
+    await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    await bridge.call('session/load', { sessionId, cwd: directory, mcpServers: [] });
+    assert.equal(modelCalls, 1);
+    await bridge.call('session/prompt', { sessionId,
+      prompt: [{ type: 'text', text: 'Continue the original fixture conversation.' }] });
+    assert.equal(modelCalls, 2, 'only the new explicit prompt starts work');
+    await bridge.stopBridgeOnly();
+    const continued = history(home, sessionId);
+    assert(continued.bytes.subarray(0, original.bytes.length).equals(original.bytes));
+    assert(continued.records.some(r => JSON.stringify(r).includes('Original conversation recovered.')));
+    const receipt = { directory, sessionId, turnId: started.payload.turn_id, startAt, coldLaunchLowerBound,
+      prebootMarginMs: coldLaunchLowerBound - startAt, originalHistorySha256: sha(original.bytes),
+      originalHistoryBytes: original.bytes.length, coldLoadStartedNoWork: true,
+      drainedHistoryUnchanged: true, continuedOriginalPrefix: true, modelCalls, shutdown };
+    fs.writeFileSync(join(directory, 'receipt.json'), JSON.stringify(receipt, null, 2));
+    console.log(JSON.stringify(receipt));
+  } finally {
+    if (bridge && alive(bridge.child.pid)) await bridge.stopBridgeOnly();
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  }
+});
