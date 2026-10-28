@@ -68,6 +68,7 @@ unavailable_port!(SandboxAdmissionStore {
 });
 unavailable_port!(WorkspaceAdmissionStore {
     fn admit_workspace(admission: WorkspaceAdmission) -> WorkspaceAdmissionResult;
+    fn begin_workspace_prepare_recovery(id: &WorkspaceId, caller: &layer2_core::Caller, operation_id: &str, now: String) -> Workspace;
     fn begin_workspace_removal(id: &WorkspaceId, owner: &SubjectId, now: String) -> Workspace;
 });
 unavailable_port!(AgentAdmissionStore {

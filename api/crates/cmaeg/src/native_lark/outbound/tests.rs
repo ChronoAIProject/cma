@@ -10,6 +10,8 @@ use serde_json::{json, Value};
 #[path = "fixture.rs"]
 pub(crate) mod fixture;
 use fixture::*;
+#[path = "document_tests.rs"]
+mod documents;
 
 pub(crate) async fn prepared(item: &NativeAttachment) -> Result<MediaUpload, Error> {
     let file = crate::media::outbound::prepare(std::slice::from_ref(item))
@@ -63,7 +65,10 @@ async fn native_lark_upload_contracts_cover_each_profile_region_and_thread() {
                 let multipart = String::from_utf8_lossy(&calls[0].2);
                 let file_type = match mime {
                     "application/pdf" => "pdf",
-                    "text/plain" => "stream",
+                    "application/msword" => "doc",
+                    "application/vnd.ms-excel" => "xls",
+                    "application/vnd.ms-powerpoint" => "ppt",
+                    mime if mime.starts_with("application/") || mime == "text/plain" => "stream",
                     "audio/ogg" => "opus",
                     "video/mp4" => "mp4",
                     _ => "message",
@@ -116,9 +121,12 @@ async fn native_lark_upload_contracts_cover_each_profile_region_and_thread() {
 async fn native_lark_rejects_unsupported_or_mislabeled_batches_before_upload() {
     for mime in MIME_TYPES {
         for defect in ["mime", "extension", "caption", "kind", "payload"] {
+            if mime == "application/octet-stream" && matches!(defect, "extension" | "payload") {
+                continue; // Generic files promise only exact opaque bytes, not typed contents.
+            }
             let mut item = attachment(mime);
             match defect {
-                "mime" => item.mime_type = Some("application/octet-stream".into()),
+                "mime" => item.mime_type = Some("application/x-unsupported".into()),
                 "extension" => item.filename = Some("misleading.bin".into()),
                 "caption" => item.caption = Some("unsupported native caption".into()),
                 "kind" => item.kind = NativeMediaKind::Sticker,
@@ -313,5 +321,31 @@ async fn native_lark_upload_retains_documented_bare_and_bounded_resource_keys() 
         let calls = io.writes.lock().unwrap();
         let body: Value = serde_json::from_slice(&calls[1].2).unwrap();
         assert_eq!(body["content"], json!({"file_key":key}).to_string());
+    }
+}
+
+#[tokio::test]
+async fn native_lark_card_image_extraction_requires_exact_confirmed_upload_destination_and_kind() {
+    for case in 0..4 {
+        let destination = reply();
+        let image = case != 3;
+        let item = attachment(if image { "image/png" } else { "text/plain" });
+        let io = Api::new(vec![uploaded(image)]);
+        let client = Client::production().unwrap().with_transport(io);
+        let token = client
+            .verified_token(&destination.identity, &credentials())
+            .await
+            .unwrap();
+        let uploaded = client
+            .upload_media(&token, &destination, prepared(&item).await.unwrap())
+            .await
+            .unwrap();
+        let mut target = destination;
+        match case {
+            1 => target.chat_id = "oc_foreign".into(),
+            2 => target.identity.app_id = "cli_foreign".into(),
+            _ => {}
+        }
+        assert_eq!(uploaded.card_image_key(&target).is_ok(), case == 0);
     }
 }

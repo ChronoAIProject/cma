@@ -1,7 +1,7 @@
 //! Neutral delivery intents; the transport engine owns external sends.
 mod complete;
 #[cfg(test)]
-mod complete_tests;
+pub(crate) mod complete_tests;
 pub mod custom;
 mod default_reply;
 pub mod destination;
@@ -44,6 +44,7 @@ mod native_clients;
 mod native_lark;
 mod native_lark_card_edit;
 mod native_lark_controls;
+mod native_lark_thread_start;
 mod pacing;
 pub mod relay_client;
 pub mod render;
