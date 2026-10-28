@@ -38,6 +38,9 @@ pub struct NativeMediaCapabilities {
 /// Exact media/control combination supported for this event's verified destination.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct MediaControlsCapabilities {
+    /// Exact attachment kinds supported with controls; absent means the parent kinds apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kinds: Option<Vec<String>>,
     pub max_attachments: usize,
     pub buttons: bool,
     pub choices: bool,
@@ -50,6 +53,7 @@ pub struct MediaControlsCapabilities {
 impl MediaControlsCapabilities {
     pub(super) fn single(caption_max_chars: u32) -> Self {
         Self {
+            kinds: None,
             max_attachments: 1,
             buttons: true,
             choices: true,
@@ -78,9 +82,36 @@ impl NativeMediaCapabilities {
                     && native_whatsapp_templates(true, channel, event, activity, verified),
             )
         } else if matches!(activity.source, SourceKind::NativeLark(_)) {
-            Self::native_lark(state.native_lark_outbound_media_enabled)
+            Self::native_lark(state.native_lark_outbound_media_enabled).map(|mut capabilities| {
+                if verified
+                    && state.native_lark_media_controls_enabled
+                    && crate::interactions::native_lark::eligible(channel, event, activity)
+                {
+                    let mut controls = MediaControlsCapabilities::single(0);
+                    controls.kinds = Some(vec!["image".into()]);
+                    controls.update = true;
+                    capabilities.controls = Some(controls);
+                }
+                capabilities
+            })
         } else if matches!(activity.source, SourceKind::Whatsapp { .. }) {
-            Self::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
+            Self::native_whatsapp(state.native_whatsapp_outbound_media_enabled).map(
+                |mut capabilities| {
+                    if verified
+                        && state.native_whatsapp_media_controls_enabled
+                        && state.native_whatsapp_interactions_enabled
+                        && (event.consumer.is_none() || state.consumer_interactions_enabled)
+                        && matches!(event.reply, cmaeg_core::seal::ReplyAddress::Whatsapp { .. })
+                        && crate::interactions::whatsapp::eligible(channel, event, activity)
+                    {
+                        let mut controls = MediaControlsCapabilities::single(0);
+                        controls.kinds = Some(["image", "file", "video"].map(String::from).into());
+                        controls.choices = false;
+                        capabilities.controls = Some(controls);
+                    }
+                    capabilities
+                },
+            )
         } else {
             Self::for_source(&activity.source, state.native_media_enabled).map(
                 |mut capabilities| {

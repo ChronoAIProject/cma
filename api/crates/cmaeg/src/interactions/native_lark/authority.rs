@@ -17,6 +17,8 @@ pub struct Authority {
     pub(crate) owner: DispatchOwner,
     pub(crate) conversation: ConversationKind,
     pub(crate) form: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) image: Option<super::Image>,
     pub(crate) custody: String,
     pub(crate) destination: Option<Receipt>,
     pub(crate) replacement: Option<super::replacement::Patch>,
@@ -112,6 +114,7 @@ impl Authority {
             },
             conversation: activity.conversation.kind,
             form,
+            image: None,
             custody: String::new(),
             destination: None,
             replacement: None,
@@ -129,13 +132,16 @@ impl Authority {
         let consumer = channel
             .consumer(card.consumer.as_ref())
             .filter(|c| !c.pending)?;
-        Some(hash(
-            &json!({"domain":"cmaeg.native-lark-card.v1", "channel":channel.id,"record":channel.pointer.record_id,
+        let mut facts = json!({"domain":"cmaeg.native-lark-card.v1", "channel":channel.id,"record":channel.pointer.record_id,
             "owner":channel.definition.owner,"consumer":self.owner,"provider":consumer.provider,
             "key":channel.consumer_key_hash(card.consumer.as_ref())?,"credential":crate::channels::definition::hash_secret(consumer.credential?.as_str()),
             "routing":channel.definition.routing,"original":self.original,"actor":card.actor,"conversation":self.conversation,
-            "thread":card.thread,"id":card.id,"revision":card.revision,"message":card.message,"replacement":self.replacement.as_ref().map(|p| &p.original_card),"issued_at":self.issued_at,"expires_at":card.expires_at,"form":self.form}),
-        ))
+            "thread":card.thread,"id":card.id,"revision":card.revision,"message":card.message,"replacement":self.replacement.as_ref().map(|p| &p.original_card),"issued_at":self.issued_at,"expires_at":card.expires_at,"form":self.form});
+        // Omit the field entirely for historical cards, preserving their custody digest.
+        if let Some(image) = &self.image {
+            facts["image"] = serde_json::to_value(image).ok()?;
+        }
+        Some(hash(&facts))
     }
     pub(crate) fn current(&self, card: &Card, channel: &ResolvedChannel) -> bool {
         self.valid(card)
@@ -200,7 +206,7 @@ impl Authority {
             && self.issued_at > 0
             && card.expires_at > self.issued_at
             && card.expires_at <= self.issued_at.saturating_add(super::super::TTL)
-            && super::render(&card.message, &card.id, card.revision, self.form).is_ok()
+            && super::markup(card).is_ok()
             && self.destination.as_ref().is_none_or(|r| {
                 r.original.channel_id == card.channel_id
                     && r.original.event_id == card.event_id

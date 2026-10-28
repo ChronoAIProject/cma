@@ -3,6 +3,15 @@ use super::{DeliveryOutcome, PreparedReply, RelayClient, ReplyAddress, REQUEST_M
 use cmaeg_core::{channel::Platform, message::WhatsappTemplate};
 
 impl RelayClient {
+    /// One uploaded media header with native private reply buttons.
+    pub fn with_native_whatsapp_media_controls(mut self, enabled: bool) -> Self {
+        self.native_whatsapp_media_controls = enabled;
+        self
+    }
+    pub(in crate::delivery) fn native_whatsapp_media_controls_enabled(&self) -> bool {
+        self.native_whatsapp_media_controls
+    }
+
     pub fn with_native_whatsapp_groups(mut self, enabled: bool) -> Self {
         self.native_whatsapp_groups = enabled;
         self

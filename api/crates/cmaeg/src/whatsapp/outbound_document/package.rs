@@ -52,10 +52,7 @@ fn u32_at(bytes: &[u8], offset: usize) -> Option<usize> {
     Some(u32::from_le_bytes(bytes.get(offset..offset + 4)?.try_into().ok()?) as usize)
 }
 // Refuse ZIP64/multidisk and cap the directory before the ZIP reader allocates it.
-fn directory(bytes: &[u8]) -> Option<(usize, usize)> {
-    if !bytes.starts_with(b"PK\x03\x04") {
-        return None;
-    }
+fn directory(bytes: &[u8], minimum_entries: usize) -> Option<(usize, usize)> {
     let end = (bytes.len().saturating_sub(65557)..bytes.len().checked_sub(21)?)
         .rev()
         .find(|&i| {
@@ -64,11 +61,13 @@ fn directory(bytes: &[u8]) -> Option<(usize, usize)> {
         })?;
     let count = u16_at(bytes, end + 10)?;
     let start = u32_at(bytes, end + 16)?;
-    if bytes.get(end.checked_sub(20)?..end - 16) == Some(b"PK\x06\x07")
+    if end.checked_sub(20).and_then(|at| bytes.get(at..at + 4)) == Some(b"PK\x06\x07")
         || u16_at(bytes, end + 4)? != 0
         || u16_at(bytes, end + 6)? != 0
         || u16_at(bytes, end + 8)? != count
-        || !(3..=1024).contains(&count)
+        || !(minimum_entries..=1024).contains(&count)
+        || (count == 0 && (start != 0 || end != 0))
+        || (count > 0 && !bytes.starts_with(b"PK\x03\x04"))
         || start.checked_add(u32_at(bytes, end + 12)?)? != end
     {
         return None;
@@ -127,8 +126,12 @@ fn directory(bytes: &[u8]) -> Option<(usize, usize)> {
     (at == end).then_some((count, start))
 }
 
-pub(super) fn inspect(bytes: &[u8]) -> Option<Document> {
-    let (count, central_start) = directory(bytes)?;
+fn contents(
+    bytes: &[u8],
+    minimum_entries: usize,
+    retain_documents: bool,
+) -> Option<BTreeMap<String, Vec<u8>>> {
+    let (count, central_start) = directory(bytes, minimum_entries)?;
     let mut archive = ZipArchive::new(Cursor::new(bytes)).ok()?;
     if archive.len() != count || archive.offset() != 0 || archive.has_overlapping_entries().ok()? {
         return None;
@@ -151,8 +154,9 @@ pub(super) fn inspect(bytes: &[u8]) -> Option<Document> {
             return None;
         }
         remaining -= size;
-        let wanted = matches!(name.as_str(), "[Content_Types].xml" | "_rels/.rels")
-            || MAIN.iter().any(|m| m.0 == name);
+        let wanted = retain_documents
+            && (matches!(name.as_str(), "[Content_Types].xml" | "_rels/.rels")
+                || MAIN.iter().any(|m| m.0 == name));
         // Read even unselected entries through EOF so truncated streams and CRC errors fail.
         if wanted {
             let mut body = Vec::new();
@@ -165,6 +169,17 @@ pub(super) fn inspect(bytes: &[u8]) -> Option<Document> {
             return None;
         }
     }
+    Some(retained)
+}
+
+/// Validate a bounded complete archive without extracting or retaining its contents.
+/// This does not add archive support to WhatsApp's document profile.
+pub(super) fn archive(bytes: &[u8]) -> bool {
+    contents(bytes, 0, false).is_some()
+}
+
+pub(super) fn inspect(bytes: &[u8]) -> Option<Document> {
+    let retained = contents(bytes, 3, true)?;
     let mut selected = None;
     let mut part_names = BTreeSet::new();
     xml::parse(
