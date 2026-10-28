@@ -145,9 +145,14 @@ pub async fn receive_event(
         LaunchOutcome::Admitted {
             sync_waiter_attached: false,
             ..
-        } if waiter.is_some() => {
+        }
+        | LaunchOutcome::Deferred
+            if waiter.is_some() =>
+        {
             // Durable acceptance is replayable; the original process-local
-            // stream is not. Dropping this unbound waiter also releases capacity.
+            // stream is not. An elapsed budget also cannot prove that this
+            // waiter owns the admission. Drop it rather than promise an empty
+            // stream while a concurrent duplicate is resolved in the runner.
             (StatusCode::ACCEPTED, Json(accepted)).into_response()
         }
         _ => match waiter {

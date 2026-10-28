@@ -47,6 +47,12 @@ pub struct FakeProviderConfig {
     pub in_progress_first: bool,
     /// Statuses that binding deletions answer instead of 204, by binding ID.
     pub unbind_status: std::collections::BTreeMap<String, u16>,
+    /// Model durable exact command admission rather than replaying every POST.
+    pub exact_admission: bool,
+    pub admission_barrier: Option<Arc<tokio::sync::Barrier>>,
+    pub context_status: Option<u16>,
+    pub context_override: Option<Value>,
+    pub context_delay: Duration,
 }
 
 impl Default for FakeProviderConfig {
@@ -70,6 +76,11 @@ impl Default for FakeProviderConfig {
             unknown_event: false,
             in_progress_first: false,
             unbind_status: std::collections::BTreeMap::new(),
+            exact_admission: false,
+            admission_barrier: None,
+            context_status: None,
+            context_override: None,
+            context_delay: Duration::ZERO,
         }
     }
 }
@@ -89,6 +100,7 @@ struct StateData {
     config: FakeProviderConfig,
     /// Every request in arrival order, event-context reads included.
     requests: Mutex<Vec<ReceivedRequest>>,
+    admitted: Mutex<Vec<ReceivedRequest>>,
     busy_once: AtomicBool,
     conversation_missing_once: AtomicBool,
     missing_turn_once: AtomicBool,
@@ -110,6 +122,7 @@ impl FakeProvider {
         let state = Arc::new(StateData {
             config,
             requests: Mutex::new(Vec::new()),
+            admitted: Mutex::new(Vec::new()),
             busy_once: AtomicBool::new(busy_once),
             conversation_missing_once: AtomicBool::new(missing_once),
             missing_turn_once: AtomicBool::new(missing_turn_once),
@@ -160,6 +173,13 @@ impl FakeProvider {
     /// Every request in arrival order, including event-context reads.
     pub fn log(&self) -> Vec<ReceivedRequest> {
         self.state.requests.lock().unwrap().clone()
+    }
+
+    // This fixture is compiled independently by many integration test crates;
+    // only admission/replay tests inspect its accepted-command ledger.
+    #[allow(dead_code)]
+    pub fn admitted(&self) -> Vec<ReceivedRequest> {
+        self.state.admitted.lock().unwrap().clone()
     }
 
     pub async fn close(mut self) {
@@ -266,6 +286,7 @@ async fn responses(
     body: Bytes,
 ) -> Response {
     let attachments = String::from_utf8_lossy(&body).contains("[Attachments:");
+    let candidate = received("POST", "/api/v2/responses".into(), &headers, &body);
     record(&state, "POST", "/api/v2/responses".into(), headers, body);
     if attachments {
         if let Some(gate) = &state.config.attachment_gate {
@@ -294,6 +315,26 @@ async fn responses(
                 .insert("retry-after", seconds.to_string().parse().unwrap());
         }
         return response;
+    }
+    if let Some(barrier) = &state.config.admission_barrier {
+        barrier.wait().await;
+    }
+    {
+        let mut admitted = state.admitted.lock().unwrap();
+        if state.config.exact_admission {
+            if let Some(original) = admitted.iter().find(|original| {
+                original.authorization == candidate.authorization
+                    && original.idempotency_key == candidate.idempotency_key
+            }) {
+                let status = if original.body == candidate.body {
+                    "exact_duplicate"
+                } else {
+                    "agent_command_key_conflict"
+                };
+                return (StatusCode::CONFLICT, Json(json!({"code":status}))).into_response();
+            }
+        }
+        admitted.push(candidate);
     }
     let mut frames = vec![
         "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fake\"}}\n\n".to_owned(),
@@ -380,11 +421,17 @@ async fn event_context(
         &headers,
         &[],
     ));
+    if !state.config.context_delay.is_zero() {
+        sleep(state.config.context_delay).await;
+    }
+    if let Some(status) = state.config.context_status {
+        return StatusCode::from_u16(status).unwrap().into_response();
+    }
     let authorization = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok());
     let snapshot = state
-        .requests
+        .admitted
         .lock()
         .unwrap()
         .iter()
@@ -398,7 +445,14 @@ async fn event_context(
                 .then(|| context.clone())
         });
     match snapshot {
-        Some(value) => Json(value).into_response(),
+        Some(mut value) => {
+            if let Some(patch) = &state.config.context_override {
+                for (key, replacement) in patch.as_object().unwrap() {
+                    value[key] = replacement.clone();
+                }
+            }
+            Json(value).into_response()
+        }
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
