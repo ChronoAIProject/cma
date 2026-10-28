@@ -150,7 +150,11 @@ impl ToolsState {
                 Problem::new(ProblemCode::Forbidden, 403, "conversation_history_disabled")
             })?;
         if options.include_media && !client.mixed_media {
-            return Err(Problem::new(ProblemCode::Forbidden, 403, "mixed_history_disabled"));
+            return Err(Problem::new(
+                ProblemCode::Forbidden,
+                403,
+                "mixed_history_disabled",
+            ));
         }
         let end = started + client.budget;
         let _permit = client.slots.try_acquire().map_err(|_| {
