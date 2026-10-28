@@ -5,6 +5,7 @@ mod acp_context_refresh;
 mod acp_handshake;
 mod acp_inbound;
 mod acp_observations;
+mod acp_open_completion;
 mod acp_settings;
 mod acp_turn;
 mod adapter;
@@ -31,6 +32,7 @@ mod subscriptions;
 mod tool_confirmation;
 mod update_relay;
 
+pub use acp_open_completion::HostedOpenCompletionProtocol;
 pub use adapter::HostedAdapter;
 pub use agent_sandbox_backend::{
     AgentSandboxBackend, NativeStatusInspection, RuntimeBackends, RuntimeRoutingStore,
