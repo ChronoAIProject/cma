@@ -27,6 +27,7 @@ pub struct ToolsState {
     pub whatsapp_reactions: Option<Arc<super::WhatsappReactionsClient>>,
     pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
     pub discord_threads: Option<Arc<super::DiscordThreads>>,
+    pub native_lark_conversation_history: Option<Arc<super::NativeLarkConversationHistory>>,
     pub discord_conversation_history: Option<Arc<super::DiscordConversationHistory>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,

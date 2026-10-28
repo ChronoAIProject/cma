@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 pub(crate) fn source() -> Source {
     Source::NativeLark(NativeLarkSource {
         separate_app: true,
+        conversation_history: false,
         identity: identity(),
         admission: AdmissionPolicy::All {},
     })
