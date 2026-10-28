@@ -6,6 +6,87 @@ use cmaeg_core::{
 use serde_json::json;
 
 #[test]
+fn shared_contacts_groups_and_locations_are_bounded_display_facts_without_resources() {
+    for (kind, value, expected) in [
+        (
+            "share_user",
+            json!({"user_id":"ou_shared"}),
+            "Shared contact: ou_shared",
+        ),
+        (
+            "share_chat",
+            json!({"chat_id":"oc_shared"}),
+            "Shared group: oc_shared",
+        ),
+        (
+            "location",
+            json!({"name":"Singapore", "latitude":"1.3521", "longitude":"103.8198"}),
+            "Shared location: Singapore\nLatitude: 1.3521\nLongitude: 103.8198",
+        ),
+    ] {
+        let mut value = value;
+        value["file_key"] = "file_untrusted".into();
+        value["url"] = "https://example.org/not-fetched".into();
+        let (text, resources) = parse(kind, &value).unwrap().unwrap();
+        assert_eq!(text, expected);
+        assert!(resources.is_empty());
+    }
+}
+
+#[test]
+fn shared_fact_payloads_refuse_invalid_types_ids_controls_and_coordinates() {
+    for kind in ["share_user", "share_chat"] {
+        let field = if kind == "share_user" {
+            "user_id"
+        } else {
+            "chat_id"
+        };
+        for invalid in [
+            json!(null),
+            json!(7),
+            json!({}),
+            json!(""),
+            json!("ou_"),
+            json!("oc_"),
+            json!("https://example.org"),
+            json!("ou_other\n"),
+            json!("ou_".to_owned() + &"x".repeat(126)),
+        ] {
+            let mut value = json!({});
+            value[field] = invalid;
+            assert!(parse(kind, &value).is_err());
+        }
+    }
+    for (field, invalid) in [
+        ("latitude", json!("90.1")),
+        ("latitude", json!("-90.1")),
+        ("longitude", json!("180.1")),
+        ("longitude", json!("-180.1")),
+        ("latitude", json!("NaN")),
+        ("longitude", json!("inf")),
+        ("latitude", json!("1e999")),
+        ("latitude", json!("1\n")),
+        ("latitude", json!(1)),
+        ("latitude", json!("1".repeat(65))),
+        ("name", json!(null)),
+        ("name", json!("")),
+        ("name", json!("hidden\u{202e}name")),
+        ("name", json!("x".repeat(1025))),
+    ] {
+        let mut value = json!({"name":"Place", "latitude":"0", "longitude":"0"});
+        value[field] = invalid;
+        assert!(parse("location", &value).is_err(), "{field}: {value}");
+    }
+    for (lat, lon) in [("90", "180"), ("-90", "-180"), ("-0", "1e-4")] {
+        assert!(parse(
+            "location",
+            &json!({"name":"Place", "latitude":lat, "longitude":lon})
+        )
+        .is_ok());
+    }
+}
+
+#[test]
 fn all_documented_standalone_resource_shapes_preserve_exact_key_and_declared_facts() {
     for (message_type, content, kind) in [
         (
