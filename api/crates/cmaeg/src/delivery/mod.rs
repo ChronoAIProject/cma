@@ -10,6 +10,11 @@ mod discord_card_edit;
 #[cfg(test)]
 mod discord_card_edit_tests;
 mod discord_card_media;
+mod discord_card_replacement;
+#[cfg(test)]
+mod discord_card_replacement_fixture;
+#[cfg(test)]
+mod discord_card_replacement_tests;
 mod discord_controls;
 #[cfg(test)]
 mod discord_controls_tests;

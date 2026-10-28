@@ -37,6 +37,8 @@ pub(crate) async fn serve(
     telegram_media_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let discord_media_edits = config.native_discord_media_card_edits_enabled && discord_card_edits;
+    let discord_media_replacements =
+        config.native_discord_media_card_replacements_enabled && discord_media_edits;
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
     service_auth.bearer().await?;
@@ -159,6 +161,7 @@ pub(crate) async fn serve(
         .with_discord_multiselect(discord_multiselect)
         .with_discord_media_controls(config.native_discord_media_controls_enabled)
         .with_discord_media_card_edits(discord_media_edits)
+        .with_discord_media_card_replacements(discord_media_replacements)
         .with_discord_card_edits(discord_card_edits)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
@@ -306,6 +309,7 @@ pub(crate) async fn serve(
         discord_interactions_enabled: discord_interactions,
         native_discord_media_controls_enabled: config.native_discord_media_controls_enabled,
         native_discord_media_card_edits_enabled: discord_media_edits,
+        native_discord_media_card_replacements_enabled: discord_media_replacements,
         whatsapp_interactions_enabled: whatsapp_interactions,
         native_whatsapp_interactions_enabled: config.native_whatsapp_interactions_enabled,
         consumer_interactions_enabled: consumer_interactions,

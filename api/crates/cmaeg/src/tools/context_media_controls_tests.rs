@@ -38,6 +38,7 @@ async fn discord_media_controls_discovery_requires_verified_source_and_each_issu
                             assert!(supported.buttons && supported.choices);
                             assert_eq!(supported.caption_max_chars, 1024);
                             assert!(!supported.update);
+                            assert!(supported.replace_media.is_none());
                         }
                     }
                 }
@@ -52,7 +53,19 @@ async fn discord_media_controls_discovery_requires_verified_source_and_each_issu
             true,
         )
         .unwrap();
-        assert!(editable.controls.unwrap().update);
+        let controls = editable.controls.unwrap();
+        assert!(controls.update);
+        assert!(controls.replace_media.is_none());
+        state.native_discord_media_card_replacements_enabled = true;
+        let replacement = NativeMediaCapabilities::for_event(
+            &state,
+            &f.channel,
+            &f.original,
+            &f.context.activity,
+            true,
+        )
+        .unwrap();
+        assert_eq!(replacement.controls.unwrap().replace_media, Some(true));
         let mut event = f.original.clone();
         if let cmaeg_core::seal::ReplyAddress::Discord { channel_id, .. } = &mut event.reply {
             *channel_id = "100".into();

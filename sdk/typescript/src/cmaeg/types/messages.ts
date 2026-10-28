@@ -180,6 +180,7 @@ export const MediaControlsCapabilitiesSchema = object({
   choices: boolean,
   caption_max_chars: integer,
   update: boolean,
+  replace_media: optional(nullable(boolean)),
 });
 export type MediaControlsCapabilities = Output<typeof MediaControlsCapabilitiesSchema>;
 export const NativeMediaCapabilitiesSchema = object({

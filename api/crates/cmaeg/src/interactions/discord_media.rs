@@ -18,6 +18,9 @@ pub struct Media {
     /// Exact native file/presentation proof; absent on historical callback-only cards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     confirmed: Option<Confirmed>,
+    /// New bytes are saved before PATCH, without borrowing the predecessor's proof.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) pending_replacement: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +49,7 @@ impl Media {
             mime_type: file.mime.clone(),
             caption: file.caption.clone(),
             confirmed: None,
+            pending_replacement: false,
         };
         if !value.valid()
             || value.filename != item.filename.as_deref().unwrap_or("attachment-0")
@@ -71,14 +75,16 @@ impl Media {
             mime_type: Some(self.mime_type.clone()),
             caption: self.caption.clone(),
         };
-        self.confirmed.as_ref().is_none_or(|fact| {
-            cmaeg_core::channel::valid_discord_id(&fact.attachment_id)
-                && fact.snapshot_sha256.len() == 64
-                && fact
-                    .snapshot_sha256
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        }) && self.kind != NativeMediaKind::Sticker
+        !(self.pending_replacement && self.confirmed.is_some())
+            && self.confirmed.as_ref().is_none_or(|fact| {
+                cmaeg_core::channel::valid_discord_id(&fact.attachment_id)
+                    && fact.snapshot_sha256.len() == 64
+                    && fact
+                        .snapshot_sha256
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+            && self.kind != NativeMediaKind::Sticker
             && self.bytes > 0
             && self.bytes <= MAX_OUTBOUND_BYTES
             && self.sha256.len() == 64
@@ -91,6 +97,28 @@ impl Media {
 }
 
 impl Media {
+    pub(super) fn replacement(
+        message: &OutboundMessage,
+        file: &PreparedFile,
+    ) -> Result<Self, Error> {
+        let mut media = Self::prepare(message, file)?;
+        media.pending_replacement = true;
+        Ok(media)
+    }
+
+    pub(super) fn valid_for(&self, card: &super::Card) -> bool {
+        self.valid()
+            && (if self.pending_replacement {
+                card.revision > 1
+                    && card.reference.is_none()
+                    && card.consumed.is_none()
+                    && !card.superseded
+                    && card.discord_edit.is_none()
+            } else {
+                self.has_edit_authority() || (card.revision == 1 && card.discord_edit.is_none())
+            })
+    }
+
     pub(crate) fn has_edit_authority(&self) -> bool {
         self.confirmed.is_some()
     }
@@ -116,6 +144,7 @@ impl Media {
             attachment_id: file.id.clone(),
             snapshot_sha256: snapshot_hash(snapshot),
         });
+        self.pending_replacement = false;
         if !self.valid() {
             return Err(Error::Denied);
         }

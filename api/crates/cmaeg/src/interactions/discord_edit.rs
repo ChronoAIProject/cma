@@ -25,6 +25,27 @@ pub(crate) struct Claim {
     version: u64,
     pub prepared: PreparedCard,
 }
+/// Compact candidate identity is created before serializing the native upload.
+pub(crate) struct Replacement {
+    id: String,
+    request_hash: String,
+    media: super::discord_media::Media,
+}
+impl Replacement {
+    pub(crate) fn prepare(
+        message: &OutboundMessage,
+        file: &crate::media::outbound::PreparedFile,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            request_hash: request_hash(message),
+            media: super::discord_media::Media::replacement(message, file)?,
+        })
+    }
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+}
 fn request_hash(message: &OutboundMessage) -> String {
     format!(
         "{:x}",
@@ -53,25 +74,7 @@ impl InteractionStore {
     ) -> Result<Admission, Error> {
         let candidate = self.discord_card_candidate(channel, reference).await?;
         let card = &candidate.card;
-        // Historical media cards have callback authority only. New retained
-        // proofs authorize preserving the exact native upload through this chain.
-        if card
-            .discord
-            .as_ref()
-            .and_then(|identity| identity.media.as_ref())
-            .is_some_and(|media| !media.has_edit_authority())
-            || !message.native_attachments.is_empty()
-            || (card
-                .discord
-                .as_ref()
-                .is_some_and(|identity| identity.media.is_some())
-                && message
-                    .blocks
-                    .iter()
-                    .any(|block| matches!(block, cmaeg_core::message::Block::Form { .. })))
-        {
-            return Err(Error::Denied);
-        }
+        validate_edit(card, message)?;
         let destination = card.destination.as_ref().ok_or(Error::Denied)?;
         if let Some(edit) = &card.discord_edit {
             if edit.request_hash != request_hash(message) {
@@ -108,36 +111,56 @@ impl InteractionStore {
         candidate: Candidate,
         message: &OutboundMessage,
     ) -> Result<Claim, Error> {
+        if !message.native_attachments.is_empty() {
+            return Err(Error::Denied);
+        }
+        self.begin_discord_revision(candidate, message, None).await
+    }
+    pub(crate) async fn begin_discord_media_replacement(
+        &self,
+        candidate: Candidate,
+        message: &OutboundMessage,
+        replacement: Replacement,
+    ) -> Result<Claim, Error> {
+        if replacement.request_hash != request_hash(message) {
+            return Err(Error::Denied);
+        }
+        self.begin_discord_revision(candidate, message, Some(replacement))
+            .await
+    }
+    async fn begin_discord_revision(
+        &self,
+        candidate: Candidate,
+        message: &OutboundMessage,
+        replacement: Option<Replacement>,
+    ) -> Result<Claim, Error> {
         let Candidate {
             mut card, version, ..
         } = candidate;
-        if card
-            .discord
-            .as_ref()
-            .and_then(|identity| identity.media.as_ref())
-            .is_some_and(|media| !media.has_edit_authority())
-            || !message.native_attachments.is_empty()
-            || (card
-                .discord
-                .as_ref()
-                .is_some_and(|identity| identity.media.is_some())
-                && message
-                    .blocks
-                    .iter()
-                    .any(|block| matches!(block, cmaeg_core::message::Block::Form { .. })))
+        validate_edit(&card, message)?;
+        if card.superseded
+            || card.discord_edit.is_some()
+            || replacement.is_some() == message.native_attachments.is_empty()
         {
             return Err(Error::Denied);
         }
         let mut next = card.clone();
-        next.id = uuid::Uuid::new_v4().to_string();
+        next.id = replacement
+            .as_ref()
+            .map(|r| r.id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         next.revision = next.revision.checked_add(1).ok_or(Error::Denied)?;
         next.message = message.clone();
+        next.message.native_attachments.clear();
         next.consumed = None;
         next.reference = None;
         next.discord_edit = None;
         next.discord_form_launch = None;
         if let Some(identity) = &mut next.discord {
             identity.form = super::discord_form::authority(message).ok();
+            if let Some(replacement) = replacement {
+                identity.media = Some(replacement.media);
+            }
         }
         if let Some(state) = &mut next.discord_effect {
             state.deletion = None;
@@ -149,7 +172,7 @@ impl InteractionStore {
         {
             super::discord_form::button(&next)?
         } else {
-            discord::render_replacement(message, &next.id, next.revision)?
+            discord::render_replacement(&next.message, &next.id, next.revision)?
         };
         card.superseded = true;
         card.discord_edit = Some(Edit {
@@ -184,6 +207,27 @@ impl InteractionStore {
         self.save(&claim.previous, Some(claim.version)).await?;
         Ok(())
     }
+}
+/// Upload replacement requires previously confirmed same-card media authority.
+/// Replay checks this immutable request before any source URL is materialized again.
+fn validate_edit(card: &Card, message: &OutboundMessage) -> Result<(), Error> {
+    message.validate().map_err(|_| Error::Denied)?;
+    let media = card
+        .discord
+        .as_ref()
+        .and_then(|identity| identity.media.as_ref());
+    if media.is_some_and(|media| !media.has_edit_authority())
+        || message.native_attachments.len() > 1
+        || (!message.native_attachments.is_empty() && media.is_none())
+        || (media.is_some()
+            && message
+                .blocks
+                .iter()
+                .any(|block| matches!(block, cmaeg_core::message::Block::Form { .. })))
+    {
+        return Err(Error::Denied);
+    }
+    Ok(())
 }
 pub(crate) fn uncertain() -> IntentReceipt {
     IntentReceipt {
