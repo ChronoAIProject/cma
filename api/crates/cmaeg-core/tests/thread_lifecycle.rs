@@ -140,3 +140,50 @@ fn lifecycle_requests_reject_destinations_other_members_and_unsupported_archive_
         assert!(serde_json::from_value::<ManageThreadRequest>(value).is_err());
     }
 }
+
+#[test]
+fn rename_requires_an_explicit_bounded_name_and_legacy_requests_keep_their_wire_shape() {
+    let target = json!({"type":"event","event_ref":"cmaeg1.ev.fixture"});
+    for action in ["archive", "reopen", "join", "leave"] {
+        let value = json!({"target":target,"action":action});
+        let request: ManageThreadRequest = serde_json::from_value(value.clone()).unwrap();
+        assert!(request.validate().is_ok());
+        assert_eq!(
+            serde_json::to_string(&request).unwrap(),
+            format!(
+                r#"{{"target":{{"type":"event","event_ref":"cmaeg1.ev.fixture"}},"action":"{action}"}}"#
+            )
+        );
+        assert_eq!(serde_json::to_value(request).unwrap(), value);
+        let request: ManageThreadRequest =
+            serde_json::from_value(json!({"target":target,"action":action,"name":"Review"}))
+                .unwrap();
+        assert!(request.validate().is_err());
+        assert!(serde_json::from_value::<ManageThreadRequest>(
+            json!({"target":target,"action":action,"name":null})
+        )
+        .is_err());
+    }
+    for name in ["a".into(), "🧵".repeat(100)] {
+        let request: ManageThreadRequest =
+            serde_json::from_value(json!({"target":target,"action":"rename","name":name})).unwrap();
+        assert!(request.validate().is_ok());
+    }
+    for name in [
+        "".into(),
+        " \t".into(),
+        "🧵".repeat(101),
+        "bad\u{1b}name".into(),
+    ] {
+        let request: ManageThreadRequest =
+            serde_json::from_value(json!({"target":target,"action":"rename","name":name})).unwrap();
+        assert!(request.validate().is_err());
+    }
+    let missing: ManageThreadRequest =
+        serde_json::from_value(json!({"target":target,"action":"rename"})).unwrap();
+    assert!(missing.validate().is_err());
+    assert!(serde_json::from_value::<ManageThreadRequest>(
+        json!({"target":target,"action":"rename","name":null})
+    )
+    .is_err());
+}

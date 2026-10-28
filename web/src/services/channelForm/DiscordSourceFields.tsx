@@ -97,9 +97,10 @@ export function DiscordSourceFields({
             />
             <p className="channel-field-hint">
               Allow agents to create public threads from incoming server messages, list public
-              threads in the same parent channel, and archive, reopen, join or leave those exact
-              threads as the bot. Messages already in a thread stay within that thread. Discord
-              permissions still apply. Private thread creation and forum posts are not supported.
+              threads in the same parent channel, and rename, archive, reopen, join or leave those
+              exact threads as the bot. Messages already in a thread stay within that thread.
+              Discord permissions still apply. Renaming requires an active thread and never reopens
+              it. Private thread creation and forum posts are not supported.
             </p>
           </>
         ) : null}

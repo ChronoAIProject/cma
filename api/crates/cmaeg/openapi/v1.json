@@ -4019,6 +4019,12 @@
           "action": {
             "$ref": "#/components/schemas/ThreadAction"
           },
+          "name": {
+            "description": "Required only for rename: 1–100 printable characters. Omit for every other action.",
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
           "target": {
             "$ref": "#/components/schemas/ThreadTarget"
           }
@@ -7013,7 +7019,8 @@
           "archive",
           "reopen",
           "join",
-          "leave"
+          "leave",
+          "rename"
         ],
         "type": "string"
       },

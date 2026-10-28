@@ -524,6 +524,10 @@ async fn context_capabilities_require_retained_scope_and_do_not_grant_history() 
         assert_eq!(capabilities["create_from_original_message"], !threaded);
         assert_eq!(capabilities["manage_original_thread"], threaded);
         assert_eq!(capabilities["expires_at"], app.event.expires_at);
+        assert_eq!(
+            capabilities["actions"],
+            json!(["archive", "reopen", "join", "leave", "rename"])
+        );
         assert!(value["capabilities"].get("thread_history").is_none());
         assert!(app.memory.lock().unwrap().calls.is_empty());
     }
