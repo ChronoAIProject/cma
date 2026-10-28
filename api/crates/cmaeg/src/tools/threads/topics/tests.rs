@@ -319,9 +319,10 @@ async fn current_consent_credential_and_consumer_custody_are_rechecked_after_per
                 definition.secrets.agent_key_hash =
                     crate::channels::definition::hash_secret("other-key")
             }
-            "provider_key" => {
-                definition.secrets.provider_credential = Some(Secret::new("rotated-provider"))
-            }
+            "provider_key" => crate::channels::definition::fixture::replace_default_credential(
+                &mut definition,
+                Some("rotated-provider"),
+            ),
             _ => unreachable!(),
         }
         let backend = app.backend.clone();
