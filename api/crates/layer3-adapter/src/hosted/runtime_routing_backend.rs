@@ -53,13 +53,13 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
-    async fn inspect_runtime(
+    async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,
-        command: &super::super::RuntimeInspectionCommand,
+        command: &super::super::RuntimeRecoveryCommand,
     ) -> Result<Vec<u8>> {
         self.for_handle(handle)?
-            .inspect_runtime(handle, command)
+            .run_recovery_command(handle, command)
             .await
     }
 
