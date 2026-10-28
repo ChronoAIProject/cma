@@ -673,11 +673,31 @@ app's webhook would redirect its traffic. This source supports native text
 replies, retained recall notifications with unknown actors, and human reaction
 add/remove deltas. `SourceKind` carries the same regional app/tenant/bot identity.
 Targets retain the original conversation and consumer authority; these incoming
-notifications confer no outgoing delete/edit/reaction authority. Native media
-(including the WhatsApp video profile), cards/forms, thread history and incoming
-edit propagation are not advertised for this source. Live platform acceptance
-remains separate from local contract tests. See the repository's native Lark
-setup document and preserved incoming-event audit for provisioning and limits.
+notifications confer no outgoing delete/edit/reaction authority. Thread history
+and incoming edit propagation are not advertised for this source. Live platform
+acceptance remains separate from local contract tests. See the repository's
+native Lark setup document and preserved incoming-event audit for provisioning
+and limits.
+
+Native interactive replies have separate optional management discovery flags,
+`native_lark_controls_enabled` and `native_lark_forms_enabled`, both default off.
+The retained event context advertises `buttons` and `cards` as `native_card`,
+`max_text_chars: 4000`, and the optional `forms` boolean when native controls are
+available. Configure `card.action.trigger` in the separate app's **Callback
+configuration**, using the encrypted native webhook URL; this is separate from
+message event subscriptions. Do not subscribe to the legacy callback version.
+
+Use the existing outbound blocks and form fields. Controls retain the original
+human actor and exact private/group conversation, including an existing group
+thread when its original native authority is retained. Both default and named
+consumers retain their exact original owner. A confirmed single interactive
+message returns a stable `message_ref` for PATCH replacement, recall and one
+reaction. Replacements preserve the original 24-hour lifetime; changing app
+credentials, source, routing, consumer key or provider revokes stale authority.
+Unknown sends or updates never produce replacement authority and must not be
+blindly retried. Gate-off stops new issuance while current retained references
+and durable callback recovery remain readable. Media mixed with cards remains
+unsupported; inspect rendering, delivery and message capability results.
 
 ### Native WhatsApp image, PDF, audio, sticker and video replies
 
@@ -844,3 +864,51 @@ advertise optional `whatsapp_template_components: ["header", "body"]` alongside
 gates and format limits still apply. No group management, message edit/delete,
 reaction or controls authority is added. Connected Meta v25/OBA acceptance is
 still outstanding; source capability presence does not prove delivery.
+
+### Confirmed Telegram and Discord media edits
+
+Use `updateMessage(ref, { native_media_update: patch }, { idempotencyKey })` with an explicit
+`native_media_update`. Read context `native_media_edits` for new-upload eligibility
+and `readMessageCapabilities` for the exact reference's `media_edit` authority.
+Historical effects-only references remain ineligible. This increment supports one
+attachment in one confirmed platform message, with same-kind replacement only.
+
+Omitting `replacement`, `caption`, or `text` preserves its current value. Empty
+caption/text clears it; explicit null refuses. At least one patch member is
+required, and ordinary message fields cannot accompany the patch. Telegram
+`caption` is visible; Discord `caption` is the attachment description/alt text and
+`text` is visible message content. Telegram does not accept `text` here.
+
+Persist the confirmed receipt's next `message_ref`: it carries the next revision
+and the original expiry. Retry only the identical body and original reference
+with the same key; an unknown outcome retains its mutation fence and never
+causes an automatic provider retry. Neither provider offers conditional revision
+writes, so external applications sharing bot credentials remain outside CMA's
+fence. New issuance stays gated until compatible readers are deployed and release
+checks pass. Connected platform tests remain the owner acceptance step.
+
+### Native Discord thread lifecycle
+
+Native Discord thread lifecycle requires the gateway gate and source
+`thread_lifecycle: true`. Check `context.capabilities.thread_lifecycle` for the
+original event's scope. `client.listEventThreads(eventRef, 'active' | 'archived')`
+returns at most 25 scoped threads and an explicit `truncated` flag.
+`client.createEventThread(eventRef, key, { name: 'Review', auto_archive_duration: 1440 })`
+creates a public thread from the exact original message.
+`client.manageThread(key, { target: { type: 'thread', thread_ref }, action: 'archive' })`
+also accepts `reopen`, `join`, or `leave`; `target: { type: 'event', event_ref }`
+addresses only the thread containing that event. References preserve original
+consumer custody and expiry. Unknown outcomes must not be retried under a new
+key. Private/forum creation and private sibling enumeration are unsupported.
+
+Native WhatsApp Forms use `prepareFormReply(eventRef, message, stablePreparationKey)`,
+then `readFormPreparation(eventRef)`. Poll Pending after `retry_after_ms`. Ready has
+not sent a customer message. Commit the exact message with
+`replyToEvent(eventRef, message, { idempotencyKey: stableCommitKey, formPreparationRef })`.
+The returned `FormPreparationReceipt` explicitly distinguishes asset uncertainty
+(`customer_message:not_sent`) from Delivery (`attempted`, with the existing receipt).
+Keep keys/content on retry; never resend Unknown under another key. Both preparation
+and status have a two-second total gateway deadline; explicit commit remains eight
+seconds. Source `forms_enabled` is separate owner consent; operator discovery uses
+`native_whatsapp_forms_enabled` and `native_whatsapp_flow_writes_enabled`.
+See `docs/CMAEG_Native_WhatsApp_Forms.md` for the supported subset and retained gaps.

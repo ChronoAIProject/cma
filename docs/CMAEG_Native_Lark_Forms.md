@@ -1,5 +1,6 @@
 # Native Lark and Feishu forms
 
+This document describes the NyxID relay form path. The separate native app uses [native Lark controls and forms](CMAEG_Native_Lark_Controls.md) with independent flags, locators, receipts and callback admission.
 Native Lark and Feishu cards can collect one neutral `Form` block and submit its
 fields together. New forms require both `CMAEG_LARK_CARDS_ENABLED=true` and
 `CMAEG_LARK_FORMS_ENABLED=true`. The form flag defaults to false. Named consumers

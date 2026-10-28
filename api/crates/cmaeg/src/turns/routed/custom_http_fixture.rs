@@ -180,6 +180,8 @@ impl App {
         let tracker = TurnTracker::new(Readiness::initialized());
         let tools = ToolsState {
             discord_thread_history: None,
+            discord_threads: None,
+            discord_conversation_history: None,
             complete_replies_enabled: false,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
@@ -187,6 +189,8 @@ impl App {
             native_whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_media_edits: None,
+            native_whatsapp_forms: None,
             native_lark_effects: None,
             lark_effects_issuance_enabled: false,
             lark_effects: None,

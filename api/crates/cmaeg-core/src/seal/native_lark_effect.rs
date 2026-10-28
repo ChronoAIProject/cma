@@ -58,6 +58,7 @@ impl NativeLarkEffectAuthority {
             || self.observed_at <= 0
             || self.expires_at <= self.observed_at
             || self.expires_at > self.observed_at.saturating_add(MAX_AGE)
+            || message.native_media_edit.is_some()
             || message.platform_message_id != self.reply.message_id
             || message.route_id != self.route()
             || message.received_reaction.is_some()

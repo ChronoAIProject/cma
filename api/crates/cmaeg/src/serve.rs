@@ -7,7 +7,7 @@ use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
 use crate::{
-    connections, console, delivery, http, ingress, interactions, mcp, media, providers, records,
+    connections, console, delivery, http, ingress, interactions, mcp, media, providers,
     router_with_state, service_auth, telegram, telemetry, tools, turns, Config,
     REQUEST_BODY_LIMIT_BYTES,
 };
@@ -67,33 +67,7 @@ pub(crate) async fn serve(
     )?);
     state.telegram = Some(telegram.clone());
     state.media_enabled = config.media.enabled;
-    state.native_bot_mentions_writes_enabled = config.native_bot_mentions_writes_enabled;
-    state.thread_contract_writes_enabled = config.thread_contract_writes_enabled;
-    state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
-    state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
-    state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
-    state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
-    state.native_lark_intake_enabled = config.native_lark_intake_enabled;
-    state.native_lark_writes_enabled = config.native_lark_writes_enabled;
-    state.native_lark_admission_enabled =
-        config.routing.admission_enabled && config.routing.recovery_enabled;
-    state.native_lark = Some(std::sync::Arc::new(
-        crate::native_lark::Client::production()?
-    ));
-    state.native_whatsapp_writes_enabled = config.native_whatsapp_writes_enabled;
-    state.native_whatsapp_groups_writes_enabled = config.native_whatsapp_groups_writes_enabled;
-    state.native_whatsapp_admission_enabled =
-        config.routing.admission_enabled && config.routing.recovery_enabled;
-    state.lark_message_effects_writes_enabled = config.lark_message_effects_writes_enabled;
-    state.native_discord_writes_enabled = config.native_discord_writes_enabled;
-    state.native_telegram_message_events_writes_enabled =
-        config.native_telegram_message_events_writes_enabled;
-    state.native_telegram_durable_admission_enabled =
-        config.routing.recovery_enabled && config.routing.admission_enabled;
-    state.native_discord_thread_history_enabled = config.native_discord_thread_history_enabled;
-    state.native_discord_reactions_enabled = config.native_discord_reactions_enabled;
-    state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
-    state.native_discord_admission_enabled = config.routing.admission_enabled;
+    let whatsapp_forms_ready = source_settings::configure(&config, &mut state).await?;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
     state.outbound_relay = Some(
         delivery::relay_client::RelayClient::new(
@@ -125,6 +99,18 @@ pub(crate) async fn serve(
         state.master_keys.clone(),
         providers.clone(),
     ));
+    let whatsapp_forms = std::sync::Arc::new(crate::whatsapp::forms::service::Forms::new(
+        (*state.records).clone(),
+        state.master_keys.clone(),
+        state.resolver.clone(),
+        interactions.as_ref().clone(),
+        whatsapp.clone(),
+        state.native_whatsapp_forms_enabled && state.native_whatsapp_admission_enabled,
+        state.native_whatsapp_flow_writes_enabled && state.native_whatsapp_admission_enabled,
+    ));
+    let native_lark_controls = config.native_lark_controls_enabled
+        && config.native_lark_intake_enabled
+        && state.native_lark_admission_enabled;
     let delivery_engine = delivery::engine::DeliveryEngine::start_observed(
         outcomes,
         state.master_keys.clone(),
@@ -142,6 +128,15 @@ pub(crate) async fn serve(
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
         .with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
         .with_native_lark_effects(config.native_lark_message_effects_enabled)
+        .with_native_media_edits(
+            config.native_telegram_media_edits_enabled,
+            config.native_discord_media_edits_enabled,
+            std::sync::Arc::new(crate::native_media::store::Store::new(
+                (*state.records).clone(),
+                state.master_keys.clone(),
+            )),
+        )
+        .with_native_lark_controls(native_lark_controls, config.native_lark_forms_enabled)
         .with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
         .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
         .with_native_whatsapp_interactions(config.native_whatsapp_interactions_enabled)
@@ -247,6 +242,19 @@ pub(crate) async fn serve(
     )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        discord_conversation_history: config
+            .native_discord_conversation_history_enabled
+            .then(|| {
+                crate::discord::DiscordRest::new()
+                    .map(crate::tools::DiscordConversationHistory::new)
+                    .map(std::sync::Arc::new)
+            })
+            .transpose()?,
+        discord_threads: state
+            .native_discord_thread_lifecycle_enabled
+            .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreads::new))
+            .transpose()?
+            .map(std::sync::Arc::new),
         discord_thread_history: config
             .native_discord_thread_history_enabled
             .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreadHistory::new))
@@ -257,11 +265,21 @@ pub(crate) async fn serve(
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
         telegram_effects_issuance_enabled: telegram_effects,
-        native_lark_effects: Some(std::sync::Arc::new(tools::NativeLarkEffectsClient::new(
-            crate::native_lark::Client::production()?,
-            config.native_lark_message_effects_enabled,
-            config.native_lark_received_reactions_enabled,
+        native_media_edits: Some(std::sync::Arc::new(crate::native_media::Client::new(
+            telegram.clone(),
+            crate::discord::DiscordRest::new()?,
+            config.native_telegram_media_edits_enabled,
+            config.native_discord_media_edits_enabled,
         ))),
+        native_whatsapp_forms: Some(whatsapp_forms.clone()),
+        native_lark_effects: Some(std::sync::Arc::new(
+            tools::NativeLarkEffectsClient::new(
+                crate::native_lark::Client::production()?,
+                config.native_lark_message_effects_enabled,
+                config.native_lark_received_reactions_enabled,
+            )
+            .with_controls(native_lark_controls, config.native_lark_forms_enabled),
+        )),
         lark_effects_issuance_enabled: config.lark_message_effects_writes_enabled,
         lark_effects: Some(std::sync::Arc::new(
             tools::message_effects::lark_transport::LarkEffectsClient::new(
@@ -317,6 +335,18 @@ pub(crate) async fn serve(
     let mut routed_worker = routed.map(|composition| {
         crate::serve_routed::Worker::start(composition.scheduler, state.readiness.clone())
     });
+    // Readers and recovery remain active when controls/forms issuance is disabled.
+    let mut native_lark_controls = crate::native_lark::control_recovery::Worker::start(
+        ingress.clone(),
+        state.readiness.clone(),
+    );
+    let mut whatsapp_form_worker = whatsapp_forms_ready.then(|| {
+        crate::whatsapp::forms::worker::Worker::start(
+            ingress.clone(),
+            whatsapp_forms.provisioner.clone(),
+            state.readiness.clone(),
+        )
+    });
     let mut native_discord = crate::discord::lifecycle::Worker::start(
         &config.native_discord,
         state.native_discord.clone(),
@@ -360,16 +390,26 @@ pub(crate) async fn serve(
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
-        wait_for_shutdown_signal().await;
+        shutdown::wait_for_shutdown_signal().await;
         tracker.start_draining();
         let deadline = Instant::now() + config.turns.drain;
+        native_lark_controls.stop();
+        if let Some(worker) = &whatsapp_form_worker {
+            worker.stop();
+        }
         if let Some(worker) = &native_discord {
             worker.stop();
         }
         if let Some(worker) = &routed_worker {
             worker.stop_scheduling();
         }
-        let (turns_drained, routed_drained, native_drained) = tokio::join!(
+        let (
+            turns_drained,
+            routed_drained,
+            native_drained,
+            lark_controls_drained,
+            whatsapp_forms_drained,
+        ) = tokio::join!(
             tracker.drain(deadline),
             async {
                 match &mut routed_worker {
@@ -382,8 +422,21 @@ pub(crate) async fn serve(
                     Some(worker) => worker.drain(deadline).await,
                     None => true,
                 }
+            },
+            native_lark_controls.drain(deadline),
+            async {
+                match &mut whatsapp_form_worker {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
             }
         );
+        if !whatsapp_forms_drained {
+            tracing::warn!("native WhatsApp Form drain incomplete; durable write fences retained");
+        }
+        if !lark_controls_drained {
+            tracing::warn!("native Lark callback drain incomplete; consumed cards retain recovery");
+        }
         if !native_drained {
             tracing::warn!(
                 "native Discord drain incomplete; durable inbox and lease fences retained"
@@ -418,40 +471,12 @@ pub(crate) async fn serve(
     Ok(())
 }
 
-/// The CMA channel-record client, authenticated as the gateway service.
-pub(crate) async fn record_client(
-    config: &Config,
-    service_auth: service_auth::ServiceAuth,
-) -> Result<records::RecordClient, records::RecordError> {
-    let client = records::RecordClient::new(
-        &config.management.cma_base_url,
-        config.management.cma_service_token.as_str(),
-    )?
-    .with_service_auth(service_auth);
-    crate::serve_storage::record_client(client).await
-}
+#[path = "serve_shutdown.rs"]
+mod shutdown;
 
-async fn wait_for_shutdown_signal() {
-    #[cfg(unix)]
-    {
-        let terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
-        match terminate {
-            Ok(mut signal) => {
-                tokio::select! {
-                    result = tokio::signal::ctrl_c() => {
-                        if let Err(error) = result { tracing::warn!(%error, "ctrl-c signal listener stopped"); }
-                    }
-                    _ = signal.recv() => {}
-                }
-            }
-            Err(error) => {
-                tracing::warn!(%error, "SIGTERM listener unavailable; waiting for ctrl-c");
-                let _ = tokio::signal::ctrl_c().await;
-            }
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
-}
+#[path = "serve_record_client.rs"]
+mod record_client_impl;
+pub(crate) use record_client_impl::record_client;
+
+#[path = "serve_source_settings.rs"]
+mod source_settings;

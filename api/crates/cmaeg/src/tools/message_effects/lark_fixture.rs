@@ -225,9 +225,13 @@ impl App {
         let (sender, _) = mpsc::channel(16);
         let state = ToolsState {
             discord_thread_history: None,
+            discord_threads: None,
+            discord_conversation_history: None,
             complete_replies_enabled: true,
             telegram_effects_issuance_enabled: false,
             telegram_effects: None,
+            native_media_edits: None,
+            native_whatsapp_forms: None,
             native_lark_effects: None,
             lark_effects_issuance_enabled: true,
             lark_effects: Some(Arc::new(
@@ -279,7 +283,7 @@ impl App {
     }
     pub fn restart(&mut self) {
         self.engine.take();
-        let records = RecordClient::new(&self.backend.base_url, "cma-service").unwrap();
+        let records = self.state.resolver.record_client();
         self.state.resolver = ChannelResolver::new(
             Arc::new(records.clone()),
             self.state.keys.clone(),

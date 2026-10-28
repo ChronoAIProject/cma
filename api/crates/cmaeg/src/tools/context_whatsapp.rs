@@ -68,3 +68,23 @@ pub(super) fn group_capabilities(capabilities: &mut super::Capabilities, event: 
         }
     }
 }
+
+pub(super) fn project_forms(
+    state: &super::ToolsState,
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+    activity: &Activity,
+    verified: bool,
+    capabilities: &mut super::Capabilities,
+) {
+    if matches!(activity.source, SourceKind::Whatsapp { .. }) {
+        capabilities.forms = Some(
+            verified
+                && state
+                    .native_whatsapp_forms
+                    .as_ref()
+                    .is_some_and(|forms| forms.issuance_enabled)
+                && crate::interactions::whatsapp_flow::eligible(channel, event, activity),
+        );
+    }
+}

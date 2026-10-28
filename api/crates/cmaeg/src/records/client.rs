@@ -63,7 +63,12 @@ pub struct RecordClient {
     base_url: Url,
     record_path: &'static str,
     record_kind: super::RecordKind,
+    retention: super::retention::InteractionRetention,
     service_token: crate::service_auth::ServiceAuth,
+    #[cfg(test)]
+    thread_fences_fixture: bool,
+    #[cfg(test)]
+    whatsapp_reaction_fixture: bool,
 }
 
 impl RecordClient {
@@ -100,7 +105,12 @@ impl RecordClient {
             base_url,
             record_path: RECORD_PATH,
             record_kind: super::RecordKind::Channel,
+            retention: Default::default(),
             service_token: crate::service_auth::ServiceAuth::Static(Secret::new(service_token)),
+            #[cfg(test)]
+            thread_fences_fixture: false,
+            #[cfg(test)]
+            whatsapp_reaction_fixture: false,
         })
     }
 
@@ -141,10 +151,12 @@ impl RecordClient {
     pub fn interactions(mut self) -> Self {
         self.record_path = "/api/v1/gateway/interaction-records";
         self.record_kind = super::RecordKind::Interaction;
+        self.retention = Default::default();
         self
     }
 
     pub fn record_url(&self, record_id: &str) -> Result<Url, RecordError> {
+        self.check_thread_fence_transport()?;
         let record_path = self.record_path;
         let id = uuid::Uuid::parse_str(record_id)
             .map_err(|_| RecordError::Rejected("invalid record ID".into()))?;
@@ -167,61 +179,6 @@ impl RecordClient {
     ) -> Result<u64, RecordError> {
         self.put_expiring(record_id, owner, blob, expected_version, None)
             .await
-    }
-
-    pub async fn put_expiring(
-        &self,
-        record_id: &RecordId,
-        owner: &str,
-        blob: &[u8],
-        expected_version: Option<u64>,
-        expires_at: Option<i64>,
-    ) -> Result<u64, RecordError> {
-        if blob.is_empty() || blob.len() > 65_536 {
-            return Err(RecordError::Rejected(
-                "record size is outside 1..=65536 bytes".into(),
-            ));
-        }
-        let url = self.record_url(record_id.as_str())?;
-        if let Some(db) = &self.database {
-            return db
-                .for_kind(self.record_kind)
-                .put_expiring(
-                    record_id.as_str(),
-                    owner,
-                    blob,
-                    expected_version,
-                    expires_at,
-                )
-                .await;
-        }
-        let response = self
-            .client
-            .put(url)
-            .bearer_auth(
-                self.service_token
-                    .bearer()
-                    .await
-                    .map_err(|error| RecordError::Unavailable(error.to_string()))?
-                    .as_str(),
-            )
-            .json(&PutRequest {
-                owner,
-                blob: STANDARD.encode(blob),
-                expected_version,
-                expires_at,
-            })
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-            .map_err(transport)?;
-        if response.status() == StatusCode::CONFLICT {
-            return Err(conflict(response, expected_version.unwrap_or(0)).await);
-        }
-        let response = success(response).await?;
-        read_json::<PutResponse>(response)
-            .await
-            .map(|body| body.version)
     }
 
     pub async fn get(&self, record_url: &str) -> Result<RecordValue, RecordError> {
@@ -342,6 +299,7 @@ impl RecordClient {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<RecordHead>, RecordError> {
+        self.check_thread_fence_transport()?;
         if let Some(db) = &self.database {
             return db
                 .for_kind(self.record_kind)
@@ -475,3 +433,15 @@ mod tests {
         assert!(client.record_url("not-a-uuid").is_err());
     }
 }
+
+#[path = "client_thread_fences.rs"]
+mod thread_fences;
+
+#[path = "client_whatsapp_flows.rs"]
+mod whatsapp_flows;
+
+#[path = "client_write.rs"]
+mod write;
+
+#[path = "client_whatsapp_reactions.rs"]
+mod whatsapp_reactions;

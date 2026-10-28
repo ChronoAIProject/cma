@@ -135,6 +135,9 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if message.native_media_update.is_some() {
+            return (unsupported(), SendEffects::default());
+        }
         if matches!(event.reply, ReplyAddress::NativeLark(_)) {
             return self.native_lark_reply(ctx, event, message).await;
         }
@@ -368,6 +371,7 @@ impl Sender {
                     result.message_ref = MessageRef::seal(
                         &MessageRefPayload {
                             discord_message: None,
+                            native_media_edit: None,
                             received_reaction: None,
                             native_lark_effect: None,
                             whatsapp_reaction: None,

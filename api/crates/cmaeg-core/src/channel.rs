@@ -7,7 +7,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::ToSchema;
 
 use crate::{
-    ids::{BindingId, ProviderSlug, RecordId},
+    ids::RecordId,
     profile::{EventWorkerProfile, NyxIdIdentity},
     require_string, ValidationError,
 };
@@ -23,6 +23,8 @@ pub use lark_resources::{LarkMessageEffectsBinding, LarkResourceBinding, LarkRes
 pub mod native_lark;
 mod partition;
 mod platform;
+mod provider;
+pub use provider::{ConformanceLevel, ProviderBinding, ProviderTarget};
 mod routing;
 mod routing_validation;
 mod secrets;
@@ -63,68 +65,15 @@ pub const MAX_ROUTE_IDS: usize = 64;
 pub const MAX_SINKS: usize = 3;
 pub const MAX_PROMPT_TEMPLATE_BYTES: usize = 8 * 1_024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConformanceLevel {
-    L1,
-    L2,
-    L3,
-    L4,
-    L5,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProviderBinding {
-    pub slug: ProviderSlug,
-    #[serde(default, skip_serializing_if = "ProviderTarget::is_profile")]
-    pub target: ProviderTarget,
-    pub binding_id: BindingId,
-    pub level: ConformanceLevel,
-}
-
-/// Generic provider target. Instance selection and authorization stay with the
-/// provider; the gateway only retains and forwards this declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-pub enum ProviderTarget {
-    Profile {},
-    ExistingAgent { agent_id: String },
-}
-
-impl Default for ProviderTarget {
-    fn default() -> Self {
-        Self::Profile {}
-    }
-}
-
-impl ProviderTarget {
-    pub fn is_profile(&self) -> bool {
-        matches!(self, Self::Profile {})
-    }
-    pub fn validate(&self) -> Result<(), ValidationError> {
-        if let Self::ExistingAgent { agent_id } = self {
-            require_string(agent_id, "/provider/target/agent_id", 1, 128)?;
-            if !agent_id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-            {
-                return Err(ValidationError::new(
-                    "/provider/target/agent_id",
-                    "must be a provider agent identifier",
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Source {
     NativeLark(NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
+        /// Owner consent to create and publish managed static native Flow assets.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        forms_enabled: bool,
         /// Explicit existing group IDs; empty keeps private-only behavior.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[schema(max_items = 16)]
@@ -153,6 +102,12 @@ pub enum Source {
         /// Allow an admitted consumer to read up to 20 earlier messages in its exact thread.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         thread_history: bool,
+        /// Explicit opt-in to bounded native Discord thread lifecycle operations.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_lifecycle: bool,
+        /// Explicit read-only pagination within the original admitted conversation.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        conversation_history: bool,
         admission: AdmissionPolicy,
     },
     NyxidRelay {

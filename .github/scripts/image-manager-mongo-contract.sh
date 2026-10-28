@@ -56,7 +56,10 @@ cargo build --locked -p cmaeg
 cargo test --locked -p cma-image-manager --test mongo_isolation --test browser_session \
   -- --ignored --test-threads=1
 
+cargo test --locked -p cmaeg --lib optional_forms_storage -- --ignored --test-threads=1
+cargo test --locked -p cmaeg --lib whatsapp_retention_on_real_mongo -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --test mongo_isolation -- --ignored --test-threads=1
+cargo test --locked -p cmaeg --lib tools::threads::ledger::mongo_tests:: -- --ignored --test-threads=1
 cargo test --locked -p cma store::isolation::tests::real_ -- --ignored --test-threads=1
 
 cargo test --locked -p cmaeg --test management binary::compiled_binary_ -- --include-ignored --test-threads=1

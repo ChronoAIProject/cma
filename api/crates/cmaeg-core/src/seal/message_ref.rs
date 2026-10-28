@@ -9,6 +9,8 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MessageRefPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_media_edit: Option<Box<super::native_media_edit::NativeMediaEditAuthority>>,
     /// Reaction-only authority for a retained incoming Telegram or Discord message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub received_reaction: Option<Box<super::received_reaction::ReceivedReactionAuthority>>,
@@ -43,6 +45,9 @@ pub struct MessageRefPayload {
 }
 impl MessageRefPayload {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(authority) = &self.native_media_edit {
+            authority.validate(self)?;
+        }
         if let Some(authority) = &self.received_reaction {
             authority.validate(self)?;
         }
@@ -143,7 +148,7 @@ pub struct DiscordMessageDestination {
     /// New effect authority is opt-in; retained edit-only references omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effects: Option<DiscordEffectWindow>,
-    /// Media uploads grant delete/own-reaction authority, never message updates.
+    /// This media scope grants delete/own-reaction authority, never edits by itself.
     /// Omitted for existing text references to preserve their serialized identity.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub effects_only: bool,

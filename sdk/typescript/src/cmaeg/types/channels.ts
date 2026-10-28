@@ -145,6 +145,7 @@ export const SourceRequestSchema = tagged(
       app_id: text,
       waba_id: text,
       phone_number_id: text,
+      forms_enabled: optional(boolean),
       group_ids: optional(array(text)),
       admission: AdmissionPolicySchema,
       type: enumeration('whatsapp'),
@@ -154,6 +155,8 @@ export const SourceRequestSchema = tagged(
       bot_id: text,
       intents: integer,
       thread_history: optional(boolean),
+      thread_lifecycle: optional(boolean),
+      conversation_history: optional(boolean),
       type: enumeration('discord'),
     }),
     telegram: TelegramSourceSchema,
@@ -364,6 +367,7 @@ export const SourceSchema = tagged(
       app_id: text,
       waba_id: text,
       phone_number_id: text,
+      forms_enabled: optional(boolean),
       group_ids: optional(array(text)),
       admission: AdmissionPolicySchema,
       type: enumeration('whatsapp'),
@@ -373,6 +377,8 @@ export const SourceSchema = tagged(
       bot_id: text,
       intents: integer,
       thread_history: optional(boolean),
+      thread_lifecycle: optional(boolean),
+      conversation_history: optional(boolean),
       type: enumeration('discord'),
     }),
     telegram: TelegramSourceSchema,
@@ -485,13 +491,3 @@ export const ChannelUpdateRequestSchema = object({
   sources: array(SourceRequestSchema),
 });
 export type ChannelUpdateRequest = Output<typeof ChannelUpdateRequestSchema>;
-
-export const RekeyResponseSchema = object({ kid: integer });
-export type RekeyResponse = Output<typeof RekeyResponseSchema>;
-
-export const TestChannelResponseSchema = object({
-  accepted_after_ms: integer,
-  first_text: text,
-  level: ConformanceLevelSchema,
-});
-export type TestChannelResponse = Output<typeof TestChannelResponseSchema>;

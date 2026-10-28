@@ -1,4 +1,7 @@
-use super::{failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MIGRATIONS, RECORDS, SESSIONS};
+use super::{
+    failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MIGRATIONS, RECORDS, SESSIONS, THREAD_FENCES,
+    WHATSAPP_FLOWS,
+};
 use crate::records::RecordError;
 use futures_util::TryStreamExt;
 use mongodb::{
@@ -58,13 +61,16 @@ pub async fn verify_with_authority(
             let collection = resource.get_str("collection").map_err(|_| invalid())?;
             if resource.len() != 2
                 || resource.get_str("db").ok() != Some(db.name())
-                || !COLLECTIONS.contains(&collection)
+                || (!COLLECTIONS.contains(&collection)
+                    && ![THREAD_FENCES, WHATSAPP_FLOWS].contains(&collection))
             {
                 return Err(invalid());
             }
             for action in grant.get_array("actions").map_err(|_| invalid())? {
                 let action = action.as_str().ok_or_else(&invalid)?;
-                let allowed = if collection != MIGRATIONS {
+                let allowed = if [THREAD_FENCES, WHATSAPP_FLOWS].contains(&collection) {
+                    &["find", "insert", "update", "listIndexes"][..]
+                } else if collection != MIGRATIONS {
                     &["find", "insert", "update", "remove", "listIndexes"][..]
                 } else {
                     &["find"][..]
@@ -123,6 +129,16 @@ pub async fn verify_with_authority(
     }
     Ok(())
 }
+/// Independent optional migrations must preserve every supported marker.
+pub(super) fn migration_validator() -> Document {
+    doc! {
+        "$jsonSchema":{"bsonType":"object","additionalProperties":false,
+            "required":["_id","version"],"properties":{
+                "_id":{"bsonType":"string"},"version":{"enum":[1,2]}}},
+        "$or":[{"_id":"schema","version":2},
+            {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1}]
+    }
+}
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     cma_service_auth::browser::migrate(db, SESSIONS)
         .await
@@ -145,10 +161,7 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         (RECORDS, record_validator.clone()),
         (CONNECTIONS, record_validator),
         (INTERACTIONS, interaction_validator),
-        (
-            MIGRATIONS,
-            doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","version"],"properties":{"_id":{"enum":["schema"]},"version":{"enum":[2]}}}},
-        ),
+        (MIGRATIONS, migration_validator()),
     ] {
         match db.run_command(doc!{"create":name,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await{
             Ok(_)=>{},Err(error) if matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==48)=>{db.run_command(doc!{"collMod":name,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;},Err(error)=>return Err(failure(error)),

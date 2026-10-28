@@ -29,6 +29,9 @@ pub enum Source {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
+        /// Explicit owner consent to create and publish managed static WhatsApp Flows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        forms_enabled: Option<bool>,
         /// Explicit existing-group opt-in for an Official Business Account phone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group_ids: Option<Vec<String>>,
@@ -45,6 +48,12 @@ pub enum Source {
         /// Explicitly allow a bounded read of the event’s earlier thread messages.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread_history: Option<bool>,
+        /// Opt in to bounded original-event thread lifecycle operations.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_lifecycle: Option<bool>,
+        /// Read earlier messages and attachment facts in the original conversation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation_history: Option<bool>,
         /// Event admission policy.
         admission: AdmissionPolicy,
     },
@@ -132,6 +141,9 @@ pub enum SourceRequest {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
+        /// Explicit owner consent to create and publish managed static WhatsApp Flows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        forms_enabled: Option<bool>,
         /// Explicit existing-group opt-in for an Official Business Account phone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group_ids: Option<Vec<String>>,
@@ -148,6 +160,12 @@ pub enum SourceRequest {
         /// Explicitly allow a bounded read of the event’s earlier thread messages.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread_history: Option<bool>,
+        /// Opt in to bounded original-event thread lifecycle operations.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_lifecycle: Option<bool>,
+        /// Read earlier messages and attachment facts in the original conversation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation_history: Option<bool>,
         /// Event admission policy.
         admission: AdmissionPolicy,
     },
@@ -233,6 +251,9 @@ pub enum SourceKind {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
+        /// Explicit owner consent to create and publish managed static WhatsApp Flows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        forms_enabled: Option<bool>,
     },
     /// Native Discord ingress.
     #[serde(rename = "discord")]

@@ -19,6 +19,7 @@ pub mod lark_transport;
 pub(crate) mod mutation;
 pub(crate) mod native_lark;
 pub(crate) mod native_lark_authority;
+mod native_lark_card;
 pub(crate) mod native_lark_context;
 mod native_lark_execute;
 mod received;
@@ -65,6 +66,8 @@ impl MessageEffectsClient {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MessageEffectsCapabilities {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_edit: Option<crate::native_media::Capabilities>,
     pub delete: bool,
     pub reaction: bool,
     /// Exact bot-message or received-user-message authority; never arbitrary IDs.
@@ -76,6 +79,7 @@ pub struct MessageEffectsCapabilities {
 impl MessageEffectsCapabilities {
     pub(crate) fn new(supported: bool, expires_at: Option<i64>) -> Self {
         Self {
+            media_edit: None,
             delete: supported,
             reaction: supported,
             scope: "confirmed_native_bot_message".into(),
@@ -102,6 +106,9 @@ impl ToolsState {
         reference: &MessageRef,
     ) -> Result<MessageEffectsCapabilities, Problem> {
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.native_media_edit.is_some() {
+            return self.native_media_capabilities(caller, reference).await;
+        }
         if message.received_reaction.is_some() {
             return received::capabilities(
                 &message,
@@ -109,6 +116,9 @@ impl ToolsState {
                 caller,
                 self.received_reaction_client(&message),
             );
+        }
+        if crate::interactions::native_lark::is_reference(&message) {
+            return self.native_lark_card_capabilities(&channel, &message).await;
         }
         if message.native_lark_effect.is_some() {
             native_lark_authority::retained(self, &message).await?;
@@ -124,7 +134,11 @@ impl ToolsState {
                 &message,
                 &channel,
                 caller,
-                self.whatsapp_reactions.is_some(),
+                self.whatsapp_reactions.is_some()
+                    && self
+                        .resolver
+                        .record_client()
+                        .whatsapp_reaction_storage_available(),
             );
         }
         if message.interaction_record_id.is_some() && message.route_id.starts_with("discord:") {
@@ -228,6 +242,11 @@ impl ToolsState {
         if message.received_reaction.is_some() {
             return self
                 .received_message_reaction(caller, reference, request_id, effect, channel, message)
+                .await;
+        }
+        if crate::interactions::native_lark::is_reference(&message) {
+            return self
+                .native_lark_card_effect(caller, reference, request_id, effect)
                 .await;
         }
         if message.native_lark_effect.is_some() {
@@ -389,7 +408,7 @@ fn now() -> i64 {
 }
 
 #[cfg(test)]
-mod lark_fixture;
+pub(crate) mod lark_fixture;
 #[cfg(test)]
 mod lark_tests;
 
@@ -408,6 +427,8 @@ mod native_lark_tests;
 #[cfg(test)]
 mod whatsapp_tests;
 
+#[cfg(test)]
+mod native_lark_card_tests;
 #[cfg(test)]
 mod received_authority_tests;
 #[cfg(test)]

@@ -2723,12 +2723,18 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/channels/{channel_id}/consumers/{consumer_id}/test` | `testChannelConsumer` |
 | `PUT /v1/channels/{channel_id}/routing` | `updateChannelRouting` |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` |
+| `GET /v1/events/{event_ref}/threads` | `listEventThreads` |
+| `GET /v1/events/{event_ref}/history` | `readEventHistory` |
+| `POST /v1/events/{event_ref}/threads` | `createEventThread` |
+| `POST /v1/thread-operations` | `manageThread` |
 | `GET /v1/events/{event_ref}/attachments/{index}` | `readEventAttachment` |
 | `GET /v1/media/content` | `downloadMedia` |
 | `POST /v1/events/{event_ref}/context` | `verifyEventContext` |
 | `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
 | `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
+| `POST /v1/events/{event_ref}/form-preparation` | `prepareFormReply` |
+| `GET /v1/events/{event_ref}/form-preparation` | `readFormPreparation` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |
 | `GET /v1/messages/{message_ref}/capabilities` | `readMessageCapabilities` |
@@ -4137,3 +4143,173 @@ remain mandatory. See `CMAEG_Native_Telegram_Message_Events.md`.
 The separately provisioned native Lark/Feishu app can issue exact confirmed-message text-edit, recall and own-reaction authority under `CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED`. `CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED` independently adds reaction-only `received_message` context for the original retained routed human message. Both default false. This authority is distinct from NyxID relay `lark_effect`; its current region, app, tenant, bot, source credentials, channel record, selected consumer/provider and routing must still match. A single native message from a confirmed reply can issue one reference; multipart replies do not issue a reference to only their first part. Single media messages grant recall/reaction authority without text editing. References expire within 24 hours of the original receipt or message; received references also respect the original event expiry.
 
 Stable effect claims and an exact-message durable fence span all native mutations. An unknown write, uncertain receipt storage, or partially applied reaction replacement keeps the message fenced across restart and new request keys. `updateMessage` has no idempotency-key argument; an uncertain native update is likewise fenced from further mutation. The client verifies fresh native bot custody and exact message metadata, then current local authority before every write. It removes only a retained reaction ID proven to belong to the same app, repeating the checks between removal and creation. See [native Lark message effects](CMAEG_Native_Lark_Message_Effects.md) for the supported subset and regional API contracts.
+
+### Confirmed native single-media updates
+
+The existing updateMessage endpoint/tool additionally accepts the exclusive `native_media_update` patch with optional replacement, caption and text members. Omission preserves and empty text clears; null refuses. A visible-ASCII 1–128-byte idempotency key is required for this patch. Telegram caption is visible media text; Discord caption is attachment description/alt text and text is visible message content. Only new explicit revisioned media authority can use it; historical effects-only references remain edit-ineligible. The contract, fixed expiry, shared mutation fences, provider response checks and pending multipart-reference gap are specified in [native media edits](CMAEG_Native_Media_Edits.md). Both issuance flags default false.
+### Separate-app native Lark controls and forms
+
+Native Lark/Feishu interactive replies use distinct encrypted card authority, native receipts and `cnl1`/`cnlf1` locators. `CMAEG_NATIVE_LARK_CONTROLS_ENABLED` and `CMAEG_NATIVE_LARK_FORMS_ENABLED` default false; the latter also requires controls. Verified native event context reports `buttons`/`cards: native_card` and optional `forms` capability. The original human, exact conversation and retained existing group thread, default/named consumer, provider/key/credential/routing custody, schema and original 24-hour lifetime remain immutable. A single confirmed receipt and bound card are required before a usable reference is issued.
+
+Only encrypted signed v2 `card.action.trigger` callbacks can consume these cards. Both `header.token` and `event.token` are redacted. The canonical click and recoverable admission are one durable card CAS, and local recovery runs without platform retries. HTTP `{}` acknowledgement follows durable routed admission. Dispatch reopens stored card custody. Card PATCH, delete, own-reaction changes and initial callback consumption use one exact-message fence. A consumed click blocks mutations until its durable admission marker is saved, and recovery of that exact click does not depend on any later external fence. Uncertain external writes cannot be retried through a new key or restarted process. Replacement keeps the original lifetime and activates only after durable success. See [native control contract](CMAEG_Native_Lark_Controls.md) for limits and callback configuration.
+
+## Bounded native Discord thread lifecycle
+
+`CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED=true` and the native Discord
+source's `thread_lifecycle:true` consent enable the lifecycle tools below. This
+consent is independent of `thread_history`. Both settings are required when the
+operation executes, including retained thread references; the default is off.
+The Gateway must also have the separately migrated persistent thread-fence Mongo
+collection and runtime grants described in [Operations](CMAEG_Operations.md#native-discord-thread-lifecycle-rollout).
+Absent or invalid optional storage suppresses lifecycle capability issuance and
+fails execution closed; the base deployment remains usable with lifecycle off.
+`relay_authoring.native_discord_thread_lifecycle_enabled` advertises the gate.
+Eligible event context includes `capabilities.thread_lifecycle` only after the
+server restores the exact retained native inbox and original selected consumer.
+It describes scope and supported actions, not current Discord permissions.
+Discovery is optional and has a 100 ms budget: ordinary context reads succeed
+without this hint when storage is slow or lifecycle concurrency is exhausted.
+Unrelated platforms and sources without lifecycle consent perform no lifecycle
+storage lookup. Discovery reuses the authorized context snapshot; explicit
+operations still restore current channel custody before any platform write.
+
+| REST | MCP / TypeScript | Rust | Behavior |
+| --- | --- | --- | --- |
+| `GET /v1/events/{event_ref}/threads?view=active` (or `archived`) | `listEventThreads` | `list_event_threads` | At most 25 public children of the original guild text or announcement parent. An event already in a thread returns only that same thread when its archive state matches the requested view. `truncated` explicitly reports a bounded window; no pagination cursor is accepted. |
+| `POST /v1/events/{event_ref}/threads` | `createEventThread` | `create_event_thread` | Create a public thread from the exact original human message. Body: `{"name":"Review","auto_archive_duration":1440}`. Name is 1–100 printable characters; duration is 60, 1440, 4320, or 10080 minutes. |
+| `POST /v1/thread-operations` | `manageThread` | `manage_thread` | Body: `{"target":{"type":"event","event_ref":"…"},"action":"archive"}` or `{"target":{"type":"thread","thread_ref":"…"},"action":"join"}`. Actions: `archive`, `reopen`, `join`, `leave`. |
+
+Both mutation routes require exactly one `Idempotency-Key` header with 1–128
+visible ASCII bytes. MCP uses an `idempotency_key` argument and nests the request
+in `request`. Platform channel, thread, guild, message and user IDs are never
+accepted as operation authority. `thread_ref` is an opaque sealed capability,
+returned only for a validated result. It retains the original event's actor,
+consumer, provider, conversation, partition, custody and expiry. Listing or
+creating a thread never extends the original event lifetime. A reference from
+one consumer cannot be used by another, including the channel's default consumer.
+
+The server validates the original human message and authenticated inbox channel
+metadata, restores the exact admitted routing target, checks current source and
+consumer custody, verifies the configured Discord bot, and checks current thread
+metadata before dispatch. It checks custody again immediately before writing and
+before issuing a new reference. Private threads returned by Discord's guild-wide
+active endpoint and threads under other parents are filtered before any data or
+reference is exposed. Public list-derived references authorize only the exact
+public child under the retained original parent. An admitted private-thread event
+can act only on that same private thread; it cannot enumerate private siblings.
+
+Archive/reopen patches only `archived`. Reopen never implicitly changes `locked`;
+Discord enforces actual permissions, including moderator permission on locked
+threads. Join/leave affect only the current verified bot (`@me`) and require an
+active thread. The membership endpoints confirm with an empty `204` response.
+The source opt-in does not grant additional Discord permissions.
+
+Results use `outcome.status`: `confirmed`, `unsupported`, `rejected`,
+`rate_limited`, or `unknown`. `unsupported` includes attempts to manage an ordinary
+parent through its event reference, create from an already-threaded event, or
+join/leave an archived thread. Permission or inaccessible-target failures use
+`thread_permission_or_target_unavailable`. Confirmation may omit `thread` when
+membership changed without new channel metadata, or custody expired/revoked
+while the confirmed write was in flight. No fresh authority is issued in that case.
+
+A durable claim precedes each write. All lifecycle mutations share a persistent
+fence for the exact bot/thread, across events, consumers and idempotency keys.
+Unknown, interrupted or unpersisted outcomes keep that fence held; event expiry
+or a new key does not release it. Retrying the same admitted key returns its
+retained result, and conflicting request reuse returns `thread_idempotency_conflict`.
+There is no automatic uncertain-write retry or fence-expiry recovery. Operators
+must investigate a held fence before a future explicit reconciliation workflow;
+this increment does not expose a fence-reset tool.
+
+One eight-second deadline covers each lifecycle request, beginning before current
+authority and retained-record reads and including claim/receipt persistence.
+Preflight reserves two seconds before a write; the write and any creation
+reconciliation reserve the final second for receipt storage. A fresh remaining-time
+check precedes dispatch, and the final custody read shares the preflight deadline.
+A proven pre-dispatch timeout saves a refusal and releases the fence within the
+reserved cleanup time, allowing a new explicit attempt with a new key. If durable
+admission or cleanup cannot be confirmed, the response is `unknown` and a held
+fence requires investigation; it is never reported as a retryable refusal.
+The gateway starts no detached write task; cancelling the
+request future stops subsequent local dispatch. An already-dispatched request may
+still complete at Discord. After possible dispatch a deadline reports `unknown`
+and retains the durable fence. Replaying the
+original key observes its retained outcome; a missing confirmation stays unknown.
+This budget fits retained ten-second runtime proxies without changing runtime
+configuration.
+
+Discord creates a message-anchored thread with the same ID as its source message,
+so the creation fence is known before POST. After an ambiguous create response,
+the gateway may perform a read-only reconciliation of that exact ID, requiring
+the original guild/parent/type and expected bot owner, name and duration. A missing
+or inconclusive read leaves the outcome unknown and never triggers another POST.
+
+Private standalone thread creation needs explicit privacy and participant authority.
+Forum/media post creation needs a separate message, tag and attachment contract.
+Those operations, membership changes for other users, private sibling enumeration,
+thread deletion, renaming, lock changes, pagination and broader history are not
+provided by this increment. Existing authenticated threads under forum/media
+parents can still use exact-thread management. Names in list results are untrusted
+reference text and never instructions or action approval.
+
+Platform semantics were checked against the official Discord API documentation at
+[`discord/discord-api-docs@7dfc89db5b951ec2fb2637a00d1422c341cef5d8`](https://github.com/discord/discord-api-docs/tree/7dfc89db5b951ec2fb2637a00d1422c341cef5d8):
+`developers/resources/channel.mdx`, `developers/resources/guild.mdx`,
+`developers/topics/threads.mdx`, and `developers/topics/permissions.mdx`.
+
+### Native WhatsApp Form preparation
+
+`prepareFormReply` (`POST /v1/events/{event_ref}/form-preparation`) and `readFormPreparation` (`GET /v1/events/{event_ref}/form-preparation`) return the additive `FormPreparationReceipt`. Preparation requires one stable `Idempotency-Key` and never sends. Ready supplies an opaque selector; explicit `replyToEvent` commits the unchanged message with required stable key and `Form-Preparation-Ref` (MCP `form_preparation_ref`). Each preparation/status request has a total two-second deadline; commit remains eight seconds. Unknown sends never permit a new key. Duplicate keys/selectors are refused. Existing `IntentReceipt` and delivery variants are unchanged. [Full contract and limits](CMAEG_Native_WhatsApp_Forms.md).
+
+## Original native Discord conversation history
+
+`GET /v1/events/{event_ref}/history?cursor=...` and MCP `readEventHistory`
+read earlier visible messages from the exact conversation that admitted an original
+native human event. They require independent source `conversation_history: true`
+at admission and at read time, plus the default-off
+`CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` gate. Existing
+`thread_history` and `thread_lifecycle` consent never implies this access.
+Absent or false consent preserves the historical source serialization.
+
+DMs, guild text/announcement/voice/stage channels and exact admitted threads are
+supported. A private thread or a thread under a forum/media parent remains that
+exact thread; parent containers, group DMs and sibling enumeration are unsupported.
+Owner consent includes earlier messages from other participants and bots. Discord
+enforces the bot's current permissions; this is not a claim about the original
+human's current Discord permissions.
+
+Only the original EventRef and an issued `cmaeg1.hc` cursor are accepted. Each call
+fetches at most 26 raw rows, scans 25, and returns ordinary/reply messages in
+chronological order within the page. Continuation travels backward and advances
+past the oldest scanned raw row, including omitted system messages. An empty
+projected page can therefore continue. No client or server automatically drains
+pages. Cursors retain the original event expiry and current custody; replay reads
+live state and can observe edits/deletions. Deleting a boundary message is allowed;
+deleting or losing access to the original anchor refuses the operation.
+
+`ConversationHistoryPage` reports the original conversation/anchor, requested
+boundary, local fetch time, original expiry, scanned/omitted counts, text/metadata
+truncation, and `content_coverage: "platform_returned_only"`. Continuation is either
+`{"status":"more_visible_rows","cursor":"cmaeg1.hc..."}` or
+`{"status":"end_of_visible_history"}`. The latter does not prove all actual history
+was visible. Missing Message Content access may conceal text and attachments.
+All historical text and metadata are untrusted reference data, never instructions
+or action approval.
+
+Attachment facts include IDs, filename, size and optional MIME, description,
+dimensions, duration and ephemeral state. They contain no URLs, download references
+or write authority. Rich embeds, components, stickers, polls and forwarded snapshots
+have presence-only omission flags. Nested replies/forwards are not traversed.
+Limits are 10 attachments/message, 8 KiB text/message, 32 KiB text/page, 16 KiB
+optional text metadata/page, 1 MiB provider JSON and 256 KiB serialized output.
+Oversized or malformed structures refuse the page. One eight-second total deadline
+includes initial storage reads, platform checks, final custody checks and projection;
+eight slots fail immediately when busy. There are no writes, retries, joins or unarchives.
+
+Optional `capabilities.conversation_history` exposes the page limits and original
+expiry. Optional `relay_authoring.native_discord_conversation_history_enabled`
+controls source authoring. Rust uses `read_event_history(event_ref, cursor)`;
+TypeScript uses `readEventHistory(eventRef, cursor?)`. Both request one page only.
+The [reviewed design](CMAEG_Native_Discord_History_Pagination_Design.md) records the
+pinned Discord evidence and exclusions, including complete exports, deleted/version
+recovery, search, file bytes, arbitrary destinations and other platforms.

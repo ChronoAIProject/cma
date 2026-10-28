@@ -3,7 +3,7 @@ use super::binary_support::{assert_no_secrets, curl, free_address, spawn_ready, 
 use super::*;
 use cmaeg_core::{profile::canonical_json, seal::seal_blob};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
 const OWNER: &str = "binary-audit-owner-fixture";
 
 struct Run {
@@ -235,7 +235,8 @@ async fn compiled_binary_lists_the_attachment_tool_with_media_enabled() {
             "updateMessage",
             "sendTyping",
             "readEventContext",
-            "readEventAttachment"
+            "readEventAttachment",
+            "readFormPreparation"
         ]
     );
     let document = curl("GET", &format!("http://{address}/openapi.json"), None, 200).await;

@@ -183,6 +183,7 @@ async fn ordinary_native_reply_edit_typing_and_restart_use_sealed_original_chat(
                 event: event.clone(),
                 message: OutboundMessage {
                     whatsapp_template: None,
+                    native_media_update: None,
                     native_attachments: Vec::new(),
                     thread_reply: false,
                     text: Some("ordinary response".into()),
@@ -211,6 +212,7 @@ async fn ordinary_native_reply_edit_typing_and_restart_use_sealed_original_chat(
                 message_ref: reference,
                 message: OutboundMessage {
                     whatsapp_template: None,
+                    native_media_update: None,
                     native_attachments: Vec::new(),
                     thread_reply: false,
                     text: Some("edited response".into()),

@@ -193,6 +193,7 @@ use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
     let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
     let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        native_media_update: None,
         whatsapp_template: None,
         native_attachments: None,
         thread_reply: None,
@@ -398,11 +399,31 @@ app's webhook would redirect its traffic. This source supports native text
 replies, retained recall notifications with unknown actors, and human reaction
 add/remove deltas. `SourceKind` carries the same regional app/tenant/bot identity.
 Targets retain the original conversation and consumer authority; these incoming
-notifications confer no outgoing delete/edit/reaction authority. Native media
-(including the WhatsApp video profile), cards/forms, thread history and incoming
-edit propagation are not advertised for this source. Live platform acceptance
-remains separate from local contract tests. See the repository's native Lark
-setup document and preserved incoming-event audit for provisioning and limits.
+notifications confer no outgoing delete/edit/reaction authority. Thread history
+and incoming edit propagation are not advertised for this source. Live platform
+acceptance remains separate from local contract tests. See the repository's
+native Lark setup document and preserved incoming-event audit for provisioning
+and limits.
+
+Native interactive replies have separate optional management discovery flags,
+`native_lark_controls_enabled` and `native_lark_forms_enabled`, both default off.
+The retained event context advertises `buttons` and `cards` as `native_card`,
+`max_text_chars: 4000`, and the optional `forms` boolean when native controls are
+available. Configure `card.action.trigger` in the separate app's **Callback
+configuration**, using the encrypted native webhook URL; this is separate from
+message event subscriptions. Do not subscribe to the legacy callback version.
+
+Use the existing outbound blocks and form fields. Controls retain the original
+human actor and exact private/group conversation, including an existing group
+thread when its original native authority is retained. Both default and named
+consumers retain their exact original owner. A confirmed single interactive
+message returns a stable `message_ref` for PATCH replacement, recall and one
+reaction. Replacements preserve the original 24-hour lifetime; changing app
+credentials, source, routing, consumer key or provider revokes stale authority.
+Unknown sends or updates never produce replacement authority and must not be
+blindly retried. Gate-off stops new issuance while current retained references
+and durable callback recovery remain readable. Media mixed with cards remains
+unsupported; inspect rendering, delivery and message capability results.
 
 ### Native WhatsApp image, PDF, audio, sticker and video replies
 
@@ -569,3 +590,52 @@ advertise optional `whatsapp_template_components: ["header", "body"]` alongside
 gates and format limits still apply. No group management, message edit/delete,
 reaction or controls authority is added. Connected Meta v25/OBA acceptance is
 still outstanding; source capability presence does not prove delivery.
+
+### Confirmed Telegram and Discord media edits
+
+Use `update_message_with_idempotency(ref, key, &message)` with an explicit
+`native_media_update`. Read context `native_media_edits` for new-upload eligibility
+and `read_message_capabilities` for the exact reference's `media_edit` authority.
+Historical effects-only references remain ineligible. This increment supports one
+attachment in one confirmed platform message, with same-kind replacement only.
+
+Omitting `replacement`, `caption`, or `text` preserves its current value. Empty
+caption/text clears it; explicit null refuses. At least one patch member is
+required, and ordinary message fields cannot accompany the patch. Telegram
+`caption` is visible; Discord `caption` is the attachment description/alt text and
+`text` is visible message content. Telegram does not accept `text` here.
+
+Persist the confirmed receipt's next `message_ref`: it carries the next revision
+and the original expiry. Retry only the identical body and original reference
+with the same key; an unknown outcome retains its mutation fence and never
+causes an automatic provider retry. Neither provider offers conditional revision
+writes, so external applications sharing bot credentials remain outside CMA's
+fence. New issuance stays gated until compatible readers are deployed and release
+checks pass. Connected platform tests remain the owner acceptance step.
+
+### Native Discord thread lifecycle
+
+Native Discord thread lifecycle requires the gateway gate and source
+`thread_lifecycle: Some(true)`. Check `Capabilities::thread_lifecycle` for the
+original event scope. `list_event_threads(event_ref, ThreadListView::Active)`
+returns a bounded `ThreadList`; `Archived` selects archived results.
+`create_event_thread(event_ref, key, &CreateThreadRequest { name, auto_archive_duration: 1440 })`
+creates a public thread from the exact original message.
+`manage_thread(key, &ManageThreadRequest { target, action })` accepts
+`ThreadTarget::Event` for the event's own thread or `ThreadTarget::Thread` for a
+scoped returned reference, and `ThreadAction::{Archive, Reopen, Join, Leave}`.
+Keep a stable key; unknown writes remain fenced and must not be resent with a
+new key. References retain the original consumer and expiry. Set the new source
+option to `None` to preserve legacy wire bytes. Private/forum creation and
+private sibling enumeration are unsupported.
+
+Native WhatsApp Forms use `prepare_form_reply(event_ref, &message, preparation_key)`,
+then `read_form_preparation(event_ref)`. Poll Pending after `retry_after_ms`; Ready is
+not customer delivery. Explicitly commit the exact message through
+`reply_to_event_with_options(event_ref, &message, ReplyOptions { idempotency_key:
+Some(commit_key), form_preparation_ref: Some(ready_ref) })`. Existing `reply_to_event`
+remains compatible. `FormPreparationReceipt` separates managed asset uncertainty
+from a customer send attempt and retains the unchanged `IntentReceipt`. Retry with
+identical keys/content; never change keys after Unknown. Source `forms_enabled`
+requires owner consent separately from operator Forms/Flow-write flags. Preparation
+and status use a two-second total deadline; commit retains eight seconds.

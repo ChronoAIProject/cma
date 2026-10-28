@@ -40,6 +40,9 @@ impl Client {
 }
 
 pub(super) fn extract(raw: &Value) -> Result<webhook::Content, webhook::Error> {
+    if raw["interactive"]["type"] == "nfm_reply" {
+        return super::forms::callback::extract(raw);
+    }
     let interactive = &raw["interactive"];
     let kind = interactive["type"]
         .as_str()

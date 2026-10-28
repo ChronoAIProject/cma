@@ -181,7 +181,33 @@ export const NativeMediaCapabilitiesSchema = object({
 });
 export type NativeMediaCapabilities = Output<typeof NativeMediaCapabilitiesSchema>;
 
+/** Explicit update patch: omission preserves and an empty string clears. Null is invalid. */
+export const NativeMediaReplacementSchema = object({
+  kind: NativeMediaKindSchema,
+  source: NativeMediaSourceSchema,
+  filename: optional(nullable(text)),
+  mime_type: optional(nullable(text)),
+});
+export type NativeMediaReplacement = Output<typeof NativeMediaReplacementSchema>;
+export const NativeMediaUpdateSchema = object({
+  replacement: optional(NativeMediaReplacementSchema),
+  caption: optional(text),
+  text: optional(text),
+});
+export type NativeMediaUpdate = Output<typeof NativeMediaUpdateSchema>;
+export const NativeMediaEditCapabilitiesSchema = object({
+  caption: boolean,
+  content: boolean,
+  replacement_kinds: array(NativeMediaKindSchema),
+  max_attachments: integer,
+  max_bytes: integer,
+  idempotency_key_required: boolean,
+  expires_at: optional(nullable(integer)),
+});
+export type NativeMediaEditCapabilities = Output<typeof NativeMediaEditCapabilitiesSchema>;
+
 export const OutboundMessageSchema = object({
+  native_media_update: optional(NativeMediaUpdateSchema),
   whatsapp_template: optional(nullable(WhatsappTemplateSchema)),
   native_attachments: optional(array(NativeAttachmentSchema)),
   thread_reply: optional(boolean),

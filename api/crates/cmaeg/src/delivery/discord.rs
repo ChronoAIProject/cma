@@ -107,6 +107,19 @@ impl Sender {
                 text: String::new(),
             });
         }
+        let seed = match self
+            .prepare_media_reference(ctx, event, message, parts.len() == 1)
+            .await
+        {
+            Ok(seed) => seed,
+            Err(()) => {
+                receipt.delivery = DeliveryOutcome::Rejected {
+                    reason: "native_media_custody_unavailable".into(),
+                };
+                return (receipt, effects);
+            }
+        };
+        let mut media_result = None;
         let route = format!("discord:{bot_id}:{channel_id}");
         let _ticket = match ctx.gate.enter_route(&route).await {
             Ok(ticket) => ticket,
@@ -135,18 +148,45 @@ impl Sender {
                 receipt.delivery = expired();
                 break;
             }
-            let sent = self
-                .relay
-                .discord
-                .send(
-                    credential,
-                    bot_id,
-                    channel_id,
-                    (index == 0).then_some(message_id.as_str()),
-                    &part.text,
-                    if index == 0 { &files } else { &[] },
-                )
-                .await;
+            let sent = if seed.is_some() {
+                match self
+                    .relay
+                    .discord
+                    .send_components_result(
+                        credential,
+                        bot_id,
+                        channel_id,
+                        (index == 0).then_some(message_id.as_str()),
+                        &part.text,
+                        &files,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(body) if body["author"]["bot"] == true => {
+                        let id = body["id"]
+                            .as_str()
+                            .map(str::to_owned)
+                            .ok_or(RestError::Unknown);
+                        media_result = Some(body);
+                        id
+                    }
+                    Ok(_) => Err(RestError::Unknown),
+                    Err(error) => Err(error),
+                }
+            } else {
+                self.relay
+                    .discord
+                    .send(
+                        credential,
+                        bot_id,
+                        channel_id,
+                        (index == 0).then_some(message_id.as_str()),
+                        &part.text,
+                        if index == 0 { &files } else { &[] },
+                    )
+                    .await
+            };
             drop(permit);
             ctx.gate.progress();
             match sent {
@@ -187,6 +227,51 @@ impl Sender {
             } = &receipt.delivery
             {
                 receipt.message_ref = self.discord_message_ref(ctx.channel, event, id, message);
+            }
+        }
+        if let (
+            Some(seed),
+            Some(body),
+            DeliveryOutcome::Confirmed {
+                platform_message_id: Some(id),
+            },
+        ) = (seed, media_result, &receipt.delivery)
+        {
+            let parsed = crate::discord::rest::media_edit::snapshot(
+                &body,
+                bot_id,
+                channel_id,
+                id,
+                message.native_attachments[0].kind,
+            );
+            let confirmed = match parsed {
+                Ok(snapshot)
+                    if snapshot.caption == files[0].caption.as_deref().unwrap_or("")
+                        && snapshot.content == parts[0].text
+                        && snapshot.files[0].filename.as_deref()
+                            == Some(files[0].filename.as_str())
+                        && snapshot.files[0].size == Some(files[0].bytes.len() as u64)
+                        && snapshot.files[0]
+                            .mime
+                            .as_deref()
+                            .is_none_or(|v| v == files[0].mime) =>
+                {
+                    self.confirm_media_reference(
+                        ctx,
+                        event,
+                        seed,
+                        snapshot,
+                        id,
+                        receipt.message_ref.as_ref(),
+                    )
+                    .await
+                }
+                _ => Err(()),
+            };
+            // Edit enrichment is optional: a confirmed ordinary upload keeps its
+            // existing effects reference when this narrower receipt cannot be issued.
+            if let Ok(reference) = confirmed {
+                receipt.message_ref = Some(reference);
             }
         }
         (receipt, effects)

@@ -30,10 +30,17 @@ data:
   CMAEG_NATIVE_LARK_INTAKE_ENABLED: "true"
   # Compatible retained readers support native resource locators; owner app setup remains explicit.
   CMAEG_NATIVE_LARK_MEDIA_ENABLED: "true"
-  # Follow-up native Lark outbound media and effects remain disabled.
-  CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED: "false"
-  CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED: "false"
-  CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED: "false"
+  # Compatible #1158 readers and shared Custom acceptance verified; native owner testing is enabled.
+  CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED: "true"
+  CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED: "false"
+  # Requires separately migrated persistent fence storage and runtime grants.
+  CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED: "false"
+  CMAEG_NATIVE_LARK_CONTROLS_ENABLED: "false"
+  CMAEG_NATIVE_LARK_FORMS_ENABLED: "false"
+  CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED: "true"
+  CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED: "true"
   # Compatible readers and Custom acceptance verified; enable owner Meta setup/testing.
   CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "true"
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "true"
@@ -43,12 +50,14 @@ data:
   CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "true"
   # Native WhatsApp received reactions enabled after compatible reader rollout.
   CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED: "true"
-  # Follow-up Telegram and Discord received-reaction scopes remain disabled.
-  CMAEG_NATIVE_TELEGRAM_RECEIVED_REACTIONS_ENABLED: "false"
-  CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED: "false"
+  # Exact received-message reaction scopes enabled after compatible #1158 reader rollout.
+  CMAEG_NATIVE_TELEGRAM_RECEIVED_REACTIONS_ENABLED: "true"
+  CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED: "true"
   # Approved-template native replies enabled for owner testing; connected Meta acceptance remains unverified.
   CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED: "true"
   # Existing-group owner opt-ins and intake/sends enabled after separate compatible-reader rollout.
+  CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED: "false"
+  CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED: "false"
   CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED: "true"
   CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED: "true"
   # Only explicitly authored native sources are discovered; existing relay sources stay unchanged.
