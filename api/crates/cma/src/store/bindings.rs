@@ -19,6 +19,7 @@ mod admission;
 mod commands;
 mod conversations;
 mod custody;
+mod retry;
 mod rotation;
 mod tools;
 pub(crate) use custody::MongoBindingCredentials;
@@ -53,6 +54,10 @@ impl BindingCollections {
         };
         for (collection, keys) in [
             (&value.records, doc! {"pending": 1, "_id": 1}),
+            (
+                &value.records,
+                doc! {"record.state.status": 1, "record.work": 1, "_id": 1},
+            ),
             (&value.records, doc! {"key_history": 1}),
             (&value.records, doc! {"record.owner": 1, "_id": 1}),
             (&value.conversations, doc! {"pending": 1, "_id": 1}),
@@ -186,7 +191,12 @@ impl BindingStore for MongoSandboxStore {
         limit: u16,
     ) -> Result<Vec<ProviderBinding>, SandboxStoreError> {
         validate_page_limit(limit)?;
-        let mut query = doc! {"pending": true};
+        let mut query = doc! {"$or": [
+            {"pending": true},
+            {"record.state.status": "failed", "record.work": "idle",
+             "record.previous": null, "record.existing_agent": null,
+             "record.profile.environment": {"$ne": null}},
+        ]};
         if let Some(after) = after {
             query.insert("_id", doc! {"$gt": after});
         }
@@ -292,6 +302,8 @@ fn driver(error: mongodb::error::Error) -> SandboxStoreError {
 mod access_tests;
 #[cfg(test)]
 mod custody_tests;
+#[cfg(test)]
+mod retry_tests;
 #[cfg(test)]
 mod rotation_tests;
 

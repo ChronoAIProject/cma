@@ -33,6 +33,7 @@ mod provider_finality;
 mod runtime;
 pub mod runtime_bootstrap;
 mod runtime_output;
+mod runtime_recovery;
 mod runtime_status;
 mod tool_proxy;
 mod workspace;
@@ -108,6 +109,11 @@ pub use runtime::{
     DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
 pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
+pub use runtime_recovery::{
+    NonexecutingRecoveryVerification, RecoveryConversation, RecoveryConversationHistory,
+    RuntimeRecovery, RuntimeRecoveryInspection, RuntimeRecoveryInspectionRequest,
+    RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
+};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{

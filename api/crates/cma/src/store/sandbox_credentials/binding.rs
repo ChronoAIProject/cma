@@ -3,6 +3,37 @@ use layer2_core::CoreError;
 use mongodb::ClientSession;
 
 impl MongoSandboxCredentialStore {
+    /// Read the existing generation inside the caller's parent-fenced
+    /// transaction. Recovery must never create or replace missing custody.
+    pub(crate) async fn current_binding_credential(
+        &self,
+        database: &str,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        session: &mut ClientSession,
+    ) -> Result<layer2_core::sandbox::binding::ProvidedCredential, CoreError> {
+        if self.collection.namespace().db != database {
+            return Err(corrupt());
+        }
+        let authority = sandbox.credential.current.as_ref().ok_or_else(corrupt)?;
+        let document = self
+            .collection
+            .find_one(doc! {"_id": credential_id(&sandbox.id, authority.generation)})
+            .session(&mut *session)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(corrupt)?;
+        let material = self.material(document).map_err(|_| corrupt())?;
+        if material.sandbox_id != sandbox.id
+            || material.owner != sandbox.owner
+            || material.source != sandbox.credential.source
+            || material.authority != *authority
+        {
+            return Err(corrupt());
+        }
+        layer2_core::sandbox::binding::ProvidedCredential::new(material.value.expose().to_owned())
+            .map_err(|_| corrupt())
+    }
+
     pub(crate) async fn retain_binding_material(
         &self,
         database: &str,

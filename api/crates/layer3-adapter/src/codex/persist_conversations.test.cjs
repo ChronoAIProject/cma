@@ -22,22 +22,29 @@ test("persistence patch refuses unexpected or already patched bridge bytes", () 
     /Unexpected Codex ACP source/,
   );
   assert.throws(
-    () => persistConversations(readFileSync(bridgePath, "utf8")),
+    () =>
+      persistConversations(
+        readFileSync(process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath, "utf8"),
+      ),
     /Unexpected Codex ACP source/,
   );
 });
 
 function startBridge(directory) {
-  const child = spawn("codex-acp", [], {
-    cwd: directory,
-    env: {
-      ...process.env,
-      CODEX_HOME: directory,
-      CODEX_PATH: "/usr/local/bin/codex",
+  const child = spawn(
+    process.env.CMA_ACP_TEST_BRIDGE ? process.execPath : "codex-acp",
+    process.env.CMA_ACP_TEST_BRIDGE ? [process.env.CMA_ACP_TEST_BRIDGE] : [],
+    {
+      cwd: directory,
+      env: {
+        ...process.env,
+        CODEX_HOME: directory,
+        CODEX_PATH: process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex",
+      },
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"],
     },
-    detached: true,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  );
   child.stderr.resume();
   const pending = new Map();
   let sequence = 0;
@@ -48,6 +55,11 @@ function startBridge(directory) {
   });
   return {
     async call(method, params) {
+      const frame = await this.frame(method, params);
+      assert.equal(frame.error, undefined, JSON.stringify(frame.error));
+      return frame.result;
+    },
+    async frame(method, params) {
       const id = ++sequence;
       const result = new Promise((resolve) => pending.set(id, resolve));
       child.stdin.write(
@@ -64,8 +76,7 @@ function startBridge(directory) {
             );
           }),
         ]);
-        assert.equal(frame.error, undefined, JSON.stringify(frame.error));
-        return frame.result;
+        return frame;
       } finally {
         clearTimeout(timer);
         pending.delete(id);
@@ -114,6 +125,15 @@ test(
       await bridge.call("initialize", {
         protocolVersion: 1,
         clientCapabilities: {},
+      });
+      const repeated = await bridge.frame("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      });
+      assert.deepEqual(repeated.error, {
+        code: -32603,
+        message: "Internal error",
+        data: { details: "Already initialized" },
       });
     };
     try {

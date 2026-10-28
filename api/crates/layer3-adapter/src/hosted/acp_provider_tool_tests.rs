@@ -1,7 +1,7 @@
 use super::*;
 use crate::hosted::{HostedProviderToolBinding, HostedToolOpenReceipt};
 
-fn binding(retained: Option<(&str, &str)>, observed: bool) -> HostedProviderToolBinding {
+pub(super) fn binding(retained: Option<(&str, &str)>, observed: bool) -> HostedProviderToolBinding {
     let request = crate::AgentOpenRequest::new(
         "open-tools",
         crate::RuntimeOptions {
