@@ -96,8 +96,9 @@ impl SandboxRuntimeUpdateService {
         self.queue(id, target_version, None).await
     }
 
-    /// Automatic repair is available only after ordinary lifecycle retries have
-    /// parked/failed. Preserve its admitted target; deployment drift is no admission.
+    /// Automatic repair is available once per unresolved recovery incident after
+    /// ordinary retries park/fail. Its existing target must still be current;
+    /// obsolete pinned targets require an explicit owner/operator update.
     pub async fn recover_failed_unpublished(
         &self,
         id: &SandboxId,
@@ -116,6 +117,12 @@ impl SandboxRuntimeUpdateService {
                     .map(|runtime| runtime.runtime_version.as_str())
             })
             .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
+        if target != self.latest_version
+            || sandbox.lifecycle.unpublished_recovery_attempted
+            || sandbox.lifecycle.unpublished_recovery.is_some()
+        {
+            return Err(SandboxRuntimeUpdateError::NotAvailable);
+        }
         self.recover_unpublished(&sandbox, target, true)
             .await
             .map_err(store_error)

@@ -218,7 +218,12 @@ async fn explicit_recovery_pins_requested_latest_while_automatic_recovery_keeps_
         let (store, id) = fixture();
         let store = Arc::new(store);
         let before = store.get_sandbox(&id).await.unwrap().unwrap();
-        let service = SandboxRuntimeUpdateService::new(store.clone(), "image-latest".into())
+        let latest = if automatic {
+            before.runtime.as_ref().unwrap().runtime_version.clone()
+        } else {
+            "image-latest".into()
+        };
+        let service = SandboxRuntimeUpdateService::new(store.clone(), latest)
             .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
         let after = if automatic {
             service.recover_failed_unpublished(&id).await.unwrap()
@@ -242,4 +247,19 @@ async fn explicit_recovery_pins_requested_latest_while_automatic_recovery_keeps_
         assert_eq!(after.lifecycle.home, before.lifecycle.home);
         assert!(after.require_unpublished_runtime_quiescence().is_err());
     }
+}
+
+#[tokio::test]
+async fn automatic_recovery_does_not_race_an_explicit_upgrade_for_an_obsolete_target() {
+    let (store, id) = fixture();
+    let store = Arc::new(store);
+    let before = store.get_sandbox(&id).await.unwrap().unwrap();
+    let service = SandboxRuntimeUpdateService::new(store.clone(), "new-deployment-image".into())
+        .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
+    assert!(matches!(
+        service.recover_failed_unpublished(&id).await,
+        Err(crate::sandbox::SandboxRuntimeUpdateError::NotAvailable)
+    ));
+    assert_eq!(store.get_sandbox(&id).await.unwrap().unwrap(), before);
+    assert!(!store.lock().sandbox_events.contains_key(&id));
 }

@@ -36,6 +36,7 @@ impl Sandbox {
             proof: Box::new(proof.clone()),
             quiescence: None,
         }));
+        next.lifecycle.unpublished_recovery_attempted = true;
         next.lifecycle
             .home_recovery
             .as_mut()
