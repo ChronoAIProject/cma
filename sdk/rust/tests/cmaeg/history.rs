@@ -39,13 +39,24 @@ async fn native_thread_empty_and_mixed_scan_pages_remain_single_explicit_reads()
         let page = fixtures["ConversationHistoryPage"][index].clone();
         server.expect(wire::json(
             "GET",
-            "/v1/events/original/history",
+            if index == 3 {
+                "/v1/events/original/history?include_media=true"
+            } else {
+                "/v1/events/original/history"
+            },
             None,
             200,
             page.clone(),
             true,
         ));
-        let decoded = client.read_event_history("original", None).await.unwrap();
+        let decoded = if index == 3 {
+            client
+                .read_event_history_with_media("original", None)
+                .await
+                .unwrap()
+        } else {
+            client.read_event_history("original", None).await.unwrap()
+        };
         if index == 2 {
             assert!(decoded.messages.is_empty());
             assert_eq!(decoded.scanned_messages, 25);
@@ -63,4 +74,23 @@ async fn native_thread_empty_and_mixed_scan_pages_remain_single_explicit_reads()
         same(decoded, page);
         server.assert_drained();
     }
+}
+
+#[tokio::test]
+async fn mixed_history_opt_in_is_repeated_with_the_exact_opaque_cursor() {
+    let server = WireServer::new().await;
+    let client = client(&server);
+    server.expect(wire::json(
+        "GET",
+        "/v1/events/original/history?cursor=opaque%2F%2B%3Fcursor&include_media=true",
+        None,
+        200,
+        sample("ConversationHistoryPage"),
+        true,
+    ));
+    client
+        .read_event_history_with_media("original", Some("opaque/+?cursor"))
+        .await
+        .unwrap();
+    server.assert_drained();
 }

@@ -225,6 +225,7 @@ impl Sender {
         match cards.bind_native_lark(&mut prepared, receipt).await {
             Ok(reference) => (
                 IntentReceipt {
+                    message_parts: vec![],
                     message_ref: Some(reference),
                     rendering,
                     delivery: DeliveryOutcome::Confirmed {

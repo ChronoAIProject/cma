@@ -64,6 +64,14 @@ impl RelayClient {
     pub(in crate::delivery) fn discord_media_card_edits_enabled(&self) -> bool {
         self.discord_media_card_edits
     }
+    /// Pending replacement readers must deploy before new upload replacement issuance.
+    pub fn with_discord_media_card_replacements(mut self, enabled: bool) -> Self {
+        self.discord_media_card_replacements = enabled;
+        self
+    }
+    pub(in crate::delivery) fn discord_media_card_replacements_enabled(&self) -> bool {
+        self.discord_media_card_replacements && self.discord_media_card_edits
+    }
     pub fn with_discord_interactions(mut self, enabled: bool) -> Self {
         self.discord_interactions = enabled;
         self

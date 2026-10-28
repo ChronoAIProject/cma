@@ -2,6 +2,21 @@
 use crate::{http::ManagementState, Config};
 use std::sync::Arc;
 
+/// Keep native card/effect client construction and its issuance gates together.
+pub(super) fn lark_effects(
+    config: &Config,
+    controls: bool,
+) -> Result<Arc<crate::tools::NativeLarkEffectsClient>, crate::ConfigError> {
+    Ok(Arc::new(
+        crate::tools::NativeLarkEffectsClient::new(
+            crate::native_lark::Client::production()?,
+            config.native_lark_message_effects_enabled,
+            config.native_lark_received_reactions_enabled,
+        )
+        .with_controls(controls, config.native_lark_forms_enabled),
+    ))
+}
+
 /// Build only enabled native history readers; preserve startup failure on invalid clients.
 pub(super) fn lark_history(
     enabled: bool,

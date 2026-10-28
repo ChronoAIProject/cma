@@ -4421,7 +4421,7 @@ recovery, search, file bytes, arbitrary destinations and other platforms.
 
 ## Original native Lark / Feishu conversation history
 
-The same `readEventHistory(event_ref, cursor?)` operation supports original native
+The same `readEventHistory(event_ref, cursor?, include_media?)` operation supports original native
 Lark/Feishu human events with independent source `conversation_history: true` at
 admission and read time and the default-off
 `CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` gate. Both exact chats and threads
@@ -4433,15 +4433,23 @@ remains the original/last pre-cutoff boundary; the sealed cursor carries provide
 position. No parent-chat fallback or automatic page draining occurs.
 
 The existing page shape and Discord behavior remain unchanged. A native internal
-v2 cursor and retained admission custody bind the original source, human, selected
+v2 legacy cursor and retained admission custody bind the original source, human, selected
 consumer/provider/key, partition and original expiry. Text/supported posts are
 projected; unsupported media/formats are counted omissions without invented
 attachment size or filename. The separate default-off
-`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` projection preserves supported post text
-around images/video and emits `omitted_content: ["media"]` without attachment
-facts, resource locators or extra requests. Retained posts do not increment the
-whole-row omission count. The flag must remain off until all consumers and their
-rollback readers accept the additive `media` enum value; old strict SDKs reject it.
+`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` permits explicit REST query/MCP argument
+`include_media=true` to preserve supported post text around images/video and emit
+`omitted_content: ["media"]` without attachment facts, resource locators or extra
+requests. Retained posts do not increment whole-row omission counts. Omitted/false
+requests always retain legacy whole-row omission, so old strict clients do not
+receive the new enum even when the gate is enabled. True with a disabled gate
+returns 403; true on other platforms returns 400. Opted-in v3 cursors bind the mode,
+which must be repeated on every continuation; a mismatch returns 400 before a
+platform read. Gateway serving and rollback readers must support v3 before activation.
+Rust opts in with `read_event_history_with_media(event_ref, cursor)`; TypeScript
+uses `readEventHistory(eventRef, cursor, { includeMedia: true })`. Original SDK
+calls remain legacy. Query and MCP input schemas advertise the optional argument;
+the existing strict context capability shape stays unchanged.
 Source consent authoring and capability discovery are
 optional additions. [Full native contract, setup, tests and platform limits](CMAEG_Native_Lark_History.md).
 
@@ -4478,13 +4486,35 @@ rebinding and expiry refuse old actions. Repeated identical callbacks share one
 durable consumption and retain the same dispatch identity. Unbound cards and
 storage contention return a retryable failure without consuming an action.
 
-This initial capability deliberately does not expose media-card updates: the
-existing `updateMessage` text route refuses these references before changing the
-card or calling `editMessageText`. Correct caption/markup replacement, media
-replacement with controls, and references for every part of a multipart batch
-remain separate capabilities. Turning issuance off preserves already-issued
-callback readers; it is not permission to roll back to an image predating the
-media-card marker while such cards remain live.
+With the separate default-off
+`CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED` gate, eligible Telegram
+discovery advertises `native_media.controls.update: true`. Only new media cards
+whose confirmed platform message has a bounded, verified file and presentation
+snapshot gain edit permission. Earlier cards remain uneditable even if the gate
+is enabled later. The existing `updateMessage` operation accepts an ordinary
+outbound message containing text, text blocks, buttons, choices and links. Its
+text and choice prompts form the new caption; a controls-only update keeps the
+old caption. Explicit `text: ""` clears the caption. The provided controls replace
+the entire keyboard; no controls clears it. Native attachments, native-media
+patches, forms, card blocks and reply/thread overrides are refused before mutation.
+
+An edit calls `editMessageCaption` once, without uploading the file again or
+calling `editMessageText`. It preserves the exact media file, bot, chat, topic,
+original expiry and callback owner. Caption position and spoiler presentation
+remain unchanged; unchanged captions also preserve automatic entities. Updates
+advance the existing interaction card chain under CAS and share the existing
+destination mutation fence. Fresh callbacks to a superseded keyboard refuse;
+an already-consumed identical callback can still recover its original result.
+The new keyboard uses the successor card and the original conversation owner.
+
+Identical update retries replay the stored result without another platform
+write. A lost final storage acknowledgement can recover the exact bound
+successor; an unknown provider result remains fenced. Recovery releases only
+the lock version held by that edit, never a newer operation's lock. File
+replacement with controls and multipart references remain separate capabilities.
+Turning issuance off preserves already-issued edit and callback readers; it is
+not permission to roll back to an image predating either retained marker while
+such cards remain live.
 
 ### Native Lark image/control cards
 

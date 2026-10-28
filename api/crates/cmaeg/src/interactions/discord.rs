@@ -117,12 +117,10 @@ pub(crate) fn valid(card: &Card) -> bool {
             .is_none_or(|click| click.selection.is_none());
     };
     card.message.native_attachments.is_empty()
-        && identity.media.as_ref().is_none_or(|media| {
-            media.valid()
-                && identity.form.is_none()
-                && (media.has_edit_authority()
-                    || (card.revision == 1 && card.discord_edit.is_none()))
-        })
+        && identity
+            .media
+            .as_ref()
+            .is_none_or(|media| media.valid_for(card) && identity.form.is_none())
         && card.native_whatsapp_flow.is_none()
         && card.lark.is_none()
         && card.whatsapp.is_none()

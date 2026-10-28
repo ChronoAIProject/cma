@@ -79,9 +79,20 @@ impl DeliveryOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IntentReceipt {
+    /// Confirmed native split-text parts in rendered order; absent for legacy receipts.
+    /// An unknown aggregate outcome can retain confirmed earlier parts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_parts: Vec<ConfirmedMessagePart>,
     pub message_ref: Option<MessageRef>,
     pub rendering: RenderingReport,
     pub delivery: DeliveryOutcome,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmedMessagePart {
+    /// Zero-based position in the rendered text, not a delivery retry counter.
+    pub index: u16,
+    pub message_ref: MessageRef,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
