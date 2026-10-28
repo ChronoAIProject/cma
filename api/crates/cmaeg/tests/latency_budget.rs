@@ -1,5 +1,7 @@
 #[path = "latency/app.rs"]
 mod app;
+#[path = "latency/batch_gate.rs"]
+mod batch_gate;
 #[path = "latency/batch_tests.rs"]
 mod batch_tests;
 #[path = "fake_cma.rs"]
