@@ -20,6 +20,9 @@ use crate::{
 #[path = "reconnect_tests.rs"]
 mod reconnect_tests;
 
+#[path = "tool_confirmation_adapter_tests.rs"]
+mod tool_confirmation_tests;
+
 #[derive(Clone, Copy)]
 enum Corruption {
     Credential,
@@ -43,6 +46,8 @@ struct CorruptingBackend {
     inner: InMemoryHostedBackend,
     next: Arc<Mutex<Option<Corruption>>>,
     expected_reconnect: Arc<Mutex<Option<String>>>,
+    opens: Arc<std::sync::atomic::AtomicUsize>,
+    opened_access: Arc<Mutex<Option<super::HostedAccessToolBinding>>>,
 }
 
 impl CorruptingBackend {
@@ -143,6 +148,8 @@ impl HostedBackend for CorruptingBackend {
         settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *self.opened_access.lock().unwrap() = settings.access_tool.clone();
         if let Some(expected) = self.expected_reconnect.lock().unwrap().as_deref() {
             assert_eq!(resume_conversation.as_deref(), Some(expected));
         }
