@@ -13,6 +13,7 @@ mod command;
 mod config;
 mod control_auth;
 mod conversation;
+mod desktop_process;
 mod failure;
 mod fs_durability;
 mod git;
