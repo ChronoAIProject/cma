@@ -219,7 +219,8 @@ impl Supervisor {
         }
         if matches!(
             request,
-            RequestFrame::PrepareWorkspace(_)
+            RequestFrame::RecoverWorkspacePrepare(_)
+                | RequestFrame::PrepareWorkspace(_)
                 | RequestFrame::WorkspaceSetup(_)
                 | RequestFrame::RemoveWorkspace(_)
         ) {
@@ -238,18 +239,20 @@ impl Supervisor {
             if let Err(error) = self.authorize_preparation(&request).await {
                 return error.response(operation);
             }
-            let removal_writer = if let RequestFrame::RemoveWorkspace(reference) = &request {
-                let guard = match self.removal_writer_guard() {
-                    Ok(guard) => guard,
-                    Err(error) => return error.response(operation),
-                };
+            let removal_writer = match self.removal_writer_guard() {
+                Ok(guard) => guard,
+                Err(error) => return error.response(operation),
+            };
+            if let RequestFrame::RemoveWorkspace(reference) = &request {
                 if let Err(error) = self.ensure_workspace_idle(&reference.name).await {
                     return error.response(operation);
                 }
-                guard
-            } else {
-                None
-            };
+            }
+            if let RequestFrame::RecoverWorkspacePrepare(frame) = &request {
+                if let Err(error) = self.authorize_workspace_recovery(frame).await {
+                    return error.response(operation);
+                }
+            }
             return match crate::workspace_runtime::dispatch(
                 self.config.clone(),
                 operation_guard,

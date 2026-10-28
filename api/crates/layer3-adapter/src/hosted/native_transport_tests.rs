@@ -238,7 +238,7 @@ async fn api_request(
                     "-I",
                     "-u",
                     "-c",
-                    include_str!("../agent_sandbox/runtime_exec_relay.py")
+                    crate::runtime_control_relay::SCRIPT
                 ]
             );
             let fields: std::collections::BTreeMap<_, _> = url.query_pairs().collect();

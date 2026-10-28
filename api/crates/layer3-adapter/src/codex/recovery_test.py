@@ -519,7 +519,7 @@ class Proc(unittest.TestCase):
                          "3bfcf358614050535610e2302cefbc84e5b6284e3df6695151e67d1703b7a0a4")
 
     def test_only_exact_supervisor_relay_source_and_argv_are_allowed(self):
-        source = (SOURCE.parent / "agent_sandbox/runtime_exec_relay.py").read_bytes()
+        source = (SOURCE.parent / "runtime_control_relay.py").read_bytes()
         argv = [b"/usr/bin/python3", b"-I", b"-u", b"-c", source]
         self.assertTrue(m.relay_command(b"\0".join(argv) + b"\0"))
         for changed in (argv + [b"extra"], [b"python3", *argv[1:]], [*argv[:-1], source + b"\n"], [*argv[:-1], b"print('unrelated')"]):

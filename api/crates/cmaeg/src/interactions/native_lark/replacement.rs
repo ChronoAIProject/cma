@@ -46,7 +46,13 @@ impl InteractionStore {
             return Err(Error::Denied);
         }
         let revision = old.revision.checked_add(1).ok_or(Error::Denied)?;
-        super::render(message, &old.id, revision, form)?;
+        super::render_with_image(
+            message,
+            &old.id,
+            revision,
+            form,
+            old.native_lark.as_ref().and_then(|a| a.image.as_ref()),
+        )?;
         old.superseded = true;
         self.save(&old, Some(version)).await?;
         let original_card = old.id.clone();
@@ -71,7 +77,7 @@ impl InteractionStore {
             .digest(&card, channel)
             .ok_or(Error::Denied)?;
         card.native_lark.as_mut().unwrap().custody = custody;
-        let markup = super::render(message, &card.id, card.revision, form)?.0;
+        let markup = super::markup(&card)?.0;
         let version = self.save(&card, None).await?;
         Ok(PreparedCard {
             card,

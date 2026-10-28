@@ -34,8 +34,7 @@ pub trait SandboxAdapter: Send + Sync {
         None
     }
 
-    /// Persist the returned storage authority before allocating a home. Runtime
-    /// selection and storage policy must remain stable across retries.
+    /// Persist home authority before allocation; retain runtime and storage policy on retry.
     async fn reserve_home_request(
         &self,
         _runtime: &RuntimeProvisionRequest,
@@ -61,8 +60,7 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
         Ok(self.native_pools())
     }
-    /// Select a provider and an eligible pool before any home allocation. The
-    /// caller persists the returned binding (or ordinary home decision).
+    /// Select an eligible provider/pool before allocation; persist the returned binding.
     async fn select_native_pool(
         &self,
         _request: &RuntimeProvisionRequest,
@@ -304,19 +302,25 @@ pub trait SandboxAdapter: Send + Sync {
         handle: &RuntimeHandle,
         request: &WorkspaceRequest,
     ) -> Result<WorkspaceReceipt>;
-
     async fn run_workspace_setup(
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceSetupRequest,
     ) -> Result<SetupReceipt>;
-
+    async fn recover_workspace_prepare(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::WorkspacePrepareRecoveryRequest,
+    ) -> Result<crate::WorkspacePrepareRecoveryReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "preserving Workspace preparation recovery is unavailable".into(),
+        ))
+    }
     async fn remove_workspace(
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceRemoveRequest,
     ) -> Result<()>;
-
     /// Probe the actual bound supervisor. Contract/image labels are insufficient.
     async fn workspace_removal_support(
         &self,
@@ -326,7 +330,6 @@ pub trait SandboxAdapter: Send + Sync {
             "guarded Workspace removal is unavailable".into(),
         ))
     }
-
     async fn reconcile_workspace_removal(
         &self,
         _handle: &RuntimeHandle,
@@ -337,14 +340,12 @@ pub trait SandboxAdapter: Send + Sync {
             "current Workspace removal observation is unavailable".into(),
         ))
     }
-
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &WorktreeRequest,
     ) -> Result<WorktreeReceipt>;
-
     async fn remove_worktree(
         &self,
         handle: &RuntimeHandle,
@@ -428,7 +429,6 @@ pub trait SandboxAdapter: Send + Sync {
         authority_fence: u64,
         request: &AgentCloseRequest,
     ) -> Result<()>;
-
     async fn capture_agent(
         &self,
         handle: &RuntimeHandle,

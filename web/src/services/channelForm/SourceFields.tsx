@@ -167,9 +167,9 @@ export function SourceFields({
               }
             />
             <p className="channel-field-hint">
-              Agents may close or reopen the forum topic containing an admitted message. Requires a
-              forum supergroup and bot administrator permission to manage topics. General topics,
-              private chats, topic creation and browsing are excluded.
+              Agents may rename, close or reopen the forum topic containing an admitted message.
+              Requires a forum supergroup and bot administrator permission to manage topics. General
+              topics, private chats, topic creation and browsing are excluded.
             </p>
             <Toggle
               label="Receive message edits and reactions"

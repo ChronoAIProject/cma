@@ -227,6 +227,14 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.prepare_workspace(handle, request).await
     }
 
+    async fn recover_workspace_prepare(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspacePrepareRecoveryRequest,
+    ) -> crate::Result<crate::WorkspacePrepareRecoveryReceipt> {
+        self.hosted.recover_workspace_prepare(handle, request).await
+    }
+
     async fn run_workspace_setup(
         &self,
         handle: &RuntimeHandle,

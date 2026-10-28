@@ -2,10 +2,7 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
-    async fn open_desktop(
-        &self,
-        handle: &RuntimeHandle,
-    ) -> crate::Result<crate::DesktopConnectionHandle> {
+    async fn open_desktop(&self, handle: &RuntimeHandle) -> crate::Result<DesktopConnectionHandle> {
         self.open_desktop(handle).await
     }
 
@@ -263,6 +260,14 @@ impl SandboxAdapter for HostedAdapter {
                 "skill cache receipt changed its digest".into(),
             )),
         }
+    }
+
+    async fn recover_workspace_prepare(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspacePrepareRecoveryRequest,
+    ) -> crate::Result<crate::WorkspacePrepareRecoveryReceipt> {
+        workspace::recover_prepare(self, handle, request).await
     }
 
     async fn run_workspace_setup(
