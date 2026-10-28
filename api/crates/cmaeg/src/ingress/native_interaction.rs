@@ -61,6 +61,7 @@ pub(crate) fn plan(
             .ok_or(PlanError::SourceUnavailable)?
             .clone(),
         targets: vec![ConsumerLaunch {
+            history_custody: None,
             consumer: target.clone(),
             provider: consumer.provider.clone(),
             idempotency_key: request.idempotency_key.clone(),

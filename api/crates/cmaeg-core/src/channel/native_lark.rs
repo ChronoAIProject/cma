@@ -63,6 +63,9 @@ pub struct NativeLarkSource {
     pub separate_app: bool,
     pub identity: NativeLarkIdentity,
     pub admission: AdmissionPolicy,
+    /// Owner consent to earlier visible messages in the exact original chat/thread.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub conversation_history: bool,
 }
 impl NativeLarkSource {
     pub fn validate(

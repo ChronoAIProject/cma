@@ -242,6 +242,14 @@ pub(crate) async fn serve(
     )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        native_lark_conversation_history: config
+            .native_lark_conversation_history_enabled
+            .then(|| {
+                crate::native_lark::Client::history_reader().map(|api| {
+                    std::sync::Arc::new(crate::tools::NativeLarkConversationHistory::new(api))
+                })
+            })
+            .transpose()?,
         discord_conversation_history: config
             .native_discord_conversation_history_enabled
             .then(|| {

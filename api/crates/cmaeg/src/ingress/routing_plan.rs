@@ -47,6 +47,9 @@ pub struct RoutedPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConsumerLaunch {
+    /// Admission-time native history custody; absent on legacy and derived events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_custody: Option<String>,
     pub consumer: ConsumerId,
     /// A binding snapshot, not a credential or permission to execute later.
     pub provider: ProviderBinding,
@@ -158,7 +161,13 @@ pub fn plan(
             );
             IdempotencyKey::for_consumer(&activity.event_id, consumer.id)
         };
+        let history_custody = crate::native_lark::history_authority::admission_custody(
+            &request.channel,
+            &event,
+            &activity,
+        );
         targets.push(ConsumerLaunch {
+            history_custody,
             consumer: consumer.id.clone(),
             provider: consumer.provider.clone(),
             idempotency_key,

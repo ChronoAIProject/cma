@@ -14,6 +14,8 @@ mod fake_cma;
 mod history;
 mod thread_history;
 pub use history::DiscordConversationHistory;
+mod native_lark_history;
+pub use native_lark_history::NativeLarkConversationHistory;
 mod threads;
 pub use thread_history::{DiscordThreadHistory, ThreadHistory, ThreadHistoryMessage};
 pub use threads::DiscordThreads;
