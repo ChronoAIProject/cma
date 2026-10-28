@@ -65,6 +65,7 @@ data:
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "true"
   # Compatible serving and rollback readers permit private native controls for owner testing.
   CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED: "true"
+  CMAEG_NATIVE_WHATSAPP_MEDIA_CONTROLS_ENABLED: "false"
   # Independent native image/document/audio/sticker/video reply uploads; live Meta acceptance remains unverified.
   CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "true"
   # Native WhatsApp received reactions enabled after compatible reader rollout.

@@ -181,6 +181,7 @@ pub struct Config {
     pub native_lark_media_controls_enabled: bool,
     pub native_whatsapp_outbound_media_enabled: bool,
     pub native_whatsapp_interactions_enabled: bool,
+    pub native_whatsapp_media_controls_enabled: bool,
     pub native_whatsapp_reactions_enabled: bool,
     pub native_telegram_received_reactions_enabled: bool,
     pub native_discord_received_reactions_enabled: bool,
@@ -389,6 +390,9 @@ impl Config {
             )?,
             native_whatsapp_interactions_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED",
+            )?,
+            native_whatsapp_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_WHATSAPP_MEDIA_CONTROLS_ENABLED",
             )?,
             native_whatsapp_reactions_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED",

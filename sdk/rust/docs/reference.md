@@ -741,10 +741,18 @@ See [native file profiles](../../../docs/CMAEG_Native_Lark_Outbound_Media.md).
 
 Check the optional `capabilities.native_media.controls` object before combining
 `native_attachments` with buttons or choices. It declares `max_attachments`,
-`buttons`, `choices`, `caption_max_chars` and `update`; absence grants no combined
-send capability. The gated Telegram and Discord combinations each use one upload and one
+`buttons`, `choices`, `caption_max_chars` and `update`. Optional `kinds` restricts
+the combination to those attachment kinds; when absent, the parent kinds apply.
+Absence of `controls` grants no combined send capability. The gated Telegram and Discord combinations each use one upload and one
 native message/card. Its `update: false` excludes media-card edits. Existing
 attachment bounds and event/consumer authority still apply.
+
+Native private WhatsApp media headers advertise `kinds: ["image", "file", "video"]`,
+`buttons: true`, `choices: false`, `max_attachments: 1`, `caption_max_chars: 0`,
+and `update: false` only with the independent native media-controls gate and
+existing media/interactions/consumer authority. Use one captionless attachment
+and one buttons block, with explanation text in the body. Lists, audio/sticker
+headers, groups, relay, albums and media/form mixtures remain unsupported.
 
 For native Discord, `native_media.controls.update` is true only with the separate
 media-card-edit gates. It permits changing message content/controls while keeping

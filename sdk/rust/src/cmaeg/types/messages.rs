@@ -357,7 +357,7 @@ pub struct NativeMediaCapabilities {
 /// Native upload and controls in one confirmed platform message.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaControlsCapabilities {
-    /// Restricts combined upload/control delivery to these kinds when present.
+    /// Exact kinds allowed with controls; absent means the parent media kinds apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kinds: Option<Vec<String>>,
     /// Maximum upload count in the same controlled message.
