@@ -77,6 +77,8 @@ try {
     const diagnostics = docker(['exec', name, 'sh', '-c', 'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-websockify.log 2>/dev/null']);
     process.stderr.write(diagnostics.replaceAll(token, '[fixture-token]'));
   } catch { /* The container may already have stopped. */ }
+  try { docker(['cp', `${name}:/tmp/cma-desktop-failed-screen.png`, destination + '.png']); }
+  catch { /* A failure before browser execution has no screenshot. */ }
 } finally {
   try {
     docker(['rm', '--force', name]);
