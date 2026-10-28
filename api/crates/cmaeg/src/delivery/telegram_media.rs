@@ -37,6 +37,11 @@ impl Sender {
         else {
             return (unsupported(), effects);
         };
+        if crate::interactions::has_controls(message) {
+            return self
+                .telegram_media_controls_reply(ctx, event, message)
+                .await;
+        }
         if message.validate().is_err()
             || message.whatsapp_template.is_some()
             || message.thread_reply

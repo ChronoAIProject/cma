@@ -161,6 +161,7 @@ pub struct Config {
     pub native_whatsapp_groups_writes_enabled: bool,
     pub native_whatsapp_groups_enabled: bool,
     pub native_telegram_media_edits_enabled: bool,
+    pub native_telegram_media_controls_enabled: bool,
     pub native_discord_media_edits_enabled: bool,
     pub native_lark_controls_enabled: bool,
     pub native_lark_forms_enabled: bool,
@@ -320,6 +321,9 @@ impl Config {
             )?,
             native_whatsapp_groups_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED",
+            )?,
+            native_telegram_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED",
             )?,
             native_telegram_media_edits_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED",
