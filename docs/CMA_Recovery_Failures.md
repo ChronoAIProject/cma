@@ -93,6 +93,52 @@ plan, its digest, operation and database admission remain unchanged; the normal
 worker records its verified completion receipt. The implementation is embedded
 in the control-plane adapter and does not require a new retained runtime image.
 
+## Failed startup after a reserved runtime generation
+
+A stalled RuntimeLost revival can retain its bound source at generation 1
+while its exact pending provision reservation and provider object are at
+generation 2. Empty-Agent recovery can prove that reserved provider request
+separately without changing the original binding or home-recovery source. The
+complete Agent set must be empty, including stopped and deleted records; the
+failed operation, reservation, retained image, full request and original native
+Claim/Sandbox/PVC home authority must all agree. A provider generation or durable
+high-water number alone does not authorize recovery.
+
+Admission stores the exact old reservation in the optional `reserved_provision`
+proof field before replacing the failed operation. The worker uses that same
+proved request to verify nonexecution, persist quiescence, suspend the original
+provider object and reconcile a lost suspension reply. The next allocation is
+reserved above the existing high-water mark: source 1 and proved reservation 2
+therefore recover to generation 3 on the same home, using the admitted target
+image. A lost upgrade reply replays that same transition. Preparing Workspaces
+retain their original operation and files, and recovery creates no Agents.
+
+A completed ephemeral diagnostic container does not by itself prevent the
+nonexecution proof. Every ephemeral specification must have one matching status,
+with no duplicate or extra names, no readiness, running/waiting or prior state,
+no restart, and a completed terminal record with ordered start/finish timestamps
+and matching nonempty container IDs. Missing or ambiguous evidence is refused.
+The proof includes the complete Pod specification/status digest and exact Pod
+UID/resourceVersion. The provider refreshes the proof immediately before the
+Sandbox suspension compare-and-swap; any changed or running container prevents
+that attempt from suspending the runtime.
+
+## API promotion and rollback compatibility
+
+The history verifier, native provider proof and reservation recovery worker are
+control-plane code. An API-only promotion can replay an existing admitted
+history journal and admit the reserved-generation recovery; installing a new
+runtime image is not a prerequisite for these fixes. Each recovery still uses
+its admitted runtime target and retains the original home.
+
+API rollback must preserve the ability to read every persisted recovery proof.
+New readers accept older proofs without `reserved_provision`; older readers
+that reject unknown fields cannot read a proof containing that field. Admission
+also writes the proof into the append-only `RuntimeRecoveryAdmitted` event, so
+completion and removal of the current lifecycle state do not by themselves make
+an older API compatible. Retain a compatible API reader after such admission;
+an unchanged runtime image does not establish API rollback compatibility.
+
 ## Verification boundary
 
 Regression fixtures cover ambiguous confirmation readback, changed authority,
@@ -103,6 +149,12 @@ replay, exact history preservation, process absence and current-turn refusal.
 A pinned native fixture creates an isolated crash, cold-loads its unmatched
 start without model work, drains through EOF without rewriting it, and then
 continues the original conversation through an explicit local fixture prompt.
+Reserved-generation worker fixtures preserve source generation 1, prove only its
+exact operation reservation 2, and replay lost suspension and upgrade replies to
+generation 3 with the original home and pending Workspace unchanged. A provider
+at unreserved generation 3 is refused without suspension or allocation. Separate
+provider fixtures cover complete terminated ephemeral status and rejection of
+missing, changed, running or ambiguous records.
 Local fixtures do not establish that an existing production sandbox
 has recovered; production acceptance must additionally confirm its original
 home, conversation and admitted work after the corrected lifecycle completes.
