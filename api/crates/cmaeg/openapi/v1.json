@@ -4166,7 +4166,7 @@
             "type": "boolean"
           },
           "kinds": {
-            "description": "When present, only these media kinds can be combined with controls.",
+            "description": "Exact attachment kinds supported with controls; absent means the parent kinds apply.",
             "items": {
               "type": "string"
             },

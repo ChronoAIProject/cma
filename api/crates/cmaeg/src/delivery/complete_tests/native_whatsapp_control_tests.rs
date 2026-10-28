@@ -7,23 +7,53 @@ use crate::{
     whatsapp,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
-struct Graph {
+pub(super) struct Graph {
     cards: Arc<InteractionStore>,
     records: Arc<crate::ingress::routing_store::test_server::Memory>,
-    seen: Mutex<Vec<serde_json::Value>>,
+    pub(super) seen: Mutex<Vec<serde_json::Value>>,
     mode: usize,
-    calls: AtomicUsize,
+    pub(super) calls: AtomicUsize,
 }
 impl whatsapp::Transport for Graph {
     fn exchange(
         &self,
         method: reqwest::Method,
         url: Url,
-        _: HeaderMap,
+        headers: HeaderMap,
         body: Vec<u8>,
         _: Duration,
     ) -> BoxFuture<'_, Result<HttpReply, TransportError>> {
         assert_eq!(method, reqwest::Method::POST);
+        assert!(headers["authorization"].is_sensitive());
+        if url.path() == "/v25.0/34567/media" {
+            assert!(headers["content-type"]
+                .to_str()
+                .unwrap()
+                .starts_with("multipart/form-data;"));
+            assert!(!body.is_empty());
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            return Box::pin(async move {
+                let ids: Vec<_> = self.records.rows.lock().unwrap().keys().cloned().collect();
+                assert_eq!(ids.len(), 1, "card must be durable before upload");
+                let card = self.cards.load(&ids[0]).await.unwrap().0;
+                assert!(card.native_whatsapp.is_some());
+                assert!(card.destination.is_none());
+                assert!(card.message.native_attachments.is_empty());
+                match self.mode {
+                    6 => Err(TransportError::Unavailable),
+                    7 => Ok(HttpReply::new(
+                        StatusCode::OK,
+                        br#"{"id":"invalid"}"#.to_vec(),
+                    )),
+                    8 => Ok(HttpReply::new(StatusCode::TOO_MANY_REQUESTS, vec![])),
+                    9 => Ok(HttpReply::new(StatusCode::BAD_REQUEST, vec![])),
+                    _ => Ok(HttpReply::new(
+                        StatusCode::OK,
+                        br#"{"id":"45678"}"#.to_vec(),
+                    )),
+                }
+            });
+        }
         assert_eq!(url.path(), "/v25.0/34567/messages");
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -68,7 +98,7 @@ impl whatsapp::Transport for Graph {
         })
     }
 }
-fn sender(f: &Fixture, mode: usize, enabled: bool) -> (Sender, Arc<Graph>) {
+pub(super) fn sender(f: &Fixture, mode: usize, enabled: bool) -> (Sender, Arc<Graph>) {
     let (mut sender, _, _, _) = setup();
     let graph = Arc::new(Graph {
         cards: f.store.clone(),
@@ -135,6 +165,16 @@ async fn native_whatsapp_buttons_and_lists_persist_before_send_then_bind_exact_r
             assert_eq!(
                 sent[0]["interactive"]["type"],
                 if list { "list" } else { "button" }
+            );
+            let markup = crate::interactions::whatsapp::render(&controls(list), &card.id, 1)
+                .unwrap()
+                .0;
+            assert_eq!(
+                sent[0],
+                json!({
+                    "messaging_product":"whatsapp", "recipient_type":"individual", "to":"447700900123",
+                    "context":{"message_id":"wamid.original"}, "type":"interactive", "interactive":markup,
+                })
             );
             assert!(!sent[0].to_string().contains("private-"));
             assert_eq!(

@@ -142,10 +142,7 @@ pub(crate) async fn serve(
         )
         .with_native_lark_controls(native_lark_controls, config.native_lark_forms_enabled)
         .with_native_lark_media_controls(config.native_lark_media_controls_enabled)
-        .with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
-        .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
-        .with_native_whatsapp_interactions(config.native_whatsapp_interactions_enabled)
-        .with_native_whatsapp_groups(config.native_whatsapp_groups_enabled)
+        .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
@@ -307,6 +304,7 @@ pub(crate) async fn serve(
         native_discord_media_card_replacements_enabled: discord_media_replacements,
         whatsapp_interactions_enabled: whatsapp_interactions,
         native_whatsapp_interactions_enabled: config.native_whatsapp_interactions_enabled,
+        native_whatsapp_media_controls_enabled: config.native_whatsapp_media_controls_enabled,
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         native_lark_outbound_media_enabled: config.native_lark_outbound_media_enabled,

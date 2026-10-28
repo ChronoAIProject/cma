@@ -5763,6 +5763,18 @@
       "max_attachments": 1,
       "update": true,
       "replace_media": true
+    },
+    {
+      "kinds": [
+        "image",
+        "file",
+        "video"
+      ],
+      "buttons": true,
+      "choices": false,
+      "max_attachments": 1,
+      "caption_max_chars": 0,
+      "update": false
     }
   ],
   "MediaDownload": [

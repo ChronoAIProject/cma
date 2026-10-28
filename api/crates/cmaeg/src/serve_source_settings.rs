@@ -103,3 +103,13 @@ pub(super) async fn configure(
     state.native_discord_admission_enabled = config.routing.admission_enabled;
     Ok(whatsapp_forms_ready)
 }
+
+impl crate::delivery::relay_client::RelayClient {
+    pub(super) fn with_native_whatsapp_config(self, config: &Config) -> Self {
+        self.with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
+            .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
+            .with_native_whatsapp_interactions(config.native_whatsapp_interactions_enabled)
+            .with_native_whatsapp_media_controls(config.native_whatsapp_media_controls_enabled)
+            .with_native_whatsapp_groups(config.native_whatsapp_groups_enabled)
+    }
+}
