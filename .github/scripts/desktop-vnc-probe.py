@@ -71,6 +71,30 @@ class Stream:
         self.send(struct.pack("!BBHH", 5, 1, x, y))
         self.send(struct.pack("!BBHH", 5, 0, x, y))
 
+    def frame(self, bytes_per_pixel):
+        while True:
+            kind = self.read(1)[0]
+            if kind == 0:
+                update = self.read(3)
+                pixels = 0
+                for _ in range(struct.unpack("!H", update[1:])[0]):
+                    _, _, w, h, encoding = struct.unpack("!HHHHi", self.read(12))
+                    assert encoding == 0
+                    pixels += len(self.read(w * h * bytes_per_pixel))
+                return pixels
+            if kind == 1:  # SetColourMapEntries
+                colors = self.read(5)
+                self.read(6 * struct.unpack("!H", colors[3:])[0])
+            elif kind == 2:  # Bell has no payload.
+                pass
+            elif kind == 3:  # ServerCutText can follow a browser selection.
+                clipboard = self.read(7)
+                length = struct.unpack("!I", clipboard[3:])[0]
+                assert length <= 8 * 1024 * 1024
+                self.read(length)
+            else:
+                raise AssertionError(f"unexpected RFB server message: {kind}")
+
 
 def main():
     stream = Stream()
@@ -94,30 +118,17 @@ def main():
         # Request one uncompressed full frame to prove pixels cross both relays.
         stream.send(struct.pack("!BBHi", 2, 0, 1, 0))
         stream.send(struct.pack("!BBHHHH", 3, 0, 0, 0, width, height))
-        update = stream.read(4)
-        assert update[0] == 0
-        rectangles = struct.unpack("!H", update[2:])[0]
-        assert rectangles > 0
-        pixels = 0
-        for _ in range(rectangles):
-            _, _, w, h, encoding = struct.unpack("!HHHHi", stream.read(12))
-            assert encoding == 0
-            pixels += len(stream.read(w * h * (header[4] // 8)))
-        assert pixels > 100000
+        assert stream.frame(header[4] // 8) > 100000
         # A viewer must keep consuming pixels while sending input. A raw frame
         # exceeds socket buffers, so leaving the next update unread can block
         # the relay and delay input until the test disconnects. Request and
         # consume every update, including x11vnc's initial link calibration.
         def updates():
             try:
+                stream.send(struct.pack("!BBHHHH", 3, 1, 0, 0, width, height))
                 while not stopped.is_set():
+                    stream.frame(header[4] // 8)
                     stream.send(struct.pack("!BBHHHH", 3, 1, 0, 0, width, height))
-                    update = stream.read(4)
-                    assert update[0] == 0, "unexpected RFB server message"
-                    for _ in range(struct.unpack("!H", update[2:])[0]):
-                        _, _, w, h, encoding = struct.unpack("!HHHHi", stream.read(12))
-                        assert encoding == 0
-                        stream.read(w * h * (header[4] // 8))
             except Exception as error:
                 if not stopped.is_set():
                     failures.append(error)
