@@ -20,6 +20,19 @@ Inspection takes version `1`, action `inspect`, a runtime object containing
 array containing `agentId` and `conversationId`. It does not take an operation ID.
 It returns status `inspected`, the complete plan, and `planSha256`.
 
+The array contains zero through sixteen live conversations. When the parent
+runtime remains after all Agents are Deleted, core admission can supply an empty
+array while retaining every terminal Agent record. This uses the same exact
+boot, home, supervisor and full process-inventory proof as a live-conversation
+request. An empty array permits only the supervisor, current inspector and
+source-pinned relay; any leftover Agent, tool child or unrelated process causes
+refusal. It does not declare the runtime Pod stopped. The admitted quiesce step
+still writes and verifies its durable journal, rechecks the boot and process
+absence through final proof, and returns an empty history array without sending
+signals or reading, recreating or reopening a Deleted Agent's history. A replay
+cannot bypass those checks. Core/store validation remains responsible for the
+terminal child records and complete runtime-generation publication log proof.
+
 The plan includes the boot identity, exact supervisor identity, Agent homes,
 source and executable checksums, PID/start-time/parent identities, stdin ownership
 evidence, the complete process baseline, and per-Agent history summaries. Each
@@ -117,6 +130,9 @@ or parent identities, reused PIDs, exact stdin ownership, missing/extra/shared
 socket endpoints, journal-before-signal ordering, lost response replay, already
 exited bridges, bounded timeout without escalation, detached descendants and
 refusal when final native turn markers are absent.
+It also covers empty live-conversation inspection and journaled quiescence,
+unchanged retained files, refusal of unknown or late processes, exact-plan replay
+and stale-boot rejection without any signal.
 
 `recovery_native.test.cjs` uses the pinned Codex 0.147.0 native binary and an
 offline model fixture. It completes one turn, starts another with a real shell

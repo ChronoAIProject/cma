@@ -120,7 +120,8 @@ class Files(Fixture):
     def test_request_bounds_and_exact_fields(self):
         good = {"version": 1, "action": "inspect", "runtime": self.runtime, "agents": [AGENT]}
         m.validate(good)
-        for changes in ({"operationId": OP}, {"agents": []}, {"agents": [AGENT] * 17}, {"action": "kill"}):
+        m.validate({**good, "agents": []})
+        for changes in ({"operationId": OP}, {"agents": None}, {"agents": {}}, {"agents": [AGENT] * 17}, {"action": "kill"}):
             with self.assertRaises(m.Refused):
                 m.validate({**good, **changes})
 
@@ -314,6 +315,104 @@ class Quiesce(Fixture):
             m.quiesce(self.request)
         self.assertEqual(owner.read_text(), "preserve")
         self.assertFalse(self.signals)
+
+
+class EmptyLiveAgents(Fixture):
+    def setUp(self):
+        super().setUp()
+        self.supervisor = process(1, 0)
+        self.live = {1: self.supervisor}
+        self.request = {"version": 1, "action": "inspect", "runtime": self.runtime, "agents": []}
+        patch.dict(m.__dict__, inventory=lambda: copy.deepcopy(self.live), services=lambda _: [],
+                   proc_identity=lambda pid: copy.deepcopy(self.live[pid])).start()
+        original_readlink = os.readlink
+        def readlink(path, *args, **kwargs):
+            if str(path).startswith(m.PROC + "/") and str(path).endswith("/exe"):
+                return "/usr/local/bin/layer4-runtime" if str(path) == m.PROC + "/1/exe" else "/unowned/process"
+            return original_readlink(path, *args, **kwargs)
+        patch.object(m.os, "readlink", readlink).start()
+        patch.dict(m.__dict__, send_eof=lambda *_: self.fail("empty admission cannot signal")).start()
+        patch.object(m.signal, "pidfd_send_signal", lambda *_: self.fail("no pidfd signal"), create=True).start()
+        patch.dict(m.__dict__, history_summary=lambda *_: self.fail("terminal Agent history is not a live conversation")).start()
+
+    def admitted(self):
+        m.validate(self.request)
+        inspection = m.inspect(self.request)
+        request = {**self.request, "action": "quiesce", "operationId": OP, "expectedPlan": inspection["plan"]}
+        m.validate(request)
+        return request
+
+    def test_empty_inspection_preserves_files_and_current_boot_authority(self):
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        request = self.admitted()
+        plan = request["expectedPlan"]
+        self.assertEqual(plan["runtime"], self.runtime)
+        self.assertEqual(plan["supervisor"], self.supervisor)
+        self.assertFalse(plan["processesAbsent"], "the verified supervisor runtime is still running")
+        for key in ("agents", "topology", "histories"):
+            self.assertEqual(plan[key], [])
+        self.assertEqual(before, {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()})
+        self.assertFalse((self.root / ".cma/recovery").exists())
+
+    def test_empty_quiescence_journals_without_signal_and_replays_exact_plan(self):
+        dirty = self.root / "dirty.txt"
+        dirty.write_bytes(b"preserved owner workspace")
+        request = self.admitted()
+        result = m.quiesce(request)
+        self.assertEqual(result["status"], "quiesced")
+        self.assertEqual(result["histories"], [])
+        journal = json.loads((self.root / ".cma/recovery" / JOURNAL).read_bytes())
+        self.assertEqual(journal["plan"], request["expectedPlan"])
+        self.assertEqual(journal["status"], "quiesced")
+        self.assertEqual(m.quiesce(request), result)
+        self.assertEqual(self.history.read_bytes(), self.initial)
+        self.assertEqual(dirty.read_bytes(), b"preserved owner workspace")
+        changed = copy.deepcopy(request)
+        changed["expectedPlan"]["baseline"].append({"pid": 99, "start": 99})
+        with self.assertRaisesRegex(m.Refused, "journal_mismatch"):
+            m.quiesce(changed)
+
+    def test_empty_inspection_refuses_unrequested_child_or_detached_process(self):
+        for parent in (1, 0):
+            with self.subTest(parent=parent):
+                self.live[99] = process(99, parent)
+                with self.assertRaisesRegex(m.Refused, "unowned_process"):
+                    m.inspect(self.request)
+                del self.live[99]
+        self.assertFalse((self.root / ".cma/recovery").exists())
+
+    def test_empty_quiescence_refuses_process_arriving_after_inspection(self):
+        request = self.admitted()
+        self.live[99] = process(99, 1)
+        with self.assertRaisesRegex(m.Refused, "unowned_process"):
+            m.quiesce(request)
+        self.assertFalse((self.root / ".cma/recovery" / JOURNAL).exists())
+
+    def test_empty_quiescence_refuses_process_arriving_before_final_proof(self):
+        request = self.admitted()
+        original = m.final_history
+        def late(plan):
+            self.live[99] = process(99, 0)
+            return original(plan)
+        with patch.dict(m.__dict__, final_history=late):
+            with self.assertRaisesRegex(m.Refused, "untracked_process"):
+                m.quiesce(request)
+        journal = json.loads((self.root / ".cma/recovery" / JOURNAL).read_bytes())
+        self.assertEqual(journal["status"], "admitted")
+        del self.live[99]
+        self.assertEqual(m.quiesce(request)["status"], "quiesced")
+
+    def test_empty_replay_revalidates_process_absence_and_boot(self):
+        request = self.admitted()
+        m.quiesce(request)
+        self.live[99] = process(99, 0)
+        with self.assertRaisesRegex(m.Refused, "untracked_process"):
+            m.quiesce(request)
+        del self.live[99]
+        self.writer["boot_id"] = "f" * 32
+        self.publish_boot()
+        with self.assertRaisesRegex(m.Refused, "boot_changed"):
+            m.quiesce(request)
 
 
 class Proc(unittest.TestCase):
