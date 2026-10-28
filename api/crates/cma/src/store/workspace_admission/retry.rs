@@ -3,7 +3,7 @@ use std::time::Duration;
 
 const RETRY_MAX_DELAY_MILLIS: u64 = 32;
 
-pub(super) async fn retry_delay(attempt: usize) {
+pub(in crate::store) async fn retry_delay(attempt: usize) {
     if attempt == 0 {
         return;
     }
@@ -15,9 +15,15 @@ pub(super) async fn retry_delay(attempt: usize) {
     tokio::time::sleep(Duration::from_millis(millis)).await;
 }
 
-pub(super) fn exhausted(operation: &str, last: Option<String>) -> SandboxStoreError {
+pub(in crate::store) fn exhausted(operation: &str, last: Option<String>) -> SandboxStoreError {
     SandboxStoreError::Unavailable(format!(
         "{operation} exhausted its retry budget: {}",
         last.unwrap_or_else(|| "no driver result".into())
     ))
+}
+
+pub(in crate::store) enum ApplyError {
+    Domain(SandboxStoreError),
+    Driver(mongodb::error::Error),
+    Retry(mongodb::error::Error),
 }

@@ -20,6 +20,8 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[path = "workspace_lifecycle_tests.rs"]
 mod lifecycle;
+#[path = "workspace_prepare_recovery_tests.rs"]
+mod prepare_recovery;
 
 #[derive(Clone, Copy, Debug)]
 enum ProfileCorruption {
