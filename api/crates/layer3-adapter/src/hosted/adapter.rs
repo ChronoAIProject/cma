@@ -87,6 +87,14 @@ impl HostedAdapter {
         &self.deployment
     }
 
+    pub(crate) async fn inspect_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        command: &super::RuntimeInspectionCommand,
+    ) -> crate::Result<Vec<u8>> {
+        self.backend.inspect_runtime(handle, command).await
+    }
+
     pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
         self.home_volumes = Some(store);
         self
