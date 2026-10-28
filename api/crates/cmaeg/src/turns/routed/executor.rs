@@ -109,12 +109,12 @@ impl RoutedTargetExecutor {
                 .await;
             return Ok(Disposition::Settled);
         }
-        if lease
-            .state
-            .delivery
-            .as_ref()
-            .is_some_and(|v| matches!(v.status, super::DeliveryStatus::Unknown))
-        {
+        if lease.state.delivery.as_ref().is_some_and(|v| {
+            matches!(
+                v.status,
+                super::DeliveryStatus::Unknown | super::DeliveryStatus::Partial { .. }
+            )
+        }) {
             return Ok(Disposition::Settled);
         }
         let started = Instant::now();

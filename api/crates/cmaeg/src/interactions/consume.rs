@@ -73,6 +73,12 @@ impl InteractionStore {
                 || card.chat != activity.conversation.id
                 || card.thread != activity.conversation.thread_id
                 || (card.superseded
+                    && !super::telegram_media_edit::callback_replay(
+                        &card,
+                        activity.event_id.as_str(),
+                        callback_id,
+                        index,
+                    )
                     && !super::lark_effect::recovery(
                         &card,
                         activity.event_id.as_str(),
