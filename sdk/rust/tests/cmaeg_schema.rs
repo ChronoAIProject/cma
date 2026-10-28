@@ -684,6 +684,17 @@ fn lark_multi_image_controls_preserve_bound_without_inventing_replacement_author
 }
 
 #[test]
+fn lark_replacement_capabilities_preserve_the_separate_issuance_bound() {
+    let value = json!({"kinds":["image"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "controls":{"kinds":["image"],"max_attachments":1,"buttons":true,"choices":true,"caption_max_chars":0,"update":true,"replace_media":true}});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(decoded.controls.as_ref().unwrap().replace_media, Some(true));
+    assert_eq!(decoded.controls.as_ref().unwrap().max_attachments, 1);
+    assert_eq!(decoded.max_attachments, 4);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
 fn native_album_capabilities_preserve_exact_groups_without_operation_authority() {
     let value = serde_json::json!({
         "kinds":["image","file","audio","video"], "sources":["base64"],

@@ -1044,9 +1044,21 @@ For native Lark/Feishu, the separate image-card issuance gate adds
 `caption_max_chars: 0` and `update: true`. This narrows the combination to one
 PNG/JPEG even when ordinary media lists file/audio/video. Supply explanatory
 message text instead of an attachment caption. Content/control edits retain the
-confirmed image; binary replacement, image removal and forms are not supported.
+confirmed image. Binary replacement requires the independent gate described below;
+image removal and forms are not supported.
 The optional `kinds` field remains absent for older responses. See
 [native Lark image controls](../../../docs/CMAEG_Native_Lark_Image_Controls.md).
+
+An independent replacement gate can advertise `replace_media: true` for a retained
+native Lark image card. Pass the complete replacement set of 1–4 PNG/JPEG
+`native_attachments` with full text/control content to `updateMessage`. Image-count
+changes are supported, including one to four and four to one. The parent
+`native_media.max_attachments` bounds replacement sets; `controls.max_attachments`
+continues to limit new-card issuance. Omitted attachments preserve all old images.
+Failed preflight/upload preserves the old card; unknown PATCH results are fenced
+and must not be blindly retried. Use the newly confirmed message reference after
+success. Destination, consumer and original expiry cannot change.
+
 The additional multi-image gate can raise `controls.max_attachments` to `4`;
 check discovery before combining two to four PNG/JPEG images with controls.
 Content/control edits preserve every confirmed image in its original order.
