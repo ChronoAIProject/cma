@@ -61,12 +61,19 @@ children+=("$!")
 "$0" --browser >/tmp/cma-chromium.log 2>&1 &
 chrome_pid=$!
 children+=("$chrome_pid")
+chrome_ready=0
 for ((attempt=0; attempt<200; attempt++)); do
-  xdotool search --onlyvisible --class chromium >/dev/null 2>&1 && break
+  if xdotool search --onlyvisible --class chromium >/dev/null 2>&1; then
+    chrome_ready=1
+    break
+  fi
   require_process "$chrome_pid" /tmp/cma-chromium.log
   sleep 0.1
 done
-xdotool search --onlyvisible --class chromium >/dev/null
+# Chromium can replace startup windows between X11 queries. Do not repeat a
+# successful observation outside the retry loop, where BadWindow would tear
+# down an otherwise healthy display under set -e.
+[[ "$chrome_ready" == 1 ]]
 x11vnc -display "$DISPLAY" -rfbport 5900 -localhost -forever -shared -nopw >/tmp/cma-x11vnc.log 2>&1 &
 children+=("$!")
 websockify --host-token --token-plugin=TokenFile --token-source=/tmp/cma-desktop-token 127.0.0.1:6080 >/tmp/cma-websockify.log 2>&1 &
