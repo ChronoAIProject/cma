@@ -9,6 +9,9 @@ use crate::sandbox::{
 };
 use std::sync::Arc;
 
+#[path = "failed_provision_tests.rs"]
+mod failed_provision;
+
 fn fixture() -> (InMemorySandboxStore, SandboxId) {
     let store = InMemorySandboxStore::default();
     let mut sandbox = native();

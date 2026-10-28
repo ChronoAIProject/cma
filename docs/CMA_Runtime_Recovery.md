@@ -147,8 +147,23 @@ generation 3. Every provider step still verifies the original Claim, native Sand
 and PVC UIDs, home identity and complete admitted request. Unreserved generations,
 changed operations, changed homes and request mismatches remain refusals.
 
+A terminal RuntimeLost provisioning failure clears runnable work but retains its
+exact failed operation, allocation reservation, owner, source binding and home
+identity as `failed_provision`. Recovery may use this evidence only with a complete
+empty Agent set, no worker lease, and fresh provider proof of the same nonexecuting
+allocation. It admits a new operation; it never replays the failed operation or
+lowers the generation fence. A failed snapshot survives API restarts and keeps the
+same pending Workspace and files. Generic saves cannot add, replace or erase this
+evidence; admitted recovery consumes it and explicit retirement may discard it.
+
+Older Failed records that already lost their allocation reservation remain
+ineligible for this path. A provider generation, high-water number or an untrusted
+copied snapshot must not reconstruct missing authority. Likewise, an assignment
+listener being Pod Ready does not prove a stopped runtime; the nonexecution
+predicate remains required. Those cases need separately verified recovery evidence.
+
 This recovery uses API code and the retained runtime image. Once admission persists
-`reserved_provision`, rollback must use an API binary that can read that evidence;
+`reserved_provision` or `failed_provision`, rollback must use an API binary that can read that evidence;
 an older strict reader that rejects the optional field cannot safely resume the
 in-flight recovery. Do not erase the evidence or lower the generation fence to
 make an older binary accept the record.
