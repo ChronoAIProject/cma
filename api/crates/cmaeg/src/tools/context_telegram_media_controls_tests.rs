@@ -67,6 +67,10 @@ async fn telegram_media_controls_discovery_matches_source_destination_and_issuan
                         editable.controls.as_ref().map(|c| c.update),
                         (enabled && verified && (!named || consumer)).then_some(true)
                     );
+                    assert!(editable
+                        .controls
+                        .as_ref()
+                        .is_none_or(|controls| controls.replace_media.is_none()));
                     state.native_telegram_media_control_edits_enabled = false;
                 }
             }
