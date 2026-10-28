@@ -104,6 +104,38 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
         Ok(WorkspaceAdmissionResult::Created(workspace))
     }
 
+    async fn begin_workspace_prepare_recovery(
+        &self,
+        id: &WorkspaceId,
+        caller: &crate::Caller,
+        operation_id: &str,
+        now: String,
+    ) -> Result<Workspace, SandboxStoreError> {
+        let mut state = self.lock();
+        let mut workspace = state
+            .workspaces
+            .get(id)
+            .cloned()
+            .ok_or(SandboxStoreError::NotFound)?;
+        let parent = state
+            .sandboxes
+            .get(&workspace.sandbox_id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        workspace.admit_prepare_recovery(
+            parent,
+            caller,
+            operation_id,
+            state.agents.values().any(|agent| agent.workspace_id == *id),
+            state
+                .worktrees
+                .values()
+                .any(|worktree| worktree.workspace_id == *id),
+            now,
+        )?;
+        state.workspaces.insert(id.clone(), workspace.clone());
+        Ok(workspace)
+    }
+
     async fn begin_workspace_removal(
         &self,
         id: &WorkspaceId,

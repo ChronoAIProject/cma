@@ -117,3 +117,5 @@ mod whatsapp_template_tests;
 
 #[cfg(test)]
 mod native_lark_outbound_tests;
+#[cfg(test)]
+mod native_lark_thread_start_tests;

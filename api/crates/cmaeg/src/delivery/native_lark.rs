@@ -37,6 +37,9 @@ impl Sender {
         let ReplyAddress::NativeLark(reply) = &event.reply else {
             return (unsupported(), effects);
         };
+        if message.thread_reply && reply.thread_id.is_none() {
+            return self.native_lark_thread_start(ctx, event, message).await;
+        }
         if self.relay.native_lark_controls
             && (crate::interactions::lark::requested(message)
                 || crate::interactions::lark_form::requested(message))
@@ -49,7 +52,6 @@ impl Sender {
             || crate::interactions::has_controls(message)
             || message.whatsapp_template.is_some()
             || message.reply_to.is_some()
-            || message.thread_reply
         {
             return (unsupported(), effects);
         }

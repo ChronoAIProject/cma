@@ -19,6 +19,8 @@ async fn native_whatsapp_group_context_never_advertises_controls_for_any_consume
         app.activity.conversation.kind = cmaeg_core::activity::ConversationKind::Group;
         for enabled in [false, true] {
             app.state.native_whatsapp_interactions_enabled = enabled;
+            app.state.native_whatsapp_outbound_media_enabled = true;
+            app.state.native_whatsapp_media_controls_enabled = true;
             app.state.whatsapp_interactions_enabled = enabled;
             app.state.consumer_interactions_enabled = enabled;
             app.state.native_whatsapp_groups_enabled = true;
@@ -35,6 +37,11 @@ async fn native_whatsapp_group_context_never_advertises_controls_for_any_consume
             );
             assert_eq!(response.capabilities.buttons, "none");
             assert!(!response.capabilities.edit);
+            assert!(response
+                .capabilities
+                .native_media
+                .as_ref()
+                .is_none_or(|media| media.controls.is_none()));
             assert_eq!(
                 response.capabilities.whatsapp_template_components,
                 Some(vec!["header".into(), "body".into()])
