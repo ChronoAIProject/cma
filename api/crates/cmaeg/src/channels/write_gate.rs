@@ -53,6 +53,7 @@ pub struct WriteFlags {
     pub telegram_message_events: bool,
     pub discord_thread_history: bool,
     pub discord_thread_lifecycle: bool,
+    pub native_lark_conversation_history: bool,
     pub discord_conversation_history: bool,
     pub discord_reactions: bool,
 }
@@ -175,6 +176,16 @@ pub(crate) fn check(
             format!("/sources/{index}/intents"), "discord_reactions_disabled",
         ));
     }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(source, Source::NativeLark(s) if s.conversation_history)
+            && !flags.native_lark_conversation_history
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/conversation_history"),
+            "native_lark_conversation_history_disabled",
+        ));
+    }
     if next.reply.thread_contract.is_some()
         && !flags.thread_contract
         && !current.is_some_and(|old| old.reply.thread_contract == next.reply.thread_contract)
@@ -232,7 +243,17 @@ pub(crate) fn check(
     let value = native_lark(next);
     if (!value.0.is_empty() || value.1.is_some())
         && !flags.native_lark
-        && !current.is_some_and(|old| native_lark(old) == value)
+        && !current.is_some_and(|old| {
+            let mut reduced = old.clone();
+            for source in &mut reduced.sources {
+                if let Source::NativeLark(s) = source {
+                    if next.sources.iter().any(|n| matches!(n, Source::NativeLark(n) if !n.conversation_history && n.identity == s.identity)) {
+                        s.conversation_history = false;
+                    }
+                }
+            }
+            native_lark(&reduced) == value
+        })
     {
         return Err(ValidationError::new(
             "/sources/native_lark",

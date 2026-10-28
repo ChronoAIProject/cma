@@ -58,7 +58,10 @@ impl IngressState {
                         return refused(403, "native_lark_original_mismatch");
                     };
                     if !matches!(plan.activity.kind, ActivityKind::Message { .. })
-                        || plan.source != Source::NativeLark(source.clone())
+                        || !crate::native_lark::same_messaging_source(
+                            &plan.source,
+                            &Source::NativeLark(source.clone()),
+                        )
                         || plan.activity.source != identity
                     {
                         return refused(403, "native_lark_original_mismatch");
@@ -93,7 +96,10 @@ impl IngressState {
                     if plan.identity.owner != channel.definition.owner.subject
                         || plan.identity.channel_id != channel.id
                         || plan.identity.record_id != channel.definition.record_id
-                        || plan.source != Source::NativeLark(source.clone())
+                        || !crate::native_lark::same_messaging_source(
+                            &plan.source,
+                            &Source::NativeLark(source.clone()),
+                        )
                         || plan.activity.source != identity
                         || plan.activity.conversation.id != receipt.recipient
                         || !plan.targets.iter().any(|t| {

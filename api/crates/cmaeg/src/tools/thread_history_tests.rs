@@ -193,6 +193,7 @@ impl App {
         let state = ToolsState {
             complete_replies_enabled: false,
             discord_threads: None,
+            native_lark_conversation_history: None,
             discord_conversation_history: None,
             discord_thread_history: Some(Arc::new(DiscordThreadHistory::new(
                 crate::discord::DiscordRest::fixture(&format!("{platform_base}/api/v10/")),

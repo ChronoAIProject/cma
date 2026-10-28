@@ -133,6 +133,7 @@ impl App {
         let state = ToolsState {
             discord_thread_history: None,
             discord_threads: None,
+            native_lark_conversation_history: None,
             discord_conversation_history: None,
             complete_replies_enabled: false,
             discord_interactions_enabled: false,

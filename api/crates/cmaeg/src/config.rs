@@ -182,6 +182,7 @@ pub struct Config {
     pub native_telegram_message_events_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_discord_thread_lifecycle_enabled: bool,
+    pub native_lark_conversation_history_enabled: bool,
     pub native_discord_conversation_history_enabled: bool,
     pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
@@ -290,6 +291,9 @@ impl Config {
             )?,
             native_discord_reactions_enabled: routing::write_flag(
                 "CMAEG_DISCORD_REACTIONS_ENABLED",
+            )?,
+            native_lark_conversation_history_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED",
             )?,
             native_discord_conversation_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED",

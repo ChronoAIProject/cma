@@ -39,6 +39,8 @@ pub(super) async fn configure(
     state.native_discord_thread_history_enabled = config.native_discord_thread_history_enabled;
     state.native_discord_thread_lifecycle_enabled =
         config.native_discord_thread_lifecycle_enabled && state.records.thread_fences_ready().await;
+    state.native_lark_conversation_history_enabled =
+        config.native_lark_conversation_history_enabled;
     state.native_discord_conversation_history_enabled =
         config.native_discord_conversation_history_enabled;
     state.native_discord_reactions_enabled = config.native_discord_reactions_enabled;
