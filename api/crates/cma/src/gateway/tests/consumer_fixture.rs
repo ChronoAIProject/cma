@@ -97,6 +97,7 @@ impl ConsumerGateway {
             native_whatsapp_groups_enabled: false,
             native_discord_writes_enabled: false,
             native_discord_thread_history_enabled: false,
+        native_telegram_topic_lifecycle_enabled: false,
         native_discord_thread_lifecycle_enabled: false,
         native_lark_conversation_history_enabled: false,
         native_discord_conversation_history_enabled: false,
@@ -139,6 +140,7 @@ impl ConsumerGateway {
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = cmaeg::tools::ToolsState {
             discord_thread_history: None,
+            telegram_topics: None,
             discord_threads: None,
             native_lark_conversation_history: None,
             discord_conversation_history: None,

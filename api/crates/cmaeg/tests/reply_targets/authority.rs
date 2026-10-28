@@ -180,6 +180,7 @@ async fn mint_requires_verified_context_and_cannot_accept_a_caller_selected_dest
 async fn native_reply_target_survives_restart_and_refuses_changed_bot_before_dispatch() {
     let mut app = App::new(vec![]).await;
     app.definition.sources = vec![Source::Telegram {
+        topic_lifecycle: false,
         message_events: false,
         channel_posts: false,
         bot_id: "77".into(),

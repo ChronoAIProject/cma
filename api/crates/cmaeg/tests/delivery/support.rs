@@ -195,6 +195,7 @@ impl App {
         .unwrap();
         let tools = ToolsState {
             discord_thread_history: None,
+            telegram_topics: None,
             discord_threads: None,
             native_lark_conversation_history: None,
             discord_conversation_history: None,

@@ -7,7 +7,12 @@ use cmaeg_core::{
 
 /// Retaining a saved source or removing only channel-post access is an opt-out.
 pub(super) fn retains_opt_in(current: &ChannelDefinition, source: &Source) -> bool {
-    if current.sources.contains(source) {
+    let source = crate::telegram::messaging_source(source);
+    if current
+        .sources
+        .iter()
+        .any(|old| crate::telegram::messaging_source(old) == source)
+    {
         return true;
     }
     let mut before = source.clone();
@@ -18,7 +23,10 @@ pub(super) fn retains_opt_in(current: &ChannelDefinition, source: &Source) -> bo
         return false;
     }
     *channel_posts = true;
-    current.sources.contains(&before)
+    current
+        .sources
+        .iter()
+        .any(|old| crate::telegram::messaging_source(old) == before)
 }
 
 pub(super) fn initialize(
@@ -33,6 +41,9 @@ pub(super) fn initialize(
                 Source::Telegram {
                     message_events: true,
                     ..
+                } | Source::Telegram {
+                    topic_lifecycle: true,
+                    ..
                 }
             )
         })
@@ -40,13 +51,32 @@ pub(super) fn initialize(
     if !opted(definition) || current.is_some_and(|old| opted(old) && old.routing.is_some()) {
         return Ok(());
     }
-    if !state.native_telegram_message_events_writes_enabled
+    let topics = definition.sources.iter().any(|s| {
+        matches!(
+            s,
+            Source::Telegram {
+                topic_lifecycle: true,
+                ..
+            }
+        )
+    });
+    let events = definition.sources.iter().any(|s| {
+        matches!(
+            s,
+            Source::Telegram {
+                message_events: true,
+                ..
+            }
+        )
+    });
+    if (events && !state.native_telegram_message_events_writes_enabled)
+        || (topics && !state.native_telegram_topic_lifecycle_enabled)
         || !state.native_telegram_durable_admission_enabled
         || !state.multi_consumer_writes_enabled
     {
         return Err(ManagementError::Invalid(ValidationError::new(
             "/sources",
-            "Telegram message events require enabled authoring and durable admission",
+            "Telegram message events or topic management require enabled authoring and durable admission",
         )));
     }
     if definition
@@ -61,13 +91,11 @@ pub(super) fn initialize(
     {
         return Err(ManagementError::Invalid(ValidationError::new(
             "/provider/slug",
-            "Telegram message events require providers configured for durable response recovery",
+            "Telegram retained operations require providers configured for durable response recovery",
         )));
     }
     if definition.routing.is_none() {
-        definition.routing = Some(serde_json::from_value(serde_json::json!({
-            "version":1,"default_consumer":{"name":"default"},"consumers":[],"default_targets":["default"]
-        })).map_err(|_| ManagementError::Internal("cannot initialize native routing".into()))?);
+        definition.routing = Some(crate::telegram::messaging_compat::default_routing());
     }
     super::definition::validate_definition(current, definition, state.write_flags())
         .map_err(ManagementError::Invalid)
