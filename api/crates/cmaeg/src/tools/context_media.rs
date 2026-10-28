@@ -80,18 +80,18 @@ impl NativeMediaCapabilities {
         } else {
             Self::for_source(&activity.source, state.native_media_enabled).map(
                 |mut capabilities| {
+                    let discord_controls = state.native_discord_media_controls_enabled
+                        && state.discord_interactions_enabled
+                        && crate::interactions::discord::eligible(channel, event, activity);
+                    let telegram_controls = state.native_telegram_media_controls_enabled
+                        && crate::interactions::telegram_media::eligible(channel, event, activity);
                     if verified
                         && (event.consumer.is_none() || state.consumer_interactions_enabled)
-                        && ((state.native_discord_media_controls_enabled
-                            && state.discord_interactions_enabled
-                            && crate::interactions::discord::eligible(channel, event, activity))
-                            || (state.native_telegram_media_controls_enabled
-                                && crate::interactions::telegram_media::eligible(
-                                    channel, event, activity,
-                                )))
+                        && (discord_controls || telegram_controls)
                     {
                         let mut controls = MediaControlsCapabilities::single(1024);
-                        controls.update = state.native_discord_media_card_edits_enabled;
+                        controls.update =
+                            discord_controls && state.native_discord_media_card_edits_enabled;
                         capabilities.controls = Some(controls);
                     }
                     capabilities
