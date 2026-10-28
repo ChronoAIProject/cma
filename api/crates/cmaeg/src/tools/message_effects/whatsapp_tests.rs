@@ -1,4 +1,6 @@
 use super::{lark_fixture::App, *};
+#[path = "whatsapp_consent_tests.rs"]
+mod consent_tests;
 #[path = "whatsapp_group_context_tests.rs"]
 mod group_context_tests;
 #[path = "whatsapp_retention_tests.rs"]
