@@ -1,5 +1,7 @@
 //! Versioned, stateless tokens used between CMAEG replicas.
 
+mod custody;
+
 use std::fmt;
 
 use base64::{engine::general_purpose, Engine as _};
