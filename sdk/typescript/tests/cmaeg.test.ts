@@ -31,6 +31,19 @@ const event = (): CloudEvent => ({
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 
+it('returns an empty native thread scan page without automatically fetching its continuation', async () => {
+  const expected = examples.ConversationHistoryPage?.[2];
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(expected));
+  const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+  const page = await client.readEventHistory('original');
+  expect(page).toEqual(expected);
+  expect(page.messages).toEqual([]);
+  expect(page.scanned_messages).toBe(25);
+  expect(page.continuation.status).toBe('more_visible_rows');
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0]?.[0]).toBe('https://gateway.example/v1/events/original/history');
+});
+
 describe('independent CMAEG client', () => {
   it('emits all management and tool methods with opaque IDs, complete bodies and exact versions', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();

@@ -4313,3 +4313,23 @@ TypeScript uses `readEventHistory(eventRef, cursor?)`. Both request one page onl
 The [reviewed design](CMAEG_Native_Discord_History_Pagination_Design.md) records the
 pinned Discord evidence and exclusions, including complete exports, deleted/version
 recovery, search, file bytes, arbitrary destinations and other platforms.
+
+## Original native Lark / Feishu conversation history
+
+The same `readEventHistory(event_ref, cursor?)` operation supports original native
+Lark/Feishu human events with independent source `conversation_history: true` at
+admission and read time and the default-off
+`CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` gate. Both exact chats and threads
+are supported. Native scans use one descending provider page of at most 25 raw rows;
+only rows strictly earlier than the original millisecond timestamp are returned.
+The platform cannot seek within a thread, so empty pages with scanned/omitted counts
+and a continuation are valid while scanning newer messages. `before_message_id`
+remains the original/last pre-cutoff boundary; the sealed cursor carries provider
+position. No parent-chat fallback or automatic page draining occurs.
+
+The existing page shape and Discord behavior remain unchanged. A native internal
+v2 cursor and retained admission custody bind the original source, human, selected
+consumer/provider/key, partition and original expiry. Text/supported posts are
+projected; unsupported media/formats are counted omissions without invented
+attachment size or filename. Source consent authoring and capability discovery are
+optional additions. [Full native contract, setup, tests and platform limits](CMAEG_Native_Lark_History.md).

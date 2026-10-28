@@ -332,6 +332,9 @@ pub enum LarkRegion {
 /// Separate native source. Configure a new app; never replace a NyxID webhook.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeLarkSource {
+    /// Explicit consent to original chat/thread history, including other participants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_history: Option<bool>,
     /// Must be true to acknowledge separate app provisioning.
     pub separate_app: bool,
     /// Exact app, tenant, region and receiving bot.

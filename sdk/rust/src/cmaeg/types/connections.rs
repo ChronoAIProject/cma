@@ -178,6 +178,9 @@ pub struct RelayAuthoringCapabilities {
     /// Independently enabled original-conversation history reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_conversation_history_enabled: Option<bool>,
+    /// Native Lark/Feishu original-conversation history authoring and reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_conversation_history_enabled: Option<bool>,
     /// Whether native Discord incoming reaction events are enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_reactions_enabled: Option<bool>,

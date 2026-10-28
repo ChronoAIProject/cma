@@ -42,6 +42,7 @@ export const RelayAuthoringCapabilitiesSchema = object({
   native_telegram_message_events_enabled: optional(nullable(boolean)),
   native_discord_thread_history_enabled: optional(nullable(boolean)),
   native_discord_thread_lifecycle_enabled: optional(nullable(boolean)),
+  native_lark_conversation_history_enabled: optional(nullable(boolean)),
   native_discord_conversation_history_enabled: optional(nullable(boolean)),
   native_discord_reactions_enabled: optional(nullable(boolean)),
   native_discord_writes_enabled: optional(nullable(boolean)),

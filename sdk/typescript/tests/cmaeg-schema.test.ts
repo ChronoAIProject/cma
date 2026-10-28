@@ -498,3 +498,25 @@ it('round-trips paginated history facts and keeps consent independent', () => {
   expect(SourceSchema(source)).toEqual(source);
   expect(SourceRequestSchema(source)).toEqual(source);
 });
+
+it('keeps native Lark history consent optional and accepts bounded empty thread progress without new page fields', () => {
+  const source = {
+    type: 'native_lark',
+    separate_app: true,
+    identity: { region: 'feishu', app_id: 'cli_app', tenant_key: 'tenant', bot_open_id: 'ou_bot' },
+    admission: { type: 'all' },
+  };
+  expect(SourceSchema(source)).toEqual(source);
+  expect(SourceRequestSchema({ ...source, conversation_history: true })).toEqual({
+    ...source,
+    conversation_history: true,
+  });
+  const fixtures = JSON.parse(
+    readFileSync(
+      new URL('../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json', import.meta.url),
+      'utf8',
+    ),
+  ) as Record<string, unknown[]>;
+  const page = fixtures.ConversationHistoryPage![2];
+  expect(ConversationHistoryPageSchema(page)).toEqual(page);
+});

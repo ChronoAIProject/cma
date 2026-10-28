@@ -26,3 +26,28 @@ async fn conversation_history_requires_explicit_cursor_and_never_auto_drains() {
         server.assert_drained();
     }
 }
+
+#[tokio::test]
+async fn native_thread_empty_scan_page_remains_a_single_explicit_read() {
+    let server = WireServer::new().await;
+    let client = client(&server);
+    let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json"
+    ))
+    .unwrap();
+    let page = fixtures["ConversationHistoryPage"][2].clone();
+    assert_eq!(page["scanned_messages"], 25);
+    server.expect(wire::json(
+        "GET",
+        "/v1/events/original/history",
+        None,
+        200,
+        page.clone(),
+        true,
+    ));
+    same(
+        client.read_event_history("original", None).await.unwrap(),
+        page,
+    );
+    server.assert_drained();
+}
