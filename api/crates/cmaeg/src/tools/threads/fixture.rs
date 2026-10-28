@@ -298,6 +298,7 @@ impl App {
             whatsapp_reactions: None,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
+            native_discord_media_controls_enabled: false,
             whatsapp_interactions_enabled: false,
             native_whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
