@@ -1029,8 +1029,9 @@ headers, groups, relay, albums and media/form mixtures remain unsupported.
 
 For native Discord, `native_media.controls.update` is true only with the separate
 media-card-edit gates. It permits changing message content/controls while keeping
-the exact confirmed upload. It does not grant binary/caption replacement or
-media/form combinations. Historical cards without a retained native file proof
+the exact confirmed upload. Its independent replacement gate may additionally
+advertise `replace_media: true` for one same-card upload replacement with complete
+content/controls. Media/form combinations remain unsupported. Historical cards without a retained native file proof
 remain callback-only.
 
 For native Lark/Feishu, the separate image-card issuance gate adds
