@@ -38,9 +38,9 @@ tool. Provider input renders it in a separate untrusted data block after routing
 | Source | Relationship and reference | Payload-supplied content | Limits |
 | --- | --- | --- | --- |
 | Telegram | `reply_to_message.message_id`, `relation: reply` | Prefer the sender's `quote.text`; otherwise parent `text` or `caption`. Descriptive image/video/audio/file/sticker/contact/location/poll kinds. | Same chat and message thread only. Ordinary `message`/`channel_post` on a selected durable routed path. Excludes `external_reply`, forwarded origins, recursive parents and aliases. |
-| Discord | Actual type 19 REPLY with DEFAULT `message_reference`, `relation: reply` | Matching `referenced_message.content`, plus attachment MIME-kind, sticker and poll descriptions. | Exact current channel and guild. Absent/null referenced message gives no content; it does not establish existence or deletion in the public contract. Excludes forwards, crossposts, thread-starter and context-menu message types. |
+| Discord | Actual type 19 REPLY with DEFAULT `message_reference`, `relation: reply` | Matching `referenced_message.content`, plus attachment MIME-kind, sticker and poll descriptions. | Exact current channel; any supplied reference or parent guild must match the authenticated current guild. The optional reference guild may be absent. Absent/null referenced message gives no content; it does not establish existence or deletion in the public contract. Excludes forwards, crossposts, thread-starter and context-menu message types. |
 | Lark / Feishu | Receive event `event.message.parent_id`, `relation: reply` | None: the ordinary receive event supplies the parent ID only. | `root_id` and `thread_id` remain separate facts. No inferred parent text, author or thread membership. Both regional native apps use the same bounded shape. |
-| WhatsApp | Plain ordinary private `context.id`, `relation: context` | None: the incoming context contains an ID/from fact, not the prior body. | Requires a bounded native ID and valid context sender shape; the quoted sender is never the current actor. Excludes groups, controls, product referral and forwarding context. Current official evidence establishes incoming context fields; this contract deliberately does not assert that every plain context is a quoted reply. |
+| WhatsApp | Plain ordinary private `context.id`, `relation: context` | None: the incoming context contains an ID/from fact, not the prior body. | Requires a bounded native ID and valid context sender shape; the context sender never replaces the current actor. Excludes groups, controls, product referral and forwarding context. Current official evidence establishes incoming context fields; this contract deliberately does not assert that every plain context is a quoted reply. |
 
 `content` is absent for a reference-only payload. A supplied parent message can
 have a content object with neither text nor supported kinds; that is not an
@@ -48,7 +48,7 @@ assertion that all of its content was normalized. Text is at most 4096 UTF-8 byt
 truncated on a character boundary with `truncated: true`. Origins are
 `selected_quote`, `parent_text`, or `parent_caption`. At most eight distinct
 content kinds are retained. Entities, author identity, nested quotes, media IDs,
-URLs, dimensions, and arbitrary content members are not copied.
+media URLs, dimensions, and arbitrary content members are not copied.
 
 Unsupported, malformed, self-referential or cross-scope optional quote facts do
 not become context. Existing admission validation still decides whether the

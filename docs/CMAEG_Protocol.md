@@ -1516,7 +1516,7 @@ Activity kind is one of:
 
 | Type | Fields |
 | --- | --- |
-| `message` | `text,mentions_bot,reply_to?,album_id?,attachments` (default `[]`) |
+| `message` | `text,mentions_bot,reply_to?,quoted_message?,album_id?,attachments` (default `[]`) |
 | `interaction` | `block_id,action_id,values` (default `{}`) |
 | `command` | `name,args` |
 | `event` | `ce`, the complete CloudEvent, and `attachments` (omitted when empty) |
@@ -1525,6 +1525,26 @@ A message's `text` is NyxID's `content.text`, except for a Lark or Feishu
 rich-text post: NyxID relays a post without text, so its `text` is derived by
 the observer from the authenticated raw event, which the callback JWT binds
 through `body_sha256` (§6).
+
+Native ordinary messages may additionally expose `quoted_message` with
+`relation` (`reply` or `context`), a source-scoped `message_id`, and optional
+payload-supplied `content`. Telegram and Discord preserve bounded text and
+descriptive content kinds from an authenticated same-conversation parent;
+Lark/Feishu preserves the parent ID, and private WhatsApp preserves a plain
+context ID without asserting that every context is a reply. Text is at most
+4096 UTF-8 bytes, with an explicit origin and truncation flag. No original-message
+fetch, download locator or actionable `MessageRef` is created. Quote data cannot
+change current text, actor, routing, partition, expiry or the outgoing reply target.
+It is untrusted reference data in provider input and authenticated event context.
+The recent Activity feed exposes only optional `quoted_context` availability,
+truncation and content-kind metadata, without quote text or parent IDs.
+
+The independent `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED` writer gate defaults to
+false. Compatible Gateway, provider, SDK and rollback readers must precede
+activation. Durable admissions and Discord inboxes pin their original quote
+projection so retries never upgrade legacy events or change accepted context
+when the gate changes. Exact source restrictions, field semantics and reader
+requirements are defined by the [native quoted-message contract](CMAEG_Native_Quoted_Context.md).
 
 Messages of one platform media group, such as a Telegram album, share
 `album_id` (1..=128 bytes, with the `filename` character rule below). Each item
