@@ -85,6 +85,9 @@ pub struct AdmittedPlan {
     /// Absent on all legacy admissions; never infer a version from raw bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_projection: Option<u8>,
+    /// Reader-first; no legacy admission can acquire replacement authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_preparation_version: Option<u8>,
     pub activity: Activity,
     pub source: Source,
     pub targets: Vec<StoredTarget>,
@@ -99,6 +102,19 @@ impl fmt::Debug for AdmittedPlan {
             .field("targets", &self.targets.len())
             .field("retained_until", &self.retained_until)
             .finish_non_exhaustive()
+    }
+}
+impl AdmittedPlan {
+    pub(crate) fn prepares_binding(&self, target: &StoredTarget) -> bool {
+        self.binding_preparation_version == Some(1) && target.launch.provider.target.is_profile()
+    }
+    pub(crate) fn permits_binding_preparation(&self) -> bool {
+        self.kind == PAYLOAD_KIND
+            && matches!(
+                self.activity.kind,
+                cmaeg_core::activity::ActivityKind::Message { .. }
+            )
+            && self.activity.actor.kind == cmaeg_core::activity::ActorKind::Human
     }
 }
 

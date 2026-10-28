@@ -142,6 +142,7 @@ impl ProductionFrozenTurnBuilder {
             );
             let body = FrozenTurn {
                 conversation_id: turn.conversation_id,
+                binding_generation: None,
                 idempotency_key: turn.idempotency_key,
                 input: rendered.input,
                 metadata: rendered.metadata,
