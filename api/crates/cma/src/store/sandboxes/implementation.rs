@@ -77,6 +77,9 @@ impl SandboxStore for MongoSandboxStore {
             .validate_service_access_successor(&sandbox)
             .map_err(|_| SandboxStoreError::Conflict)?;
         current
+            .validate_unpublished_recovery_save(&sandbox)
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        current
             .validate_checkpoint_capture_successor(&sandbox)
             .map_err(|_| SandboxStoreError::Conflict)?;
         layer2_core::sandbox::ProvisioningExecution::validate_successor(

@@ -152,6 +152,9 @@ impl SandboxStore for InMemorySandboxStore {
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
                 || current.validate_service_access_successor(&sandbox).is_err()
+                || current
+                    .validate_unpublished_recovery_save(&sandbox)
+                    .is_err()
                 || crate::sandbox::ProvisioningExecution::validate_successor(
                     current.work.execution,
                     sandbox.work.execution,
