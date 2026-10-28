@@ -31,6 +31,10 @@ pub(super) fn routes() -> Router<HierarchyState> {
             post(create_inline),
         )
         .route("/api/v1/workspaces/{id}", get(read).delete(remove))
+        .route(
+            "/api/v1/workspaces/{id}/recover-prepare",
+            post(recover_prepare),
+        )
 }
 
 #[utoipa::path(
@@ -216,5 +220,44 @@ pub(super) async fn remove(
             Ok((StatusCode::ACCEPTED, Json(WorkspaceView::from(&workspace))).into_response())
         },
     )
+    .await
+}
+
+/// Recover only a failed, never-ready original Workspace without changing identity or data.
+#[utoipa::path(post, path = "/api/v1/workspaces/{id}/recover-prepare", tag = "workspaces",
+    params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
+    responses((status = 202, body = WorkspaceView), (status = 409, body = crate::rest::ProblemDocument),
+        (status = 403, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument)))]
+pub(super) async fn recover_prepare(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    key: IdempotencyKey,
+) -> Response {
+    let key = match key.required() {
+        Ok(key) => key,
+        Err(error) => return error.into_response(),
+    };
+    let scope = operation_scope("workspace:recover-prepare", &[&id]);
+    let operation = format!(
+        "wpr_{}",
+        key.confirmation_hash(&format!("{scope}:{}", caller.subject))
+            .expect("required operation key")
+    );
+    let authority = if caller.authorization.allows(Capability::ControlAnySandbox) {
+        Capability::ControlAnySandbox
+    } else {
+        Capability::UseOwnSandboxes
+    };
+    let command_state = state.clone();
+    let command_caller = caller.clone();
+    execute_empty_command(&state, &caller, authority, key, scope, move || async move {
+        let workspace = command_state
+            .workspaces
+            .recover_prepare(&command_caller, &WorkspaceId(id), &operation)
+            .await
+            .map_err(HierarchyProblem::workspace)?;
+        Ok((StatusCode::ACCEPTED, Json(WorkspaceView::from(&workspace))).into_response())
+    })
     .await
 }
