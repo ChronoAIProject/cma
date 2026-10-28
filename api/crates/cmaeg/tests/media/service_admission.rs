@@ -270,6 +270,7 @@ fn config(media: MediaConfig) -> Config {
         native_telegram_topic_lifecycle_enabled: false,
         native_discord_thread_lifecycle_enabled: false,
         native_lark_conversation_history_enabled: false,
+        native_lark_mixed_history_enabled: false,
         native_discord_conversation_history_enabled: false,
         native_discord_reactions_enabled: false,
         native_discord: Default::default(),
