@@ -423,20 +423,116 @@ async fn completion_retention_survives_original_event_expiry_and_admission_marke
 
 #[test]
 fn forms_consent_does_not_change_existing_group_or_control_source_hashes() {
-    let source = crate::whatsapp::tests::source();
+    use cmaeg_core::channel::Source;
+
     let credentials = crate::whatsapp::tests::credentials();
-    let mut consented = source.clone();
-    if let cmaeg_core::channel::Source::Whatsapp { forms_enabled, .. } = &mut consented {
-        *forms_enabled = true;
+    // Pre-Forms Source declaration order, including the omitted empty group list.
+    // Literal old hashes catch Value reserialization under either serde map mode.
+    for (old_bytes, old_revision) in [
+        (
+            r#"{"type":"whatsapp","app_id":"12345","waba_id":"23456","phone_number_id":"34567","admission":{"type":"all"}}"#,
+            "91a95dc31924cb62c63abd9cb55b44f8cb952dc2ac48ed51732aa27c8c22b5d5",
+        ),
+        (
+            r#"{"type":"whatsapp","group_ids":["group_A+/=="],"app_id":"12345","waba_id":"23456","phone_number_id":"34567","admission":{"type":"all"}}"#,
+            "6159db7c7aa9f87c3b22728e60a66ddad56e532698a97ad547c3f2f4dbcb7f14",
+        ),
+    ] {
+        let original: Source = serde_json::from_str(old_bytes).unwrap();
+        for enabled in [false, true] {
+            let mut source = original.clone();
+            let Source::Whatsapp { forms_enabled, .. } = &mut source else {
+                panic!();
+            };
+            *forms_enabled = enabled;
+            assert_eq!(crate::whatsapp::legacy_source(&source), original);
+            assert_eq!(
+                serde_json::to_string(&crate::whatsapp::legacy_source(&source)).unwrap(),
+                old_bytes
+            );
+            assert_eq!(
+                crate::whatsapp::group_revision(&source, &credentials),
+                old_revision
+            );
+            // Normalizing a copy must not withdraw the caller's Forms consent.
+            assert!(
+                matches!(source, Source::Whatsapp { forms_enabled, .. } if forms_enabled == enabled)
+            );
+        }
     }
-    assert_eq!(
-        crate::whatsapp::legacy_source(&source),
-        crate::whatsapp::legacy_source(&consented)
-    );
-    assert_eq!(
-        crate::whatsapp::group_revision(&source, &credentials),
-        crate::whatsapp::group_revision(&consented, &credentials)
-    );
+}
+
+#[test]
+fn pre_forms_group_replies_survive_consent_changes_but_not_source_or_credential_changes() {
+    use cmaeg_core::{
+        channel::{whatsapp::WhatsappGroupReply, AdmissionPolicy, Secret, Source},
+        seal::ReplyAddress,
+    };
+
+    let address = ReplyAddress::WhatsappGroup(WhatsappGroupReply {
+        revision: "6159db7c7aa9f87c3b22728e60a66ddad56e532698a97ad547c3f2f4dbcb7f14".into(),
+        app_id: "12345".into(),
+        waba_id: "23456".into(),
+        phone_number_id: "34567".into(),
+        group_id: "group_A+/==".into(),
+        participant_id: "447700900123".into(),
+        message_id: "wamid.original".into(),
+    });
+    for enabled in [false, true] {
+        let mut definition =
+            crate::channels::definition::fixture::with_agent_key("legacy-group-fixture");
+        let mut source = crate::whatsapp::tests::source();
+        let Source::Whatsapp {
+            forms_enabled,
+            group_ids,
+            ..
+        } = &mut source
+        else {
+            panic!();
+        };
+        *forms_enabled = enabled;
+        *group_ids = vec!["group_A+/==".into()];
+        definition.sources = vec![source];
+        definition.secrets.whatsapp = Some(crate::whatsapp::tests::credentials());
+        assert!(crate::whatsapp::credentials(&definition, &address).is_some());
+
+        for change in 0..5 {
+            let mut changed = definition.clone();
+            match change {
+                0 => {
+                    let Source::Whatsapp { group_ids, .. } = &mut changed.sources[0] else {
+                        panic!()
+                    };
+                    // Original group remains admitted, so refusal must bind the revision.
+                    group_ids.push("another_group".into());
+                }
+                1 => {
+                    let Source::Whatsapp { admission, .. } = &mut changed.sources[0] else {
+                        panic!()
+                    };
+                    *admission = AdmissionPolicy::Allowlist {
+                        sender_ids: vec!["447700900123".into()],
+                    };
+                }
+                2 => {
+                    changed.secrets.whatsapp.as_mut().unwrap().app_secret =
+                        Secret::new("rotated-fixture-app")
+                }
+                3 => {
+                    changed.secrets.whatsapp.as_mut().unwrap().access_token =
+                        Secret::new("rotated-fixture-access")
+                }
+                _ => {
+                    changed.secrets.whatsapp.as_mut().unwrap().verify_token =
+                        Secret::new("rotated-fixture-verify")
+                }
+            }
+            assert!(
+                crate::whatsapp::credentials(&changed, &address).is_none(),
+                "change {change}"
+            );
+        }
+    }
 }
 #[tokio::test]
 async fn real_preparation_reopens_only_the_exact_selected_durable_event() {

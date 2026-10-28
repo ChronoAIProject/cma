@@ -80,10 +80,13 @@ pub(crate) fn group_revision(
 }
 
 /// Forms consent is independent of retained native button/list and group authority.
-pub(crate) fn legacy_source(source: &cmaeg_core::channel::Source) -> serde_json::Value {
-    let mut value = serde_json::to_value(source).expect("native source serializes");
-    if let Some(object) = value.as_object_mut() {
-        object.remove("forms_enabled");
+pub(crate) fn legacy_source(source: &cmaeg_core::channel::Source) -> cmaeg_core::channel::Source {
+    // Retained group revisions serialize the typed source in declaration order.
+    // A JSON Value would sort fields, or swap them on removal with preserve_order,
+    // changing issued revisions even though the source remains semantically equal.
+    let mut source = source.clone();
+    if let cmaeg_core::channel::Source::Whatsapp { forms_enabled, .. } = &mut source {
+        *forms_enabled = false;
     }
-    value
+    source
 }
