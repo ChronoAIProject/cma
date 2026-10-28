@@ -203,6 +203,7 @@ impl Sender {
             .await
         {
             Ok(reference) => IntentReceipt {
+                message_parts: vec![],
                 message_ref: Some(reference),
                 rendering,
                 delivery: DeliveryOutcome::Confirmed {

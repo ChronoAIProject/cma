@@ -288,10 +288,10 @@ async fn stale_tool_writer_cannot_erase_or_overwrite_a_new_automatic_reservation
     else {
         panic!("claimed")
     };
-    assert_eq!(
+    assert!(matches!(
         store.finish(&first, &receipt()).await,
         Err(ExecutionError::LostLease)
-    );
+    ));
     store.guard(&next).await.unwrap();
     assert_eq!(
         store.status(&setup.plan, setup.target()).await.unwrap(),

@@ -75,6 +75,7 @@ impl Sender {
             return (unsupported(), effects);
         }
         let rejected = |reason: &str| IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering: rendering.clone(),
             delivery: DeliveryOutcome::Rejected {
@@ -200,6 +201,7 @@ impl Sender {
                     .await;
                 (
                     IntentReceipt {
+                        message_parts: vec![],
                         message_ref: reference.as_ref().ok().cloned(),
                         rendering,
                         delivery: if reference.is_ok() && target_confirmed {

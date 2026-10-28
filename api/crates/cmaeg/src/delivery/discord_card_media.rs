@@ -15,11 +15,11 @@ impl Sender {
         &self,
         candidate: &Candidate,
         credential: &Secret,
-    ) -> Result<(), RestError> {
+    ) -> Result<Option<crate::native_media::model::Snapshot>, RestError> {
         let card = &candidate.card;
         let identity = card.discord.as_ref().ok_or(RestError::Rejected)?;
         let Some(media) = identity.media.as_ref() else {
-            return Ok(());
+            return Ok(None);
         };
         let destination = card.destination.as_ref().ok_or(RestError::Rejected)?;
         let capabilities = Capabilities {
@@ -54,7 +54,7 @@ impl Sender {
         if !media.matches_snapshot(&snapshot) {
             return Err(RestError::Rejected);
         }
-        Ok(())
+        Ok(Some(snapshot))
     }
 
     pub(super) async fn edit_discord_card_media(

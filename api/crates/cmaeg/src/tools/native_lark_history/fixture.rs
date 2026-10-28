@@ -299,6 +299,21 @@ impl Fixture {
             .read_event_history(self.app.caller(), &self.reference(), cursor)
             .await
     }
+    pub async fn read_with_media(
+        &self,
+        cursor: Option<&HistoryCursor>,
+        include_media: bool,
+    ) -> Result<ConversationHistoryPage, Problem> {
+        self.app
+            .state
+            .read_event_history_with_media(
+                self.app.caller(),
+                &self.reference(),
+                cursor,
+                include_media,
+            )
+            .await
+    }
     pub fn rows(&self, count: usize, next: Option<&str>) {
         self.set_page(
             "",
