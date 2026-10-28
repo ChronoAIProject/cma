@@ -7,7 +7,7 @@ use layer3_adapter::{DesktopConnectionHandle, RuntimeHandle, SandboxAdapter};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use super::{AgentReadService, AgentStatus, SandboxStatus};
-use crate::{AgentId, Caller, Capability, RuntimeCapability};
+use crate::{AgentId, Caller, Capability};
 
 pub use layer3_adapter::DesktopFrame;
 
@@ -76,10 +76,6 @@ impl DesktopService {
                 lineage.agent.status,
                 AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
             )
-            || !lineage
-                .agent
-                .capabilities
-                .supports(RuntimeCapability::Desktop)
             || lineage.agent.profile.content.isolated_agent
             || !lineage
                 .sandbox

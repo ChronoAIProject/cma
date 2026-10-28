@@ -55,7 +55,6 @@ pub(crate) fn runtime_capabilities(capabilities: AdapterCapabilities) -> Runtime
         (capabilities.interrupt, RuntimeCapability::Interrupt),
         (capabilities.usage, RuntimeCapability::Usage),
         (capabilities.resources, RuntimeCapability::Resources),
-        (capabilities.desktop, RuntimeCapability::Desktop),
     ];
     RuntimeCapabilities::new(
         values

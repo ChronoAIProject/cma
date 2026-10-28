@@ -72,7 +72,6 @@ pub use agent::{
 pub use agent_provider::{AgentProvider, ModelConnectionServices};
 pub use capabilities::{
     AdapterCapabilities, RuntimeContract, RUNTIME_CONTRACT_LABEL, RUNTIME_CONTRACT_VERSION,
-    RUNTIME_DESKTOP_LABEL,
 };
 pub use checkpoint::{
     valid_writer_resume_token, writer_resume_tokens_match, CheckpointHoldReceipt,

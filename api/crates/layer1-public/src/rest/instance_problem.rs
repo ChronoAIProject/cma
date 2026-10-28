@@ -290,6 +290,5 @@ fn capability_name(capability: RuntimeCapability) -> &'static str {
         RuntimeCapability::Interrupt => "interrupt",
         RuntimeCapability::Usage => "usage",
         RuntimeCapability::Resources => "resources",
-        RuntimeCapability::Desktop => "desktop",
     }
 }
