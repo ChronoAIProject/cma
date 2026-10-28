@@ -10,10 +10,15 @@ pub(crate) fn opted_in(request: &LaunchRequest) -> bool {
             .channel
             .definition
             .source_of(&request.activity.source),
-        Some(cmaeg_core::channel::Source::Telegram {
-            message_events: true,
-            ..
-        })
+        Some(
+            cmaeg_core::channel::Source::Telegram {
+                message_events: true,
+                ..
+            } | cmaeg_core::channel::Source::Telegram {
+                topic_lifecycle: true,
+                ..
+            }
+        )
     )
 }
 impl RoutedIngress {

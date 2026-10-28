@@ -41,9 +41,11 @@ pub use journal::Journal;
 pub use model::{
     ExecutionError, FrozenDelivery, FrozenTurn, Lease, Phase, RecoverySupport, TargetState,
 };
-#[cfg(test)]
-pub(crate) use received_message::bind_received_message_fixture;
 pub use received_message::current_received_message;
+#[cfg(test)]
+pub(crate) use received_message::{
+    bind_received_message_fixture, bind_received_message_fixture_with_source,
+};
 pub use tool_replies::RoutedToolReplies;
 pub use tool_reply_store::ToolReplyStatus;
 

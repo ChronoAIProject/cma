@@ -1751,6 +1751,17 @@
               }
             ]
           },
+          "topic_lifecycle": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TopicLifecycleCapabilities",
+                "description": "Exact admitted Telegram forum topic; no creation or enumeration."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "typing": {
             "type": "boolean"
           },
@@ -5592,6 +5603,12 @@
               "null"
             ]
           },
+          "native_telegram_topic_lifecycle_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_whatsapp_auto_activation_enabled": {
             "type": [
               "boolean",
@@ -6316,6 +6333,10 @@
                 "description": "Retain original message routing for edits and attributable reactions.",
                 "type": "boolean"
               },
+              "topic_lifecycle": {
+                "description": "Owner consent to close/reopen only the exact admitted forum topic.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "telegram"
@@ -6772,6 +6793,10 @@
                 "description": "Retain original message routing for edits and attributable reactions.",
                 "type": "boolean"
               },
+              "topic_lifecycle": {
+                "description": "Owner consent to close/reopen only the exact admitted forum topic.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "telegram"
@@ -7024,6 +7049,7 @@
       },
       "ThreadAction": {
         "enum": [
+          "close",
           "archive",
           "reopen",
           "join",
@@ -7451,6 +7477,38 @@
             "type": "object"
           }
         ]
+      },
+      "TopicAction": {
+        "description": "Telegram forum-topic scope only; this grants no listing or creation authority.",
+        "enum": [
+          "close",
+          "reopen"
+        ],
+        "type": "string"
+      },
+      "TopicLifecycleCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/TopicAction"
+            },
+            "type": "array"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "manage_original_topic": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "manage_original_topic",
+          "actions",
+          "expires_at"
+        ],
+        "type": "object"
       },
       "TypingOutcome": {
         "enum": [

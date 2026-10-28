@@ -175,6 +175,9 @@ pub struct RelayAuthoringCapabilities {
     /// Native Discord lifecycle opt-in and execution gate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_lifecycle_enabled: Option<bool>,
+    /// Gateway accepts new exact Telegram forum-topic management opt-ins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_telegram_topic_lifecycle_enabled: Option<bool>,
     /// Independently enabled original-conversation history reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_conversation_history_enabled: Option<bool>,

@@ -190,6 +190,7 @@ impl DiscordRest {
     ) -> Result<Option<Thread>, RestError> {
         self.ready(token)?;
         match action {
+            ThreadAction::Close => Err(RestError::Rejected),
             ThreadAction::Archive | ThreadAction::Reopen => {
                 let archived = action == ThreadAction::Archive;
                 let response = self

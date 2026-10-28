@@ -90,6 +90,7 @@ impl TelegramTransport for Platform {
 async fn setup() -> (App, Arc<Platform>, MessageRef) {
     let mut app = App::new(vec![]).await;
     app.definition.sources = vec![Source::Telegram {
+        topic_lifecycle: false,
         message_events: false,
         channel_posts: false,
         bot_id: "77".into(),
@@ -435,5 +436,37 @@ async fn partial_native_delivery_never_issues_new_effect_authority() {
         .await["delivery"]["outcome"],
         "unsupported"
     );
+    assert_eq!(platform.calls.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn telegram_topic_enrollment_preserves_old_sent_effects_without_reminting_references() {
+    let (mut app, platform, reference) = setup().await;
+    assert!(app.definition.routing.is_none());
+    app.definition.routing = Some(serde_json::from_value(json!({"version":1,"default_consumer":{"name":"default"},"consumers":[],"default_targets":["default"]})).unwrap());
+    for (opted, key) in [(true, "opt-in"), (false, "opt-out")] {
+        let Source::Telegram {
+            topic_lifecycle, ..
+        } = &mut app.definition.sources[0]
+        else {
+            panic!()
+        };
+        *topic_lifecycle = opted;
+        app.update().await;
+        let result = receipt(
+            effect(
+                &app,
+                &reference,
+                "reaction",
+                key,
+                json!({"reaction":[{"type":"emoji","emoji":"👍"}]}),
+            )
+            .send()
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(result["delivery"]["outcome"], "confirmed");
+    }
     assert_eq!(platform.calls.lock().unwrap().len(), 3);
 }

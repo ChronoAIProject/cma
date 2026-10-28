@@ -19,7 +19,7 @@ export const ThreadListViewSchema = enumeration('active', 'archived');
 export type ThreadListView = Output<typeof ThreadListViewSchema>;
 export const CreateThreadRequestSchema = object({ name: text, auto_archive_duration: integer });
 export type CreateThreadRequest = Output<typeof CreateThreadRequestSchema>;
-export const ThreadActionSchema = enumeration('archive', 'reopen', 'join', 'leave');
+export const ThreadActionSchema = enumeration('close', 'archive', 'reopen', 'join', 'leave');
 export type ThreadAction = Output<typeof ThreadActionSchema>;
 export const ThreadTargetSchema = tagged(
   {
@@ -80,3 +80,13 @@ export const ThreadCapabilitiesSchema = object({
   expires_at: integer,
 });
 export type ThreadCapabilities = Output<typeof ThreadCapabilitiesSchema>;
+
+/** Exact admitted Telegram forum topic; never grants creation or listing. */
+export const TopicActionSchema = enumeration('close', 'reopen');
+export type TopicAction = Output<typeof TopicActionSchema>;
+export const TopicLifecycleCapabilitiesSchema = object({
+  manage_original_topic: boolean,
+  actions: array(TopicActionSchema),
+  expires_at: integer,
+});
+export type TopicLifecycleCapabilities = Output<typeof TopicLifecycleCapabilitiesSchema>;
