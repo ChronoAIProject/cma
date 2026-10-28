@@ -161,7 +161,7 @@ function AgentLifecycleForm({
           />
           <span>Machine Included</span>
         </label>
-        <p id="agent-machine-included-help" className="field__hint">
+        <p id="agent-machine-included-help" className="field__hint agent-lifecycle-machine__hint">
           {machineIncludedAvailable
             ? 'Add a shared Linux desktop with Chromium that you and your Agent can control.'
             : 'Machine Included is available when creating a new Sandbox; existing Sandboxes keep their immutable runtime.'}
