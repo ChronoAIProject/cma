@@ -1,3 +1,4 @@
+import { QuotedContextSummary } from './QuotedContextSummary';
 import { Presence } from '../ui/Presence';
 import {
   ActivityConnection,
@@ -29,6 +30,7 @@ export function ChannelActivityPreview({ feed }: { readonly feed: ChannelActivit
                   Received <ActivityTimestamp value={event.received_at} />
                 </span>
               </p>
+              <QuotedContextSummary context={event.quoted_context} />
               {event.consumers.length ? (
                 <ul aria-label="Reported consumer states">
                   {event.consumers.map((consumer) => (

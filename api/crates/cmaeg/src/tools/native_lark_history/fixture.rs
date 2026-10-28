@@ -198,6 +198,7 @@ impl Fixture {
             .unwrap();
         let created = (now() - 5) * 1000 + 456;
         let message = native_lark::message::Message::Text {
+            quoted_message: None,
             message_id: "om_original".into(),
             chat_id: "oc_history".into(),
             sender: "ou_human".into(),

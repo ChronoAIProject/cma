@@ -10,6 +10,8 @@ use crate::RuntimeHandle;
 #[serde(deny_unknown_fields)]
 pub struct NonexecutingRuntimeProof {
     pub(crate) version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) idle_bootstrap: Option<IdleBootstrapProof>,
     pub(crate) handle: RuntimeHandle,
     pub(crate) request_sha256: String,
     pub(crate) home_identity: String,
@@ -21,4 +23,14 @@ pub struct NonexecutingRuntimeProof {
     pub(crate) runtime_container_id: String,
     pub(crate) runtime_restart_count: i32,
     pub(crate) state_sha256: String,
+}
+
+/// Full process/descriptor proof from the specifically supported legacy bootstrap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IdleBootstrapProof {
+    pub version: u32,
+    pub pid_start_ticks: u64,
+    pub binary_sha256: String,
+    pub process_sha256: String,
 }

@@ -10,6 +10,8 @@ mod partition_keys;
 mod receiver;
 #[path = "relay/support.rs"]
 pub mod relay_support;
+#[path = "custom/replay.rs"]
+mod replay;
 #[path = "relay/signer.rs"]
 pub mod signer;
 #[path = "custom/sinks.rs"]

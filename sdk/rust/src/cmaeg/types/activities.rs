@@ -2,7 +2,7 @@
 use super::{
     AcceptedStatus, ActorKind, AttachmentKind, AttachmentSource, BindingId, ChannelId, ConsumerId,
     ConsumerName, ConversationId, ConversationKind, EventId, EventRef, MessageRef, ProblemCode,
-    ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts,
+    QuotedMessage, ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts,
 };
 use serde::{Deserialize, Serialize};
 
@@ -142,6 +142,9 @@ pub enum ActivityKind {
         /// Wire field `reply_to`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<MessageRef>,
+        /// Bounded untrusted reply context; confers no lookup or effect authority.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quoted_message: Option<QuotedMessage>,
         /// Wire field `text`.
         text: String,
     },

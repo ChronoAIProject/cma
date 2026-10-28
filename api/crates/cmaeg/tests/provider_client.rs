@@ -199,6 +199,10 @@ async fn busy_and_missing_conversation_errors_are_typed() {
         .await
         .unwrap_err();
     assert!(matches!(error, ProviderError::Busy { .. }));
+    assert!(
+        fake.admitted().is_empty(),
+        "a rejected request must never be exposed as retained event context"
+    );
     fake.close().await;
 }
 

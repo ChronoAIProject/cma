@@ -1,3 +1,4 @@
+import { QuotedContextSummary } from './QuotedContextSummary';
 import { Presence } from '../ui/Presence';
 import './ChannelActivity.css';
 import { useChannelActivity, type ChannelActivityFeed } from './useChannelActivity';
@@ -46,6 +47,7 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                 <p>
                   {activityActor(event)} · <code>{event.event_id}</code>
                 </p>
+                <QuotedContextSummary context={event.quoted_context} />
                 <dl>
                   <div>
                     <dt>{event.kind === 'event' ? 'Source event time' : 'Recorded event time'}</dt>
