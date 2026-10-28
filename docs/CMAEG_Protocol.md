@@ -1449,13 +1449,34 @@ Keepalive comments are not events. A slow consumer receives terminal
 There is no durable replay or Last-Event-ID contract. Disconnect removes the
 waiter without cancelling the admitted turn.
 
-On the durable routed lane, repeating an already-admitted event with
+On both the durable routed lane and legacy Custom ingress, repeating an already-admitted event with
 `?mode=stream` returns the normal 202 accepted JSON body when the current request
 does not own the original primary waiter. This includes concurrent duplicate
 requests and retrying an event first submitted asynchronously. It does not
 start another provider turn, replace the original waiter, or promise replay.
 Only the request whose waiter was retained by the winning admission receives
-the live 200 SSE response.
+the live 200 SSE response. If the acceptance budget expires before this waiter
+is confirmed, the request returns 202 JSON and releases its waiter; pending
+admission and provider work continue. It does not open an unowned stream that
+could remain empty when a concurrent duplicate is resolved.
+
+Legacy Custom retries read the provider's original admitted event under the
+channel's current credential before starting work. Missing CloudEvent `time`
+retains the original generated timestamp; an explicit time, source, subject,
+extensions, data and extracted attachments must still match exactly. Changed
+content under the same event ID returns 409 `conflict`. A concurrent first
+delivery that loses provider admission performs the same retained-context check.
+Retries never send a second result webhook or replace the original response.
+401 and 403 from the authority check remain distinct; a failed lookup cannot
+authorize a new turn.
+
+After losing a live sync response, an authorized channel owner can read
+`GET /v1/channels/{channel_id}/activity`, find the original event's consumer
+`response_id`, and retrieve its retained output from CMA's public
+`GET /api/v2/responses/{response_id}`. Custom producer ingress credentials alone
+do not grant owner reads. Consumers requiring unattended durable results should
+configure the result webhook sink; repeated sync requests acknowledge admission
+and do not replay historical SSE frames.
 
 A `{type:"result_webhook",url,hmac_key_id}` sink receives structured CloudEvents
 of type `cmaeg.response.message`, `cmaeg.response.completed` or
