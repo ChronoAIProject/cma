@@ -87,10 +87,11 @@ impl RuntimeConfig {
             "CHRONO_SANDBOX_IMAGE",
             &required(lookup, "CHRONO_SANDBOX_IMAGE")?,
         )?;
-        let machine_sandbox_image = match lookup("CHRONO_MACHINE_SANDBOX_IMAGE")? {
-            Some(value) => Some(parse_pinned_image("CHRONO_MACHINE_SANDBOX_IMAGE", &value)?),
-            None => None,
-        };
+        let machine_sandbox_image =
+            match lookup("CHRONO_MACHINE_SANDBOX_IMAGE")?.filter(|value| !value.is_empty()) {
+                Some(value) => Some(parse_pinned_image("CHRONO_MACHINE_SANDBOX_IMAGE", &value)?),
+                None => None,
+            };
         let sandbox_namespace = parse_sandbox_namespace(
             "CHRONO_SANDBOX_NAMESPACE",
             &required(lookup, "CHRONO_SANDBOX_NAMESPACE")?,
