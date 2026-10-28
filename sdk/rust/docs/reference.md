@@ -708,3 +708,12 @@ omission counts exclude retained mixed posts, while `text_truncated` independent
 reports clipped or sanitized text. Older SDK decoders reject `media`, so the gateway's separate
 `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag stays off until all consumers and
 rollback readers support this value. See [native history](../../../docs/CMAEG_Native_Lark_History.md).
+
+### Native media with controls
+
+Check the optional `capabilities.native_media.controls` object before combining
+`native_attachments` with buttons or choices. It declares `max_attachments`,
+`buttons`, `choices`, `caption_max_chars` and `update`; absence grants no combined
+send capability. Native Discord's gated combination uses one upload and one
+native message/card. Its `update: false` excludes media-card edits. Existing
+attachment bounds and event/consumer authority still apply.

@@ -47,6 +47,15 @@ impl RelayClient {
     pub(in crate::delivery) fn native_discord_edits_enabled(&self) -> bool {
         self.native_discord_edits
     }
+    /// New media-bearing cards need a compatible retained reader before issuance.
+    /// Disabling this flag does not block callbacks to already bound cards.
+    pub fn with_discord_media_controls(mut self, enabled: bool) -> Self {
+        self.discord_media_controls = enabled;
+        self
+    }
+    pub(in crate::delivery) fn discord_media_controls_enabled(&self) -> bool {
+        self.discord_media_controls
+    }
     pub fn with_discord_interactions(mut self, enabled: bool) -> Self {
         self.discord_interactions = enabled;
         self

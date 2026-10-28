@@ -18,6 +18,8 @@ mod discord_edit_tests;
 #[cfg(test)]
 mod discord_form_tests;
 #[cfg(test)]
+mod discord_media_controls_tests;
+#[cfg(test)]
 mod discord_reaction_tests;
 mod discord_receipts;
 #[cfg(test)]
