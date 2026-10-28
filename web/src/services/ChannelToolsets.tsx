@@ -37,10 +37,25 @@ function missingSetup(tool: string, channel: Channel): string | undefined {
         ? 'Enable Discord conversation history'
         : 'Enable Lark / Feishu conversation history';
   }
+  if (tool === 'manageThread') {
+    const sources = channel.definition.sources.map(object);
+    if (
+      sources.some(
+        (source) =>
+          (source.type === 'discord' && source.thread_lifecycle === true) ||
+          (source.type === 'telegram' && source.topic_lifecycle === true),
+      )
+    )
+      return undefined;
+    if (sources.some((source) => source.type === 'telegram'))
+      return 'Enable Telegram topic management';
+    if (sources.some((source) => source.type === 'discord'))
+      return 'Enable Discord thread management';
+    return 'Requires a direct Discord or Telegram source';
+  }
   const requirements: Readonly<Record<string, readonly [string, string, string]>> = {
     listEventThreads: ['discord', 'thread_lifecycle', 'Enable Discord thread management'],
     createEventThread: ['discord', 'thread_lifecycle', 'Enable Discord thread management'],
-    manageThread: ['discord', 'thread_lifecycle', 'Enable Discord thread management'],
     prepareFormReply: ['whatsapp', 'forms_enabled', 'Enable WhatsApp Forms'],
   };
   const requirement = Object.hasOwn(requirements, tool) ? requirements[tool] : undefined;

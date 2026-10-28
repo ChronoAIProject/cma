@@ -60,6 +60,9 @@ pub enum Source {
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
+        /// Opt in to close/reopen of the exact original forum topic.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        topic_lifecycle: Option<bool>,
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_events: Option<bool>,
@@ -172,6 +175,9 @@ pub enum SourceRequest {
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
+        /// Opt in to close/reopen of the exact original forum topic.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        topic_lifecycle: Option<bool>,
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_events: Option<bool>,

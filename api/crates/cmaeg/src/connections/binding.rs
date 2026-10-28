@@ -52,6 +52,7 @@ fn source(
     admission: Option<AdmissionPolicy>,
 ) -> Result<SourceRequest, ManagementError> {
     Ok(SourceRequest::Telegram {
+        topic_lifecycle: false,
         message_events: false,
         channel_posts: false,
         bot_id: material.bot_id.clone(),

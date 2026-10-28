@@ -639,3 +639,33 @@ from a customer send attempt and retains the unchanged `IntentReceipt`. Retry wi
 identical keys/content; never change keys after Unknown. Source `forms_enabled`
 requires owner consent separately from operator Forms/Flow-write flags. Preparation
 and status use a two-second total deadline; commit retains eight seconds.
+
+
+### Native Telegram forum topic lifecycle
+
+The source's independent `topic_lifecycle: true` consent and the gateway's
+separate default-off topic gate enable exact original non-General forum-topic
+close/reopen. Check `context.capabilities.topic_lifecycle` for
+`manage_original_topic`, `actions` and `expires_at`. Both default and named
+consumers retain only their original admitted authority. Enabling consent
+transparently enrolls a previously unrouted channel in default-only durable
+routing when authoring prerequisites are available; it does not enable incoming
+edit/reaction retention.
+
+Use the existing method:
+
+```rust
+client.manage_thread("stable-close", &ManageThreadRequest { target: ThreadTarget::Event { event_ref }, action: ThreadAction::Close }).await?
+```
+
+Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the
+original Event target and issues no `thread_ref`. There is no list, create,
+private-chat or General-topic operation. Discord rejects the additive Close
+action before platform IO. A confirmed receipt can omit `thread`.
+
+Keep a stable idempotency key. Same-key replay returns the saved outcome;
+conflicting action reuse fails. An unknown write keeps a permanent bot/chat/topic
+fence across process restart, different keys and event expiry. Never retry an
+unknown result with a new key. Discovery describes scope; current Telegram bot
+administrator topic permissions are checked at execution. Source support and
+local tests do not establish connected-account native acceptance.

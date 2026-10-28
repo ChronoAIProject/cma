@@ -5,7 +5,7 @@ import {
   nativeWhatsappUnavailable,
   type RelayDiscovery,
 } from '../RelayCapabilities';
-import { credentialsPatch, object, records, strings, text, type Fields } from './model';
+import { credentialsPatch, object, records, strings, text, without, type Fields } from './model';
 
 function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
@@ -146,15 +146,27 @@ export function validateRelayAuthoring(
     if (
       source.type === 'telegram' &&
       source.message_events === true &&
-      !unchanged &&
-      !(
-        source.channel_posts !== true &&
-        oldSources.some((old) => canonical(old) === canonical({ ...source, channel_posts: true }))
+      !oldSources.some(
+        (old) =>
+          canonical(without(old, ['topic_lifecycle'])) ===
+            canonical(without(source, ['topic_lifecycle'])) ||
+          (source.channel_posts !== true &&
+            canonical(without(old, ['topic_lifecycle'])) ===
+              canonical(without({ ...source, channel_posts: true }, ['topic_lifecycle']))),
       ) &&
       discovery.authoring?.native_telegram_message_events_enabled !== true
     )
       throw new Error(
         'New or changed Telegram message event settings are disabled on this gateway. Your draft has been retained.',
+      );
+    if (
+      source.type === 'telegram' &&
+      source.topic_lifecycle === true &&
+      !unchanged &&
+      discovery.authoring?.native_telegram_topic_lifecycle_enabled !== true
+    )
+      throw new Error(
+        'New or changed Telegram topic management is disabled on this gateway. Your draft has been retained.',
       );
     if (source.type === 'discord') {
       if (
