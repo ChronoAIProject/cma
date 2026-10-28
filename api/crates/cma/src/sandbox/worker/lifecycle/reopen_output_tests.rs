@@ -166,3 +166,108 @@ async fn rejected_startup_commit_never_acknowledges_and_disconnect_ends_drain() 
     .unwrap()
     .is_err());
 }
+
+#[tokio::test]
+async fn failed_ack_preserves_available_open_failure_after_the_commit_finishes() {
+    for outcome in [
+        Err(AdapterError::Unsupported(
+            "original tool receipt refusal".into(),
+        )),
+        Err(AdapterError::Rejected("original initialize refusal".into())),
+        Ok(()),
+    ] {
+        let expected = outcome.clone().err().unwrap_or_else(|| {
+            AdapterError::Unavailable("runtime acknowledgement link ended".into())
+        });
+        let recorder = Arc::new(Recorder {
+            entered: Notify::new(),
+            release: Notify::new(),
+            committed: Mutex::new(Vec::new()),
+            refuse: false,
+        });
+        let (send, mut receiver) = mpsc::channel(1);
+        let (ack, acknowledged) = mpsc::channel(1);
+        send.send(output(ack)).await.unwrap();
+        let (complete, completed) = tokio::sync::oneshot::channel();
+        let task_recorder = recorder.clone();
+        let task = tokio::spawn(async move {
+            drain(
+                async { completed.await.unwrap() },
+                &mut receiver,
+                task_recorder.as_ref(),
+                &AgentId("agt_reopen".into()),
+                &guard(),
+            )
+            .await
+        });
+        recorder.entered.notified().await;
+        drop(acknowledged);
+        complete.send(outcome).unwrap();
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished(), "an admitted durable write must finish");
+        assert!(recorder.committed.lock().unwrap().is_empty());
+        recorder.release.notify_one();
+        assert_eq!(task.await.unwrap(), Err(expected));
+        assert_eq!(*recorder.committed.lock().unwrap(), [1]);
+    }
+}
+
+#[tokio::test]
+async fn failed_ack_does_not_wait_for_an_unresolved_open_or_publish_success() {
+    let recorder = Recorder {
+        entered: Notify::new(),
+        release: Notify::new(),
+        committed: Mutex::new(Vec::new()),
+        refuse: false,
+    };
+    recorder.release.notify_one();
+    let (send, mut receiver) = mpsc::channel(1);
+    let (ack, acknowledged) = mpsc::channel(1);
+    send.send(output(ack)).await.unwrap();
+    drop(acknowledged);
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        drain(
+            std::future::pending::<layer3_adapter::Result<()>>(),
+            &mut receiver,
+            &recorder,
+            &AgentId("agt_reopen".into()),
+            &guard(),
+        ),
+    )
+    .await
+    .expect("custody failure cannot wait on an unresolved open");
+    assert_eq!(
+        result,
+        Err(AdapterError::Unavailable(
+            "runtime acknowledgement link ended".into()
+        ))
+    );
+    assert_eq!(*recorder.committed.lock().unwrap(), [1]);
+}
+
+#[tokio::test]
+async fn closed_update_receiver_preserves_an_open_failure_finishing_cleanup() {
+    let recorder = Recorder {
+        entered: Notify::new(),
+        release: Notify::new(),
+        committed: Mutex::new(Vec::new()),
+        refuse: false,
+    };
+    let (send, mut receiver) = mpsc::channel(1);
+    drop(send);
+    let error = AdapterError::Unsupported("original open refusal".into());
+    let result = drain(
+        async {
+            tokio::task::yield_now().await;
+            Err::<(), _>(error.clone())
+        },
+        &mut receiver,
+        &recorder,
+        &AgentId("agt_reopen".into()),
+        &guard(),
+    )
+    .await;
+    assert_eq!(result, Err(error));
+    assert!(recorder.committed.lock().unwrap().is_empty());
+}
