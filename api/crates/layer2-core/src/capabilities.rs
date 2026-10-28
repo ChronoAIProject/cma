@@ -14,6 +14,9 @@ pub enum RuntimeCapability {
     Interrupt,
     Usage,
     Resources,
+    /// A runtime-provided desktop screen and serialized pointer/keyboard
+    /// input channel. Provider details remain below Layer 2.
+    Desktop,
 }
 
 /// A closed set of runtime abilities, used for advertisements and frozen grants.

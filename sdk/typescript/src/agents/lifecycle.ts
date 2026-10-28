@@ -1,5 +1,6 @@
 import {
   array,
+  boolean,
   enumeration,
   integer,
   object,
@@ -13,6 +14,7 @@ import {
 
 export const agentLifecycleCreateRequest = object({
   name: text,
+  machine_included: optional(boolean),
   workspace_id: optional(text),
   sandbox_id: optional(text),
   image: optional(object({ id: text, version: optional(text) })),

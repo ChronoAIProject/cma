@@ -68,6 +68,7 @@ pub(super) fn facade(
             max_memory_mib: 16384,
         },
         layer3_adapter::SandboxCapacity::default(),
+        None,
         Arc::new([] as [String; 0]),
         operations,
         None,

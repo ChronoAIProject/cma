@@ -157,6 +157,7 @@ RUN apt-get update \
         bash \
         bubblewrap \
         ca-certificates \
+        chromium \
         curl \
         build-essential \
         git \
@@ -168,10 +169,16 @@ RUN apt-get update \
         libssl3t64 \
         libunwind8 \
         ncurses-term \
+        novnc \
+        openbox \
         python3 \
         ripgrep \
         tar \
         unzip \
+        x11vnc \
+        xdotool \
+        xvfb \
+        websockify \
         xz-utils \
         zlib1g \
         zstd \
@@ -229,6 +236,7 @@ RUN set -eux; \
     test "$(node -p "require('/usr/local/lib/node_modules/@openai/codex/package.json').version")" = "${CODEX_VERSION}"; \
     test "$(node -p "require('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json').version")" = "${CODEX_ACP_VERSION}"; \
     test "$(codex --version)" = "codex-cli ${CODEX_VERSION}"; \
+    codex features list | awk '$1 == "computer_use" && $2 == "stable" && $3 == "true" { found = 1 } END { exit found ? 0 : 1 }'; \
     echo "${CODEX_LAUNCHER_SHA256}  /usr/local/lib/node_modules/@openai/codex/bin/codex.js" | sha256sum -c -; \
     echo "${CODEX_ACP_UPSTREAM_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c -; \
     case "${TARGETARCH}" in \
@@ -313,6 +321,39 @@ RUN set -eux; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+
+# A Machine Included Sandbox starts this rootless desktop session from the
+# supervisor.  noVNC is bound to loopback; CMA must relay it through the
+# authenticated control plane before a browser can reach the screen.
+RUN cat > /usr/local/bin/cma-desktop-session <<'SH'
+#!/bin/sh
+set -eu
+export DISPLAY="${DISPLAY:-:99}"
+screen="${CMA_DESKTOP_GEOMETRY:-1280x800x24}"
+openbox_pid=
+chrome_pid=
+x11vnc_pid=
+websockify_pid=
+Xvfb "$DISPLAY" -screen 0 "$screen" -nolisten tcp -ac >/tmp/cma-xvfb.log 2>&1 &
+xvfb_pid=$!
+trap 'kill "$xvfb_pid" "$openbox_pid" "$chrome_pid" "$x11vnc_pid" "$websockify_pid" 2>/dev/null || true' INT TERM EXIT
+for _ in $(seq 1 50); do
+  [ -S "/tmp/.X11-unix/X${DISPLAY#:}" ] && break
+  kill -0 "$xvfb_pid" 2>/dev/null || exit 1
+  sleep 0.1
+done
+[ -S "/tmp/.X11-unix/X${DISPLAY#:}" ] || exit 1
+openbox >/tmp/cma-openbox.log 2>&1 &
+openbox_pid=$!
+chromium --user-data-dir="$HOME/.cma/chrome" --no-first-run --disable-gpu about:blank >/tmp/cma-chromium.log 2>&1 &
+chrome_pid=$!
+x11vnc -display "$DISPLAY" -rfbport 5900 -localhost -forever -shared -nopw >/tmp/cma-x11vnc.log 2>&1 &
+x11vnc_pid=$!
+websockify --web=/usr/share/novnc 6080 127.0.0.1:5900 >/tmp/cma-websockify.log 2>&1 &
+websockify_pid=$!
+wait "$websockify_pid"
+SH
+RUN chmod 0755 /usr/local/bin/cma-desktop-session
 
 # Native SandboxTemplates use this same image as a non-root init container:
 # --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
@@ -403,9 +444,11 @@ ENTRYPOINT ["/usr/local/bin/layer4-runtime"]
 
 ARG CHRONO_BUILD_SHA=local-unpinned
 ARG CHRONO_BUILD=development
+ARG RUNTIME_DESKTOP=0
 LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}" \
       dev.chrono.cma.runtime-contract="3" \
+      dev.chrono.cma.runtime-desktop="${RUNTIME_DESKTOP}" \
       dev.chrono.cma.runtime-bootstrap="1" \
       dev.chrono.cma.home-layout="2"

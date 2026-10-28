@@ -14,7 +14,7 @@ let key = IdempotencyKey::new(std::env::var("CMA_CREATE_KEY")?)?;
 let request = AgentLifecycleCreateRequest {
     workspace_id: None,
     sandbox_id: None,
-    name: "Research".into(), image: None, repository: None, profile: None,
+    name: "Research".into(), machine_included: false, image: None, repository: None, profile: None,
 };
 let receipt = client.agents().create_lifecycle(&request, &key).await?;
 let operation = client.agents().read_lifecycle(&receipt.id).await?;

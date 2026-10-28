@@ -11,6 +11,7 @@ use super::checkpoint_store::{CheckpointArchiveStore, CheckpointArchiveStoreFact
 use super::checkpoint_transport::{restore_request, successful_checkpoint};
 use super::provider_endpoint::{NativeRuntimeIdentity, RuntimeEndpoint};
 use super::{checkpoint_transport, control_correlation, HostedAgentOpenSettings};
+use crate::agent_sandbox::RuntimeStreamKind;
 use crate::provider::SandboxClient;
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
 use crate::{
@@ -347,6 +348,29 @@ mod native_transport;
 
 #[async_trait::async_trait]
 impl super::HostedControlTransport for ProviderHostedControlTransport {
+    async fn open_desktop(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::DesktopConnectionHandle> {
+        let endpoint = self.endpoint(handle).await?;
+        let stream = self
+            .native_stream(&endpoint, RuntimeStreamKind::Request)
+            .await?;
+        let mut request = endpoint
+            .desktop()?
+            .as_str()
+            .into_client_request()
+            .map_err(|_| AdapterError::Rejected("runtime desktop request is invalid".into()))?;
+        let (name, token) = self.auth_header(&endpoint);
+        let header = http::HeaderValue::from_str(token)
+            .map_err(|_| AdapterError::Rejected("runtime token is not a valid header".into()))?;
+        request.headers_mut().insert(name, header);
+        let (socket, _) = tokio_tungstenite::client_async(request, stream)
+            .await
+            .map_err(|_| AdapterError::Unavailable("runtime desktop WebSocket failed".into()))?;
+        Ok(Box::new(TungsteniteDesktopConnection { socket }))
+    }
+
     async fn inspect_native_status(
         &self,
         inspection: &super::NativeStatusInspection<'_>,
@@ -476,6 +500,61 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             link.stop().await;
         }
         Ok(())
+    }
+}
+
+struct TungsteniteDesktopConnection {
+    socket: tokio_tungstenite::WebSocketStream<crate::agent_sandbox::RuntimeStream>,
+}
+
+#[async_trait::async_trait]
+impl crate::DesktopConnection for TungsteniteDesktopConnection {
+    async fn recv(&mut self) -> crate::Result<Option<crate::DesktopFrame>> {
+        use futures_util::StreamExt as _;
+        let Some(message) = self.socket.next().await else {
+            return Ok(None);
+        };
+        let message = message
+            .map_err(|_| AdapterError::Unavailable("runtime desktop stream closed".into()))?;
+        Ok(Some(match message {
+            tokio_tungstenite::tungstenite::Message::Binary(bytes) => {
+                crate::DesktopFrame::Binary(bytes.to_vec())
+            }
+            tokio_tungstenite::tungstenite::Message::Text(text) => {
+                crate::DesktopFrame::Text(text.to_string())
+            }
+            tokio_tungstenite::tungstenite::Message::Ping(bytes) => {
+                crate::DesktopFrame::Ping(bytes.to_vec())
+            }
+            tokio_tungstenite::tungstenite::Message::Pong(bytes) => {
+                crate::DesktopFrame::Pong(bytes.to_vec())
+            }
+            tokio_tungstenite::tungstenite::Message::Close(_) => crate::DesktopFrame::Close,
+            _ => return Ok(None),
+        }))
+    }
+
+    async fn send(&mut self, frame: crate::DesktopFrame) -> crate::Result<()> {
+        use futures_util::SinkExt as _;
+        let message = match frame {
+            crate::DesktopFrame::Binary(bytes) => {
+                tokio_tungstenite::tungstenite::Message::Binary(bytes.into())
+            }
+            crate::DesktopFrame::Text(text) => {
+                tokio_tungstenite::tungstenite::Message::Text(text.into())
+            }
+            crate::DesktopFrame::Ping(bytes) => {
+                tokio_tungstenite::tungstenite::Message::Ping(bytes.into())
+            }
+            crate::DesktopFrame::Pong(bytes) => {
+                tokio_tungstenite::tungstenite::Message::Pong(bytes.into())
+            }
+            crate::DesktopFrame::Close => tokio_tungstenite::tungstenite::Message::Close(None),
+        };
+        self.socket
+            .send(message)
+            .await
+            .map_err(|_| AdapterError::Unavailable("runtime desktop stream closed".into()))
     }
 }
 

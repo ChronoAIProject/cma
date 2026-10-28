@@ -22,6 +22,10 @@ pub(crate) struct RuntimeConfig {
     pub sandbox_base_url: String,
     pub sandbox_api_key: String,
     pub sandbox_image: String,
+    /// Optional immutable image used when an Agent explicitly requests a
+    /// desktop machine. Keeping this separate from the default image prevents
+    /// ordinary Agent creation from silently changing its runtime.
+    pub machine_sandbox_image: Option<String>,
     pub sandbox_namespace: String,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub agent_sandbox_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -37,6 +41,7 @@ impl fmt::Debug for RuntimeConfig {
             .field("sandbox_base_url", &self.sandbox_base_url)
             .field("sandbox_api_key", &"<redacted>")
             .field("sandbox_image", &self.sandbox_image)
+            .field("machine_sandbox_image", &self.machine_sandbox_image)
             .field("sandbox_namespace", &self.sandbox_namespace)
             .field("home_policy", &self.home_policy)
             .field("native_prepared_target", &self.native_prepared_target)
@@ -82,6 +87,10 @@ impl RuntimeConfig {
             "CHRONO_SANDBOX_IMAGE",
             &required(lookup, "CHRONO_SANDBOX_IMAGE")?,
         )?;
+        let machine_sandbox_image = match lookup("CHRONO_MACHINE_SANDBOX_IMAGE")? {
+            Some(value) => Some(parse_pinned_image("CHRONO_MACHINE_SANDBOX_IMAGE", &value)?),
+            None => None,
+        };
         let sandbox_namespace = parse_sandbox_namespace(
             "CHRONO_SANDBOX_NAMESPACE",
             &required(lookup, "CHRONO_SANDBOX_NAMESPACE")?,
@@ -178,6 +187,7 @@ impl RuntimeConfig {
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
+            machine_sandbox_image,
             sandbox_namespace,
             home_policy,
             agent_sandbox_home_policy,

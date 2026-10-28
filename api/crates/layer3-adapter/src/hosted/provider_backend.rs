@@ -27,6 +27,15 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    async fn open_desktop(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> crate::Result<crate::DesktopConnectionHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime desktop is unavailable".into(),
+        ))
+    }
+
     /// Optional native status exchange whose fresh proof is made after checkout.
     /// None retains the original backend inspection and transport behavior.
     async fn inspect_native_status(
@@ -191,6 +200,13 @@ impl ProviderHostedBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for ProviderHostedBackend {
+    async fn open_desktop(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::DesktopConnectionHandle> {
+        self.transport.open_desktop(handle).await
+    }
+
     async fn provision_receipted(
         &self,
         mut request: ProviderSandboxRequest,

@@ -218,6 +218,9 @@ pub struct Agent {
     pub workspace: AgentWorkspace,
     /// Owning Sandbox.
     pub sandbox: AgentSandbox,
+    /// Whether the immutable Sandbox provides the Linux desktop session.
+    #[serde(default)]
+    pub desktop: bool,
     /// Fresh lifecycle bootstrap lineage while messages can be queued before runtime readiness.
     pub bootstrap: Option<AgentBootstrap>,
     /// Public conformance identifiers.
