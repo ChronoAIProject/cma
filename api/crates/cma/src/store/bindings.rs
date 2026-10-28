@@ -19,6 +19,7 @@ mod admission;
 mod commands;
 mod conversations;
 mod custody;
+mod reprovision;
 mod retry;
 mod rotation;
 mod tools;
@@ -42,15 +43,26 @@ pub(super) struct BindingCollections {
     pub(super) records: Collection<Document>,
     pub(super) conversations: Collection<Document>,
     pub(super) tool_opens: Collection<Document>,
+    pub(super) preparations: Collection<Document>,
 }
 
 impl BindingCollections {
     pub(super) async fn open(database: &Database) -> Result<Self, StoreError> {
-        initialize_collections(database, &[BINDINGS, CONVERSATIONS, TOOL_OPENS]).await?;
+        initialize_collections(
+            database,
+            &[
+                BINDINGS,
+                CONVERSATIONS,
+                TOOL_OPENS,
+                reprovision::PREPARATIONS,
+            ],
+        )
+        .await?;
         let value = Self {
             records: majority_collection(database, BINDINGS),
             conversations: majority_collection(database, CONVERSATIONS),
             tool_opens: majority_collection(database, TOOL_OPENS),
+            preparations: majority_collection(database, reprovision::PREPARATIONS),
         };
         for (collection, keys) in [
             (&value.records, doc! {"pending": 1, "_id": 1}),
@@ -61,6 +73,7 @@ impl BindingCollections {
             (&value.records, doc! {"key_history": 1}),
             (&value.records, doc! {"record.owner": 1, "_id": 1}),
             (&value.conversations, doc! {"pending": 1, "_id": 1}),
+            (&value.conversations, doc! {"record.binding_id": 1}),
             (
                 &value.conversations,
                 doc! {"binding_id": 1, "generation": 1, "conversation_id": 1},
@@ -85,6 +98,22 @@ impl BindingCollections {
             )
             .await
             .map_err(|error| StoreError::Unavailable(format!("binding unique index: {error}")))?;
+        value
+            .preparations
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"binding_id":1,"generation":1})
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .unique(true)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("binding preparation index: {error}"))
+            })?;
         // An existing Agent may be borrowed by another channel. Lookup remains
         // unique inside one binding generation; resource lifecycle is retained
         // by the Agent's original owner, independently of these associations.

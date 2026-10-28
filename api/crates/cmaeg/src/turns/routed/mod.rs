@@ -17,6 +17,10 @@ mod dispatcher;
 mod executor;
 mod journal;
 mod model;
+mod preparation;
+pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
+#[cfg(test)]
+mod preparation_tests;
 mod projection_store;
 mod received_message;
 mod replay_projection;
