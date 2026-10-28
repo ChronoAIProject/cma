@@ -32,6 +32,14 @@ Workspace snapshot, original retained storage authority, original conversations,
 and evidence that this runtime generation never published or accepted CMA work.
 Healthy active generations cannot enter this path.
 
+A revival or image rotation stuck at ConversationReopen may also qualify after
+a persisted retry, between worker leases. This does not require a terminal update
+failure or an elapsed-time threshold. The same complete child snapshot, full
+publication logs and native proof must show that the retained generation never
+published. An explicit owner/operator update can supersede an older queued target;
+automatic recovery retains any queued or started target and requires it to equal
+the currently released image.
+
 First-message `dispatch_generation` records the Agent work-authority fence; it
 does not identify a Sandbox runtime generation. A completed first message may
 therefore have a larger fence than the failed runtime generation. Runtime-loss
@@ -73,7 +81,8 @@ through the normal retained-home lifecycle.
 
 ## Automatic recovery and operational limits
 
-Background recovery applies only after ordinary retries have failed or parked.
+Background recovery applies only after ordinary retries have stalled at reopen,
+failed or parked.
 Its target must already equal the released managed image; it cannot silently
 retarget an older admitted update. One automatic replacement attempt is allowed
 per unresolved incident. Explicit owner/operator retry remains available, and a
