@@ -53,6 +53,25 @@ impl InteractionStore {
     ) -> Result<Admission, Error> {
         let candidate = self.discord_card_candidate(channel, reference).await?;
         let card = &candidate.card;
+        // Historical media cards have callback authority only. New retained
+        // proofs authorize preserving the exact native upload through this chain.
+        if card
+            .discord
+            .as_ref()
+            .and_then(|identity| identity.media.as_ref())
+            .is_some_and(|media| !media.has_edit_authority())
+            || !message.native_attachments.is_empty()
+            || (card
+                .discord
+                .as_ref()
+                .is_some_and(|identity| identity.media.is_some())
+                && message
+                    .blocks
+                    .iter()
+                    .any(|block| matches!(block, cmaeg_core::message::Block::Form { .. })))
+        {
+            return Err(Error::Denied);
+        }
         let destination = card.destination.as_ref().ok_or(Error::Denied)?;
         if let Some(edit) = &card.discord_edit {
             if edit.request_hash != request_hash(message) {
@@ -92,6 +111,23 @@ impl InteractionStore {
         let Candidate {
             mut card, version, ..
         } = candidate;
+        if card
+            .discord
+            .as_ref()
+            .and_then(|identity| identity.media.as_ref())
+            .is_some_and(|media| !media.has_edit_authority())
+            || !message.native_attachments.is_empty()
+            || (card
+                .discord
+                .as_ref()
+                .is_some_and(|identity| identity.media.is_some())
+                && message
+                    .blocks
+                    .iter()
+                    .any(|block| matches!(block, cmaeg_core::message::Block::Form { .. })))
+        {
+            return Err(Error::Denied);
+        }
         let mut next = card.clone();
         next.id = uuid::Uuid::new_v4().to_string();
         next.revision = next.revision.checked_add(1).ok_or(Error::Denied)?;
