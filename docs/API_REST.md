@@ -368,8 +368,26 @@ provisioning is asynchronous: `GET` reports `provisioning`, `ready`, `failed`
 (with a reason), or `retired`. Repeating the same digest and key returns the
 retained reservation. A supplied key hash can belong to only one binding;
 retired records retain that reservation. Reusing the key on another binding
-returns a conflict. A changed profile waits for prior work to settle, retires
-old conversation Agents, and keeps compatible Sandbox and Workspace snapshots.
+returns a conflict. Metadata-only profile changes retain the original hierarchy,
+generation and conversations; changes to pinned runtime configuration are refused.
+
+An identical PUT can return a failed, idle profile binding to `ready` after its
+original Sandbox has recovered to `active` and its original Workspace is
+`ready`. Admission requires the same manager, owner, profile digest, key and
+tool endpoint, no previous environment or pending lifecycle/conversation work,
+and the exact current credential generation already present in encrypted
+custody. The transaction fences the binding and both backing resources. This
+retry preserves the binding generation, resource IDs and terminal conversations;
+it does not provision resources, replace credentials or reopen deleted Agents.
+A busy, removed or changed hierarchy returns a conflict, and a retired binding
+cannot be recovered through PUT. Replays of healthy ready bindings keep their
+existing behavior.
+
+The existing binding reconciler also discovers these failed, idle reservations
+in bounded pages and applies the same recovery transaction using their retained
+encrypted credential. An unrecovered reservation remains failed while later
+pages continue. No owner credential needs to be extracted for operator recovery;
+the reconciler verifies its hash and exact current Sandbox authority in custody.
 
 The optional `target` field selects `{"type":"profile"}` (the default) or
 `{"type":"existing_agent","agent_id":"agt_existing"}`. Existing-agent binding

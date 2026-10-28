@@ -214,9 +214,19 @@ impl BindingService {
                     if value.profile_digest == digest
                         && value.key_sha256 == credential.sha256() =>
                 {
+                    if matches!(value.state, BindingState::Failed { .. }) {
+                        return self
+                            .credentials
+                            .retry_recovered_binding(&value, credential)
+                            .await
+                            .map_err(credential_error);
+                    }
                     value
                 }
                 Some(value) if value.profile_digest == digest => {
+                    if matches!(value.state, BindingState::Failed { .. }) {
+                        return Err(BindingError::Conflict);
+                    }
                     return self
                         .credentials
                         .rotate_binding(&value, credential)
