@@ -30,6 +30,11 @@ pub struct DiscordConversationHistory {
     slots: Semaphore,
     budget: Duration,
 }
+#[derive(Clone, Copy)]
+pub(super) struct HistoryReadOptions<'a> {
+    pub cursor: Option<&'a HistoryCursor>,
+    pub include_media: bool,
+}
 impl DiscordConversationHistory {
     pub fn new(api: DiscordRest) -> Self {
         Self {
@@ -132,6 +137,17 @@ impl ToolsState {
         reference: &EventRef,
         cursor: Option<&HistoryCursor>,
     ) -> Result<ConversationHistoryPage, Problem> {
+        self.read_event_history_with_media(caller, reference, cursor, false)
+            .await
+    }
+    /// Opted-in response shapes never flow to callers using the original method.
+    pub async fn read_event_history_with_media(
+        &self,
+        caller: AgentCaller,
+        reference: &EventRef,
+        cursor: Option<&HistoryCursor>,
+        include_media: bool,
+    ) -> Result<ConversationHistoryPage, Problem> {
         let started = Instant::now();
         let event = reference
             .open(&self.keys, now())
@@ -139,8 +155,24 @@ impl ToolsState {
             .payload;
         if matches!(event.reply, ReplyAddress::NativeLark(_)) {
             return self
-                .read_native_lark_history(caller, reference, cursor, event, started)
+                .read_native_lark_history(
+                    caller,
+                    reference,
+                    HistoryReadOptions {
+                        cursor,
+                        include_media,
+                    },
+                    event,
+                    started,
+                )
                 .await;
+        }
+        if include_media {
+            return Err(Problem::new(
+                ProblemCode::InvalidRequest,
+                400,
+                "include_media_requires_native_lark_history",
+            ));
         }
         let client = self.history_client()?;
         let end = started + client.budget;

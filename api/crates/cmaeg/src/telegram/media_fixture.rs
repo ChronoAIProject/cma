@@ -10,7 +10,10 @@ use axum::{
 use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -43,7 +46,11 @@ impl Answer {
         )
     }
 }
+type OnSend = Arc<dyn Fn(&Capture) + Send + Sync>;
 pub(crate) struct Memory {
+    pub echo_controls: AtomicBool,
+    pub on_send: Mutex<Option<OnSend>>,
+    pub last_media: Mutex<Option<Value>>,
     pub calls: Mutex<Vec<Capture>>,
     pub answers: Mutex<VecDeque<Answer>>,
 }
@@ -60,6 +67,9 @@ impl Drop for Fixture {
 impl Fixture {
     pub async fn new() -> Self {
         let memory = Arc::new(Memory {
+            echo_controls: AtomicBool::new(false),
+            on_send: Mutex::new(None),
+            last_media: Mutex::new(None),
             calls: Mutex::default(),
             answers: Mutex::default(),
         });
@@ -85,7 +95,7 @@ impl Fixture {
 async fn endpoint(State(memory): State<Arc<Memory>>, request: Request) -> Response {
     let (parts, body) = request.into_parts();
     let bytes = to_bytes(body, 9 * 1024 * 1024).await.unwrap();
-    memory.calls.lock().unwrap().push(Capture {
+    let capture = Capture {
         path: parts.uri.path().to_owned(),
         content_type: parts
             .headers
@@ -96,13 +106,43 @@ async fn endpoint(State(memory): State<Arc<Memory>>, request: Request) -> Respon
             .get("authorization")
             .map(|h| h.to_str().unwrap().to_owned()),
         body: bytes.to_vec(),
-    });
+    };
+    memory.calls.lock().unwrap().push(capture.clone());
+    if let Some(callback) = memory.on_send.lock().unwrap().as_ref() {
+        callback(&capture);
+    }
     let answer = memory
         .answers
         .lock()
         .unwrap()
         .pop_front()
-        .unwrap_or_else(Answer::ok);
+        .unwrap_or_else(|| {
+            if memory.echo_controls.load(Ordering::SeqCst) && capture.path.ends_with("/editMessageCaption") {
+                let body: Value = serde_json::from_slice(&capture.body).unwrap();
+                let mut previous = memory.last_media.lock().unwrap();
+                let value = previous.as_mut().unwrap();
+                value["caption"] = body["caption"].clone();
+                value["reply_markup"] = body["reply_markup"].clone();
+                for key in ["caption_entities", "show_caption_above_media"] {
+                    if let Some(field) = body.get(key) { value[key] = field.clone(); }
+                }
+                Answer::json(StatusCode::OK, json!({"ok":true,"result":value}))
+            } else if memory.echo_controls.load(Ordering::SeqCst) {
+                let markup: Value = serde_json::from_str(&field(&capture, "reply_markup")).unwrap();
+                let caption = field(&capture, "caption");
+                let media = match capture.path.rsplit('/').next().unwrap() {
+                    "sendPhoto"=>"photo", "sendDocument"=>"document", "sendAudio"=>"audio", "sendVideo"=>"video", _=>panic!("expected one media upload"),
+                };
+                let asset = json!({"file_id":"file_locator","file_unique_id":"stable_file","file_size":4,"width":2,"height":2});
+                let asset = if media == "photo" { json!([asset]) } else { asset };
+                let value = json!({
+                    "message_id":800,"from":{"id":77,"is_bot":true},"chat":{"id":-42},"message_thread_id":7,
+                    "reply_markup":markup,"caption":caption,media:asset
+                });
+                *memory.last_media.lock().unwrap() = Some(value.clone());
+                Answer::json(StatusCode::OK, json!({"ok":true,"result":value}))
+            } else { Answer::ok() }
+        });
     tokio::time::sleep(answer.delay).await;
     let body = if answer.broken {
         Body::from_stream(futures_util::stream::iter([Err::<bytes::Bytes, _>(
@@ -115,4 +155,13 @@ async fn endpoint(State(memory): State<Arc<Memory>>, request: Request) -> Respon
         .status(answer.status)
         .body(body)
         .unwrap()
+}
+
+pub(crate) fn field(capture: &Capture, name: &str) -> String {
+    let body = String::from_utf8_lossy(&capture.body);
+    let marker = format!("name=\"{name}\"\r\n\r\n");
+    body.split(&marker)
+        .nth(1)
+        .map(|value| value.split("\r\n--").next().unwrap().to_owned())
+        .unwrap_or_default()
 }

@@ -3,7 +3,9 @@ use super::Error;
 use cmaeg_core::{
     activity::{Actor, ActorKind},
     channel::native_lark::safe_id,
-    conversation_history::{HistoryMessage, HISTORY_PAGE_SIZE, HISTORY_TEXT_BYTES},
+    conversation_history::{
+        HistoryMessage, HistoryOmittedContent, HISTORY_PAGE_SIZE, HISTORY_TEXT_BYTES,
+    },
     seal::NativeLarkHistoryCursorPayload,
 };
 use serde_json::Value;
@@ -67,6 +69,7 @@ pub(crate) fn check_scope(
 pub(crate) fn project(
     value: &Value,
     cursor: &NativeLarkHistoryCursorPayload,
+    mixed_media: bool,
 ) -> Result<Projection, Error> {
     let data = &value["data"];
     let rows = data["items"]
@@ -163,16 +166,21 @@ pub(crate) fn project(
         let content: Value =
             serde_json::from_str(row["body"]["content"].as_str().ok_or(Error::Rejected)?)
                 .map_err(|_| Error::Rejected)?;
+        let mut omitted_content = vec![];
         let raw = if kind == "text" {
             content["text"].as_str().ok_or(Error::Rejected)?.to_owned()
         } else {
             let (text, resources) = super::content::parse(kind, &content)
                 .map_err(|_| Error::Rejected)?
                 .ok_or(Error::Rejected)?;
-            // The platform does not provide required size/name facts. Omit the row honestly.
+            // Keep text without inventing attachment facts or creating resource authority.
+            // Old strict readers cannot decode Media; preserve legacy output while disabled.
             if !resources.is_empty() {
-                result.omitted += 1;
-                continue;
+                if !mixed_media {
+                    result.omitted += 1;
+                    continue;
+                }
+                omitted_content.push(HistoryOmittedContent::Media);
             }
             text
         };
@@ -200,7 +208,7 @@ pub(crate) fn project(
             occurred_at: timestamp(created)?,
             edited_at,
             attachments: vec![],
-            omitted_content: vec![],
+            omitted_content,
             text_truncated: truncated,
             metadata_truncated: false,
         });

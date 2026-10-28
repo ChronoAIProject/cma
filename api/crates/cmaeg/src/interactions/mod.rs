@@ -26,6 +26,7 @@ pub(crate) mod discord_form_store;
 #[cfg(test)]
 mod discord_form_tests;
 pub(crate) mod discord_form_values;
+mod discord_media;
 mod discord_receipts;
 #[cfg(test)]
 mod discord_tests;
@@ -38,6 +39,9 @@ pub(crate) mod native_lark;
 pub(crate) mod owner;
 mod prepare;
 mod replacement;
+pub(crate) mod telegram_media;
+pub(crate) mod telegram_media_edit;
+mod telegram_media_store;
 pub(crate) mod whatsapp;
 pub(crate) mod whatsapp_authority;
 mod whatsapp_binding;
@@ -136,6 +140,7 @@ impl InteractionStore {
             || card.expires_at <= now()
             || !native_lark::valid(&card, &self.keys)
             || card.native_whatsapp_flow.is_some()
+            || !telegram_media::valid(&card)
             || !owner::valid(&card)
             || !whatsapp::valid_record(&card)
             || !discord::valid(&card)
@@ -163,6 +168,15 @@ impl InteractionStore {
         prepared: &mut PreparedCard,
         destination: Destination,
     ) -> Result<MessageRef, Error> {
+        if prepared
+            .card
+            .discord
+            .as_ref()
+            .and_then(|i| i.media.as_ref())
+            .is_some_and(|media| media.pending_replacement)
+        {
+            return Err(Error::Denied);
+        }
         prepared.card.destination = Some(destination);
         prepared.card.reference = Some(self.reference(&prepared.card)?);
         prepared.version = self.save(&prepared.card, Some(prepared.version)).await?;

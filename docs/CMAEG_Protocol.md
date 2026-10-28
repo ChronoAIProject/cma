@@ -3075,6 +3075,20 @@ Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 `delivery.outcome: "unsupported"` before any platform send. The field does not
 enable a new native connection.
 
+An optional `native_media.controls` object reports an explicitly supported
+same-message media/control combination: `max_attachments`, `buttons`, `choices`,
+`caption_max_chars`, and `update`. Absence does not grant combined delivery.
+Native Discord advertises one upload with buttons/choices only for verified
+eligible human context when its media-controls and interaction issuance gates
+are enabled (plus the named-consumer gate when applicable). It uses the existing
+`native_attachments` and `blocks` request fields and one delivered card/message;
+`update: false` excludes media-card edits. With its separate media-card-edit
+and ordinary card-edit gates, `update: true` permits content/control edits while
+preserving the exact confirmed upload; binary/caption replacement remains
+unsupported. Historical cards do not acquire new authority. See
+[native Discord controls](CMAEG_Native_Discord_Interactions.md). Historical context
+serialization omits this optional capability; no existing wire field is removed.
+
 Native Lark/Feishu advertises `kinds: ["image", "file", "audio", "video"]`,
 `mime_types: ["image/jpeg", "image/png", "application/pdf", "text/plain", "audio/ogg", "video/mp4"]`,
 `max_total_bytes: 8388608`, `max_image_bytes: 8388608` and `max_caption_chars: 0`.
@@ -4406,7 +4420,7 @@ recovery, search, file bytes, arbitrary destinations and other platforms.
 
 ## Original native Lark / Feishu conversation history
 
-The same `readEventHistory(event_ref, cursor?)` operation supports original native
+The same `readEventHistory(event_ref, cursor?, include_media?)` operation supports original native
 Lark/Feishu human events with independent source `conversation_history: true` at
 admission and read time and the default-off
 `CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` gate. Both exact chats and threads
@@ -4418,8 +4432,85 @@ remains the original/last pre-cutoff boundary; the sealed cursor carries provide
 position. No parent-chat fallback or automatic page draining occurs.
 
 The existing page shape and Discord behavior remain unchanged. A native internal
-v2 cursor and retained admission custody bind the original source, human, selected
+v2 legacy cursor and retained admission custody bind the original source, human, selected
 consumer/provider/key, partition and original expiry. Text/supported posts are
 projected; unsupported media/formats are counted omissions without invented
-attachment size or filename. Source consent authoring and capability discovery are
+attachment size or filename. The separate default-off
+`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` permits explicit REST query/MCP argument
+`include_media=true` to preserve supported post text around images/video and emit
+`omitted_content: ["media"]` without attachment facts, resource locators or extra
+requests. Retained posts do not increment whole-row omission counts. Omitted/false
+requests always retain legacy whole-row omission, so old strict clients do not
+receive the new enum even when the gate is enabled. True with a disabled gate
+returns 403; true on other platforms returns 400. Opted-in v3 cursors bind the mode,
+which must be repeated on every continuation; a mismatch returns 400 before a
+platform read. Gateway serving and rollback readers must support v3 before activation.
+Rust opts in with `read_event_history_with_media(event_ref, cursor)`; TypeScript
+uses `readEventHistory(eventRef, cursor, { includeMedia: true })`. Original SDK
+calls remain legacy. Query and MCP input schemas advertise the optional argument;
+the existing strict context capability shape stays unchanged.
+Source consent authoring and capability discovery are
 optional additions. [Full native contract, setup, tests and platform limits](CMAEG_Native_Lark_History.md).
+
+### Native Telegram media with controls
+
+`CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED` is a separate default-off issuance
+gate. After every live reader understands the media-card marker, a verified
+native Telegram routed human event can advertise `native_media.controls` with
+`max_attachments: 1`, `buttons: true`, `choices: true`, `caption_max_chars: 1024`
+and `update: false`. Named consumers also require the existing consumer
+interaction gate. Legacy relay sources do not gain this capability.
+
+One image, document, audio or video upload can carry buttons, choices and links.
+The message text, text blocks, choice prompt and attachment caption are joined
+in that order into one plain caption, limited to 1,024 UTF-16 code units. The
+existing event's chat and exact forum topic are retained. Extra attachments,
+explicit thread/reply overrides, forms and card blocks refuse before a platform
+write; the gateway never splits a requested media card into separate text and
+media messages.
+
+Only compact media metadata and the SHA-256 of the actual prepared bytes are
+stored with the existing encrypted interaction card; neither upload base64 nor
+source URLs enter that record. The one multipart Bot API request contains the
+file, caption and inline keyboard. A confirmation must identify the same bot,
+chat, topic, message and keyboard before the destination is bound durably. An
+ambiguous reply or lost platform response never causes an automatic resend. A
+lost database acknowledgement is recovered only when the exact committed card
+and version can be read back; otherwise delivery remains unknown.
+
+Callbacks retain the original actor, chat, topic, consumer, provider binding and
+conversation. Current source configuration and credentials are checked again;
+rotation for the same bot/provider identity remains supported. Source removal,
+rebinding and expiry refuse old actions. Repeated identical callbacks share one
+durable consumption and retain the same dispatch identity. Unbound cards and
+storage contention return a retryable failure without consuming an action.
+
+With the separate default-off
+`CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED` gate, eligible Telegram
+discovery advertises `native_media.controls.update: true`. Only new media cards
+whose confirmed platform message has a bounded, verified file and presentation
+snapshot gain edit permission. Earlier cards remain uneditable even if the gate
+is enabled later. The existing `updateMessage` operation accepts an ordinary
+outbound message containing text, text blocks, buttons, choices and links. Its
+text and choice prompts form the new caption; a controls-only update keeps the
+old caption. Explicit `text: ""` clears the caption. The provided controls replace
+the entire keyboard; no controls clears it. Native attachments, native-media
+patches, forms, card blocks and reply/thread overrides are refused before mutation.
+
+An edit calls `editMessageCaption` once, without uploading the file again or
+calling `editMessageText`. It preserves the exact media file, bot, chat, topic,
+original expiry and callback owner. Caption position and spoiler presentation
+remain unchanged; unchanged captions also preserve automatic entities. Updates
+advance the existing interaction card chain under CAS and share the existing
+destination mutation fence. Fresh callbacks to a superseded keyboard refuse;
+an already-consumed identical callback can still recover its original result.
+The new keyboard uses the successor card and the original conversation owner.
+
+Identical update retries replay the stored result without another platform
+write. A lost final storage acknowledgement can recover the exact bound
+successor; an unknown provider result remains fenced. Recovery releases only
+the lock version held by that edit, never a newer operation's lock. File
+replacement with controls and multipart references remain separate capabilities.
+Turning issuance off preserves already-issued edit and callback readers; it is
+not permission to roll back to an image predating either retained marker while
+such cards remain live.

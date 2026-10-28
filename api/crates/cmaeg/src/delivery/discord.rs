@@ -1,7 +1,7 @@
 //! Native Discord reply delivery, independent of relay envelopes and credentials.
 use super::{
     gate::expired,
-    intents::{DeliveryOutcome, IntentReceipt},
+    intents::{ConfirmedMessagePart, DeliveryOutcome, IntentReceipt},
     render::{RelayText, RenderedPart, Renderer},
     send::{unsupported, SendContext, SendEffects, Sender},
 };
@@ -24,6 +24,15 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if self.relay.discord_media_controls_enabled()
+            && !message.native_attachments.is_empty()
+            && message
+                .blocks
+                .iter()
+                .any(|block| matches!(block, cmaeg_core::message::Block::Form { .. }))
+        {
+            return (unsupported(), SendEffects::default());
+        }
         if self.relay.discord_interactions_enabled() {
             if crate::interactions::discord::requested(message) {
                 return self.discord_controls(ctx, event, message, None).await;
@@ -68,6 +77,7 @@ impl Sender {
         }
         let (mut parts, rendering) = RelayText.render(message, &Capabilities::native_discord());
         let mut receipt = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery: DeliveryOutcome::Rejected {
@@ -128,6 +138,9 @@ impl Sender {
                 return (receipt, effects);
             }
         };
+        let split_refs = self.relay.native_split_text_refs
+            && parts.len() > 1
+            && super::discord_edit::editable_content(message);
         let mut confirmed = 0;
         let mut first = None;
         for (index, part) in parts.iter().enumerate() {
@@ -198,6 +211,16 @@ impl Sender {
                                 reason: "reaction_target_receipt_unconfirmed".into(),
                             };
                             break;
+                        }
+                    }
+                    if split_refs {
+                        if let Some(message_ref) =
+                            self.discord_message_ref(ctx.channel, event, &id, message)
+                        {
+                            receipt.message_parts.push(ConfirmedMessagePart {
+                                index: index as u16,
+                                message_ref,
+                            });
                         }
                     }
                     if first.is_none() {

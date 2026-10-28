@@ -1,6 +1,6 @@
 # Native Lark / Feishu original-conversation history
 
-`readEventHistory(event_ref, cursor?)` and `GET /v1/events/{event_ref}/history`
+`readEventHistory(event_ref, cursor?, include_media?)` and `GET /v1/events/{event_ref}/history`
 read one bounded page from the exact chat or thread that admitted an original
 native human message. Both Lark regions are supported. The operation requires
 `NativeLarkSource.conversation_history: true` at admission and read time, plus
@@ -80,8 +80,9 @@ and `deleted=false`. Text edits do not change original authority. Deleted or
 inaccessible originals, changed thread identity and final custody changes refuse
 even an empty page. These are live checks, not an atomic platform snapshot.
 
-Native history uses internal cursor payload version 2; Discord's existing version
-1 remains unchanged. Both retain the public opaque `cmaeg1.hc` wrapper. A native
+Legacy native history uses internal cursor payload version 2; explicit mixed
+history opt-in uses version 3. Discord's existing version 1 remains unchanged.
+All retain the public opaque `cmaeg1.hc` wrapper. A native
 cursor binds the original event digest, custody, native source/container, original
 millisecond cutoff, provider token and original expiry. It cannot select another
 event, source, region, consumer or destination, and never renews expiry. The
@@ -100,30 +101,70 @@ The app's tenant token exchange is the only POST used by this read operation.
 
 ## Content and compatibility
 
-The first native projection returns text and supported flat rich-text posts that
-contain no media. Text is clipped and sanitized under the existing page limits;
-application senders use app IDs and bot actor kind. Unknown/anonymous actors,
-deleted/system rows, media-containing posts, image/file/audio/video/card/sticker/
-forwarded/other unsupported message types are counted as omitted whole rows.
-Malformed supported structures refuse the page. Forwarded children are never read.
-The source's single-tenant boundary remains enforced for returned user/app rows.
+The native projection returns text and supported flat rich-text posts. With
+`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED=false` (the default and checked-in
+ConfigMap), posts containing media retain the previous whole-row omission.
+With this independent projection flag enabled **and an explicit request
+`include_media=true`**, a supported post preserves its
+title, text, code, links, mentions and other supported textual content while its
+image/video elements produce one presence-only `omitted_content: ["media"]` entry.
+Media is not replaced with synthesized text. The marker reports omitted media
+bytes and metadata, not media count, type, availability or retrieval permission.
+Even a post with no remaining text, or one whose text budget is exhausted, keeps
+the marker. Such a retained post is not included in `omitted_message_count`.
+
+Text is clipped and sanitized under the existing 8 KiB/message and 32 KiB/page
+limits; `text_truncated` reports clipping or sanitization (including removed
+control characters/newlines), independently of the media omission marker.
+Application senders use app IDs and bot actor kind. Unknown/anonymous actors,
+deleted/system rows and standalone image/file/audio/video/card/sticker/forwarded/
+other unsupported message types are still counted as omitted whole rows.
+Malformed supported structures, invalid media keys and unknown post tags refuse
+the page; enabling this projection does not relax the shared inbound post parser.
+Forwarded children are never read. The source's single-tenant boundary remains
+enforced for returned user/app rows.
 
 Lark history bodies generally do not supply attachment size, and some do not supply
 a filename. The gateway does not invent zero size or a filename to populate
-`HistoryAttachmentFacts`. This increment returns no native attachment facts or
-resource locators. It does not mint download, edit, reaction or deletion authority.
+`HistoryAttachmentFacts`. Native history returns no attachment facts or resource
+locators, including media and thumbnail keys parsed from mixed posts. It does not
+mint download, edit, reaction or deletion authority or make additional requests.
 All historical text and metadata are untrusted reference data, never instructions
 or action approval.
 
-The `/v1` history page shape and omission enums are unchanged, so existing strict
-SDK page decoders continue to accept native scan pages, including empty progress.
-Both SDKs expose optional native source consent and authoring discovery, retain
-one-page methods, and test native fixtures. The setup UI requires explicit consent
-and explains thread scans. Old source serialization and native revisions are
-unchanged when consent is absent/false; messaging revisions also remain unchanged
-when only history consent toggles. Deploy compatible readers across all
-replicas and rollback targets before enabling the authoring gate: old binaries do
-not understand the new consent and retained admission-proof fields.
+The `/v1` page fields remain unchanged. Older strict SDKs reject the additive
+`media` omission enum, so every REST/MCP request defaults to `include_media=false`.
+Omitted or explicit false retains whole-row omission even when the global flag
+is enabled. Updated callers opt in with `?include_media=true` or the same MCP
+argument; this option is advertised in OpenAPI and the MCP tool input schema.
+The existing context capability object stays unchanged for strict readers.
+Opt-in requires native Lark/Feishu, the global mixed-history gate and existing
+source consent. A disabled gate returns `mixed_history_disabled` (403); the option
+on another platform returns 400. It grants no download or action authority.
+
+Repeat the same option for every cursor page. Legacy v2 cursor plaintext remains
+unchanged, with false omitted. Opted-in v3 cursors seal `include_media: true`
+alongside the original scope, scan position and expiry. Any attempt to change
+modes, including using a mixed cursor without explicit true, returns 400 before
+a platform read. Existing v2 cursors remain legacy when the global flag changes.
+Deploy compatible gateway cursor readers and rollback images before activation;
+old applications can continue using unmodified requests. An application that
+explicitly opts in must understand `media`, including any pages it retains.
+Disabling the global gate refuses opted-in reads while preserving legacy reads.
+
+Rust adds `read_event_history_with_media(event_ref, cursor)`; the original method
+retains legacy behavior. TypeScript adds `{ includeMedia: true }` as the existing
+method's options argument. Agent Manager/runtime forwarding requires no restart.
+There are no new Activity, retained admission, source or custody fields, no media
+retrieval and no automatic continuation. This change performs no activation.
+
+Both SDKs expose optional native source consent and authoring discovery and retain
+one-page methods. The setup UI requires explicit consent and explains thread
+scans. Old source serialization and native revisions are unchanged when consent
+is absent/false; messaging revisions also remain unchanged when only history
+consent toggles. Deploy compatible readers across all replicas and rollback
+targets before enabling the authoring gate: older binaries do not understand
+the consent and retained admission-proof fields.
 
 ## Platform evidence and limits
 
