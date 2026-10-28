@@ -76,3 +76,12 @@ fn recovery_plan_is_bounded_and_digest_covers_full_original_evidence() {
     after["runtime"]["generation"] = json!(4);
     assert_ne!(before, plan_digest(&after).unwrap());
 }
+
+#[test]
+fn recovery_plan_digest_matches_provider_utf8_workspace_paths() {
+    let plan = json!({"cwd": "/home/cma/研究", "record": "😀"});
+    assert_eq!(
+        plan_digest(&plan).unwrap(),
+        "3bfcf358614050535610e2302cefbc84e5b6284e3df6695151e67d1703b7a0a4"
+    );
+}
