@@ -70,6 +70,17 @@ filesystem ready. A missing marker in an already-published workspace retains its
 separate refusal behavior. No marker is synthesized and no staging data is
 deleted during this recovery.
 
+An explicitly configured repository clone has a 600-second wall-clock budget,
+including both Git transfer and checkout. The ordinary 120-second Git budget
+still applies to other operations. A large repository can finish downloading its
+pack but need more than 120 seconds to write its working tree; downloading a pack
+alone is not a successful preparation. The longer clone budget does not alter the
+requested branch, clone depth, request identity or completion checks. A clone
+that reaches its limit still has its process group terminated and records a
+failure; retained original and attempted checkout files are not deleted. An
+explicit preparation-recovery retry remains a new recorded operation after the
+previous terminal failure, never a manual journal or identity-marker rewrite.
+
 ## Unfinished history from a previous native process
 
 A failed reopen can leave an old `task_started` record in a conversation that
