@@ -2,6 +2,9 @@
 # One desktop belongs to one Sandbox; all user and Agent input uses this display.
 set -euo pipefail
 export DISPLAY=:99
+if [[ ${1:-} == --browser ]]; then
+  exec chromium --user-data-dir="$HOME/.cma/chrome" --no-first-run --disable-gpu --disable-dev-shm-usage about:blank
+fi
 mkdir -p "$HOME/.cma/chrome"
 # /tmp is an empty writable mount. Xvfb cannot create the conventional socket
 # directory itself as a non-root user, but accepts an existing shared directory.
@@ -49,7 +52,7 @@ done
 xdotool getdisplaygeometry >/dev/null
 openbox >/tmp/cma-openbox.log 2>&1 &
 children+=("$!")
-chromium --user-data-dir="$HOME/.cma/chrome" --no-first-run --disable-gpu --disable-dev-shm-usage about:blank >/tmp/cma-chromium.log 2>&1 &
+"$0" --browser >/tmp/cma-chromium.log 2>&1 &
 chrome_pid=$!
 children+=("$chrome_pid")
 for ((attempt=0; attempt<200; attempt++)); do
@@ -62,7 +65,8 @@ x11vnc -display "$DISPLAY" -rfbport 5900 -localhost -forever -shared -nopw >/tmp
 children+=("$!")
 websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900 >/tmp/cma-websockify.log 2>&1 &
 children+=("$!")
-# Any failed desktop component tears down the whole session instead of leaving
-# a blank, apparently connected desktop behind.
-wait -n "${children[@]}"
+# Closing the browser is normal. Keep the desktop available, and let the user
+# reopen Chromium from the desktop's right-click menu (or ask their Agent).
+# Display/window-manager/stream failure still tears down the session.
+wait -n "${children[0]}" "${children[1]}" "${children[3]}" "${children[4]}"
 exit 1
