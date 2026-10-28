@@ -66,10 +66,17 @@ class Stream:
 
     def key(self, keysym, down):
         self.send(struct.pack("!BBHI", 4, int(down), 0, keysym))
+        # Match real viewer input instead of flooding X11 modifier synthesis
+        # with a whole keyboard sequence in one socket-read iteration.
+        time.sleep(0.025)
 
     def click(self, x, y):
-        self.send(struct.pack("!BBHH", 5, 1, x, y))
         self.send(struct.pack("!BBHH", 5, 0, x, y))
+        time.sleep(0.05)
+        self.send(struct.pack("!BBHH", 5, 1, x, y))
+        time.sleep(0.05)
+        self.send(struct.pack("!BBHH", 5, 0, x, y))
+        time.sleep(0.1)
 
     def frame(self, bytes_per_pixel):
         while True:
@@ -140,6 +147,7 @@ def main():
         stream.key(ord('a'), True)
         stream.key(ord('a'), False)
         stream.key(0xffe3, False)
+        time.sleep(0.1)
         for char in 'cma-user':
             stream.key(ord(char), True)
             stream.key(ord(char), False)
