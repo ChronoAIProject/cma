@@ -588,7 +588,7 @@ jobs:
         # Adding a value here adds a check named "Images (<value>)" and leaves
         # the existing names untouched, so branch protection keeps reporting.
         # The new check is not required until it is added to the ruleset.
-        component: [api, web, runtime, cmaeg, image-manager]
+        component: [api, web, runtime, runtime-desktop, cmaeg, image-manager]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # arm64 builds run under emulation on the amd64 runner.
@@ -640,12 +640,13 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: infra/${{ matrix.component }}/Dockerfile
+          file: infra/${{ matrix.component == 'runtime-desktop' && 'runtime' || matrix.component }}/Dockerfile
           platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: false
           outputs: type=cacheonly
           build-args: |
             CHRONO_BUILD_SHA=${{ github.sha }}
+            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-desktop' && '1' || '0' }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           # Scoped per component so api and web never overwrite each other's
           # cache. A branch's first run is still cold, since it can only read
@@ -657,13 +658,14 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: infra/${{ matrix.component }}/Dockerfile
+          file: infra/${{ matrix.component == 'runtime-desktop' && 'runtime' || matrix.component }}/Dockerfile
           platforms: linux/amd64
           push: false
           load: true
           tags: cma-${{ matrix.component }}:ci
           build-args: |
             CHRONO_BUILD_SHA=${{ github.sha }}
+            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-desktop' && '1' || '0' }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
       - name: Extract API Cargo cache before pruning
@@ -709,6 +711,22 @@ jobs:
       - name: Require passing runtime image evidence
         if: always() && matrix.component == 'runtime'
         run: node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
+      - uses: actions/setup-node@v6
+        if: matrix.component == 'runtime-desktop'
+        with:
+          node-version: 26
+      - name: Execute desktop image contract
+        if: matrix.component == 'runtime-desktop'
+        timeout-minutes: 5
+        run: node .github/scripts/desktop-runtime-evidence.mjs cma-runtime-desktop:ci "$GITHUB_SHA" "$RUNNER_TEMP/desktop-runtime-evidence.json"
+      - name: Retain desktop image evidence
+        if: always() && matrix.component == 'runtime-desktop'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-runtime-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/desktop-runtime-evidence.json
+          if-no-files-found: error
+          retention-days: 90
       # Preserve the exact native bytes that passed this job. PR artifacts keep
       # their actual merge-checkout revision; consumers must verify tree equality.
       - name: Export tested native image
