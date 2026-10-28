@@ -979,6 +979,18 @@ reports clipped or sanitized text. Older SDK decoders reject `media`, so the gat
 `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag stays off until all consumers and
 rollback readers support this value. See [native history](../../../docs/CMAEG_Native_Lark_History.md).
 
+### Native Lark and Feishu document files
+
+Use the existing `native_attachments` `file` kind for TXT/PDF, DOC/DOCX,
+XLS/XLSX, PPT/PPTX, ZIP and generic binary files when the event's native media
+capability advertises the corresponding MIME. Typed documents are checked from
+complete bytes; opaque `application/octet-stream` files preserve arbitrary bytes
+and safe filenames. Legacy Office uses native `doc`/`xls`/`ppt`; modern Office,
+ZIP and opaque files use native `stream`. The existing four-attachment, 64 KiB
+inline and 8 MiB aggregate transport limits still apply. Files are never converted
+or re-encoded; this grants no new source, recipient or consumer authority.
+See [native file profiles](../../../docs/CMAEG_Native_Lark_Outbound_Media.md).
+
 ### Native media with controls
 
 Check the optional `capabilities.native_media.controls` object before combining

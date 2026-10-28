@@ -141,7 +141,26 @@ pub(crate) fn attachment(mime: &str) -> NativeAttachment {
             include_bytes!("../../../tests/fixtures/whatsapp-outbound/whatsapp-baseline.mp4")
                 .to_vec(),
         ),
-        _ => panic!("unexpected fixture MIME"),
+        "application/zip" => ("file", archive_bytes()),
+        "application/octet-stream" => ("file", vec![0, 255, 254, 1, 128]),
+        _ => (
+            "file",
+            crate::whatsapp::outbound::document::tests::fixtures()
+                .into_iter()
+                .find(|(kind, _)| kind.mime() == mime)
+                .expect("document fixture MIME")
+                .1,
+        ),
     };
     serde_json::from_value(json!({"kind":kind,"source":{"type":"base64","data":STANDARD.encode(bytes)},"mime_type":mime})).unwrap()
+}
+
+pub(crate) fn archive_bytes() -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    archive
+        .start_file("report.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    archive.write_all(b"A document in the archive").unwrap();
+    archive.finish().unwrap().into_inner()
 }
