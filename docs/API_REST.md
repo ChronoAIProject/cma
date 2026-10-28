@@ -389,6 +389,19 @@ encrypted credential. An unrecovered reservation remains failed while later
 pages continue. No owner credential needs to be extracted for operator recovery;
 the reconciler verifies its hash and exact current Sandbox authority in custody.
 
+The separate, default-disabled fresh-event preparation protocol supports a new
+generation only after an original owned Sandbox is fully retired and its home
+released. `POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections`
+authenticates the current manager, owner and supplied binding key and returns a
+current generation pin or an exact immutable reservation intent without writes.
+`POST /api/v1/cmaeg/bindings/{binding_id}/preparations` requires that same intent,
+key and its exact `Idempotency-Key`, plus the enabled preparation writer. Its
+receipt names the newly reserved generation, Sandbox and Workspace; the old
+retired hierarchy and history remain retained. This operation does not recover
+the original released home. See
+[fresh-event preparation](CMAEG_Fresh_Event_Binding_Preparation.md) for eligibility,
+replay, reader compatibility and isolated activation requirements.
+
 The optional `target` field selects `{"type":"profile"}` (the default) or
 `{"type":"existing_agent","agent_id":"agt_existing"}`. Existing-agent binding
 checks the actual personal/organization resource owner, retains all existing
@@ -413,6 +426,12 @@ Once reserved, a conversation still provisioning its Agent returns
 `429 conversation_not_ready` and `Retry-After: 1` on Responses requests. Retry
 the same input and idempotency key; a preparation refusal admits no turn.
 Missing, foreign, failed or retired conversations remain 404.
+
+After a preparation reserves a guarded generation, conversation PUT requires
+one positive canonical `x-cma-binding-generation` header and Responses v2
+requires the matching `binding_generation` field. These are checked before
+conversation allocation or source-user routing. Unguarded legacy bindings keep
+their existing request contract.
 
 A profile binding whose owned Sandbox or Workspace is missing or being removed
 returns `409 binding_resources_unavailable` on binding GET/PUT and conversation
@@ -1254,6 +1273,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PUT /api/v1/cmaeg/bindings/{binding_id}` | PutBindingRequest | - | 200 BindingView; 400/401/403/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}` | - | - | 204 empty; 401/403/409/503 ProblemDocument |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections` | InspectPreparationRequest | - | 200 PreparationInspectionView; 400/401/403/404/409/503 ProblemDocument |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/preparations` | PrepareBindingRequest | Idempotency-Key | 200 PreparationReceiptView; 400/401/403/404/409/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` | - | - | 200 EventContext; 401/403/404/503 Responses error |
