@@ -785,3 +785,15 @@ Content/control edits preserve every confirmed image in its original order.
 ### Native Lark / Feishu thread starts
 
 When verified context advertises `capabilities.native_thread_start: true`, `replyToEvent` may send one plain-text reply with `thread_reply: true` to start the exact originally admitted group message thread. The text must contain 1–4,000 characters and no blocks, attachments or explicit reply target. Only that root can be selected; no caller-selected chat, message or thread ID is accepted. The operation may continue that same root’s thread if it already exists, confirms the returned root/parent/chat/thread identity, and never falls back to top-level delivery. The feature is independently default-off; existing retained-thread replies keep their behavior. This is not the Discord `createThread` name/archive operation and grants no list/manage authority. See [native thread starts](../../../docs/CMAEG_Native_Lark_Thread_Start.md).
+
+### Native Telegram albums
+
+The optional `capabilities.native_media.albums` object describes ordered album
+support for the current native Telegram destination. It declares two to four
+attachments and `kind_groups: [["image", "video"], ["file"], ["audio"]]`.
+`controls: false` and `message_operations: false` mean album delivery provides no
+interactive controls or editable/deletable/reactable message references. Use the
+existing ordered `native_attachments` array. Single-upload requests and their
+references are unchanged. Captions stay per attachment and top-level text is
+separate. Preserve the exact idempotency key on unknown outcomes; never resend an
+uncertain album under another key. The field is omitted when issuance is disabled.

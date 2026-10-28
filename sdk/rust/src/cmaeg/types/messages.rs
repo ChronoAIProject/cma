@@ -323,6 +323,9 @@ pub struct NativeAttachment {
 /// Deployment-attested outbound media capabilities.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeMediaCapabilities {
+    /// Ordered album constraints; omitted when disabled for this destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub albums: Option<NativeAlbumCapabilities>,
     /// Same-message native upload and controls, omitted when not supported for this event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controls: Option<MediaControlsCapabilities>,
@@ -352,6 +355,21 @@ pub struct NativeMediaCapabilities {
     /// Bounded video profile; absent when no destination-specific profile is declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<NativeVideoCapabilities>,
+}
+
+/// Exact album constraints; no public operation authority is issued for its members.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeAlbumCapabilities {
+    /// Minimum number of attachments sent together.
+    pub min_attachments: u64,
+    /// Maximum number of attachments sent together.
+    pub max_attachments: u64,
+    /// An album's kinds must all belong to one group.
+    pub kind_groups: Vec<Vec<String>>,
+    /// Whether interactive controls can accompany an album.
+    pub controls: bool,
+    /// Whether album delivery issues message operation references.
+    pub message_operations: bool,
 }
 
 /// Native upload and controls in one confirmed platform message.

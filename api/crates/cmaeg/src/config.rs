@@ -180,6 +180,7 @@ pub struct Config {
     pub native_lark_outbound_media_enabled: bool,
     pub native_lark_media_controls_enabled: bool,
     pub native_lark_multi_image_controls_enabled: bool,
+    pub native_telegram_albums_enabled: bool,
     /// Start an exact admitted root thread with one explicit text reply.
     pub native_lark_thread_start_enabled: bool,
     pub native_whatsapp_outbound_media_enabled: bool,
@@ -387,6 +388,9 @@ impl Config {
             )?,
             native_lark_media_controls_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED",
+            )?,
+            native_telegram_albums_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED",
             )?,
             native_lark_multi_image_controls_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED",

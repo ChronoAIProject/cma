@@ -34,6 +34,8 @@ data:
   CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED: "true"
   # Native single-attachment Telegram edits are enabled after compatible reader rollout.
   # Requires every reader to support durable media-card custody before enabling.
+  # Ordered native albums; existing single uploads and their references are unchanged.
+  CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED: "false"
   CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED: "false"
