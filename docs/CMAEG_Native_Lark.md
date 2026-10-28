@@ -48,6 +48,20 @@ Recall notifications become `cma.message.deleted.v1` with `recall_type` and an *
 
 Unknown targets receive HTTP 503 for a bounded two-minute window after the event timestamp, allowing an original admission or confirmed outbound receipt to settle. Older unavailable targets are acknowledged as refused. Original plans and confirmed targets have bounded retention; this is not a historical message archive. Event arrival order is not assumed.
 
+## Shared contacts, groups and locations
+
+Native receive events also preserve personal contact cards (`share_user`), group
+cards (`share_chat`) and locations as bounded message text. Cards show the shared
+Open ID or chat ID; locations show the supplied name and latitude/longitude.
+The shared identity is content only: the authenticated sender, original chat,
+admission policy, consumers and reply target remain unchanged. CMA does not
+resolve the shared identity, join a shared group, fetch supplied URLs or grant
+attachment access. Coordinates must be finite strings within ±90/±180 degrees,
+and names are limited to 1024 UTF-8 bytes with no control or bidi formatting
+characters. Invalid facts refuse the message before admission. This follows the
+official [received message content](https://open.larksuite.com/document/uAjLw4CM/ukTMukTMukTM/im-v1/message/events/message_content.md)
+contract; source implementation is not connected-platform acceptance.
+
 ## Native replies and confirmed outbound targets
 
 Text replies use the exact retained app and chat through the region's official API. Non-thread replies send to the retained chat, so a recalled original can still receive a conversational response. A thread reply uses the retained message with `reply_in_thread`; failure to address that thread is reported and never falls back to another conversation. Thread creation remains unsupported. Original-conversation history has its own consent and gate, described below.

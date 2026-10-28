@@ -308,3 +308,6 @@ async fn native_lark_confirmed_receipt_selects_only_sending_consumer_and_retains
 
 #[path = "native_lark_media_tests.rs"]
 mod media_tests;
+
+#[path = "native_lark_shared_fact_tests.rs"]
+mod shared_facts;

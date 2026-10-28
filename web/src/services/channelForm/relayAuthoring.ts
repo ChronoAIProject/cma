@@ -84,9 +84,20 @@ export function validateRelayAuthoring(
       const retained = oldSources.some(
         (old) =>
           old.type === 'whatsapp' &&
-          canonical({ ...old, group_ids: undefined, forms_enabled: undefined }) ===
-            canonical({ ...source, group_ids: undefined, forms_enabled: undefined }) &&
+          canonical({
+            ...old,
+            group_ids: undefined,
+            forms_enabled: undefined,
+            message_events: undefined,
+          }) ===
+            canonical({
+              ...source,
+              group_ids: undefined,
+              forms_enabled: undefined,
+              message_events: undefined,
+            }) &&
           (source.forms_enabled !== true || old.forms_enabled === true) &&
+          (source.message_events !== true || old.message_events === true) &&
           groups.every((id) => strings(old.group_ids).includes(id)),
       );
       if (
@@ -119,6 +130,19 @@ export function validateRelayAuthoring(
           'New WhatsApp form consent is disabled on this gateway. Your draft has been retained.',
         );
       }
+      if (
+        source.message_events === true &&
+        discovery.authoring?.native_whatsapp_message_events_enabled !== true &&
+        !oldSources.some(
+          (old) =>
+            old.type === 'whatsapp' &&
+            old.message_events === true &&
+            ['app_id', 'waba_id', 'phone_number_id'].every((key) => old[key] === source[key]),
+        )
+      )
+        throw new Error(
+          'New WhatsApp incoming message change consent is disabled on this gateway. Your draft has been retained.',
+        );
       const reason = nativeWhatsappUnavailable(discovery, !saved);
       if (reason && (!retained || replacement))
         throw new Error(`${reason} Your draft has been retained.`);
