@@ -76,6 +76,7 @@ async fn websocket(
         Err(error) => return problem(error),
     };
     ws.max_message_size(8 * 1024 * 1024)
+        .max_frame_size(8 * 1024 * 1024)
         .on_upgrade(move |socket| relay(state.service, caller, id, socket, connection))
         .into_response()
 }
@@ -105,7 +106,7 @@ async fn relay(
                     Some(Ok(Message::Pong(bytes))) => DesktopFrame::Pong(bytes.to_vec()),
                     _ => break,
                 };
-                if connection.send(frame).await.is_err() { break; }
+                if !matches!(tokio::time::timeout(Duration::from_secs(10), connection.send(frame)).await, Ok(Ok(()))) { break; }
             },
             outgoing = connection.recv() => {
                 let message = match outgoing {
@@ -115,11 +116,11 @@ async fn relay(
                     Ok(Some(DesktopFrame::Pong(bytes))) => Message::Pong(bytes.into()),
                     _ => break,
                 };
-                if sink.send(message).await.is_err() { break; }
+                if !matches!(tokio::time::timeout(Duration::from_secs(10), sink.send(message)).await, Ok(Ok(()))) { break; }
             },
         }
     }
-    let _ = sink.send(Message::Close(None)).await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(Message::Close(None))).await;
 }
 
 fn problem(error: DesktopError) -> Response {
