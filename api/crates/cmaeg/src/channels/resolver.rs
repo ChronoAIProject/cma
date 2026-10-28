@@ -461,3 +461,19 @@ impl ChannelResolver {
         .await
     }
 }
+
+impl ChannelResolver {
+    pub(crate) async fn whatsapp_message_change_current(
+        &self,
+        channel: &ResolvedChannel,
+        plan: &crate::ingress::routing_store::AdmittedPlan,
+    ) -> Result<(), crate::whatsapp::message_context::Error> {
+        crate::whatsapp::message_context::current(
+            &self.inner.records,
+            &self.inner.keys,
+            channel,
+            plan,
+        )
+        .await
+    }
+}

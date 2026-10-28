@@ -47,6 +47,7 @@ pub struct ManagementState {
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
     pub native_whatsapp_groups_writes_enabled: bool,
+    pub native_whatsapp_message_events_enabled: bool,
     pub native_whatsapp_forms_enabled: bool,
     pub native_whatsapp_flow_writes_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
@@ -84,6 +85,8 @@ impl ManagementState {
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
             native_lark: self.native_lark_writes_enabled,
+            native_whatsapp_message_events: self.native_whatsapp_message_events_enabled
+                && self.native_whatsapp_admission_enabled,
             native_whatsapp_forms: self.native_whatsapp_forms_enabled
                 && self.native_whatsapp_flow_writes_enabled
                 && self.native_whatsapp_admission_enabled,
@@ -178,6 +181,7 @@ impl ManagementState {
             native_lark_writes_enabled: false,
             native_lark_admission_enabled: false,
             native_lark: None,
+            native_whatsapp_message_events_enabled: false,
             native_whatsapp_forms_enabled: false,
             native_whatsapp_flow_writes_enabled: false,
             native_whatsapp_writes_enabled: false,
