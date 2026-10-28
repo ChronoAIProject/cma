@@ -9,6 +9,11 @@ use serde_json::json;
 async fn telegram_media_controls_discovery_matches_source_destination_and_issuance_gates() {
     let tools_fixture = FixtureState::new().await;
     let mut state = state(&tools_fixture, false);
+    // Both adapters can be enabled in one gateway; Discord edit support must
+    // not advertise edits for Telegram's issuance-only media cards.
+    state.native_discord_media_controls_enabled = true;
+    state.discord_interactions_enabled = true;
+    state.native_discord_media_card_edits_enabled = true;
     for named in [false, true] {
         let request = fixture::request(
             |value| {
