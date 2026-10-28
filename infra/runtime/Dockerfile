@@ -336,7 +336,7 @@ COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 # supervisor.  noVNC is bound to loopback; CMA must relay it through the
 # authenticated control plane before a browser can reach the screen.
 COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /usr/local/bin/cma-desktop-session
-COPY infra/runtime/desktop-menu.xml /etc/xdg/openbox/menu.xml
+COPY api/crates/layer4-runtime/src/desktop-menu.xml /etc/xdg/openbox/menu.xml
 
 # Native SandboxTemplates use this same image as a non-root init container:
 # --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
