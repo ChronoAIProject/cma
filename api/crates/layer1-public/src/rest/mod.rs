@@ -109,6 +109,7 @@ mod bindings;
 mod bindings_tests;
 pub use bindings::{
     binding_router, binding_router_with_native_tools, binding_router_with_native_tools_alias,
+    binding_router_with_native_tools_alias_and_preparation,
 };
 mod gateway_connections;
 mod gateway_interactions;
