@@ -17,6 +17,21 @@ pub struct Journal {
     pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 impl Journal {
+    pub(super) fn receipts<'a>(
+        &'a self,
+        scope: &'a str,
+        owner: &'a str,
+        retained_until: i64,
+    ) -> crate::delivery::retained_receipt::ReceiptStore<'a> {
+        crate::delivery::retained_receipt::ReceiptStore {
+            records: &self.records,
+            keys: &self.keys,
+            scope,
+            owner,
+            retained_until,
+        }
+    }
+
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
             activity: None,
@@ -287,6 +302,9 @@ fn validate(
             || storage::bytes(checkpoint)?.len() > 20 * 1024
             || matches!(checkpoint.status, super::DeliveryStatus::Settled { .. })
                 && !checkpoint.status.settled()
+            || matches!(&checkpoint.status, super::DeliveryStatus::Partial { receipt }
+                if !receipt.has_parts() || !matches!(receipt.delivery,
+                    crate::delivery::intents::DeliveryOutcome::Unknown { .. }))
         {
             return Err(ExecutionError::Corrupt);
         }

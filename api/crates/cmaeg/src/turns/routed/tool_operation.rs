@@ -5,7 +5,7 @@ use super::{
     tool_reply_store::{Attempt, Record},
     ExecutionError, Journal,
 };
-use crate::delivery::intents::IntentReceipt;
+use crate::delivery::{intents::IntentReceipt, retained_receipt::StoredReceipt};
 use serde::{Deserialize, Serialize};
 const KIND: &str = "ordinary_route_tool_operation_v1";
 
@@ -22,7 +22,7 @@ struct Operation {
     operation: String,
     content_hash: String,
     claim: String,
-    receipt: Option<IntentReceipt>,
+    receipt: Option<StoredReceipt>,
 }
 #[derive(Clone)]
 pub(super) struct OperationStore(pub Journal);
@@ -33,10 +33,19 @@ impl OperationStore {
         operation: &str,
         content_hash: &str,
     ) -> Result<Option<IntentReceipt>, ExecutionError> {
-        Ok(self
-            .read(record, operation, content_hash)
-            .await?
-            .and_then(|entry| entry.receipt))
+        let Some(entry) = self.read(record, operation, content_hash).await? else {
+            return Ok(None);
+        };
+        match entry.receipt {
+            Some(receipt) => self
+                .0
+                .receipts(&entry.operation, &record.owner, record.retained_until)
+                .load(&receipt)
+                .await
+                .map(Some)
+                .map_err(|_| ExecutionError::Unavailable),
+            None => Ok(None),
+        }
     }
     pub async fn prepare(&self, record: &Record, attempt: &Attempt) -> Result<(), ExecutionError> {
         let content_hash = attempt
@@ -65,7 +74,7 @@ impl OperationStore {
         &self,
         record: &Record,
         attempt: &Attempt,
-        receipt: &IntentReceipt,
+        receipt: &StoredReceipt,
     ) -> Result<(), ExecutionError> {
         let mut entry = self
             .read(
@@ -104,7 +113,7 @@ impl OperationStore {
         &self,
         record: &Record,
         attempt: &Attempt,
-    ) -> Result<Option<IntentReceipt>, ExecutionError> {
+    ) -> Result<Option<StoredReceipt>, ExecutionError> {
         let Some(content_hash) = &attempt.content_hash else {
             return Ok(None);
         };

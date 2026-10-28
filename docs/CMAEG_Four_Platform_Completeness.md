@@ -82,8 +82,9 @@ explicit revisioned edit authority for one supported attachment in one confirmed
 message. Historical effects-only references gain no editing authority. Supported
 automatic Telegram caption entities and Discord generated previews/spoiler flags
 are preserved by the composed media-edit implementation. Unsupported authored
-formatting/embeds, multipart per-message references, albums and multiple-attachment
-edits remain pending; uncertain sends issue no authority. Outgoing WhatsApp message
+formatting/embeds, multipart media references, albums and multiple-attachment
+edits remain pending. Separately gated [split-text receipts](CMAEG_Native_Split_Text_Receipts.md)
+retain individual confirmed ordinary Telegram/Discord text parts; unconfirmed parts receive no authority. Outgoing WhatsApp message
 editing remains unsupported. Separately gated [incoming private text/caption edits
 and revokes](CMAEG_Native_WhatsApp_Message_Events.md) support Business App coexistence
 accounts with retained original-message authority. Native existing-group messaging has separate owner

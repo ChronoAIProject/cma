@@ -67,6 +67,7 @@ impl Sender {
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_lark());
         let editable = !media && parts.len() == 1;
         let mut result = IntentReceipt {
+            message_parts: vec![],
             rendering,
             ..rejected("empty_message")
         };
