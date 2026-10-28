@@ -79,5 +79,8 @@ pub(crate) fn verify(
         return Err(());
     }
     value["header"].as_object_mut().ok_or(())?.remove("token");
+    if let Some(event) = value["event"].as_object_mut() {
+        event.remove("token");
+    }
     Ok(Verified::Event(value))
 }

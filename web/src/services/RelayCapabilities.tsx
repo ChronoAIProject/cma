@@ -5,11 +5,17 @@ import { ServiceError, serviceRequest, type Denied } from './client';
 export interface RelayAuthoringCapabilities {
   readonly native_lark_writes_enabled?: boolean | null;
   readonly native_lark_intake_enabled?: boolean | null;
+  readonly native_lark_controls_enabled?: boolean | null;
+  readonly native_lark_forms_enabled?: boolean | null;
+  readonly native_whatsapp_forms_enabled?: boolean | null;
+  readonly native_whatsapp_flow_writes_enabled?: boolean | null;
   readonly native_whatsapp_writes_enabled?: boolean | null;
   readonly native_whatsapp_groups_writes_enabled?: boolean | null;
   readonly native_whatsapp_auto_activation_enabled?: boolean | null;
   readonly native_telegram_message_events_enabled?: boolean | null;
   readonly native_discord_thread_history_enabled?: boolean | null;
+  readonly native_discord_thread_lifecycle_enabled?: boolean | null;
+  readonly native_discord_conversation_history_enabled?: boolean | null;
   readonly native_discord_reactions_enabled?: boolean | null;
   readonly native_discord_writes_enabled?: boolean | null;
   readonly native_discord_auto_activation_enabled?: boolean | null;

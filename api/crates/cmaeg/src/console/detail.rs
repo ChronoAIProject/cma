@@ -172,6 +172,7 @@ fn source_view(source: &Source) -> SourceView {
             waba_id,
             phone_number_id,
             group_ids,
+            forms_enabled,
             admission,
         } => SourceView {
             id,
@@ -185,6 +186,7 @@ fn source_view(source: &Source) -> SourceView {
             key_ids: Vec::new(),
             settings: vec![
                 format!("App {app_id}; account {waba_id}; dedicated callback required"),
+                format!("Managed static form consent: {forms_enabled}"),
                 format!("Private messages and reactions; {} explicitly allowed existing groups. Media and templates require separate gateway capabilities.",group_ids.len()),
             ],
         },

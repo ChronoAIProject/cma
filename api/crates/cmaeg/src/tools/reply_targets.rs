@@ -1,5 +1,5 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
-pub(super) mod receipts;
+pub(crate) mod receipts;
 use super::{
     context,
     state::{owner, validate},
@@ -105,6 +105,13 @@ impl ToolsState {
         message: OutboundMessage,
     ) -> Result<IntentReceipt, Problem> {
         validate(&message)?;
+        if message.native_media_update.is_some() {
+            return Err(Problem::new(
+                ProblemCode::InvalidRequest,
+                400,
+                "native_media_update_requires_updateMessage",
+            ));
+        }
         if request_id.is_empty()
             || request_id.len() > 128
             || !request_id.bytes().all(|b| (33..=126).contains(&b))

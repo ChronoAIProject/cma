@@ -3,17 +3,25 @@ mod attachment_compose;
 mod attachment_view;
 mod attachments;
 mod context;
+mod form_preparation;
+pub use crate::whatsapp::forms::service::{
+    FormCustomerMessage, FormPreparationReceipt, FormPreparationState,
+};
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../../tests/fake_cma.rs"]
 mod fake_cma;
+mod history;
 mod thread_history;
+pub use history::DiscordConversationHistory;
+mod threads;
 pub use thread_history::{DiscordThreadHistory, ThreadHistory, ThreadHistoryMessage};
+pub use threads::DiscordThreads;
 mod download_access;
 mod media_links;
 pub(crate) mod message_effects;
-mod reply_targets;
-mod state;
+pub(crate) mod reply_targets;
+pub(crate) mod state;
 pub use attachment_view::{
     AttachmentImage, AttachmentImageOrigin, AttachmentStatus, AttachmentText, AttachmentTextSource,
     AttachmentUnavailableReason, AttachmentView, AttachmentViewKind, InboundMediaCapabilities,
@@ -73,3 +81,5 @@ pub(crate) fn validate_reply_key(key: Option<&str>) -> Result<(), cmaeg_core::pr
 
 #[cfg(test)]
 mod thread_history_tests;
+
+mod update;

@@ -30,6 +30,7 @@ struct Stored {
 struct StateData {
     records: Arc<Mutex<BTreeMap<String, Stored>>>,
     pub fail_put: Arc<AtomicBool>,
+    put_failures: Arc<AtomicU64>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
     put_conflicts: Arc<AtomicU64>,
@@ -39,6 +40,8 @@ struct StateData {
 pub struct FakeCma {
     pub base_url: String,
     pub fail_put: Arc<AtomicBool>,
+    /// Fail only the next N writes, allowing terminal receipt persistence to recover.
+    pub put_failures: Arc<AtomicU64>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
     /// Upcoming writes to an existing record that lose a race: each first
@@ -57,6 +60,7 @@ impl FakeCma {
         let state = StateData {
             records: Arc::new(Mutex::new(BTreeMap::new())),
             fail_put: Arc::new(AtomicBool::new(fail_put)),
+            put_failures: Arc::default(),
             get_delay_ms: Arc::default(),
             gets: Arc::default(),
             put_conflicts: Arc::default(),
@@ -71,6 +75,17 @@ impl FakeCma {
             .route(
                 "/api/v1/gateway/interaction-records/{record_id}",
                 put(put_record).get(get_record).delete(delete_record),
+            )
+            // Explicit test adapter for the local Mongo WhatsApp retention class.
+            // It shares the Interaction rows, but never changes the legacy route.
+            .route(
+                "/test/whatsapp-reaction-records/{record_id}",
+                put(put_record),
+            )
+            // Test-only transport for the dedicated Mongo-backed persistent domain.
+            .route(
+                "/api/v1/gateway/thread-fence-records/{record_id}",
+                put(put_record).get(get_record),
             )
             .with_state(state.clone())
             .layer(axum::middleware::from_fn(
@@ -97,6 +112,7 @@ impl FakeCma {
         Self {
             base_url: format!("http://{address}"),
             fail_put: state.fail_put.clone(),
+            put_failures: state.put_failures.clone(),
             get_delay_ms: state.get_delay_ms.clone(),
             gets: state.gets.clone(),
             put_conflicts: state.put_conflicts.clone(),
@@ -183,12 +199,39 @@ struct RecordResponse {
 async fn put_record(
     State(state): State<StateData>,
     Path(record_id): Path<String>,
+    uri: axum::http::Uri,
     body: Result<Json<PutRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    if state.fail_put.load(Ordering::SeqCst) {
+    if state.fail_put.load(Ordering::SeqCst)
+        || state
+            .put_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+    {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let Json(body) = body.unwrap();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let interaction = uri.path().contains("/interaction-records/");
+    let whatsapp_reaction = uri.path().starts_with("/test/whatsapp-reaction-records/");
+    if if interaction || whatsapp_reaction {
+        body.expires_at.is_none_or(|expiry| {
+            expiry <= now
+                || expiry
+                    > now
+                        + if whatsapp_reaction {
+                            30 * 86400
+                        } else {
+                            7 * 86400
+                        }
+        })
+    } else {
+        body.expires_at.is_some()
+    } {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     let blob = STANDARD.decode(body.blob).unwrap();
     let mut records = state.records.lock().unwrap();
     let Some(existing) = records.get_mut(&record_id) else {

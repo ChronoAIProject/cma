@@ -16,6 +16,7 @@ pub mod interactions;
 pub mod mcp;
 pub mod media;
 pub mod native_lark;
+pub mod native_media;
 pub mod net;
 pub mod openapi;
 pub mod outbound;

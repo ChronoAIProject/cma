@@ -20,7 +20,7 @@ fn message() -> OutboundMessage {
     let ReplayEffect::Reply(message) = effect() else {
         unreachable!()
     };
-    message
+    *message
 }
 fn receipt() -> IntentReceipt {
     receipt_for(DeliveryOutcome::Confirmed {

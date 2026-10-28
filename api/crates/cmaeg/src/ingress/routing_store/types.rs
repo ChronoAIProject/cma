@@ -17,6 +17,7 @@ pub const ROOT_KIND: &str = "ordinary_route_manifest_v1";
 pub const PAYLOAD_KIND: &str = "ordinary_route_payload_v1";
 pub const NATIVE_INTERACTION_KIND: &str = "native_discord_interaction_payload_v1";
 pub const NATIVE_WHATSAPP_INTERACTION_KIND: &str = "native_whatsapp_interaction_payload_v1";
+pub const NATIVE_LARK_INTERACTION_KIND: &str = "native_lark_interaction_payload_v1";
 pub const MESSAGE_EVENT_KIND: &str = "native_message_event_payload_v1";
 pub const CHUNK_KIND: &str = "ordinary_route_chunk_v1";
 
@@ -172,3 +173,6 @@ pub(super) struct Chunk {
     #[serde(with = "codec::base64_bytes")]
     pub bytes: Vec<u8>,
 }
+
+pub(super) const NATIVE_WHATSAPP_FLOW_INTERACTION_KIND: &str =
+    "native_whatsapp_flow_interaction_v1";

@@ -14,6 +14,8 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub native_lark_controls_enabled: bool,
+    pub native_lark_forms_enabled: bool,
     pub native_lark_intake_enabled: bool,
     pub native_lark_writes_enabled: bool,
     pub native_lark_admission_enabled: bool,
@@ -45,6 +47,8 @@ pub struct ManagementState {
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
     pub native_whatsapp_groups_writes_enabled: bool,
+    pub native_whatsapp_forms_enabled: bool,
+    pub native_whatsapp_flow_writes_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
     pub native_whatsapp_admission_enabled: bool,
     pub whatsapp: Option<Arc<crate::whatsapp::Client>>,
@@ -53,6 +57,8 @@ pub struct ManagementState {
     pub native_telegram_message_events_writes_enabled: bool,
     pub native_telegram_durable_admission_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
+    pub native_discord_thread_lifecycle_enabled: bool,
+    pub native_discord_conversation_history_enabled: bool,
     pub native_discord_reactions_enabled: bool,
     pub native_discord: crate::discord::selection::Selection,
     pub native_discord_admission_enabled: bool,
@@ -76,6 +82,9 @@ impl ManagementState {
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
             native_lark: self.native_lark_writes_enabled,
+            native_whatsapp_forms: self.native_whatsapp_forms_enabled
+                && self.native_whatsapp_flow_writes_enabled
+                && self.native_whatsapp_admission_enabled,
             native_bot_mentions: self.native_bot_mentions_writes_enabled,
             thread_contract: self.thread_contract_writes_enabled,
             multi_consumer: self.multi_consumer_writes_enabled,
@@ -88,6 +97,8 @@ impl ManagementState {
             native_discord: self.native_discord_writes_enabled,
             telegram_message_events: self.native_telegram_message_events_writes_enabled,
             discord_thread_history: self.native_discord_thread_history_enabled,
+            discord_thread_lifecycle: self.native_discord_thread_lifecycle_enabled,
+            discord_conversation_history: self.native_discord_conversation_history_enabled,
             discord_reactions: self.native_discord_reactions_enabled,
         }
     }
@@ -157,10 +168,14 @@ impl ManagementState {
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
             lark_resource_writes_enabled: false,
+            native_lark_controls_enabled: false,
+            native_lark_forms_enabled: false,
             native_lark_intake_enabled: false,
             native_lark_writes_enabled: false,
             native_lark_admission_enabled: false,
             native_lark: None,
+            native_whatsapp_forms_enabled: false,
+            native_whatsapp_flow_writes_enabled: false,
             native_whatsapp_writes_enabled: false,
             native_whatsapp_groups_writes_enabled: false,
             native_whatsapp_admission_enabled: false,
@@ -170,6 +185,8 @@ impl ManagementState {
             native_telegram_message_events_writes_enabled: false,
             native_telegram_durable_admission_enabled: false,
             native_discord_thread_history_enabled: false,
+            native_discord_thread_lifecycle_enabled: false,
+            native_discord_conversation_history_enabled: false,
             native_discord_reactions_enabled: false,
             native_discord: Default::default(),
             native_discord_admission_enabled: false,

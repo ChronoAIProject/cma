@@ -193,7 +193,7 @@ export function NodeInspector({
     selection.kind === 'channel'
       ? 'Channel settings'
       : selection.kind === 'toolsets'
-        ? 'Agent toolsets'
+        ? 'Event tools'
         : newProducer
           ? 'New producer'
           : (selected?.title ?? 'Node unavailable');
@@ -313,19 +313,14 @@ export function NodeInspector({
                 {selection.kind === 'channel'
                   ? 'Shared routing, conversation and reply settings.'
                   : selection.kind === 'toolsets'
-                    ? 'What the channel’s agents can use to read events and respond.'
+                    ? 'Tools for reading and responding to channel events.'
                     : selection.kind === 'producer'
                       ? 'How this source sends events into the channel.'
                       : 'The agent that receives and responds to events.'}
               </p>
             </div>
             <div className="channel-inspector__summary" key={selectionKey(selection)}>
-              {selection.kind === 'toolsets' ? (
-                <p className="channel-field-hint">
-                  Tools use the selected event’s destination and permissions. Availability can
-                  differ between producers and individual messages.
-                </p>
-              ) : newProducer ? (
+              {selection.kind === 'toolsets' ? null : newProducer ? (
                 <p className="channel-field-hint">
                   Configure and save this producer before checking its delivery settings.
                 </p>
@@ -362,7 +357,7 @@ export function NodeInspector({
                 data-section={key}
                 hidden={!sectionVisible(key)}
               >
-                <h3>{label}</h3>
+                {key !== 'catalog' ? <h3>{label}</h3> : null}
                 <ConfigurationSections
                   value={
                     (key === 'configuration' && selection.kind !== 'toolsets') || key === 'catalog'

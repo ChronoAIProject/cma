@@ -50,6 +50,12 @@ impl Store {
             keys,
         }
     }
+    pub(crate) fn whatsapp_reaction(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
+        Self {
+            records: records.whatsapp_reaction_records(),
+            keys,
+        }
+    }
     pub async fn claim(
         &self,
         target: &ReplyTargetPayload,
@@ -189,7 +195,9 @@ impl Store {
             return Err(Problem::new(
                 ProblemCode::Conflict,
                 409,
-                if matches!(
+                if expected.kind == "native_media_update_v1" {
+                    "native_media_update_idempotency_conflict"
+                } else if matches!(
                     expected.kind.as_str(),
                     "lark_message_effect_v1"
                         | "native_lark_message_effect_v1"

@@ -206,21 +206,17 @@ export function DeliveryFlowCanvas({
             ),
       ),
       ...(toolsets
-        ? (groups[2] ?? []).map((target) => ({
-            id: `${toolsets.key}:${target.key}`,
-            source: toolsets.key,
-            target: target.key,
-            type: 'smoothstep',
-            className: 'delivery-flow__tool-access',
-            label: 'Tool access',
-            animated: false,
-            markerEnd: {
-              type: MarkerType.ArrowClosed,
-              color: 'var(--dsw-alias-label-tertiary)',
-              width: 16,
-              height: 16,
-            },
-          }))
+        ? (groups[2] ?? [])
+            .filter((target) => !target.pending)
+            .map((target) => ({
+              id: `${toolsets.key}:${target.key}`,
+              source: toolsets.key,
+              target: target.key,
+              type: 'smoothstep',
+              className: 'delivery-flow__tool-catalog',
+              label: 'Tools',
+              animated: false,
+            }))
         : []),
     ],
     [groups, toolsets, reduced],

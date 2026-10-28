@@ -50,24 +50,42 @@ it('shows directed routing motion, static tool associations, and accessible over
     ['channel', 'agent'],
   ]);
   expect(
-    props.edges.every(
-      (edge) =>
-        edge.markerEnd &&
-        typeof edge.markerEnd !== 'string' &&
-        edge.markerEnd.type === 'arrowclosed',
-    ),
+    props.edges
+      .filter((edge) => edge.source !== 'toolsets')
+      .every(
+        (edge) =>
+          edge.markerEnd &&
+          typeof edge.markerEnd !== 'string' &&
+          edge.markerEnd.type === 'arrowclosed',
+      ),
   ).toBe(true);
   expect(props.edges.find((edge) => edge.source === 'toolsets')).toMatchObject({
     target: 'agent',
     animated: false,
-    label: 'Tool access',
+    label: 'Tools',
   });
+  expect(props.edges.find((edge) => edge.source === 'toolsets')?.markerEnd).toBeUndefined();
   expect(props.nodes.find((value) => value.id === 'toolsets')!.position.y).toBeGreaterThan(
     props.nodes.find((value) => value.id === 'channel')!.position.y,
   );
   expect(
     screen.getByRole('button', { name: 'Activity' }).closest('.delivery-flow__overlay'),
   ).not.toBeNull();
+});
+
+it('keeps pending consumers visible without suggesting a tool connection', () => {
+  const pending = { ...node('pending', { kind: 'consumer', id: 'pending' }), pending: true };
+  render(
+    <DeliveryFlowCanvas
+      groups={[groups[0]!, groups[1]!, [...groups[2]!, pending]]}
+      toolsets={node('toolsets', { kind: 'toolsets' })}
+    />,
+  );
+  const props = capture.mock.lastCall![0] as { nodes: Node[]; edges: Edge[] };
+  expect(props.nodes.some((value) => value.id === 'pending')).toBe(true);
+  expect(
+    props.edges.filter((edge) => edge.source === 'toolsets').map((edge) => edge.target),
+  ).toEqual(['agent']);
 });
 
 it('responds to reduced-motion changes by leaving all arrows static', () => {

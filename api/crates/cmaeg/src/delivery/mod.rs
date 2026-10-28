@@ -32,6 +32,8 @@ mod interactive;
 pub mod local_stream;
 mod native_clients;
 mod native_lark;
+mod native_lark_card_edit;
+mod native_lark_controls;
 mod pacing;
 pub mod relay_client;
 pub mod render;
@@ -49,3 +51,5 @@ mod whatsapp_controls;
 mod worker;
 
 mod lark_effects;
+
+mod native_media_ref;

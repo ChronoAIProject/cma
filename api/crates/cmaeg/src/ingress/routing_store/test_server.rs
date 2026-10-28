@@ -35,6 +35,7 @@ pub struct Fault {
 pub struct Memory {
     pub rows: Mutex<BTreeMap<String, Row>>,
     pub channels: Mutex<BTreeMap<String, Row>>,
+    pub flows: Mutex<BTreeMap<String, Row>>,
     pub fault: Mutex<Option<Fault>>,
     pub clock: Arc<AtomicI64>,
     realtime: bool,
@@ -73,6 +74,7 @@ impl Server {
         let memory = Arc::new(Memory {
             rows: Mutex::new(BTreeMap::new()),
             channels: Mutex::new(BTreeMap::new()),
+            flows: Mutex::new(BTreeMap::new()),
             fault: Mutex::new(None),
             clock: Arc::new(AtomicI64::new(fixture::NOW)),
             realtime,
@@ -86,6 +88,14 @@ impl Server {
             .route(
                 "/api/v1/gateway/interaction-records/{id}",
                 get(read).put(write),
+            )
+            .route(
+                "/api/v1/gateway/whatsapp-flow-records",
+                get(flow_records::list),
+            )
+            .route(
+                "/api/v1/gateway/whatsapp-flow-records/{id}",
+                get(flow_records::read).put(flow_records::write),
             )
             .with_state(memory.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -250,3 +260,6 @@ async fn list(State(state): State<Arc<Memory>>, Query(query): Query<List>) -> Re
         .collect::<Vec<_>>();
     Json(json!({"items":items})).into_response()
 }
+
+#[path = "test_server_flows.rs"]
+mod flow_records;

@@ -18,9 +18,14 @@ pub mod lineage;
 pub mod media_link;
 pub mod message_ref;
 pub mod native_lark_effect;
+pub mod native_media_edit;
 pub mod pointer;
 pub mod received_reaction;
 pub mod reply_target;
+pub mod thread_ref;
+pub use thread_ref::{ThreadRef, ThreadRefPayload};
+mod history_cursor;
+pub use history_cursor::{HistoryCursor, HistoryCursorPayload, HistoryOrigin};
 pub mod telegram_effect;
 pub mod whatsapp_reaction;
 
@@ -56,6 +61,8 @@ pub enum TokenKind {
     /// An interaction card owned by a non-default consumer.
     ConsumerInteraction,
     ReplyTarget,
+    ThreadRef,
+    HistoryCursor,
     Connection,
     ConnectionSetup,
     MediaLink,
@@ -72,6 +79,8 @@ impl TokenKind {
             Self::Interaction => "in",
             Self::ConsumerInteraction => "ic",
             Self::ReplyTarget => "rt",
+            Self::ThreadRef => "tr",
+            Self::HistoryCursor => "hc",
             Self::Connection => "cn",
             Self::ConnectionSetup => "cs",
             Self::MediaLink => "md",
@@ -205,6 +214,7 @@ pub struct Opened<T> {
 
 #[derive(Debug)]
 pub enum SealError {
+    InvalidPayload,
     Serialize(serde_json::Error),
     Random(ring::error::Unspecified),
     TooLarge,
@@ -213,6 +223,7 @@ pub enum SealError {
 impl fmt::Display for SealError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidPayload => formatter.write_str("invalid token payload"),
             Self::Serialize(error) => write!(formatter, "cannot serialize token payload: {error}"),
             Self::Random(_) => formatter.write_str("secure nonce generation failed"),
             Self::TooLarge => formatter.write_str("sealed payload exceeds its size limit"),
