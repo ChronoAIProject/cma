@@ -17,7 +17,8 @@ const route = `.onRequest("cma/open-completion", emptyExtensionParamsParser, (ct
 const originalAgent = "    return new CodexAcpServer(connection, codexClient, defaultAuthRequest, () => codexConnection.process.exitCode, () => stderr);";
 const initializedAgent = `    const server = new CodexAcpServer(connection, codexClient, defaultAuthRequest, () => codexConnection.process.exitCode, () => stderr);
     const proof = (${createOpenCompletionRuntime.toString()})(require, server, () =>
-      codexConnection.process.exitCode === null && codexConnection.process.signalCode === null && !codexConnection.process.killed);
+      codexConnection.process.exitCode === null && codexConnection.process.signalCode === null && !codexConnection.process.killed,
+      message => RequestError.invalidRequest(message));
     server.cmaOpenCompletion = proof;
     appServerClient.cmaOpenCompletion = proof;
     appServerClient.onClientTransportEvent(event => proof.observe(event));
@@ -30,7 +31,7 @@ const replacements = [
   ["  beginSessionCloseFence(sessionId) {", "  beginSessionCloseFence(sessionId) {\n    this.cmaOpenCompletion?.retire(sessionId);"],
   ["    this.sessions.set(sessionId, sessionState);", "    this.cmaOpenCompletion?.installing(sessionId, sessionState);\n    this.sessions.set(sessionId, sessionState);"],
   ['  async threadUnsubscribe(params) {', '  async threadUnsubscribe(params) {\n    this.cmaOpenCompletion?.retire(params.threadId);'],
-  ["  async cmaAgentInstructions(params) {", "  async cmaAgentInstructions(params) {\n    return this.cmaOpenCompletion.exclusive(() => this.cmaOriginalAgentInstructions(params));\n  }\n  async cmaOriginalAgentInstructions(params) {"],
+  ["  async cmaAgentInstructions(params) {", "  async cmaAgentInstructions(params) {\n    return this.cmaOpenCompletion.exclusive(() => this.cmaOriginalAgentInstructions(params), params.action === \"apply\" ? params.sessionId : undefined);\n  }\n  async cmaOriginalAgentInstructions(params) {"],
   ["  async prompt(params, signal, onTurnStarted) {", "  async prompt(params, signal, onTurnStarted) {\n    this.cmaOpenCompletion?.promptStarting();"],
 ];
 for (const [name, kind] of [["newSession", "new"], ["loadSession", "load"], ["resumeSession", "resume"]]) {

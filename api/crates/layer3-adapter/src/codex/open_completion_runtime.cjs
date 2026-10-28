@@ -1,8 +1,9 @@
 // Embedded into the SHA-pinned ACP bundle. Keep this factory self-contained.
-function createOpenCompletionRuntime(require, agent, alive) {
+function createOpenCompletionRuntime(require, agent, alive, invalidRequest = message => new Error(message)) {
   const crypto = require("node:crypto");
   const path = require("node:path");
   const records = new Map();
+  const queuedTargets = new Set();
   const processNonce = crypto.randomUUID();
   let tail = Promise.resolve(), queued = 0, nativeWorkInFlight = 0, opening = null, dead = false;
   const canonical = value => {
@@ -26,7 +27,8 @@ function createOpenCompletionRuntime(require, agent, alive) {
     const names = value.mcpServers.map(server => server?.name);
     if (names.some(name => typeof name !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(name)) ||
         new Set(names).size !== names.length ||
-        !value.mcpServers.some(server => server.name === "cma_access" && server.type === "http")) return null;
+        !value.mcpServers.some(server => server.type === "http" &&
+          ["cma_access", "cmaeg", "cma_channel"].includes(server.name))) return null;
     return { value: freeze(structuredClone(value)),
       digest: "v1:" + crypto.createHash("sha256").update(encoded).digest("hex") };
   }
@@ -38,6 +40,7 @@ function createOpenCompletionRuntime(require, agent, alive) {
   }
   function retire(sessionId) {
     records.delete(sessionId);
+    for (const target of queuedTargets) if (target.sessionId === sessionId) target.invalid = true;
     if (opening) {
       if (opening.sessionId === sessionId) opening.invalid = true;
       // A fresh new request learns its id only when native start returns.
@@ -48,6 +51,7 @@ function createOpenCompletionRuntime(require, agent, alive) {
   function retireAll() {
     dead = true;
     records.clear();
+    for (const target of queuedTargets) target.invalid = true;
     if (opening) opening.invalid = true;
   }
   function observe(event) {
@@ -71,10 +75,26 @@ function createOpenCompletionRuntime(require, agent, alive) {
       })]);
     } finally { clearTimeout(timer); }
   }
-  function exclusive(operation) {
+  function exclusive(operation, sessionId) {
     if (queued >= 32) return Promise.reject(new Error("Open queue capacity exceeded"));
+    // Preserve ACP's synchronous beginSessionOpen/getSessionState admission:
+    // work delayed by this queue must never reopen or mutate a closed/replaced
+    // target. A close fence can change even when its state/generation do not.
+    const target = typeof sessionId === "string" ? { sessionId,
+      state: agent.sessions.get(sessionId), generation: agent.getSessionGeneration(sessionId),
+      invalid: agent.sessionIsClosing(sessionId) } : null;
+    if (target) queuedTargets.add(target);
     queued += 1;
-    const result = tail.then(operation);
+    const result = tail.then(() => {
+      if (target) {
+        queuedTargets.delete(target);
+        if (target.invalid || agent.sessionIsClosing(sessionId) ||
+            agent.getSessionGeneration(sessionId) !== target.generation ||
+            agent.sessions.get(sessionId) !== target.state)
+          throw invalidRequest("Session changed while operation was queued");
+      }
+      return operation();
+    });
     tail = result.catch(() => {}).finally(() => { queued -= 1; });
     return result;
   }
@@ -112,7 +132,7 @@ function createOpenCompletionRuntime(require, agent, alive) {
         // A rejection, including history streaming failure, cannot leave proof.
         opening = null;
       }
-    });
+    }, kind === "new" ? undefined : request.sessionId);
   }
   async function nativeOpen(kind, params, operation) {
     const current = opening;
