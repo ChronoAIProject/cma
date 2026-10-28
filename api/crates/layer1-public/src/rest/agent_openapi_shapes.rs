@@ -237,6 +237,8 @@ pub(crate) struct AgentView {
     worktree: WorktreeSummaryView,
     workspace: WorkspaceContextView,
     sandbox: SandboxContextView,
+    /// Whether the immutable Sandbox profile requested the desktop session.
+    desktop: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     bootstrap: Option<AgentBootstrapView>,
     conforms_to: Vec<&'static str>,
@@ -300,6 +302,15 @@ impl AgentView {
                 });
         Self {
             id: agent.id.to_string(),
+            desktop: !agent.profile.content.isolated_agent
+                && sandbox
+                    .profile
+                    .content
+                    .environment_variables
+                    .iter()
+                    .any(|variable| {
+                        variable.name == "CMA_MACHINE_INCLUDED" && variable.value == "1"
+                    }),
             bootstrap,
             status: agent.status,
             profile: (&agent).into(),

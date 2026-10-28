@@ -63,6 +63,8 @@ mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
 mod defaults;
+mod desktop;
+pub use desktop::desktop_router;
 mod documents;
 pub use documents::documents_router;
 mod embed;

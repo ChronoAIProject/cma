@@ -119,6 +119,10 @@ impl Agents<'_> {
         }
         self.client.get(&["agents"], &query).await
     }
+    /// Discover the owner-authenticated desktop stream; the host opens its WebSocket.
+    pub async fn desktop(&self, id: &str) -> Result<AgentDesktopDescriptor> {
+        self.client.get(&["agents", id, "desktop"], &[]).await
+    }
     /// Read an Agent and its full parent hierarchy.
     pub async fn read(&self, id: &str) -> Result<Agent> {
         let value: Agent = self.client.get(&["agents", id], &[]).await?;

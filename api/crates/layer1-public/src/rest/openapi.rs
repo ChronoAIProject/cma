@@ -1,6 +1,7 @@
 use utoipa::OpenApi;
 pub mod agent_delegations;
 mod agent_manager;
+mod composition;
 mod identity;
 mod projections;
 use self::projections::*;
@@ -53,6 +54,8 @@ use super::trigger_openapi_shapes::*;
         super::bots::rotate,
         super::bots::delete,
         super::agent_attachments::upload,
+        super::desktop::describe,
+        super::desktop::websocket,
         super::agent_filesystem::list,
         super::agent_filesystem::read,
         super::agent_filesystem::download,
@@ -212,6 +215,7 @@ use super::trigger_openapi_shapes::*;
         super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation,
     ),
     components(schemas(
+        super::desktop::DesktopDescriptor,
         super::agent_access_requests::AgentAccessRequestView,
         super::agent_access_requests::AgentAccessRequestList,
         super::agent_access_requests::AgentAccessStatusView,
@@ -485,15 +489,7 @@ use super::trigger_openapi_shapes::*;
     )
 )]
 struct ApiDoc;
-pub fn document() -> utoipa::openapi::OpenApi {
-    let mut document = ApiDoc::openapi();
-    document.merge(super::documents::document());
-    document.merge(crate::responses::document());
-    document.merge(crate::agui::document());
-    document.merge(crate::agent_v2::document());
-    identity::secure_operations(&mut document);
-    document
-}
 pub use agent_manager::document as agent_manager_document;
+pub use composition::document;
 #[cfg(test)]
 mod tests;
