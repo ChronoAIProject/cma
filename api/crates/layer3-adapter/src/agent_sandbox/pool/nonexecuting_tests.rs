@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "terminated_ephemeral_tests.rs"]
+mod terminated_ephemeral;
+
 async fn crashed() -> (Bound, HomeVolumeAttachment) {
     let bound = bound_with_mode(false, HomeVolumeMode::NativeVctFullHomeV2).await;
     let home = adopted(&bound.fixture, &bound.claim).await;
