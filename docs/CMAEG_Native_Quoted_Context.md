@@ -96,6 +96,29 @@ metadata only. It does not copy quoted text or parent IDs into a feed that
 previously omitted message contents. Authorized event-context readers and the
 Rust/TypeScript SDKs expose the actual bounded quote.
 
+### Reader deployment floor
+
+The writer gate requires a reader inventory for the actual selected providers,
+not just a Gateway upgrade. The source review for this contract establishes the
+following boundaries; deployed image provenance and any rollback candidate must
+be checked against them before activation.
+
+| Reader | Required compatibility |
+| --- | --- |
+| Gateway serving, recovery and rollback processes | Must include this quoted-context implementation: strict `ActivityKind`, `EventContextSnapshot`, admitted-plan `quote_projection`, and Discord inbox snapshot readers. Older Gateway code rejects the new Activity field or private projection markers. Disabling the writer does not make those older readers safe for retained new records. |
+| CMA Agent Manager API/provider | Must preserve the complete nested `activity` value in Responses `event_context`, command persistence, immutable replay fingerprints and authenticated context retrieval. The reviewed deployed source `f255c93388462e07ffaa4749675d0d50ad7a418f` already does so: Layer 1 uses `activity: serde_json::Value`, Layer 2 retains `ExternalEventContext.payload` as `Value`, and Mongo command records round-trip that payload. The source-user router authenticates the original value and reads only an identity projection with `kind: Value`. Bot setup context retention is also generic JSON. These reader files are unchanged by the quote implementation; a quote-specific API deployment is not required at this verified floor. An arbitrary older API image is not thereby approved. |
+| Retained sandbox runtime and tool proxy | The reviewed runtime source `c5520397af66d942f65ff44a3960d6ac7eac8488` forwards MCP request/response bytes without parsing Activity and retains the 4 MiB tool-response bound. The full event stays in Agent Manager; runtime input receives rendered user text and the event reference. This field alone needs no runtime replacement at that floor. Retained custom or older runtimes still need the existing compatible tool-proxy/input contract. |
+| Other configured providers | Must prove verbatim context admission, immutable storage/replay and authenticated retrieval before they can receive quote-bearing events. Recovery-path configuration determines native routed eligibility. In the reviewed configuration only `cma_codex` declares recovery paths; configured `nyxbot` does not and is excluded by native eligibility and routed-target checks. Its context-reader compatibility is not claimed. Adding recovery paths does not replace that proof. |
+| Web Activity readers | Deploy the quote-summary UI to display availability, truncation and kinds. The prior Web reader uses JSON and tolerates the additive metadata, but cannot display it. Web does not ingest full quote text or parent IDs through this feed. |
+| Rust/TypeScript SDK consumers | Use the quote-aware models whenever full Activity/context data is consumed or reserialized. Older SDK models can silently discard the unknown quote field, so passing parse alone is insufficient: reserialization must preserve the sealed Activity digest. SDKs are source dependencies and require each consuming application to adopt the update. |
+
+The API admission fixtures carry a quote through original admission, exact retry,
+authorized read and retained-command equality; mutating only the quote conflicts.
+Core digest fixtures still cover unchanged legacy bytes. This is source and
+fixture evidence, not a live activation receipt. An activation record must name
+the actual image digest/source for each serving and rollback reader and the
+selected provider/SDK consumers. Keep the gate false until that record is complete.
+
 ## Official field evidence
 
 Checked on 2026-10-28:
