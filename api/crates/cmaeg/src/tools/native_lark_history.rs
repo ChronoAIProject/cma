@@ -25,13 +25,15 @@ pub struct NativeLarkConversationHistory {
     api: Client,
     slots: Semaphore,
     budget: Duration,
+    mixed_media: bool,
 }
 impl NativeLarkConversationHistory {
-    pub fn new(api: Client) -> Self {
+    pub fn new(api: Client, mixed_media: bool) -> Self {
         Self {
             api,
             slots: Semaphore::new(8),
             budget: Duration::from_secs(8),
+            mixed_media,
         }
     }
 }
@@ -206,7 +208,8 @@ impl ToolsState {
         let fetched_at = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .map_err(|_| unavailable())?;
-        let projection = history_projection::project(&rows, &position).map_err(read_problem)?;
+        let projection = history_projection::project(&rows, &position, client.mixed_media)
+            .map_err(read_problem)?;
         client
             .api
             .history_anchor(&token, &authority)

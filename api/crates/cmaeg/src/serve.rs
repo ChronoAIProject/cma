@@ -36,6 +36,7 @@ pub(crate) async fn serve(
     telegram_effects: bool,
     telegram_media_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let discord_media_edits = config.native_discord_media_card_edits_enabled && discord_card_edits;
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
     service_auth.bearer().await?;
@@ -155,10 +156,13 @@ pub(crate) async fn serve(
         .with_discord_interactions(discord_interactions)
         .with_discord_forms(discord_forms)
         .with_discord_multiselect(discord_multiselect)
+        .with_discord_media_controls(config.native_discord_media_controls_enabled)
+        .with_discord_media_card_edits(discord_media_edits)
         .with_discord_card_edits(discord_card_edits)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
         .with_telegram_media_effects(telegram_media_effects)
+        .with_telegram_media_controls(config.native_telegram_media_controls_enabled)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
@@ -243,22 +247,13 @@ pub(crate) async fn serve(
     )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
-        native_lark_conversation_history: config
-            .native_lark_conversation_history_enabled
-            .then(|| {
-                crate::native_lark::Client::history_reader().map(|api| {
-                    std::sync::Arc::new(crate::tools::NativeLarkConversationHistory::new(api))
-                })
-            })
-            .transpose()?,
-        discord_conversation_history: config
-            .native_discord_conversation_history_enabled
-            .then(|| {
-                crate::discord::DiscordRest::new()
-                    .map(crate::tools::DiscordConversationHistory::new)
-                    .map(std::sync::Arc::new)
-            })
-            .transpose()?,
+        native_lark_conversation_history: source_settings::lark_history(
+            config.native_lark_conversation_history_enabled,
+            config.native_lark_mixed_history_enabled,
+        )?,
+        discord_conversation_history: source_settings::discord_history(
+            config.native_discord_conversation_history_enabled,
+        )?,
         telegram_topics: state
             .native_telegram_topic_lifecycle_enabled
             .then(|| std::sync::Arc::new(tools::TelegramTopics::new(telegram.clone()))),
@@ -277,6 +272,7 @@ pub(crate) async fn serve(
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
         telegram_effects_issuance_enabled: telegram_effects,
+        native_telegram_media_controls_enabled: config.native_telegram_media_controls_enabled,
         native_media_edits: Some(std::sync::Arc::new(crate::native_media::Client::new(
             telegram.clone(),
             crate::discord::DiscordRest::new()?,
@@ -304,6 +300,8 @@ pub(crate) async fn serve(
         )),
         whatsapp_templates_enabled: whatsapp_templates,
         discord_interactions_enabled: discord_interactions,
+        native_discord_media_controls_enabled: config.native_discord_media_controls_enabled,
+        native_discord_media_card_edits_enabled: discord_media_edits,
         whatsapp_interactions_enabled: whatsapp_interactions,
         native_whatsapp_interactions_enabled: config.native_whatsapp_interactions_enabled,
         consumer_interactions_enabled: consumer_interactions,
