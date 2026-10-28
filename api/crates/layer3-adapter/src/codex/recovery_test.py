@@ -317,6 +317,10 @@ class Quiesce(Fixture):
 
 
 class Proc(unittest.TestCase):
+    def test_plan_digest_matches_adapter_utf8_workspace_paths(self):
+        self.assertEqual(m.sha(m.encode({"cwd": "/home/cma/研究", "record": "😀"})),
+                         "3bfcf358614050535610e2302cefbc84e5b6284e3df6695151e67d1703b7a0a4")
+
     def test_only_exact_supervisor_relay_source_and_argv_are_allowed(self):
         source = (SOURCE.parent / "agent_sandbox/runtime_exec_relay.py").read_bytes()
         argv = [b"/usr/bin/python3", b"-I", b"-u", b"-c", source]
