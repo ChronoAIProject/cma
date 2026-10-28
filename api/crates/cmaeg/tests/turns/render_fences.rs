@@ -235,6 +235,7 @@ fn media_only_and_captioned_inputs_carry_the_block() {
             attachments: vec![photo.clone()],
             mentions_bot,
             reply_to: reply.then(|| "earlier".parse().unwrap()),
+            quoted_message: None,
             album_id: None,
         };
         assert_eq!(text_of(&activity, &definition), rendered, "{text:?}");
@@ -276,6 +277,7 @@ async fn runner_fences_each_media_turn_with_a_fresh_nonce_for_its_audience() {
         attachments: vec![photo.clone()],
         mentions_bot: false,
         reply_to: None,
+        quoted_message: None,
         album_id: None,
     };
     let request = fixture.request_with_kind("media-1", Some(media("look")));

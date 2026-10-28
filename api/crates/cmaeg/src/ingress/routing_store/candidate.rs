@@ -21,7 +21,25 @@ impl Candidate {
         keys: &MasterKeyRing,
         now: i64,
     ) -> Result<Self, AdmissionError> {
-        Self::prepare_inner(request, plan, source_body, keys, now, None)
+        Self::prepare_projected(request, plan, source_body, keys, now, None)
+    }
+    pub(crate) fn prepare_projected(
+        request: &LaunchRequest,
+        plan: &RoutedPlan,
+        source_body: &[u8],
+        keys: &MasterKeyRing,
+        now: i64,
+        quote_projection: Option<u8>,
+    ) -> Result<Self, AdmissionError> {
+        Self::prepare_inner(
+            request,
+            plan,
+            source_body,
+            keys,
+            now,
+            None,
+            quote_projection,
+        )
     }
     pub(crate) fn prepare_native_interaction(
         request: &LaunchRequest,
@@ -56,6 +74,7 @@ impl Candidate {
                     NATIVE_INTERACTION_KIND
                 },
             ),
+            None,
         )
     }
     pub(crate) fn prepare_message_event(
@@ -75,6 +94,7 @@ impl Candidate {
             keys,
             now,
             Some(MESSAGE_EVENT_KIND),
+            None,
         )
     }
     fn prepare_inner(
@@ -84,6 +104,7 @@ impl Candidate {
         keys: &MasterKeyRing,
         now: i64,
         native_kind: Option<&str>,
+        quote_projection: Option<u8>,
     ) -> Result<Self, AdmissionError> {
         let native = native_kind.is_some();
         if source_body.len() > MAX_SOURCE_BYTES {
@@ -155,6 +176,7 @@ impl Candidate {
             retained_until: now
                 .checked_add(RETENTION_SECONDS)
                 .ok_or(AdmissionError::Invalid)?,
+            quote_projection,
             activity: plan.activity.clone(),
             source: plan.source.clone(),
             targets: plan
@@ -226,7 +248,19 @@ impl AdmittedPlan {
         let flow_native = self.kind == NATIVE_WHATSAPP_FLOW_INTERACTION_KIND;
         let native = discord_native || whatsapp_native || lark_native || flow_native;
         let message_event = self.kind == MESSAGE_EVENT_KIND;
-        if (self.kind != PAYLOAD_KIND && !native && !message_event)
+        if self.quote_projection.is_some_and(|v| v != 1)
+            || (self.quote_projection.is_some()
+                && (self.kind != PAYLOAD_KIND
+                    || !matches!(self.activity.kind, ActivityKind::Message { .. })))
+            || (self.quote_projection.is_none()
+                && matches!(
+                    &self.activity.kind,
+                    ActivityKind::Message {
+                        quoted_message: Some(_),
+                        ..
+                    }
+                ))
+            || (self.kind != PAYLOAD_KIND && !native && !message_event)
             || self.admission_id != self.identity.admission_id()
             || self.activity.validate().is_err()
             || if native {

@@ -177,6 +177,7 @@ impl Sandbox {
             );
         if !retiring
             && (self.lifecycle.unpublished_recovery != next.lifecycle.unpublished_recovery
+                || self.lifecycle.failed_provision != next.lifecycle.failed_provision
                 || self.lifecycle.unpublished_recovery_attempted
                     != next.lifecycle.unpublished_recovery_attempted)
         {
@@ -189,6 +190,7 @@ impl Sandbox {
         &self,
         next: &Self,
     ) -> Result<(), SandboxModelError> {
+        self.validate_failed_provision_successor(next)?;
         let finishes_incident = matches!(
             next.status,
             super::SandboxStatus::Retiring | super::SandboxStatus::Retired

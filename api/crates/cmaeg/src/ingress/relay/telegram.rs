@@ -19,6 +19,18 @@ pub fn observe(
     allow_bots: bool,
     ingress: MediaIngress,
 ) -> Result<Observation, VerificationError> {
+    observe_content(payload, bot_username, bot_id, allow_bots, ingress, false)
+}
+
+/// Native source content has independently verified display-fact normalization.
+pub(crate) fn observe_content(
+    payload: &CallbackPayload,
+    bot_username: Option<&str>,
+    bot_id: Option<&str>,
+    allow_bots: bool,
+    ingress: MediaIngress,
+    native_shared_facts: bool,
+) -> Result<Observation, VerificationError> {
     let Some(raw) = payload
         .raw_platform_data
         .as_ref()
@@ -103,7 +115,17 @@ pub fn observe(
         }
         return super::telegram_managed::observe(payload, raw, message);
     }
-    let text = message.get("text").and_then(Value::as_str);
+    let shared = if native_shared_facts {
+        match crate::ingress::telegram::shared_facts::extract(message) {
+            Ok(shared) => shared,
+            Err(()) => return Ok(Observation::Refused(Refusal::ContentUnsupported)),
+        }
+    } else {
+        None
+    };
+    let text = shared
+        .as_deref()
+        .or_else(|| message.get("text").and_then(Value::as_str));
     // NyxID's content type and text must describe the raw message: text for a
     // plain message, NyxID's media type and the caption for a media message.
     let content_agrees = match &media {
@@ -121,18 +143,13 @@ pub fn observe(
                     .is_none_or(|caption| caption.len() <= MAX_TEXT_BYTES)
         }
     };
-    if [
-        "contact",
-        "location",
-        "venue",
-        "poll",
-        "dice",
-        "game",
-        "invoice",
-        "successful_payment",
-    ]
-    .iter()
-    .any(|field| message.get(*field).is_some())
+    if (!native_shared_facts
+        && ["contact", "location", "venue"]
+            .iter()
+            .any(|field| message.get(*field).is_some()))
+        || ["poll", "dice", "game", "invoice", "successful_payment"]
+            .iter()
+            .any(|field| message.get(*field).is_some())
         || !content_agrees
     {
         return Ok(Observation::Refused(Refusal::ContentUnsupported));

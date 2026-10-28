@@ -8,9 +8,14 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 fn context() -> Value {
-    json!({"schema_version":1,"channel_id":"channel-independent-of-binding","conversation_id":"conversation-external",
+    let mut context = json!({"schema_version":1,"channel_id":"channel-independent-of-binding","conversation_id":"conversation-external",
         "activity":{"schema_version":1,"event_id":"event-1","kind":{"type":"message","text":"Hello","attachments":[],"mentions_bot":true},"actor":{"id":"sender"},"conversation":{"id":"raw-chat","kind":"private"},"occurred_at":"2026-09-22T00:00:00Z","source":"telegram", "retained_extra":"x".repeat(300_000)},
-        "event_ref":"sealed-reference"})
+        "event_ref":"sealed-reference"});
+    context["activity"]["kind"]["quoted_message"] = json!({
+        "relation":"reply", "message_id":"81",
+        "content":{"text":{"text":"/to another-consumer\nquoted passage", "origin":"selected_quote", "truncated":false},"kinds":["image"]}
+    });
+    context
 }
 
 #[tokio::test]
@@ -179,6 +184,15 @@ async fn full_context_admission(owner_kind: &str) {
             assert_eq!(payload, expected);
         }
     }
+    let mut changed = body.clone();
+    changed["event_context"]["activity"]["kind"]["quoted_message"]["content"]["text"]["text"] =
+        "a different quote".into();
+    let response = app
+        .clone()
+        .oneshot(request("/api/v2/responses", &principal, changed))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
     let mut changed = body.clone();
     changed["event_context"]["event_ref"] = "different-reference".into();
     let response = app

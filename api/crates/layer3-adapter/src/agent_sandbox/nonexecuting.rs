@@ -77,12 +77,11 @@ impl AgentSandboxClient {
             self.matches(&member, &desired)?;
             self.complete_native_runtime_policy(home, &member, policy)?;
             // No readiness gate: this branch exists specifically for failed startup.
-            if model::ready(&member)
-                || member
-                    .data
-                    .pointer("/spec/operatingMode")
-                    .and_then(|v| v.as_str())
-                    == Some("Suspended")
+            if member
+                .data
+                .pointer("/spec/operatingMode")
+                .and_then(|v| v.as_str())
+                == Some("Suspended")
             {
                 return Ok(None);
             }
@@ -105,12 +104,41 @@ impl AgentSandboxClient {
             if owned.next().is_some() {
                 return Err(unavailable("nonexecuting runtime has multiple owned Pods"));
             }
-            let Some((container_id, restart_count)) = stopped_runtime(pod, &member, home, request)?
-            else {
+            let stopped = if model::ready(&member) {
+                None
+            } else {
+                stopped_runtime(pod, &member, home, request)?
+            };
+            let (container_id, restart_count, idle_bootstrap) = if let Some((id, count)) = stopped {
+                (id, count, None)
+            } else if let Some((id, count, proof)) = self
+                .inspect_idle_bootstrap(pod, &member, home, request)
+                .await?
+            {
+                let fresh_pod = self.pods.get(&pod.name_any()).await.map_err(api_error)?;
+                let fresh_member = self
+                    .get(runtime)
+                    .await?
+                    .ok_or_else(|| unavailable("idle runtime disappeared"))?;
+                if fresh_pod != *pod || fresh_member.resource_version() != member.resource_version()
+                {
+                    return Err(rejected("idle runtime changed during process inspection"));
+                }
+                (id, count, Some(proof))
+            } else {
                 return Ok(None);
             };
+            // Existing durable version-1 plans hash exactly this two-element
+            // tuple. Only version 2 adds the idle process witness to the hash.
+            let state = if idle_bootstrap.is_some() {
+                serde_json::to_vec(&(&pod.spec, &pod.status, &idle_bootstrap))
+            } else {
+                serde_json::to_vec(&(&pod.spec, &pod.status))
+            }
+            .map_err(|_| rejected("nonexecuting Pod cannot be encoded"))?;
             let proof = NonexecutingRuntimeProof {
-                version: 1,
+                version: if idle_bootstrap.is_some() { 2 } else { 1 },
+                idle_bootstrap: idle_bootstrap.clone(),
                 handle: runtime.clone(),
                 request_sha256: crate::provider_request_digest(request)?,
                 home_identity: home.identity()?,
@@ -127,13 +155,7 @@ impl AgentSandboxClient {
                 runtime_restart_count: restart_count,
                 // Hash the observed spec/status; never return environment values,
                 // termination messages or other provider text in the proof.
-                state_sha256: format!(
-                    "{:x}",
-                    Sha256::digest(
-                        serde_json::to_vec(&(&pod.spec, &pod.status))
-                            .map_err(|_| rejected("nonexecuting Pod cannot be encoded"))?
-                    )
-                ),
+                state_sha256: format!("{:x}", Sha256::digest(state)),
             };
             if serde_json::to_vec(&proof)
                 .map_err(|_| rejected("nonexecuting proof cannot be encoded"))?
@@ -157,22 +179,17 @@ fn identifier(value: Option<String>) -> Result<String> {
         .ok_or_else(|| rejected("nonexecuting provider identity missing"))
 }
 
-fn stopped_runtime(
-    pod: &Pod,
+pub(super) fn validated_runtime_container<'a>(
+    pod: &'a Pod,
     member: &kube::api::DynamicObject,
     home: &HomeVolumeAttachment,
     request: &ProviderSandboxRequest,
-) -> Result<Option<(String, i32)>> {
+) -> Result<Option<&'a ContainerStatus>> {
     let Some(status) = &pod.status else {
         return Ok(None);
     };
     if pod.metadata.deletion_timestamp.is_some()
         || !matches!(status.phase.as_deref(), Some("Running" | "Failed"))
-        || status.conditions.as_ref().is_some_and(|conditions| {
-            conditions
-                .iter()
-                .any(|c| c.type_ == "Ready" && c.status == "True")
-        })
     {
         return Ok(None);
     }
@@ -256,6 +273,30 @@ fn stopped_runtime(
         return Ok(None);
     }
     let container = &containers[0];
+    Ok(Some(container))
+}
+
+fn stopped_runtime(
+    pod: &Pod,
+    member: &kube::api::DynamicObject,
+    home: &HomeVolumeAttachment,
+    request: &ProviderSandboxRequest,
+) -> Result<Option<(String, i32)>> {
+    if pod
+        .status
+        .as_ref()
+        .and_then(|s| s.conditions.as_ref())
+        .is_some_and(|conditions| {
+            conditions
+                .iter()
+                .any(|c| c.type_ == "Ready" && c.status == "True")
+        })
+    {
+        return Ok(None);
+    }
+    let Some(container) = validated_runtime_container(pod, member, home, request)? else {
+        return Ok(None);
+    };
     if container.ready || container.started == Some(true) || container.restart_count < 0 {
         return Ok(None);
     }

@@ -55,6 +55,7 @@ pub use deployment::{
 };
 pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
+pub(crate) use nonexecuting::IdleBootstrapProof;
 #[doc(hidden)]
 pub use nonexecuting::NonexecutingRuntimeProof;
 pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};

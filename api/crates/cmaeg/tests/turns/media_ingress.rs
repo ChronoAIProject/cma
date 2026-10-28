@@ -253,6 +253,7 @@ pub fn message_with(attachments: Value) -> cmaeg_core::activity::ActivityKind {
         attachments: serde_json::from_value(attachments).unwrap(),
         mentions_bot: true,
         reply_to: None,
+        quoted_message: None,
         album_id: None,
     }
 }

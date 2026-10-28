@@ -301,6 +301,7 @@ impl MediaSetup {
             attachments: self.attachments.clone(),
             mentions_bot: true,
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         };
         let mut payload = request

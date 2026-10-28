@@ -138,7 +138,6 @@ export function DocumentPage({
       // FileReader may have inserted an image while this snapshot was saving.
       // Keep that newer local source; the acknowledged snapshot is the new baseline.
       setIntent(undefined);
-      retainDocumentDraft(viewer, id);
     } catch (cause) {
       if (!request.signal.aborted) {
         if (cause instanceof DocumentError && cause.status >= 400 && cause.status < 500) {
