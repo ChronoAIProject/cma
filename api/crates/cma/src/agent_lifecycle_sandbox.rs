@@ -17,6 +17,12 @@ impl InlineAgentLifecycle {
             .authorize_lifecycle_sandbox(caller, actor, &SandboxId(id.clone()))
             .await
             .map_err(|error| sandbox_context_error(error, id))?;
+        if request.machine_included {
+            return Err(AgentLifecycleProvisioningError::Conflict(
+                "Machine Included requires a new Sandbox; existing Sandbox images are immutable"
+                    .into(),
+            ));
+        }
         workspace::validate_scopes(request, &sandbox.credential.effective_reaches())?;
         Ok(sandbox)
     }

@@ -2,6 +2,26 @@
 
 ## Current Runtime Contract
 
+### Machine Included prototype
+
+The lifecycle request accepts `machine_included: true` for a new Sandbox. CMA
+resolves `CHRONO_MACHINE_SANDBOX_IMAGE`, records the immutable image and the
+`CMA_MACHINE_INCLUDED=1` marker in the Sandbox profile, and keeps the existing
+2,000 millicore / 8,192 MiB Agent Manager reservation. The desktop image is
+built with `RUNTIME_DESKTOP=1`, installs Chromium, Xvfb, Openbox, x11vnc and
+noVNC, and starts a rootless desktop session inside the runtime. The runtime
+endpoint `/runtime/desktop` is authenticated by the same supervisor control
+token and relays the local noVNC WebSocket. CMA exposes an owner-authenticated
+`/api/v1/agents/{id}/desktop` page and `/desktop/ws` relay, with one serialized
+control lease per Agent. The page uses the pinned noVNC client from the public
+CDN for this prototype; a production rollout should vendor and pin that asset
+before enabling the option for general users.
+
+Codex still runs in the same Sandbox and uses its local display. A separate
+model-side computer-use service is not required when the selected Codex CLI
+build proves native computer-use support. Video and audio playback are outside
+this prototype.
+
 The Sandbox/Agent implementation requires runtime contract **3**, declared by
 the image label `dev.chrono.cma.runtime-contract`. The control plane provisions
 one isolated runtime per Sandbox, with Workspaces, dedicated Worktrees and

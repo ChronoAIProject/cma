@@ -31,7 +31,7 @@ pub(crate) enum RuntimeStreamKind {
 
 /// Owns the forwarding task for precisely as long as its stream is usable.
 /// Kubernetes error-channel contents are deliberately excluded from errors/logs.
-pub(crate) struct RuntimeStream {
+pub struct RuntimeStream {
     stream: Box<dyn RuntimeIo>,
     owner: StreamOwner,
     // true denotes a successful exec exit; its buffered stdout must still drain.

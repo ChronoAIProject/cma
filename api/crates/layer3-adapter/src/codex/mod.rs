@@ -147,6 +147,12 @@ impl SandboxAdapter for CodexAdapter {
     fn capabilities(&self) -> AdapterCapabilities {
         self.hosted.capabilities()
     }
+    async fn open_desktop(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::DesktopConnectionHandle> {
+        self.hosted.open_desktop(handle).await
+    }
     fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
         self.hosted.home_volumes()
     }
