@@ -10,6 +10,7 @@ const { bridgePath } = require("./persist_conversations.cjs");
 const { agentInstructions, method, recording } = require("./agent_instructions.cjs");
 const { method: steeringMethod, route: steeringRoute } = require("./turn_steering.cjs");
 const { processRpc } = require("./native_tools_fixture.cjs");
+const { withoutOpenCompletion } = require("./open_completion.cjs");
 async function modelFixture() {
   const calls = [];
   let mcpInitializations = 0;
@@ -93,7 +94,7 @@ function legacyInstructions(installed) {
 `, "");
     // Reconstruct the exact deployed legacy bytes, including removal of later
     // steering support. Retain the original hash as the recovery authority.
-    const source = installed.replace(steeringMethod, "").replace(steeringRoute, "")
+    const source = withoutOpenCompletion(installed).replace(steeringMethod, "").replace(steeringRoute, "")
       .replace(method, oldMethod).replaceAll(recording, oldRecording);
     assert.equal(createHash("sha256").update(source).digest("hex"),
       "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4",
