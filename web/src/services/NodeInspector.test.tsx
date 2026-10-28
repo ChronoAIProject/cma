@@ -68,7 +68,7 @@ it('navigates actual conditional settings, excludes nested fields and retains dr
   expect(within(nav).queryByRole('button', { name: 'Connection' })).not.toBeInTheDocument();
   expect(screen.getByText('Tool availability is not reported by this gateway.')).toBeVisible();
   expect(screen.queryByText('readEventContext')).not.toBeInTheDocument();
-  expect(screen.getByText(/Existing agent. Its current tool setup is preserved/)).toBeVisible();
+  expect(screen.getByText(/Existing agent. Uses its current tool setup./)).toBeVisible();
   rerender(tree({ kind: 'channel' }));
   expect(await screen.findByLabelText('Draft name')).toHaveValue('Unsaved edit');
   expect(within(nav).queryByRole('button', { name: 'Event tools' })).not.toBeInTheDocument();

@@ -214,7 +214,7 @@ export function DeliveryFlowCanvas({
               target: target.key,
               type: 'smoothstep',
               className: 'delivery-flow__tool-catalog',
-              label: 'Catalog reference',
+              label: 'Tools',
               animated: false,
             }))
         : []),

@@ -193,7 +193,7 @@ export function NodeInspector({
     selection.kind === 'channel'
       ? 'Channel settings'
       : selection.kind === 'toolsets'
-        ? 'Agent toolsets'
+        ? 'Event tools'
         : newProducer
           ? 'New producer'
           : (selected?.title ?? 'Node unavailable');
@@ -313,7 +313,7 @@ export function NodeInspector({
                 {selection.kind === 'channel'
                   ? 'Shared routing, conversation and reply settings.'
                   : selection.kind === 'toolsets'
-                    ? 'Gateway-advertised tools and this channel’s source setup.'
+                    ? 'Tools for reading and responding to channel events.'
                     : selection.kind === 'producer'
                       ? 'How this source sends events into the channel.'
                       : 'The agent that receives and responds to events.'}

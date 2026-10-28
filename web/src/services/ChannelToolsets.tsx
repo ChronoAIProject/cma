@@ -81,18 +81,15 @@ export function ChannelToolsets({ channel }: { readonly channel: Channel }) {
     <>
       <Section
         title="Event tools"
-        description="These tools are advertised by the gateway. Support depends on the event, platform and permissions; this list does not confirm installation in an agent."
+        description="Available tools depend on the event, platform and permissions."
       >
         {discovery.agentTools?.length ? (
           <>
             {conditional.length > 0 ? <Tools items={conditional} channel={channel} /> : null}
             {other.length > 0 ? (
               <details>
-                <summary>Other advertised tools ({other.length})</summary>
-                <p className="channel-field-hint">
-                  These tools need source settings that are missing from this channel. Saved events
-                  and receipts are checked separately when used.
-                </p>
+                <summary>Tools requiring setup ({other.length})</summary>
+                <p className="channel-field-hint">These tools need additional source settings.</p>
                 <Tools items={other} channel={channel} />
               </details>
             ) : null}
@@ -112,10 +109,7 @@ export function ChannelToolsets({ channel }: { readonly channel: Channel }) {
           </p>
         )}
       </Section>
-      <Section
-        title="Connected agents"
-        description="Tool access follows each consumer’s binding. Selecting this node does not install tools or change permissions."
-      >
+      <Section title="Connected agents" description="Each connected agent has its own tool setup.">
         <ul className="channel-tools-list">
           {consumers.map((node) => {
             const config = consumerConfig(
@@ -132,15 +126,15 @@ export function ChannelToolsets({ channel }: { readonly channel: Channel }) {
                 </div>
                 <p>
                   {node.pending
-                    ? 'Connection pending. Tool availability is not confirmed.'
+                    ? 'Connection pending.'
                     : existing
-                      ? 'Existing agent. Its current tool setup is preserved; this view does not confirm installation.'
-                      : 'A gateway tool connection is requested when this agent is created. Provider installation is not reported here.'}
+                      ? 'Existing agent. Uses its current tool setup.'
+                      : 'Gateway tools requested for this agent.'}
                 </p>
                 {extra > 0 ? (
                   <p>
                     {extra} additional MCP {extra === 1 ? 'server is' : 'servers are'} requested in
-                    its saved profile. Provider installation is not confirmed here.
+                    this agent’s settings.
                   </p>
                 ) : null}
               </li>
