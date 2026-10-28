@@ -217,7 +217,7 @@ async fn native_controls_refuse_unconfirmed_cross_transport_wrong_actor_message_
 }
 
 #[tokio::test]
-async fn source_key_provider_credential_owner_and_routing_changes_revoke_pending_dispatch() {
+async fn source_key_consumer_credential_owner_and_routing_changes_revoke_pending_dispatch() {
     for named in [false, true] {
         for case in 0..9 {
             let mut f = Fixture::new(named, true, LarkRegion::Feishu).await;
@@ -290,8 +290,10 @@ async fn source_key_provider_credential_owner_and_routing_changes_revoke_pending
                         c.definition.secrets.consumer_keys[0].1 =
                             Secret::new("fixture-rotated-provider");
                     } else {
-                        c.definition.secrets.provider_credential =
-                            Some(Secret::new("fixture-rotated-provider"));
+                        crate::channels::definition::fixture::replace_default_credential(
+                            &mut c.definition,
+                            Some("fixture-rotated-provider"),
+                        );
                     }
                 }
             }
