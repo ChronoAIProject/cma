@@ -12,6 +12,7 @@ class Exit extends Error {
 function fixture(overrides = {}) {
   const state = {
     finalProcess: true, authenticated: true, config: null, primary: false,
+    replicationOptions: {replSet: 'cma-im-contract'},
     initializationCalls: 0, throwNotInitialized: false, loseInitializeReply: false,
     ...overrides,
   };
@@ -28,7 +29,7 @@ function fixture(overrides = {}) {
     adminCommand(command) {
       if (command.getCmdLineOpts) {
         return {ok: 1, parsed: state.finalProcess
-          ? {replication: {replSetName: 'cma-im-contract'}} : {}};
+          ? {replication: state.replicationOptions} : {}};
       }
       if (command.replSetGetConfig) {
         if (state.config) return {ok: 1, config: state.config};
@@ -74,6 +75,29 @@ test('final process initializes once and becomes ready only after primary electi
     f.state.primary = true;
     assert.equal(f.probe(), 0);
     assert.equal(f.state.initializationCalls, 1);
+  }
+});
+
+test('CLI and config replica options are accepted, but missing or conflicting names never initialize', () => {
+  for (const replicationOptions of [
+    {replSet: 'cma-im-contract'},
+    {replSetName: 'cma-im-contract'},
+    {replSet: 'cma-im-contract', replSetName: 'cma-im-contract'},
+  ]) {
+    const f = fixture({replicationOptions, primary: true});
+    assert.equal(f.probe(), 0);
+    assert.equal(f.state.initializationCalls, 1);
+  }
+  for (const replicationOptions of [
+    {}, {replSet: 'foreign'}, {replSetName: 'foreign'},
+    {replSet: 'cma-im-contract', replSetName: 'foreign'},
+    {replSet: 'foreign', replSetName: 'cma-im-contract'},
+    {replSet: 'cma-im-contract/foreign:27017'},
+  ]) {
+    const f = fixture({replicationOptions, primary: true});
+    assert.equal(f.probe(), 1);
+    assert.equal(f.state.initializationCalls, 0);
+    assert.equal(f.state.config, null);
   }
 });
 
