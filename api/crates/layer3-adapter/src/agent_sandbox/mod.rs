@@ -14,7 +14,7 @@ mod pool;
 mod pool_runtime;
 pub(crate) mod provision_timing;
 pub(crate) mod resume_timing;
-mod runtime_inspection;
+mod runtime_recovery;
 mod runtime_stream;
 mod suspension;
 mod termination;

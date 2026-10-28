@@ -198,12 +198,12 @@ impl HostedBackend for AgentSandboxBackend {
         self.inspect_native_context(handle, request, home).await
     }
 
-    async fn inspect_runtime(
+    async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,
-        command: &super::RuntimeInspectionCommand,
+        command: &super::RuntimeRecoveryCommand,
     ) -> Result<Vec<u8>> {
-        self.client.inspect_runtime(handle, command).await
+        self.client.run_recovery_command(handle, command).await
     }
 
     async fn reclaim(&self, expected: &RuntimeObservation) -> Result<()> {
