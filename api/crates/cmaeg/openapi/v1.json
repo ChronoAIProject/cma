@@ -3823,7 +3823,8 @@
           "components",
           "stickers",
           "poll",
-          "forwarded_snapshot"
+          "forwarded_snapshot",
+          "media"
         ],
         "type": "string"
       },

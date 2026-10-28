@@ -44,6 +44,18 @@ it('returns an empty native thread scan page without automatically fetching its 
   expect(fetch.mock.calls[0]?.[0]).toBe('https://gateway.example/v1/events/original/history');
 });
 
+it('preserves native mixed post text and media omission without fetching media or continuation', async () => {
+  const expected = examples.ConversationHistoryPage?.[3];
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(expected));
+  const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+  const page = await client.readEventHistory('original');
+  expect(page).toEqual(expected);
+  expect(page.messages[0]?.text).toBe('Earlier post\nText before and after omitted media');
+  expect(page.messages[0]?.omitted_content).toEqual(['media']);
+  expect(page.messages[0]?.attachments).toEqual([]);
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
 describe('independent CMAEG client', () => {
   it('emits all management and tool methods with opaque IDs, complete bodies and exact versions', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();

@@ -7668,7 +7668,8 @@
     "components",
     "stickers",
     "poll",
-    "forwarded_snapshot"
+    "forwarded_snapshot",
+    "media"
   ],
   "HistoryMessage": [
     {
@@ -7700,6 +7701,21 @@
         "stickers",
         "poll",
         "forwarded_snapshot"
+      ],
+      "text_truncated": false,
+      "metadata_truncated": false
+    },
+    {
+      "message_id": "om_mixed",
+      "author": {
+        "id": "ou_historical",
+        "kind": "human"
+      },
+      "text": "Earlier post\nText before and after omitted media",
+      "occurred_at": "2026-10-28T00:00:00Z",
+      "attachments": [],
+      "omitted_content": [
+        "media"
       ],
       "text_truncated": false,
       "metadata_truncated": false
@@ -7806,6 +7822,43 @@
       "messages": [],
       "scanned_messages": 25,
       "omitted_message_count": 25,
+      "text_truncated": false,
+      "metadata_truncated": false,
+      "content_coverage": "platform_returned_only",
+      "continuation": {
+        "status": "more_visible_rows",
+        "cursor": "cmaeg1.hc.native_scan_fixture"
+      }
+    },
+    {
+      "conversation": {
+        "id": "oc_history",
+        "kind": "group",
+        "thread_id": "omt_history"
+      },
+      "anchor_message_id": "om_original",
+      "before_message_id": "om_original",
+      "fetched_at": "2026-10-28T00:02:00Z",
+      "expires_at": 1793179800,
+      "messages": [
+        {
+          "message_id": "om_mixed",
+          "author": {
+            "id": "ou_historical",
+            "kind": "human"
+          },
+          "text": "Earlier post\nText before and after omitted media",
+          "occurred_at": "2026-10-28T00:00:00Z",
+          "attachments": [],
+          "omitted_content": [
+            "media"
+          ],
+          "text_truncated": false,
+          "metadata_truncated": false
+        }
+      ],
+      "scanned_messages": 1,
+      "omitted_message_count": 0,
       "text_truncated": false,
       "metadata_truncated": false,
       "content_coverage": "platform_returned_only",

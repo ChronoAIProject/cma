@@ -48,6 +48,8 @@ pub enum HistoryOmittedContent {
     Poll,
     /// Forwarded message snapshots.
     ForwardedSnapshot,
+    /// Media bytes and metadata omitted where complete attachment facts are unavailable.
+    Media,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
