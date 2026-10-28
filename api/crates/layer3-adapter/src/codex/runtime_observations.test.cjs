@@ -45,7 +45,7 @@ function connect(program, directory, home, binary, frames) {
 
 test("pinned provider emits canonical cwd and cumulative real usage across turns and process resume", {timeout:120000}, async()=>{
   const binary=process.env.CMA_CODEX_TEST_BINARY??"/usr/local/bin/codex";
-  assert.equal(execFileSync(binary,["--version"],{encoding:"utf8"}).trim(),"codex-cli 0.147.0");
+  assert.match(execFileSync(binary,["--version"],{encoding:"utf8"}).trim(),/^codex-cli 0\.(147|165)\.0$/);
   const directory=mkdtempSync(join(tmpdir(),"cma-observations-")),home=join(directory,"agent-home"),other=join(directory,"other");
   mkdirSync(home);mkdirSync(other);const frames=[];let calls=0,error;
   const server=createServer(async(req,res)=>{try{
@@ -96,5 +96,5 @@ test("pinned provider emits canonical cwd and cumulative real usage across turns
     assert(frames.some(f=>f.params?.update?._meta?.cma?.runtimeMetadata?.workingDirectory===other));
     await prompt();if(error)throw error;
     assert.equal(snapshots().at(-1).inputTokens,30);assert.equal(snapshots().at(-1).outputTokens,9);
-  }finally{await bridge?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));rmSync(directory,{recursive:true,force:true});}
+  }finally{await bridge?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));rmSync(directory,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 });

@@ -112,7 +112,7 @@ for (const legacy of [false, true]) test(
     : "pinned native instructions change at idle without replacing the thread, process, files or history",
   { timeout: 120000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   let program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
   // Validate before opening the HTTP fixture so a source-pin assertion cannot
   // leave a listening server that holds the whole image build open.
@@ -191,6 +191,6 @@ for (const legacy of [false, true]) test(
     assert.equal((await apply("")).applied, true);
     assert.equal(readFileSync(join(home, "AGENTS.md"), "utf8"), "");
   } finally {
-    await bridge.close(); await fixture.close(); rmSync(directory, { recursive: true, force: true });
+    await bridge.close(); await fixture.close(); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

@@ -136,6 +136,10 @@ ARG CODEX_VERSION=0.147.0
 ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
 ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
+ARG DESKTOP_CODEX_VERSION=0.165.0
+ARG DESKTOP_CODEX_NATIVE_SHA256_AMD64=c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5
+ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f
+ARG DESKTOP_CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
 ARG CODEX_ACP_SHA256=ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66
@@ -225,6 +229,14 @@ RUN set -eux; \
 # metadata, launcher, bridge source, and architecture-specific native binary
 # are all checked against the reviewed pinned artifacts.
 RUN set -eux; \
+    if [ "${RUNTIME_DESKTOP}" = "1" ]; then \
+      CODEX_VERSION="${DESKTOP_CODEX_VERSION}"; \
+      CODEX_NATIVE_SHA256_AMD64="${DESKTOP_CODEX_NATIVE_SHA256_AMD64}"; \
+      CODEX_NATIVE_SHA256_ARM64="${DESKTOP_CODEX_NATIVE_SHA256_ARM64}"; \
+      CODEX_LAUNCHER_SHA256="${DESKTOP_CODEX_LAUNCHER_SHA256}"; \
+      mkdir -p /etc/codex; \
+      printf '[features]\ncomputer_use = true\n' > /etc/codex/config.toml; \
+    fi; \
     npm install -g "@openai/codex@${CODEX_VERSION}" \
         "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}"; \
     npm cache clean --force; \
@@ -239,6 +251,10 @@ RUN set -eux; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     echo "${want}  ${native}" | sha256sum -c -
+
+# ACP's dependency can retain an older CLI. Always execute the verified global
+# CLI selected above; this does not alter persisted Agent launch requests.
+ENV CODEX_PATH=/usr/local/bin/codex
 
 # Install the platform CLI from its pinned release and verify the published
 # checksum before placing the binary on PATH.

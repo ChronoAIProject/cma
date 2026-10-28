@@ -99,6 +99,6 @@ test("pinned Codex keeps exact native tool names through live key rotation and c
     }
   } finally {
     await bridge?.close(); await stop(runtime); await server.close();
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

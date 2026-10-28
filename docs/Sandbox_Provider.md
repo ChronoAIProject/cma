@@ -28,8 +28,12 @@ computer-use feature flag does not prove a Linux screenshot/click/type driver.
 A clean CLI 0.165.0 tool-inventory check exposed shell and image tools but no
 computer-use tool. Official OpenAI documentation describes the desktop Computer
 Use plugin on macOS and Windows, not a bundled Linux CLI driver:
-https://learn.chatgpt.com/docs/computer-use . The prototype retains CMA's
-validated CLI 0.147.0 and ACP 1.4.0 pins. An Agent can take a screenshot with
+https://learn.chatgpt.com/docs/computer-use . The desktop variant pins CLI 0.165.0
+(the current stable registry version checked on 2026-10-29), while the ordinary
+headless runtime keeps CLI 0.147.0. Both use the source-pinned ACP 1.4.0 bridge.
+The desktop image enables `features.computer_use` in its system configuration
+and uses the verified global CLI instead of ACP's older nested dependency.
+The feature flag is checked separately from actual desktop execution. An Agent can take a screenshot with
 `scrot /tmp/desktop.png`, inspect it with `view_image`, and click/type through
 `xdotool` on `DISPLAY=:99`; no additional computer-use MCP server is involved.
 
