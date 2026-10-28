@@ -27,6 +27,22 @@ is required. A `202` receipt contains an **operation** ID; read
 `agent_id` to open the Agent. A phase event marked `ready` does not complete the
 operation. Workspace/runtime readiness is reported only after Agent preparation.
 
+For a new Sandbox, `machine_included: true` selects the deployment's immutable
+Linux desktop image. Omission defaults to false. This option cannot be combined
+with `image`, `sandbox_id`, or `workspace_id`; existing environments retain their
+original desktop capability. A deployment without a configured desktop image
+refuses the request before provisioning. The returned Agent detail has `desktop`
+set when its retained Sandbox supports desktop access and the Agent is not isolated.
+
+An owner discovers the stream with `GET /api/v1/agents/{id}/desktop`, then opens
+the returned `websocket_url` using the same bearer or CMA browser authentication.
+The stream carries RFB over binary WebSocket frames; it is compatible with noVNC.
+Cookie connections require the exact CMA `Origin`. Shared conversation access
+does not grant desktop control. A second browser connection to the same Sandbox
+receives `409 desktop_busy`; inactive/unavailable desktops return `404`, and an
+unreachable display returns `503`. Connections expire after 30 minutes and may
+reconnect. The owner and non-isolated Agents use the same desktop and browser.
+
 To add an Agent to an existing owned, ready Workspace, pass `workspace_id` to
 the same lifecycle endpoint. This path retains the Workspace and parent Sandbox;
 it rejects `image` and `repository` because those belong to the existing
@@ -1345,6 +1361,8 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
+| `GET /api/v1/agents/{id}/desktop` | - | - | 200 DesktopDescriptor; 404 ProblemDocument |
+| `GET /api/v1/agents/{id}/desktop/ws` | WebSocket upgrade; browser Origin | - | 101 RFB stream; 400/403 refusal; 404/409/503 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
 | `POST /api/v1/workspaces/{id}/agents` | CreateAgentRequest; key | - | 201 AgentView |
 
