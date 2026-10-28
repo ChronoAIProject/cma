@@ -104,6 +104,7 @@ mod runtime_update_service;
 pub use runtime_update_service::{SandboxRuntimeUpdateError, SandboxRuntimeUpdateService};
 mod runtime_recovery_agents;
 mod unpublished_recovery;
+mod unpublished_recovery_legacy;
 mod unpublished_recovery_reservation;
 mod unpublished_recovery_state;
 mod unpublished_recovery_transition;

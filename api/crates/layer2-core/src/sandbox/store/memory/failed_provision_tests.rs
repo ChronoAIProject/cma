@@ -108,6 +108,7 @@ impl SandboxUnpublishedRecoveryVerifier for VerifyStopped {
             runtime_id: binding.runtime_id.clone(),
             runtime_generation: snapshot.runtime_generation()?,
             reserved_provision: snapshot.recovery_provision_reservation()?.cloned(),
+            observed_provision_generation: None,
             home_identity: snapshot.home_identity()?,
             boot_id: None,
             runtime_process_absent: true,
