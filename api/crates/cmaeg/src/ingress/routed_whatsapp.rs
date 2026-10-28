@@ -204,8 +204,11 @@ impl IngressState {
                     verified.body.clone()
                 }
                 Some(existing) => {
-                    let same = webhook::extract(&verified.source, &existing.source_body).is_ok_and(
-                        |messages| messages.iter().any(|message| message == &verified.message),
+                    let same = webhook::same_message(
+                        &verified.source,
+                        &existing.source_body,
+                        &verified.body,
+                        &verified.message,
                     );
                     if !same {
                         return refusal(409, "native_whatsapp_message_identity_conflict");
