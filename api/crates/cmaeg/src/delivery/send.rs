@@ -251,6 +251,7 @@ impl Sender {
         }
         let (parts, rendering) = RelayText.render(message, &capabilities);
         let mut result = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery: DeliveryOutcome::Rejected {
@@ -445,6 +446,7 @@ impl Sender {
 /// A receipt for a send a gate stopped before its side effect.
 pub(super) fn refused(rendering: RenderingReport, delivery: DeliveryOutcome) -> IntentReceipt {
     IntentReceipt {
+        message_parts: vec![],
         message_ref: None,
         rendering,
         delivery,
@@ -452,6 +454,7 @@ pub(super) fn refused(rendering: RenderingReport, delivery: DeliveryOutcome) -> 
 }
 pub(super) fn unsupported() -> IntentReceipt {
     IntentReceipt {
+        message_parts: vec![],
         message_ref: None,
         rendering: RenderingReport {
             outcome: RenderingOutcome::Unsupported,

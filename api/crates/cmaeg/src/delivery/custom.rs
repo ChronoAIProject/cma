@@ -53,6 +53,7 @@ impl CustomDelivery {
         // address does nothing, so its first webhook attempt commits.
         if matches!(event.reply, ReplyAddress::Sync { .. }) && !gate.commit() {
             return IntentReceipt {
+                message_parts: vec![],
                 message_ref: None,
                 rendering: custom::report(message),
                 delivery: expired(),
@@ -71,6 +72,7 @@ impl CustomDelivery {
             )
             .await;
         IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering: custom::report(message),
             delivery,

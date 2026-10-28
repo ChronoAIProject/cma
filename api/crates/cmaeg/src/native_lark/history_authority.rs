@@ -168,6 +168,7 @@ pub(crate) async fn load(
     Ok(Authority {
         activity: plan.activity,
         cursor: NativeLarkHistoryCursorPayload {
+            include_media: false,
             v: 2,
             event_sha256: crate::tools::message_effects::mutation::hash(event),
             custody,
