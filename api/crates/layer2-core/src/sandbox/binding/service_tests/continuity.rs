@@ -1,6 +1,56 @@
 use super::*;
 
 #[tokio::test]
+async fn generation_pin_prevents_conversation_allocation_before_alias_resolution() {
+    let f = fixture();
+    let binding = f.ready().await;
+    assert!(matches!(
+        f.service
+            .ensure_conversation_at_generation(
+                &f.caller,
+                &binding.binding_id,
+                "conversation_future",
+                Some(binding.generation + 1)
+            )
+            .await,
+        Err(BindingError::Conflict)
+    ));
+    assert!(f
+        .store
+        .binding_conversation(
+            &binding.binding_id,
+            binding.generation,
+            "conversation_future"
+        )
+        .await
+        .unwrap()
+        .is_none());
+    let (current, created) = f
+        .service
+        .ensure_conversation_at_generation(
+            &f.caller,
+            &binding.binding_id,
+            "conversation_current",
+            Some(binding.generation),
+        )
+        .await
+        .unwrap();
+    assert!(created);
+    let (replayed, created) = f
+        .service
+        .ensure_conversation_at_generation(
+            &f.caller,
+            &binding.binding_id,
+            "conversation_current",
+            Some(binding.generation),
+        )
+        .await
+        .unwrap();
+    assert!(!created);
+    assert_eq!(current, replayed);
+}
+
+#[tokio::test]
 async fn unsupported_updates_and_reconciliation_retries_preserve_original_work() {
     for field in ["services", "skills", "prompt", "environment", "affinity"] {
         let f = fixture();

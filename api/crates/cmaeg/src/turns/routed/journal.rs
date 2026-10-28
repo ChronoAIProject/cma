@@ -93,6 +93,7 @@ impl Journal {
                 retained_until: plan.retained_until,
                 event_expires_at: target.launch.event.expires_at,
                 phase: Phase::Pending,
+                binding_preparation: None,
                 delivery: None,
                 projection: None,
                 body: None,
@@ -268,7 +269,7 @@ impl Journal {
     }
 }
 
-fn validate(
+pub(super) fn validate(
     state: &TargetState,
     plan: &AdmittedPlan,
     target: &StoredTarget,
@@ -285,6 +286,9 @@ fn validate(
         || uuid::Uuid::parse_str(&state.ownership.claim).is_err()
         || (!matches!(state.phase, Phase::Pending | Phase::Refused { .. }) && state.body.is_none())
         || (matches!(state.phase, Phase::Pending) && state.body.is_some())
+        || (plan.prepares_binding(target)
+            && !matches!(state.phase, Phase::Pending | Phase::Refused { .. })
+            && state.binding_preparation.is_none())
     {
         return Err(ExecutionError::Corrupt);
     }
@@ -305,6 +309,14 @@ fn validate(
             || matches!(&checkpoint.status, super::DeliveryStatus::Partial { receipt }
                 if !receipt.has_parts() || !matches!(receipt.delivery,
                     crate::delivery::intents::DeliveryOutcome::Unknown { .. }))
+        {
+            return Err(ExecutionError::Corrupt);
+        }
+    }
+    if let Some(preparation) = &state.binding_preparation {
+        preparation.validate(plan, target)?;
+        if !matches!(state.phase, Phase::Pending | Phase::Refused { .. })
+            && preparation.resolved_generation().is_err()
         {
             return Err(ExecutionError::Corrupt);
         }
