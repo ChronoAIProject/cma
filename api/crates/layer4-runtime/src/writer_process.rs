@@ -115,7 +115,12 @@ fn unexpected_live_processes(table: &BTreeMap<i32, ProcessRecord>, supervisor: i
 
 #[cfg(target_os = "linux")]
 pub(super) fn require_no_other_processes(supervisor: i32) -> Result<(), String> {
-    let processes = unexpected_live_processes(&process_table()?, supervisor);
+    let mut processes = Vec::new();
+    for pid in unexpected_live_processes(&process_table()?, supervisor) {
+        if !crate::writer_control_relay::is_nonwriting_relay(pid)? {
+            processes.push(pid);
+        }
+    }
     if processes.is_empty() {
         Ok(())
     } else {

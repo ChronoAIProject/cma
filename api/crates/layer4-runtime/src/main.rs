@@ -52,6 +52,8 @@ mod workspace_runtime;
 mod workspace_setup;
 mod workspace_source;
 mod worktree;
+#[cfg(any(target_os = "linux", test))]
+mod writer_control_relay;
 mod writer_fence;
 mod writer_process;
 
