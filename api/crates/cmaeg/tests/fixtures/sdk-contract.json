@@ -837,6 +837,13 @@
           "progressive_only": true,
           "video_codec": "h264",
           "video_profile": "baseline"
+        },
+        "controls": {
+          "buttons": true,
+          "caption_max_chars": 1024,
+          "choices": true,
+          "max_attachments": 1,
+          "update": false
         }
       },
       "whatsapp_templates": true,
@@ -3315,6 +3322,13 @@
             "progressive_only": true,
             "video_codec": "h264",
             "video_profile": "baseline"
+          },
+          "controls": {
+            "buttons": true,
+            "caption_max_chars": 1024,
+            "choices": true,
+            "max_attachments": 1,
+            "update": false
           }
         },
         "whatsapp_templates": true,
@@ -3566,6 +3580,13 @@
             "progressive_only": true,
             "video_codec": "h264",
             "video_profile": "baseline"
+          },
+          "controls": {
+            "buttons": true,
+            "caption_max_chars": 1024,
+            "choices": true,
+            "max_attachments": 1,
+            "update": false
           }
         },
         "whatsapp_templates": true,
@@ -4031,6 +4052,15 @@
         "type": "none"
       },
       "url": "fixture"
+    }
+  ],
+  "MediaControlsCapabilities": [
+    {
+      "buttons": true,
+      "caption_max_chars": 1024,
+      "choices": true,
+      "max_attachments": 1,
+      "update": false
     }
   ],
   "MediaDownload": [
@@ -6368,6 +6398,13 @@
         "progressive_only": true,
         "video_codec": "h264",
         "video_profile": "baseline"
+      },
+      "controls": {
+        "buttons": true,
+        "caption_max_chars": 1024,
+        "choices": true,
+        "max_attachments": 1,
+        "update": false
       }
     },
     {
@@ -6422,6 +6459,13 @@
         "progressive_only": true,
         "video_codec": "h264",
         "video_profile": "baseline"
+      },
+      "controls": {
+        "buttons": true,
+        "caption_max_chars": 1024,
+        "choices": true,
+        "max_attachments": 1,
+        "update": false
       }
     }
   ],
