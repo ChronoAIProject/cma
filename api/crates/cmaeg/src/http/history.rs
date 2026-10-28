@@ -41,7 +41,12 @@ pub async fn read_event_history(
                 Problem::new(ProblemCode::InvalidRequest, 400, "invalid history query")
             })?;
             state
-                .read_event_history_with_media(caller, &event_ref(&raw)?, query.cursor.as_ref(), query.include_media)
+                .read_event_history_with_media(
+                    caller,
+                    &event_ref(&raw)?,
+                    query.cursor.as_ref(),
+                    query.include_media,
+                )
                 .await
         }
         .await,
