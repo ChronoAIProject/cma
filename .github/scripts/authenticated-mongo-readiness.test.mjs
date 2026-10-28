@@ -17,16 +17,16 @@ function fixture(overrides = {}) {
     ...overrides,
   };
   const db = {
-    auth(username, password) {
+    async auth(username, password) {
       assert.equal(username, 'fixture-admin');
       assert.equal(password, 'fixture-password');
     },
-    runCommand(command) {
+    async runCommand(command) {
       assert.equal(command.connectionStatus, 1);
       return {authInfo: {authenticatedUsers: state.authenticated
         ? [{user: 'fixture-admin', db: 'admin'}] : []}};
     },
-    adminCommand(command) {
+    async adminCommand(command) {
       if (command.getCmdLineOpts) {
         return {ok: 1, parsed: state.finalProcess
           ? {replication: state.replicationOptions} : {}};
@@ -43,11 +43,11 @@ function fixture(overrides = {}) {
       if (state.loseInitializeReply) throw new Error('connection lost after initialization');
       return {ok: 1};
     },
-    hello() { return {isWritablePrimary: state.primary, setName: 'cma-im-contract'}; },
+    async hello() { return {isWritablePrimary: state.primary, setName: 'cma-im-contract'}; },
   };
-  return {state, probe() {
+  return {state, async probe() {
     try {
-      vm.runInNewContext(source, {
+      await vm.runInNewContext(source, {
         db, process: {env: {MONGO_INITDB_ROOT_USERNAME: 'fixture-admin',
           MONGO_INITDB_ROOT_PASSWORD: 'fixture-password'}},
         quit(code) { throw new Exit(code); },
@@ -60,32 +60,32 @@ function fixture(overrides = {}) {
   }};
 }
 
-test('temporary authenticated bootstrap cannot satisfy readiness or initialize a set', () => {
+test('temporary authenticated bootstrap cannot satisfy readiness or initialize a set', async () => {
   const f = fixture({finalProcess: false, primary: true});
-  assert.equal(f.probe(), 1);
+  assert.equal(await f.probe(), 1);
   assert.equal(f.state.initializationCalls, 0);
   assert.equal(f.state.config, null);
 });
 
-test('final process initializes once and becomes ready only after primary election', () => {
+test('final process initializes once and becomes ready only after primary election', async () => {
   for (const throwNotInitialized of [false, true]) {
     const f = fixture({throwNotInitialized});
-    assert.equal(f.probe(), 1);
+    assert.equal(await f.probe(), 1);
     assert.equal(f.state.initializationCalls, 1);
     f.state.primary = true;
-    assert.equal(f.probe(), 0);
+    assert.equal(await f.probe(), 0);
     assert.equal(f.state.initializationCalls, 1);
   }
 });
 
-test('CLI and config replica options are accepted, but missing or conflicting names never initialize', () => {
+test('CLI and config replica options are accepted, but missing or conflicting names never initialize', async () => {
   for (const replicationOptions of [
     {replSet: 'cma-im-contract'},
     {replSetName: 'cma-im-contract'},
     {replSet: 'cma-im-contract', replSetName: 'cma-im-contract'},
   ]) {
     const f = fixture({replicationOptions, primary: true});
-    assert.equal(f.probe(), 0);
+    assert.equal(await f.probe(), 0);
     assert.equal(f.state.initializationCalls, 1);
   }
   for (const replicationOptions of [
@@ -95,23 +95,23 @@ test('CLI and config replica options are accepted, but missing or conflicting na
     {replSet: 'cma-im-contract/foreign:27017'},
   ]) {
     const f = fixture({replicationOptions, primary: true});
-    assert.equal(f.probe(), 1);
+    assert.equal(await f.probe(), 1);
     assert.equal(f.state.initializationCalls, 0);
     assert.equal(f.state.config, null);
   }
 });
 
-test('lost initialization response is reconciled without a second initialization', () => {
+test('lost initialization response is reconciled without a second initialization', async () => {
   const f = fixture({loseInitializeReply: true});
-  assert.throws(() => f.probe(), /connection lost/);
+  await assert.rejects(() => f.probe(), /connection lost/);
   f.state.primary = true;
-  assert.equal(f.probe(), 0);
+  assert.equal(await f.probe(), 0);
   assert.equal(f.state.initializationCalls, 1);
 });
 
-test('failed authentication and foreign configurations never become ready or get rewritten', () => {
+test('failed authentication and foreign configurations never become ready or get rewritten', async () => {
   const unauthorized = fixture({authenticated: false, primary: true});
-  assert.equal(unauthorized.probe(), 1);
+  assert.equal(await unauthorized.probe(), 1);
   assert.equal(unauthorized.state.initializationCalls, 0);
   for (const config of [
     {...expected, _id: 'foreign'},
@@ -120,7 +120,7 @@ test('failed authentication and foreign configurations never become ready or get
     {...expected, members: [...expected.members, {_id: 1, host: 'foreign:27017'}]},
   ]) {
     const f = fixture({config, primary: true});
-    assert.equal(f.probe(), 1);
+    assert.equal(await f.probe(), 1);
     assert.deepEqual(f.state.config, config);
     assert.equal(f.state.initializationCalls, 0);
   }
