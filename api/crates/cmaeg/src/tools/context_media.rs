@@ -81,10 +81,14 @@ impl NativeMediaCapabilities {
             Self::for_source(&activity.source, state.native_media_enabled).map(
                 |mut capabilities| {
                     if verified
-                        && state.native_discord_media_controls_enabled
-                        && state.discord_interactions_enabled
                         && (event.consumer.is_none() || state.consumer_interactions_enabled)
-                        && crate::interactions::discord::eligible(channel, event, activity)
+                        && ((state.native_discord_media_controls_enabled
+                            && state.discord_interactions_enabled
+                            && crate::interactions::discord::eligible(channel, event, activity))
+                            || (state.native_telegram_media_controls_enabled
+                                && crate::interactions::telegram_media::eligible(
+                                    channel, event, activity,
+                                )))
                     {
                         capabilities.controls = Some(MediaControlsCapabilities::single(1024));
                     }

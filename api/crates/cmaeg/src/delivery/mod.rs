@@ -45,6 +45,11 @@ mod step;
 pub mod sync;
 mod telegram;
 mod telegram_media;
+mod telegram_media_controls;
+#[cfg(test)]
+mod telegram_media_controls_fixture;
+#[cfg(test)]
+mod telegram_media_controls_tests;
 #[cfg(test)]
 mod telegram_media_tests;
 pub mod webhook_client;
