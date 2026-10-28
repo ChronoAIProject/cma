@@ -399,8 +399,11 @@ app's webhook would redirect its traffic. This source supports native text
 replies, retained recall notifications with unknown actors, and human reaction
 add/remove deltas. `SourceKind` carries the same regional app/tenant/bot identity.
 Targets retain the original conversation and consumer authority; these incoming
-notifications confer no outgoing delete/edit/reaction authority. Thread history
-and incoming edit propagation are not advertised for this source. Live platform
+notifications confer no outgoing delete/edit/reaction authority. Incoming edit
+propagation remains unsupported; original-conversation history has separate consent.
+Native received personal/group cards and locations become bounded message text
+without changing the authenticated sender, conversation, admission or reply target.
+Shared identities do not grant directory, group or attachment access. Live platform
 acceptance remains separate from local contract tests. See the repository's
 native Lark setup document and preserved incoming-event audit for provisioning
 and limits.
