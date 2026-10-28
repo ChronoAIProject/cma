@@ -70,11 +70,39 @@ filesystem ready. A missing marker in an already-published workspace retains its
 separate refusal behavior. No marker is synthesized and no staging data is
 deleted during this recovery.
 
+## Unfinished history from a previous native process
+
+A failed reopen can leave an old `task_started` record in a conversation that
+the replacement native process loaded without running a new turn. Pinned Codex
+0.147.0 leaves that record unchanged when the idle replacement exits through
+stdin EOF. Waiting for that process to append a terminal event cannot resolve
+the recovery after it has exited.
+
+Final recovery verification accepts such a record only after the exact admitted
+processes are absent. Its start must already occur in the admitted transcript
+prefix, more than sixty seconds before the admitted native process started.
+The transcript must retain its original file identity and byte prefix, and the
+start's timestamp and ordinal must be unchanged. Current turns, missing clock
+evidence, new starts, reused process IDs and surviving untracked processes
+remain refused. Recovery neither writes terminal events nor changes native
+conversation IDs.
+
+These final checks derive the historical classification from the original plan,
+including a journal admitted before that classification was available. The
+plan, its digest, operation and database admission remain unchanged; the normal
+worker records its verified completion receipt. The implementation is embedded
+in the control-plane adapter and does not require a new retained runtime image.
+
 ## Verification boundary
 
 Regression fixtures cover ambiguous confirmation readback, changed authority,
 bounded timeouts/cancellation, one native open with unchanged tool binding,
 interrupted and completed staged preparation, wrong identities, and genuine
-I/O errors. Local fixtures do not establish that an existing production sandbox
+I/O errors. Previous-process recovery fixtures also cover admitted-journal
+replay, exact history preservation, process absence and current-turn refusal.
+A pinned native fixture creates an isolated crash, cold-loads its unmatched
+start without model work, drains through EOF without rewriting it, and then
+continues the original conversation through an explicit local fixture prompt.
+Local fixtures do not establish that an existing production sandbox
 has recovered; production acceptance must additionally confirm its original
 home, conversation and admitted work after the corrected lifecycle completes.
