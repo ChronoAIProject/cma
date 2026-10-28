@@ -114,6 +114,7 @@ fn stored(gateway: &Gateway, record_id: &str) -> ChannelDefinition {
 /// thread-scoped subscriber captures every trace line of both requests.
 #[tokio::test(flavor = "current_thread")]
 async fn a_routed_channel_reads_back_with_only_hashes_and_survives_a_full_put() {
+    keep_log_callsite_registry_shared();
     let capture = Capture::default();
     let writer = capture.clone();
     let _logs = tracing::subscriber::set_default(
