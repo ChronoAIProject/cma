@@ -3798,3 +3798,13 @@ arrowheads; pending consumers have no catalog association. This supersedes the
 earlier **Tool access** label and arrowheads while retaining routing arrows.
 
 | 2026-10-28 | Align New channel header, form and actions with shared page spacing; show source-specific setup hints for advertised tools, preserve the complete catalog, and distinguish catalog references from confirmed tool access. |
+
+The tool node and inspector use the plain title **Event tools** with **Tools and
+channel setup** on the map. Static dashed associations are labeled **Tools**.
+Tools with missing source settings remain under **Tools requiring setup** with
+the existing concise source hints. The inspector says that available tools depend
+on the event, platform and permissions. Connected agents state pending, existing
+setup or requested tools directly; internal installation and receipt caveats stay
+in implementation documentation. These labels supersede the catalog wording above.
+
+| 2026-10-28 | Use plain Event tools, Tools and Tools requiring setup labels; keep configuration states concise while preserving conditional availability and the complete server catalog. |

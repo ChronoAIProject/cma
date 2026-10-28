@@ -262,9 +262,9 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await expect(page.getByLabel('Bot username', { exact: true })).toHaveValue('retained_bot');
   expect(await editor.evaluate((element, previous) => element === previous, retained)).toBe(true);
   await page.getByRole('button', { name: 'Close', exact: true }).click();
-  await map.getByRole('button', { name: /^Toolsets: Agent toolsets/ }).click();
+  await map.getByRole('button', { name: /^Toolsets: Event tools/ }).click();
   await expect(page.getByText('readEventContext', { exact: true })).toBeVisible();
-  const otherTools = page.getByText('Other advertised tools (2)');
+  const otherTools = page.getByText('Tools requiring setup (2)');
   await expect(otherTools).toBeVisible();
   await expect(page.getByText('prepareFormReply', { exact: true })).not.toBeVisible();
   await capture('channel-toolsets-conditional-light-1600.png', 'light');
@@ -332,7 +332,7 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   }
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.setViewportSize({ width: 1600, height: 5000 });
-  await map.getByRole('button', { name: /^Toolsets: Agent toolsets/ }).click();
+  await map.getByRole('button', { name: /^Toolsets: Event tools/ }).click();
   await expect(page.locator('.modal:not([hidden])')).toHaveCSS('opacity', '1');
   await expect
     .poll(() => toolPanel.evaluate((panel) => panel.scrollHeight <= panel.clientHeight + 1))

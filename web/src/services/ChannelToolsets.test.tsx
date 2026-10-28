@@ -83,9 +83,8 @@ it('shows only the advertised tools and server descriptions, reusing discovery a
   expect(within(catalog()).getAllByText('Read only')).toHaveLength(2);
   for (const missing of ['readEventAttachment', 'replyToEvent', 'setMessageReaction'])
     expect(within(catalog()).queryByText(missing)).not.toBeInTheDocument();
-  expect(screen.getByText(/does not confirm installation in an agent/)).toBeVisible();
-  expect(screen.getByText(/Existing agent. Its current tool setup is preserved/)).toBeVisible();
-  expect(screen.getByText('Connection pending. Tool availability is not confirmed.')).toBeVisible();
+  expect(screen.getByText(/Existing agent. Uses its current tool setup./)).toBeVisible();
+  expect(screen.getByText('Connection pending.')).toBeVisible();
 
   view.rerender(<Catalog visible={false} />);
   view.rerender(<Catalog />);
@@ -136,20 +135,18 @@ it.each([
     );
     render(<Catalog current={{ ...channel, definition: { ...channel.definition, sources } }} />);
     await screen.findByText('readEventContext');
-    const other = screen.getByText('Other advertised tools (5)').closest('details')!;
+    const other = screen.getByText('Tools requiring setup (5)').closest('details')!;
     expect(other).not.toHaveAttribute('open');
     for (const name of ['readEventContext', 'readFormPreparation', 'futureTool']) {
       expect(screen.getByText(name)).toBeVisible();
       expect(other).not.toContainElement(screen.getByText(name));
     }
-    await userEvent.click(screen.getByText('Other advertised tools (5)'));
+    await userEvent.click(screen.getByText('Tools requiring setup (5)'));
     expect(within(other).getAllByRole('listitem')).toHaveLength(5);
     expect(within(other).getAllByText(discordHint)).not.toHaveLength(0);
     expect(within(other).getByText(whatsappHint)).toBeVisible();
     expect(within(other).getByText('readEventHistory')).toBeVisible();
-    expect(
-      screen.getByText('Connection pending. Tool availability is not confirmed.'),
-    ).toBeVisible();
+    expect(screen.getByText('Connection pending.')).toBeVisible();
   },
 );
 
@@ -179,9 +176,10 @@ it('uses saved source consents without treating them as confirmed execution or i
   const view = render(<Catalog current={current} />);
   await screen.findByText('prepareFormReply');
   expect(within(catalog()).getAllByRole('listitem')).toHaveLength(names.length);
-  expect(screen.queryByText(/Other advertised tools/)).not.toBeInTheDocument();
-  expect(screen.getByText(/Support depends on the event, platform and permissions/)).toBeVisible();
-  expect(screen.getByText(/does not confirm installation in an agent/)).toBeVisible();
+  expect(screen.queryByText(/Tools requiring setup/)).not.toBeInTheDocument();
+  expect(
+    screen.getByText(/Available tools depend on the event, platform and permissions/),
+  ).toBeVisible();
   view.rerender(
     <Catalog
       current={{
@@ -196,13 +194,13 @@ it('uses saved source consents without treating them as confirmed execution or i
       }}
     />,
   );
-  const other = screen.getByText('Other advertised tools (2)').closest('details')!;
+  const other = screen.getByText('Tools requiring setup (2)').closest('details')!;
   expect(within(other).getByText('readEventHistory')).toBeInTheDocument();
   expect(within(other).getByText('prepareFormReply')).toBeInTheDocument();
   expect(within(other).queryByText('listEventThreads')).not.toBeInTheDocument();
   expect(screen.getByText('Enable Discord conversation history')).toBeInTheDocument();
   view.rerender(<Catalog current={channel} />);
-  expect(screen.getByText('Other advertised tools (5)')).toBeVisible();
+  expect(screen.getByText('Tools requiring setup (5)')).toBeVisible();
   expect(fetcher).toHaveBeenCalledOnce();
 });
 
