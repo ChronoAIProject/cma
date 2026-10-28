@@ -2,6 +2,14 @@
 use crate::{http::ManagementState, Config};
 use std::sync::Arc;
 
+pub(super) fn lark_issuance(config: &Config, state: &ManagementState) -> (bool, bool) {
+    let admitted = config.native_lark_intake_enabled && state.native_lark_admission_enabled;
+    (
+        admitted && config.native_lark_controls_enabled,
+        admitted && config.native_lark_thread_start_enabled,
+    )
+}
+
 /// Keep native card/effect client construction and its issuance gates together.
 pub(super) fn lark_effects(
     config: &Config,

@@ -2,6 +2,56 @@ use super::*;
 use crate::channels::routing_fixture;
 use cmaeg_core::{ids::ChannelId, seal::ChannelPointer};
 
+#[tokio::test]
+async fn native_lark_thread_start_discovery_requires_verified_original_group_and_gate() {
+    let mut app = crate::tools::message_effects::lark_fixture::App::new(Platform::Lark).await;
+    for mode in ["root", "private", "thread", "forged"] {
+        let mut f = if mode == "root" || mode == "forged" {
+            crate::interactions::native_lark::fixture::Fixture::new_group(
+                true,
+                cmaeg_core::channel::LarkRegion::Lark,
+            )
+            .await
+        } else {
+            crate::interactions::native_lark::fixture::Fixture::new(
+                true,
+                mode == "thread",
+                cmaeg_core::channel::LarkRegion::Lark,
+            )
+            .await
+        };
+        if mode == "forged" {
+            f.context.activity.actor.id = "ou_other".into();
+        }
+        for enabled in [false, true] {
+            for verified in [false, true] {
+                app.state.native_lark_thread_start_enabled = enabled;
+                let consumer =
+                    consumer_view(&f.channel, f.event.consumer.as_ref().unwrap()).unwrap();
+                let response = project(
+                    &f.channel,
+                    &consumer,
+                    &f.event,
+                    f.context.activity.clone(),
+                    verified,
+                    None,
+                    &app.state,
+                );
+                assert_eq!(
+                    response.capabilities.native_thread_start,
+                    (enabled && verified && mode == "root").then_some(true)
+                );
+                if response.capabilities.native_thread_start.is_none() {
+                    assert!(serde_json::to_value(response.capabilities)
+                        .unwrap()
+                        .get("native_thread_start")
+                        .is_none());
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn relay_text_edit_discovery_preserves_legacy_shape_and_limits_supported_platforms() {
     for platform in [

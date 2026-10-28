@@ -21,6 +21,7 @@ impl Capabilities {
             thread_history: None,
             topic_lifecycle: None,
             thread_lifecycle: None,
+            native_thread_start: None,
             conversation_history: None,
         }
     }
@@ -48,6 +49,7 @@ impl Capabilities {
             thread_history: None,
             topic_lifecycle: None,
             thread_lifecycle: None,
+            native_thread_start: None,
             conversation_history: None,
         }
     }
@@ -71,6 +73,7 @@ impl Capabilities {
             thread_history: None,
             topic_lifecycle: None,
             thread_lifecycle: None,
+            native_thread_start: None,
             conversation_history: None,
         }
     }

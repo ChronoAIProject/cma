@@ -246,6 +246,7 @@ impl App {
             native_media_enabled: false,
             native_lark_outbound_media_enabled: false,
             native_lark_media_controls_enabled: false,
+            native_lark_thread_start_enabled: false,
             native_whatsapp_outbound_media_enabled: false,
             whatsapp_reactions: None,
             native_whatsapp_templates_enabled: false,
