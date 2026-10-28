@@ -227,7 +227,7 @@ impl Candidate {
             return Err(AdmissionError::Invalid);
         }
         let admission_id = identity.admission_id();
-        let payload = AdmittedPlan {
+        let mut payload = AdmittedPlan {
             kind: native_kind.unwrap_or(PAYLOAD_KIND).into(),
             admission_id: admission_id.clone(),
             identity,
@@ -238,6 +238,7 @@ impl Candidate {
                 .ok_or(AdmissionError::Invalid)?,
             quote_projection,
             binding_preparation_version: generation_aware.then_some(1),
+            binding_custom_source: None,
             activity: plan.activity.clone(),
             source: plan.source.clone(),
             targets: plan
@@ -250,11 +251,7 @@ impl Candidate {
                     ),
                     binding_replacement_version: (generation_aware
                         && !native
-                        && matches!(
-                            plan.activity.kind,
-                            cmaeg_core::activity::ActivityKind::Message { .. }
-                        )
-                        && plan.activity.actor.kind == cmaeg_core::activity::ActorKind::Human
+                        && super::preparation_source::eligible(&plan.activity, &plan.source)
                         && launch.provider.slug.as_str() == "cma_codex"
                         && launch.provider.target.is_profile()
                         && replacements.contains(launch.provider.binding_id.as_str()))
@@ -264,6 +261,22 @@ impl Candidate {
                 .collect(),
             source_body: source_body.to_vec(),
         };
+        if matches!(
+            payload.activity.source,
+            cmaeg_core::activity::SourceKind::Custom
+        ) && payload
+            .targets
+            .iter()
+            .any(|target| target.binding_replacement_version.is_some())
+        {
+            payload.binding_custom_source =
+                Some(super::preparation_source::CustomSourceCustody::capture(
+                    &payload.identity,
+                    &payload.source,
+                    &request.channel.definition,
+                    keys,
+                )?);
+        }
         payload.validate()?;
         let bytes = codec::canonical(&payload)?;
         if bytes.len() > MAX_PAYLOAD_BYTES {
@@ -320,7 +333,8 @@ impl AdmittedPlan {
         let flow_native = self.kind == NATIVE_WHATSAPP_FLOW_INTERACTION_KIND;
         let native = discord_native || whatsapp_native || lark_native || flow_native;
         let message_event = self.kind == MESSAGE_EVENT_KIND;
-        if self.quote_projection.is_some_and(|v| v != 1)
+        if !self.valid_custom_source_custody()
+            || self.quote_projection.is_some_and(|v| v != 1)
             || self.binding_preparation_version.is_some_and(|v| v != 1)
             || (self.quote_projection.is_some()
                 && (self.kind != PAYLOAD_KIND

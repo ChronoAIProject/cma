@@ -159,7 +159,11 @@ impl Dispatcher {
         plan: &AdmittedPlan,
         target: &StoredTarget,
     ) -> Result<Arc<ResolvedChannel>, ExecutionError> {
-        current_target(self.authority.as_ref(), plan, target).await
+        let current = current_target(self.authority.as_ref(), plan, target).await?;
+        if !plan.current_preparation_source(&current.definition, &self.journal.keys) {
+            return Err(ExecutionError::AuthorityChanged);
+        }
+        Ok(current)
     }
     /// A retained checkpoint is the only retry authority. Never re-inspect
     /// after marker acknowledgement, including an ambiguous reservation reply.
