@@ -77,7 +77,13 @@ try {
     const diagnostics = docker(['exec', name, 'sh', '-c', 'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-websockify.log 2>/dev/null']);
     process.stderr.write(diagnostics.replaceAll(token, '[fixture-token]'));
   } catch { /* The container may already have stopped. */ }
-  try { docker(['cp', `${name}:/tmp/cma-desktop-failed-screen.png`, destination + '.png']); }
+  try {
+    // Docker's archive endpoint cannot reliably read a container's tmpfs.
+    // Read the live mount through exec without decoding the PNG as text.
+    const screen = execFileSync('docker', ['exec', name, 'cat', '/tmp/cma-desktop-failed-screen.png'],
+      { timeout: 10000, maxBuffer: 8 * 1024 * 1024 });
+    writeFileSync(destination + '.png', screen);
+  }
   catch { /* A failure before browser execution has no screenshot. */ }
 } finally {
   try {
