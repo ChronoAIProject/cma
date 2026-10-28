@@ -22,6 +22,12 @@ pending their persistent-storage checks. The NyxID contract was inspected read-o
 currently serving NyxID replica has the same behavior. No NyxID code change or
 external platform send is authorized by this review.
 
+Native Telegram shared contacts, locations and venues also have a composed
+bounded display-text path; see [shared facts](CMAEG_Native_Telegram_Shared_Facts.md).
+They preserve normal sender/chat/source consent and grant no resource or contact
+identity authority. Their production activation requires a release containing
+this implementation; this source note is not a live acceptance claim.
+
 ## Current capabilities
 
 | Capability | Telegram | WhatsApp | Lark / Feishu | Discord |
