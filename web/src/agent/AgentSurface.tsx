@@ -38,6 +38,7 @@ import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
+import { DesktopPanel } from './DesktopPanel';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -85,6 +86,7 @@ export function AgentSurface({
   onAgentAction,
 }: AgentSurfaceProps) {
   const [steeringMode, setSteeringMode] = useState<SteeringMode>('queue');
+  const [desktopAgentId, setDesktopAgentId] = useState<string>();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const state: AgentResourceState =
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
@@ -306,6 +308,14 @@ export function AgentSurface({
         {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
           <AgentLifecycleFollowup client={lifecycleClient} viewerId={viewerId} agentId={agentId} />
         ) : null}
+
+        {detail.desktop && !readOnly ? (
+          <div className="agent-surface__desktop-action">
+            <Button size="sm" onClick={() => setDesktopAgentId(agentId)}>
+              Open machine desktop
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="agent-surface__conversation">
@@ -486,6 +496,9 @@ export function AgentSurface({
           onReady={connection.accept}
           onCancel={() => onNavigate({ kind: 'home' })}
         />
+      ) : null}
+      {desktopAgentId === agentId ? (
+        <DesktopPanel agentId={agentId} onClose={() => setDesktopAgentId(undefined)} />
       ) : null}
     </section>
   );

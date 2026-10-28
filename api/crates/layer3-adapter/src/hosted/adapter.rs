@@ -120,6 +120,13 @@ impl HostedAdapter {
             .cloned()
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))
     }
+
+    pub(crate) async fn open_desktop(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::DesktopConnectionHandle> {
+        self.backend.open_desktop(handle).await
+    }
 }
 
 #[path = "adapter_sandbox.rs"]

@@ -31,6 +31,8 @@ pub(crate) struct RuntimeConfig {
     pub github_proxy: Option<crate::github_proxy::GithubProxyConfig>,
     pub nyxid_url: Option<String>,
     pub allow_local_git: bool,
+    /// Set only on a Sandbox whose immutable profile requested a desktop.
+    pub machine_included: bool,
 }
 
 impl RuntimeConfig {
@@ -78,12 +80,23 @@ impl RuntimeConfig {
         {
             return Err("CHRONO_RUNTIME_HOME_IDENTITY must be a canonical home fingerprint".into());
         }
+        let machine_included = match process_env.get("CMA_MACHINE_INCLUDED").map(String::as_str) {
+            None | Some("0") | Some("false") => false,
+            Some("1") | Some("true") => true,
+            Some(_) => return Err("CMA_MACHINE_INCLUDED must be 0, 1, false or true".into()),
+        };
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
         process_env
             .entry("PATH".into())
             .or_insert_with(|| DEFAULT_PATH.into());
+        if machine_included {
+            // Codex and Chrome must share the display started by the
+            // supervisor-owned desktop session. Do not inherit a caller's
+            // arbitrary display socket.
+            process_env.insert("DISPLAY".into(), ":99".into());
+        }
 
         let mut install_env = process_env
             .iter()
@@ -137,6 +150,7 @@ impl RuntimeConfig {
             github_proxy,
             nyxid_url,
             allow_local_git: false,
+            machine_included,
         })
     }
 
@@ -174,6 +188,7 @@ impl RuntimeConfig {
             github_proxy: None,
             nyxid_url: None,
             allow_local_git: true,
+            machine_included: false,
         }
     }
 }
@@ -305,6 +320,25 @@ mod tests {
         );
         assert_eq!(config.process_env["TMPDIR"], "/var/lib/cma-transfer");
         assert_eq!(config.install_env["TMPDIR"], "/var/lib/cma-transfer");
+    }
+
+    #[test]
+    fn machine_marker_is_explicit_and_fail_closed() {
+        let mut environment = runtime_environment();
+        assert!(
+            !RuntimeConfig::from_values(environment.clone())
+                .unwrap()
+                .machine_included
+        );
+        environment.insert("CMA_MACHINE_INCLUDED".into(), "1".into());
+        let machine = RuntimeConfig::from_values(environment.clone()).unwrap();
+        assert!(machine.machine_included);
+        assert_eq!(
+            machine.process_env.get("DISPLAY").map(String::as_str),
+            Some(":99")
+        );
+        environment.insert("CMA_MACHINE_INCLUDED".into(), "yes".into());
+        assert!(RuntimeConfig::from_values(environment).is_err());
     }
 
     #[test]

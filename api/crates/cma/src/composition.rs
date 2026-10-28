@@ -5,6 +5,7 @@ mod adapter;
 mod bindings;
 mod bots;
 mod credentials;
+mod desktop;
 mod documents;
 mod event_routing;
 mod profiles;
@@ -177,6 +178,7 @@ impl ControlPlaneComposition {
             image_resolver.clone(),
             authoring_bounds,
             config.agent_manager_sandbox_capacity,
+            config.runtime.machine_sandbox_image.clone(),
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
@@ -406,6 +408,7 @@ impl ControlPlaneComposition {
             .merge(rest::profile_authoring_router(profile_authoring))
             .merge(rest::hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
+            .merge(desktop::router(projections.reads(), adapter.clone()))
             .merge(projections.conversation_router(
                 context,
                 sandbox_lifecycle.updates(),

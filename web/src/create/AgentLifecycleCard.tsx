@@ -74,6 +74,7 @@ function AgentLifecycleForm({
     [admitted, createdReceipt?.id, operation],
   );
   const [repository, setRepository] = useState('');
+  const [machineIncluded, setMachineIncluded] = useState(false);
   // Shown only after the field is left or Create agent is pressed, never while
   // somebody is still typing the URL, so the alert is announced once.
   const [repositoryError, setRepositoryError] = useState(false);
@@ -96,6 +97,8 @@ function AgentLifecycleForm({
   const repositoryUrl = repository.trim();
   const repositoryValid = validRepository(repositoryUrl);
   const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
+  const machineIncludedAvailable =
+    workspaceId === undefined && sandboxId === undefined && canCreateSandbox;
   const submit = () => {
     if (!canCreate) return;
     if (!repositoryValid) {
@@ -105,6 +108,7 @@ function AgentLifecycleForm({
     }
     const input: AgentLifecycleCreateInput = {
       name: agentNameFor(repositoryUrl),
+      ...(machineIncludedAvailable && machineIncluded ? { machine_included: true } : {}),
       ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }),
       ...(sandboxId === undefined ? {} : { sandbox_id: sandboxId }),
       ...(repositoryUrl === '' ? {} : { repository: { url: repositoryUrl } }),
@@ -144,6 +148,24 @@ function AgentLifecycleForm({
             Enter an HTTPS GitHub repository URL.
           </p>
         ) : null}
+      </div>
+      <div className="agent-lifecycle-machine">
+        <label className="agent-lifecycle-machine__control" htmlFor="agent-machine-included">
+          <input
+            id="agent-machine-included"
+            type="checkbox"
+            checked={machineIncluded}
+            disabled={!machineIncludedAvailable}
+            onChange={(event) => setMachineIncluded(event.target.checked)}
+            aria-describedby="agent-machine-included-help"
+          />
+          <span>Machine Included</span>
+        </label>
+        <p id="agent-machine-included-help" className="field__hint">
+          {machineIncludedAvailable
+            ? 'Provision a Linux desktop with Chrome and native computer use. It uses a dedicated immutable runtime.'
+            : 'Machine Included is available when creating a new Sandbox; existing Sandboxes keep their immutable runtime.'}
+        </p>
       </div>
       {/*
        * Read-only on purpose: the lifecycle request sends no inline

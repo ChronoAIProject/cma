@@ -237,6 +237,8 @@ pub(crate) struct AgentView {
     worktree: WorktreeSummaryView,
     workspace: WorkspaceContextView,
     sandbox: SandboxContextView,
+    /// Whether the immutable Sandbox profile requested the desktop session.
+    desktop: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     bootstrap: Option<AgentBootstrapView>,
     conforms_to: Vec<&'static str>,
@@ -300,6 +302,12 @@ impl AgentView {
                 });
         Self {
             id: agent.id.to_string(),
+            desktop: sandbox
+                .profile
+                .content
+                .environment_variables
+                .iter()
+                .any(|variable| variable.name == "CMA_MACHINE_INCLUDED" && variable.value == "1"),
             bootstrap,
             status: agent.status,
             profile: (&agent).into(),
@@ -386,6 +394,10 @@ fn agent_conformance(capabilities: &RuntimeCapabilities) -> Vec<&'static str> {
         (
             RuntimeCapability::Resources,
             concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/resources"),
+        ),
+        (
+            RuntimeCapability::Desktop,
+            concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/desktop"),
         ),
     ] {
         if capabilities.supports(capability) {

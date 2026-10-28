@@ -6,6 +6,7 @@ use layer3_adapter::{
     AgentLaunch, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, InstallRequest,
     RestoreBootstrapReceipt, RestoreBootstrapRequest,
 };
+use tokio::process::Child;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::bridge::Bridge;
@@ -78,9 +79,15 @@ pub(crate) struct Supervisor {
     resources: crate::resources::Sampler,
     writer_boundary: SupervisorBoundary,
     http: reqwest::Client,
+    // Dropping the supervisor terminates the isolated desktop session.
+    _desktop_process: Option<Child>,
 }
 
 impl Supervisor {
+    pub(crate) fn desktop_enabled(&self) -> bool {
+        self.config.machine_included
+    }
+
     pub(crate) async fn start(
         config: RuntimeConfig,
         writer_boundary: SupervisorBoundary,
@@ -131,6 +138,21 @@ impl Supervisor {
             RecoveryState::Absent | RecoveryState::Terminal => (Phase::Provisioned, None),
         };
         let checkpoint = CheckpointStore::new(&config);
+        let desktop_process = if config.machine_included {
+            Some(
+                tokio::process::Command::new("/usr/local/bin/cma-desktop-session")
+                    .kill_on_drop(true)
+                    .spawn()
+                    .map_err(|error| {
+                        RuntimeError::unavailable(
+                            "desktop_start_failed",
+                            format!("start desktop session: {error}"),
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
         Ok(Arc::new(Self {
             config,
             boot_id,
@@ -152,6 +174,7 @@ impl Supervisor {
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .expect("skill HTTP client builds"),
+            _desktop_process: desktop_process,
         }))
     }
 

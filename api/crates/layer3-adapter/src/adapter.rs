@@ -24,6 +24,15 @@ pub trait SandboxAdapter: Send + Sync {
     /// Abilities proved for the admitted runtime contract.
     fn capabilities(&self) -> AdapterCapabilities;
 
+    async fn open_desktop(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<crate::DesktopConnectionHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime desktop is unavailable".into(),
+        ))
+    }
+
     /// Optional durable storage authority; absence must never fall back to an empty home.
     fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
         None

@@ -39,6 +39,24 @@ mod tool_proxy;
 mod workspace;
 mod workspace_removal;
 
+/// Frames carried by the authenticated desktop WebSocket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DesktopFrame {
+    Binary(Vec<u8>),
+    Text(String),
+    Ping(Vec<u8>),
+    Pong(Vec<u8>),
+    Close,
+}
+
+#[async_trait::async_trait]
+pub trait DesktopConnection: Send {
+    async fn recv(&mut self) -> Result<Option<DesktopFrame>>;
+    async fn send(&mut self, frame: DesktopFrame) -> Result<()>;
+}
+
+pub type DesktopConnectionHandle = Box<dyn DesktopConnection>;
+
 pub mod agent_sandbox;
 pub mod codex;
 pub mod hosted;
@@ -54,6 +72,7 @@ pub use agent::{
 pub use agent_provider::{AgentProvider, ModelConnectionServices};
 pub use capabilities::{
     AdapterCapabilities, RuntimeContract, RUNTIME_CONTRACT_LABEL, RUNTIME_CONTRACT_VERSION,
+    RUNTIME_DESKTOP_LABEL,
 };
 pub use checkpoint::{
     valid_writer_resume_token, writer_resume_tokens_match, CheckpointHoldReceipt,

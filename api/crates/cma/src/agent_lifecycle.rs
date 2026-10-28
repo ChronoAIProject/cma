@@ -79,6 +79,7 @@ pub(crate) struct InlineAgentLifecycle {
     image_resolver: Arc<dyn ImageResolver>,
     bounds: ProfileCapacityBounds,
     capacity: layer3_adapter::SandboxCapacity,
+    machine_sandbox_image: Option<String>,
     operations: Arc<MongoAgentLifecycleStore>,
     native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
     self_ref: OnceLock<Weak<Self>>,
@@ -110,6 +111,7 @@ impl InlineAgentLifecycle {
         image_resolver: Arc<dyn ImageResolver>,
         bounds: ProfileCapacityBounds,
         capacity: layer3_adapter::SandboxCapacity,
+        machine_sandbox_image: Option<String>,
         scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
         operations: Arc<MongoAgentLifecycleStore>,
         native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
@@ -122,6 +124,7 @@ impl InlineAgentLifecycle {
             image_resolver,
             bounds,
             capacity,
+            machine_sandbox_image,
             operations,
             native_prepared,
             self_ref: OnceLock::new(),
@@ -400,6 +403,11 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             Some(guidance::managed_v3()),
         ))?;
         services(&profile.permissions)?;
+        if request.machine_included && request.image.is_some() {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "Machine Included selects the deployment desktop image and cannot be combined with an explicit image".into(),
+            ));
+        }
         // Resolve the delegated Image Manager reference before persisting the
         // operation. The durable worker then needs no secret after admission.
         let resolved_image = match &request.image {
@@ -408,6 +416,15 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
                     .resolve(delegated_credential, image)
                     .await?,
             ),
+            None if request.machine_included => self
+                .machine_sandbox_image
+                .clone()
+                .ok_or_else(|| {
+                    AgentLifecycleProvisioningError::Invalid(
+                        "Machine Included is not available in this deployment".into(),
+                    )
+                })
+                .map(Some)?,
             None => None,
         };
         let input = LifecycleInput {
