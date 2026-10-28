@@ -26,7 +26,7 @@
 .agent-lifecycle-machine__control input:disabled {
   cursor: not-allowed;
 }
-.agent-lifecycle-machine .field__hint {
+.agent-lifecycle-machine__hint {
   margin: 0 0 0 26px;
 }
 /*
