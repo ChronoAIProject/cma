@@ -51,12 +51,15 @@ impl Sender {
         {
             return unsupported();
         }
-        let Ok((_, rendering)) = interactions::native_lark::render_with_image(
+        let Ok(images) = a.images() else {
+            return unsupported();
+        };
+        let Ok((_, rendering)) = interactions::native_lark::render_with_images(
             message,
             &old.id,
             old.revision.saturating_add(1),
             a.form,
-            a.image.as_ref(),
+            images,
         ) else {
             return unsupported();
         };
