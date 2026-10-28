@@ -69,6 +69,7 @@ impl InteractionStore {
         );
         let expires_at = authority.issued_at.saturating_add(super::super::TTL);
         let mut card = Card {
+            native_telegram_media: None,
             id,
             owner: channel.definition.owner.subject.clone(),
             channel_id: channel.id.clone(),

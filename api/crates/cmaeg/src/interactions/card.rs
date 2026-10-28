@@ -10,6 +10,9 @@ use serde_json::Value;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Card {
+    /// One native Telegram media message with controls; omitted on historical cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_telegram_media: Option<super::telegram_media::Authority>,
     pub id: String,
     pub(super) owner: String,
     pub(super) channel_id: ChannelId,

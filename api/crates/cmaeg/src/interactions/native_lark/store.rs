@@ -63,6 +63,7 @@ impl InteractionStore {
             return Err(Error::Denied);
         }
         let mut card = Card {
+            native_telegram_media: None,
             native_whatsapp_flow: None,
             id: uuid::Uuid::new_v4().to_string(),
             owner: channel.definition.owner.subject.clone(),
