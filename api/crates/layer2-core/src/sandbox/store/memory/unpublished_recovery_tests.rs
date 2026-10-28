@@ -151,25 +151,125 @@ async fn native_verification_race_refuses_new_child_and_preserves_all_state() {
 
 #[tokio::test]
 async fn prior_publication_in_logs_cannot_be_hidden_by_an_older_agent_projection() {
+    for deleted in [false, true] {
+        for retired in [false, true] {
+            for runtime_generation in [2, 3] {
+                let (store, id) = fixture();
+                {
+                    let mut state = store.lock();
+                    let agent = state.agents.values_mut().next().unwrap();
+                    agent.work.receipts.clear();
+                    agent.conversation.last_seq = 2;
+                    if deleted {
+                        agent.status = AgentStatus::Deleted;
+                        agent.deleted_at = Some(NOW.into());
+                    }
+                    let agent_id = agent.id.clone();
+                    state.agent_logs.get_mut(&agent_id).unwrap().push(log(
+                        agent_id.as_str(),
+                        2,
+                        NOW,
+                    ));
+                }
+                let before = store
+                    .unpublished_runtime_recovery_snapshot(&id)
+                    .await
+                    .unwrap();
+                before.validate().unwrap();
+                let request = SandboxUnpublishedRecoveryRequest {
+                    proof: proof(&before),
+                    snapshot: before.clone(),
+                    target_runtime_version: "image-latest".into(),
+                    automatic: false,
+                    requested_at: NOW.into(),
+                };
+                {
+                    let mut state = store.lock();
+                    let entry = &mut state.agent_logs.values_mut().next().unwrap()[0];
+                    entry.kind = if retired {
+                        AgentLogKind::RuntimeGenerationRetired {
+                            previous_generation: 1,
+                            runtime_generation,
+                        }
+                    } else {
+                        AgentLogKind::ConversationOpened {
+                            conversation_id: "native-original".into(),
+                            runtime_generation,
+                        }
+                    };
+                }
+                assert!(store
+                    .unpublished_runtime_recovery_snapshot(&id)
+                    .await
+                    .is_err());
+                assert!(store
+                    .admit_unpublished_runtime_recovery(request)
+                    .await
+                    .is_err());
+                assert_eq!(
+                    store.get_sandbox(&id).await.unwrap().unwrap(),
+                    before.sandbox
+                );
+                assert!(!store.lock().sandbox_events.contains_key(&id));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn terminal_only_recovery_preserves_deleted_rows_and_delivery_history() {
     let (store, id) = fixture();
     {
         let mut state = store.lock();
-        let entry = state
+        let agent = state.agents.values_mut().next().unwrap();
+        agent.status = AgentStatus::Deleted;
+        agent.deleted_at = Some(NOW.into());
+        agent.work.receipts.clear();
+        let mut first =
+            crate::sandbox::FirstMessageRecord::new("original-request", "retained input", NOW)
+                .unwrap();
+        first.fence_dispatch_for(8, 9, 6, NOW.into()).unwrap();
+        first.mark_write_confirmed(NOW.into()).unwrap();
+        agent.conversation.first_message = Some(first);
+        agent.conversation.active_turn = Some(8);
+        let mut another = agent.clone();
+        another.id = AgentId("agt_deleted_second".into());
+        state
             .agent_logs
-            .values_mut()
-            .next()
-            .unwrap()
-            .first_mut()
-            .unwrap();
-        entry.kind = AgentLogKind::ConversationOpened {
-            conversation_id: "native-original".into(),
-            runtime_generation: 2,
-        };
+            .insert(another.id.clone(), vec![log(another.id.as_str(), 1, NOW)]);
+        state.agents.insert(another.id.clone(), another);
     }
-    assert!(store
+    let before = store
         .unpublished_runtime_recovery_snapshot(&id)
         .await
-        .is_err());
+        .unwrap();
+    let original_logs = store.lock().agent_logs.clone();
+    let native_proof = proof(&before);
+    assert!(native_proof.conversations.is_empty());
+    let admitted = store
+        .admit_unpublished_runtime_recovery(SandboxUnpublishedRecoveryRequest {
+            proof: native_proof,
+            snapshot: before.clone(),
+            target_runtime_version: "image-latest".into(),
+            automatic: false,
+            requested_at: NOW.into(),
+        })
+        .await
+        .unwrap();
+    let Some(crate::sandbox::SandboxLifecycleOperation::ImageRotation { identity, .. }) =
+        admitted.lifecycle.operation
+    else {
+        panic!()
+    };
+    assert!(identity.agents.is_empty());
+    for original in &before.agents {
+        assert_eq!(
+            store.get_agent(&original.id).await.unwrap().as_ref(),
+            Some(original)
+        );
+        assert_eq!(original.status, AgentStatus::Deleted);
+    }
+    assert_eq!(store.lock().agent_logs, original_logs);
 }
 
 struct RefuseUnverifiableProcess;
