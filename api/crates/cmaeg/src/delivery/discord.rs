@@ -24,6 +24,15 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if self.relay.discord_media_controls_enabled()
+            && !message.native_attachments.is_empty()
+            && message
+                .blocks
+                .iter()
+                .any(|block| matches!(block, cmaeg_core::message::Block::Form { .. }))
+        {
+            return (unsupported(), SendEffects::default());
+        }
         if self.relay.discord_interactions_enabled() {
             if crate::interactions::discord::requested(message) {
                 return self.discord_controls(ctx, event, message, None).await;
