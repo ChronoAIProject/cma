@@ -5,6 +5,7 @@ import os
 import socket
 import struct
 import subprocess
+import threading
 import time
 
 
@@ -25,6 +26,7 @@ class Stream:
         expected = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
         assert expected in headers
         self.buffer = bytearray()
+        self.writer = threading.Lock()
 
     def raw(self, count):
         result = bytearray()
@@ -39,7 +41,8 @@ class Stream:
         length = len(data)
         assert length < 65536
         header = bytes([0x80 | opcode]) + (bytes([0x80 | length]) if length < 126 else b"\xfe" + struct.pack("!H", length))
-        self.socket.sendall(header + mask + bytes(v ^ mask[i % 4] for i, v in enumerate(data)))
+        with self.writer:
+            self.socket.sendall(header + mask + bytes(v ^ mask[i % 4] for i, v in enumerate(data)))
 
     def read(self, count):
         while len(self.buffer) < count:
@@ -71,6 +74,9 @@ class Stream:
 
 def main():
     stream = Stream()
+    stopped = threading.Event()
+    reader = None
+    failures = []
     try:
         assert stream.read(12) == b"RFB 003.008\n"
         stream.send(b"RFB 003.008\n")
@@ -98,10 +104,26 @@ def main():
             assert encoding == 0
             pixels += len(stream.read(w * h * (header[4] // 8)))
         assert pixels > 100000
-        # Viewers request the next update after rendering a frame. x11vnc also
-        # uses that request for initial link calibration; omitting it stalls
-        # queued input until the calibration timeout despite a healthy relay.
-        stream.send(struct.pack("!BBHHHH", 3, 1, 0, 0, width, height))
+        # A viewer must keep consuming pixels while sending input. A raw frame
+        # exceeds socket buffers, so leaving the next update unread can block
+        # the relay and delay input until the test disconnects. Request and
+        # consume every update, including x11vnc's initial link calibration.
+        def updates():
+            try:
+                while not stopped.is_set():
+                    stream.send(struct.pack("!BBHHHH", 3, 1, 0, 0, width, height))
+                    update = stream.read(4)
+                    assert update[0] == 0, "unexpected RFB server message"
+                    for _ in range(struct.unpack("!H", update[2:])[0]):
+                        _, _, w, h, encoding = struct.unpack("!HHHHi", stream.read(12))
+                        assert encoding == 0
+                        stream.read(w * h * (header[4] // 8))
+            except Exception as error:
+                if not stopped.is_set():
+                    failures.append(error)
+
+        reader = threading.Thread(target=updates, daemon=True)
+        reader.start()
         stream.click(120, 120)
         stream.key(0xffe3, True)  # Control
         stream.key(ord('a'), True)
@@ -115,6 +137,7 @@ def main():
         # Closing here can tear down a relay before its queued input reaches X.
         deadline = time.monotonic() + 5
         while True:
+            assert not failures, str(failures)
             title = subprocess.check_output(
                 ['xdotool', 'getactivewindow', 'getwindowname'], text=True).strip()
             if title.startswith('cma-ui:cma-user'):
@@ -123,7 +146,14 @@ def main():
             time.sleep(0.1)
         print('authenticated-framebuffer-and-input: pass')
     finally:
+        stopped.set()
+        try:
+            stream.socket.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         stream.socket.close()
+        if reader:
+            reader.join(timeout=1)
 
 
 if __name__ == '__main__':
