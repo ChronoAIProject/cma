@@ -36,6 +36,8 @@ mod exchange;
 mod filesystem;
 #[path = "adapter_install.rs"]
 mod install;
+#[path = "adapter_nonexecuting.rs"]
+mod nonexecuting;
 #[path = "adapter_provider_tools.rs"]
 mod provider_tools;
 #[path = "adapter_runtime.rs"]
@@ -85,6 +87,14 @@ impl HostedAdapter {
 
     pub fn deployment(&self) -> &HostedDeployment {
         &self.deployment
+    }
+
+    pub(crate) async fn run_recovery_command(
+        &self,
+        handle: &RuntimeHandle,
+        command: &super::RuntimeRecoveryCommand,
+    ) -> crate::Result<Vec<u8>> {
+        self.backend.run_recovery_command(handle, command).await
     }
 
     pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {

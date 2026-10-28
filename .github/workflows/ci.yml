@@ -308,6 +308,8 @@ jobs:
           workspaces: api
       - name: Format
         run: cargo fmt --all --check
+      - name: Native recovery persistence and process fences
+        run: python3 crates/layer3-adapter/src/codex/recovery_test.py
       - name: Lint
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Build

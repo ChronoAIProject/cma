@@ -20,6 +20,15 @@ impl HostedAgentRuntime for CodexRuntime {
             crate::PermissionLevel::Autonomous => "agent-full-access",
         };
         Ok(HostedAgentOpenSettings {
+            // ACP 1.4.0 wraps Codex 0.147.0's native ResponseError using its
+            // internal-error envelope. Other initialize errors are not evidence
+            // of a retained bridge, even when they share that outer code.
+            already_initialized_error: Some(serde_json::json!({
+                "code": -32603,
+                "message": "Internal error",
+                "data": { "details": "Already initialized" },
+            })),
+            open_completion: Some(crate::hosted::HostedOpenCompletionProtocol::V1),
             context_refresh: None,
             permission_mode: Some(permission_mode.into()),
             own_credential: request.options.own_credential,

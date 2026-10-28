@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 mod readiness;
+mod retry;
 pub(super) use readiness::create_backing_resources;
 
 struct Registry;
@@ -28,7 +29,10 @@ impl AgentRuntimeRegistry for Registry {
         Ok(())
     }
 }
-struct Custody;
+struct Custody {
+    store: Arc<InMemorySandboxStore>,
+    keys: std::sync::Mutex<std::collections::HashMap<SandboxId, String>>,
+}
 #[async_trait::async_trait]
 impl BindingCredentialCustody for Custody {
     async fn retain(
@@ -45,7 +49,45 @@ impl BindingCredentialCustody for Custody {
         value: &ProviderBinding,
         key: &ProvidedCredential,
     ) -> Result<(), CoreError> {
-        value.require_credential_admission(key)
+        value.require_credential_admission(key)?;
+        self.keys
+            .lock()
+            .unwrap()
+            .insert(value.sandbox_id.clone(), key.sha256());
+        Ok(())
+    }
+    async fn retry_recovered_binding(
+        &self,
+        binding: &ProviderBinding,
+        key: &ProvidedCredential,
+    ) -> Result<ProviderBinding, CoreError> {
+        use layer2_core::sandbox::store::{SandboxStore, WorkspaceStore};
+        if self.keys.lock().unwrap().get(&binding.sandbox_id) != Some(&key.sha256()) {
+            return Err(CoreError::InvalidState("missing custody".into()));
+        }
+        let sandbox = self
+            .store
+            .get_sandbox(&binding.sandbox_id)
+            .await
+            .unwrap()
+            .ok_or_else(|| CoreError::InvalidState("missing sandbox".into()))?;
+        let workspace = self
+            .store
+            .get_workspace(&binding.workspace_id)
+            .await
+            .unwrap()
+            .ok_or_else(|| CoreError::InvalidState("missing workspace".into()))?;
+        let next = binding.retry_recovered_hierarchy(
+            &sandbox,
+            &workspace,
+            key,
+            layer2_core::now_rfc3339(),
+        )?;
+        self.store
+            .save_binding(Some(binding.revision), next.clone())
+            .await
+            .map_err(|_| CoreError::InvalidState("binding changed".into()))?;
+        Ok(next)
     }
 }
 pub(super) fn app() -> (Router, Arc<InMemorySandboxStore>) {
@@ -80,7 +122,10 @@ fn app_with_tools_alias(
             BindingService::new(
                 store.clone(),
                 resources,
-                Arc::new(Custody),
+                Arc::new(Custody {
+                    store: store.clone(),
+                    keys: Default::default(),
+                }),
                 BindingPolicy {
                     provider: AgentProvider::default(),
                     supported_model_api: "responses".into(),

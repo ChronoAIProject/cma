@@ -541,6 +541,16 @@ results are not retried. This transport alone does not attach tools to an Agent:
 binding provenance, retained endpoint configuration and confirmed conversation
 setup are checked separately before a provider Agent can become ready.
 
+Provider tool resolution and open confirmation use at most five transaction
+attempts in total, retrying only MongoDB-labelled transient failures. Every attempt
+rereads authority and applies all binding/lineage fences. Concurrent startup
+output may write the same Sandbox and Agent records. A rejected authority or
+non-transient storage failure is not retried; an uncertain commit remains
+unavailable and never becomes an unproved successful confirmation. The
+`Provider tool authority transaction did not complete` log identifies the
+Agent identity, operation, stage, fixed error category and attempt number without driver error
+text or record contents. The public adapter error stays unchanged.
+
 A provider binding can retain one tool endpoint as part of its immutable supplied
 credential authority. Exact replays and key rotation preserve that endpoint;
 changing or removing it under the same binding identity is refused. Binding

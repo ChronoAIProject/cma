@@ -197,6 +197,22 @@ pub trait SandboxStore: Send + Sync {
         None
     }
 
+    async fn unpublished_runtime_recovery_snapshot(
+        &self,
+        _id: &SandboxId,
+    ) -> Result<super::SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "unpublished runtime recovery is unavailable",
+        ))
+    }
+    async fn admit_unpublished_runtime_recovery(
+        &self,
+        _request: super::SandboxUnpublishedRecoveryRequest,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "unpublished runtime recovery is unavailable",
+        ))
+    }
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError>;
     async fn get_sandbox(&self, id: &SandboxId) -> Result<Option<Sandbox>, SandboxStoreError>;
     async fn save_sandbox(

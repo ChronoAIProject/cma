@@ -88,12 +88,29 @@ mod targeted_controls;
 #[cfg(test)]
 mod targeted_controls_tests;
 mod transactions;
+mod unpublished_recovery;
+#[cfg(test)]
+mod unpublished_recovery_tests;
 mod workspace_lifecycle;
 
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
     fn managed_runtime_version(&self) -> Option<&str> {
         self.managed_runtime_version.as_deref()
+    }
+
+    async fn unpublished_runtime_recovery_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<crate::sandbox::SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
+        unpublished_recovery::snapshot(&self.lock(), id)
+    }
+
+    async fn admit_unpublished_runtime_recovery(
+        &self,
+        request: crate::sandbox::SandboxUnpublishedRecoveryRequest,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        unpublished_recovery::admit(&mut self.lock(), request)
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
@@ -135,6 +152,9 @@ impl SandboxStore for InMemorySandboxStore {
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
                 || current.validate_service_access_successor(&sandbox).is_err()
+                || current
+                    .validate_unpublished_recovery_save(&sandbox)
+                    .is_err()
                 || crate::sandbox::ProvisioningExecution::validate_successor(
                     current.work.execution,
                     sandbox.work.execution,

@@ -1,4 +1,4 @@
-use super::acp::{Bridge, PROTOCOL_VERSION, SIGN_IN_DEADLINE};
+use super::acp::{Bridge, CALL_DEADLINE, PROTOCOL_VERSION, SIGN_IN_DEADLINE};
 use super::update_relay::UpdateRelay;
 use super::HostedAgentOpenSettings;
 use crate::AdapterError;
@@ -51,57 +51,10 @@ impl Bridge {
                         "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
                     },
                 },
-            }),settings.channel_tool.is_some() || settings.provider_tool.is_some() || settings.access_tool.is_some())
+            }), settings.already_initialized_error.as_ref())
             .await?;
         timing.completed("protocol_initialize");
 
-        if let Some(binding) = &settings.channel_tool {
-            match &greeting {
-                Greeting::Fresh(hello)
-                    if hello.pointer("/agentCapabilities/mcpCapabilities/http")
-                        == Some(&serde_json::Value::Bool(true)) => {}
-                Greeting::Existing
-                    if resume.as_deref().is_some_and(|id| binding.retained_for(id)) => {}
-                _ => {
-                    return Err(AdapterError::Unsupported(
-                        "runtime cannot establish the required channel reply tool connection"
-                            .into(),
-                    ))
-                }
-            }
-        }
-        if let Some(binding) = &settings.provider_tool {
-            match &greeting {
-                Greeting::Fresh(hello)
-                    if binding.observed().is_some()
-                        && hello.pointer("/agentCapabilities/mcpCapabilities/http")
-                            == Some(&serde_json::Value::Bool(true)) => {}
-                Greeting::Existing
-                    if resume.as_deref().is_some_and(|id| binding.retained_for(id)) => {}
-                _ => {
-                    return Err(AdapterError::Unsupported(
-                        "runtime cannot establish the required provider tools".into(),
-                    ))
-                }
-            }
-        }
-        if let Some(binding) = &settings.access_tool {
-            match &greeting {
-                Greeting::Fresh(hello)
-                    if hello.pointer("/agentCapabilities/mcpCapabilities/http")
-                        == Some(&serde_json::Value::Bool(true)) => {}
-                Greeting::Existing
-                    if resume
-                        .as_deref()
-                        .is_some_and(|id| binding.retained_for(id) || binding.prepared_for(id)) => {
-                }
-                _ => {
-                    return Err(AdapterError::Unsupported(
-                        "runtime cannot establish the required service access request tool".into(),
-                    ))
-                }
-            }
-        }
         let tool_servers: Vec<_> = settings
             .channel_tool
             .as_ref()
@@ -120,7 +73,86 @@ impl Bridge {
                     .map(|binding| binding.acp_server()),
             )
             .collect();
+        let completion = if let (Greeting::Existing, Some(conversation), Some(protocol)) =
+            (&greeting, resume.as_deref(), settings.open_completion)
+        {
+            let missing_confirmation = settings
+                .channel_tool
+                .as_ref()
+                .is_some_and(|binding| !binding.retained_for(conversation))
+                || settings
+                    .provider_tool
+                    .as_ref()
+                    .is_some_and(|binding| !binding.retained_for(conversation))
+                || settings.access_tool.as_ref().is_some_and(|binding| {
+                    !binding.retained_for(conversation) && !binding.prepared_for(conversation)
+                });
+            if missing_confirmation {
+                let digest = super::acp_open_completion::binding_digest(&cwd, &tool_servers)?;
+                Some((
+                    protocol,
+                    self.read_open_completion(protocol, conversation, &digest)
+                        .await?,
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let completed = completion.is_some();
 
+        if let Some(binding) = &settings.channel_tool {
+            match &greeting {
+                Greeting::Fresh(hello)
+                    if hello.pointer("/agentCapabilities/mcpCapabilities/http")
+                        == Some(&serde_json::Value::Bool(true)) => {}
+                Greeting::Existing
+                    if resume
+                        .as_deref()
+                        .is_some_and(|id| binding.retained_for(id) || completed) => {}
+                _ => {
+                    return Err(AdapterError::Unsupported(
+                        "runtime cannot establish the required channel reply tool connection"
+                            .into(),
+                    ))
+                }
+            }
+        }
+        if let Some(binding) = &settings.provider_tool {
+            match &greeting {
+                Greeting::Fresh(hello)
+                    if binding.observed().is_some()
+                        && hello.pointer("/agentCapabilities/mcpCapabilities/http")
+                            == Some(&serde_json::Value::Bool(true)) => {}
+                Greeting::Existing
+                    if binding.observed().is_some()
+                        && resume
+                            .as_deref()
+                            .is_some_and(|id| binding.retained_for(id) || completed) => {}
+                _ => {
+                    return Err(AdapterError::Unsupported(
+                        "runtime cannot establish the required provider tools".into(),
+                    ))
+                }
+            }
+        }
+        if let Some(binding) = &settings.access_tool {
+            match &greeting {
+                Greeting::Fresh(hello)
+                    if hello.pointer("/agentCapabilities/mcpCapabilities/http")
+                        == Some(&serde_json::Value::Bool(true)) => {}
+                Greeting::Existing
+                    if resume.as_deref().is_some_and(|id| {
+                        binding.retained_for(id) || binding.prepared_for(id) || completed
+                    }) => {}
+                _ => {
+                    return Err(AdapterError::Unsupported(
+                        "runtime cannot establish the required service access request tool".into(),
+                    ))
+                }
+            }
+        }
         if settings.own_credential && self.subscription.is_some() {
             self.call("cma/codex/authenticate", serde_json::json!({}))
                 .await?;
@@ -236,6 +268,9 @@ impl Bridge {
             self.configure_channel_effort(&session).await;
         }
         timing.completed("protocol_settings");
+        if let Some((protocol, receipt)) = completion {
+            self.recheck_open_completion(protocol, receipt).await?;
+        }
         Ok(())
     }
 
@@ -285,18 +320,19 @@ impl Bridge {
         }
     }
 
-    async fn greet(&self, params: serde_json::Value, protected: bool) -> crate::Result<Greeting> {
-        match self.call("initialize", params).await {
-            Ok(hello) => Ok(Greeting::Fresh(hello)),
-            Err(refused @ AdapterError::Rejected(_)) => {
-                if protected {
-                    tracing::info!("channel runtime bridge was already initialized");
-                } else {
-                    tracing::info!(%refused, "runtime bridge was already initialized");
-                }
-                Ok(Greeting::Existing)
-            }
-            Err(error) => Err(error),
+    async fn greet(
+        &self,
+        params: serde_json::Value,
+        already_initialized_error: Option<&serde_json::Value>,
+    ) -> crate::Result<Greeting> {
+        let frame = self
+            .call_frame_within("initialize", params, CALL_DEADLINE)
+            .await?;
+        if already_initialized_error.is_some_and(|expected| frame.get("error") == Some(expected)) {
+            tracing::info!("runtime bridge was already initialized");
+            Ok(Greeting::Existing)
+        } else {
+            super::acp::rpc_result("initialize", frame).map(Greeting::Fresh)
         }
     }
 
