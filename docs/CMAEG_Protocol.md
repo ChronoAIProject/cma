@@ -4128,6 +4128,13 @@ for limits, rollback rules, official reference pin and local/live evidence bound
 
 ### Native separate-app Lark / Feishu ingress
 
+Received `share_user`, `share_chat` and `location` payloads are normalized to bounded
+message text using their documented top-level fields. Shared IDs are display facts,
+not actors, destinations or attachment locators. Existing sender admission and
+original reply custody apply. Location names are limited to 1024 UTF-8 bytes;
+coordinates are finite strings within latitude ±90 and longitude ±180.
+See [native source details](CMAEG_Native_Lark.md#shared-contacts-groups-and-locations).
+
 `POST /v1/native-lark/{channel_id}` accepts encrypted signed schema-2.0 callbacks from an explicitly configured separate native app. The `native_lark` source pins region, app, tenant and bot identity; its encrypted app secret, Encrypt Key and Verification Token are independent of NyxID. Authoring and intake gates default off. Text, recall and human reaction deltas use durable original-plan routing and native text replies with confirmed target receipts. Incoming edits are not claimed. See [native Lark / Feishu](CMAEG_Native_Lark.md) for setup, authentication, source shape, acknowledgment behavior, retention and limitations. Existing NyxID webhook URLs must not be replaced.
 
 Native Telegram opted-in retained-message notifications also preserve anonymous

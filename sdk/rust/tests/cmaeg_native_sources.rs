@@ -109,3 +109,21 @@ fn native_telegram_channel_posts_are_an_independent_optional_source_opt_in() {
         assert_eq!(serde_json::to_value(request).unwrap(), value);
     }
 }
+
+#[test]
+fn native_whatsapp_incoming_changes_consent_is_optional_and_independent() {
+    let legacy = json!({"type":"whatsapp","app_id":"12345","waba_id":"23456","phone_number_id":"34567","admission":{"type":"all"}});
+    for enabled in [false, true] {
+        let mut value = legacy.clone();
+        value["message_events"] = enabled.into();
+        assert_eq!(
+            serde_json::to_value(serde_json::from_value::<Source>(value.clone()).unwrap()).unwrap(),
+            value
+        );
+        assert_eq!(
+            serde_json::to_value(serde_json::from_value::<SourceRequest>(value.clone()).unwrap())
+                .unwrap(),
+            value
+        );
+    }
+}

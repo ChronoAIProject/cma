@@ -4,6 +4,10 @@ use axum::{
     http::{Request, StatusCode},
 };
 use cmaeg_core::seal::seal_blob;
+#[path = "whatsapp_changes_http_tests.rs"]
+mod changes_tests;
+#[path = "whatsapp_shared_facts_http_tests.rs"]
+mod shared_facts_tests;
 #[path = "whatsapp_status_tests.rs"]
 mod status_tests;
 

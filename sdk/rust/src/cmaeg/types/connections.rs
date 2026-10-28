@@ -163,6 +163,9 @@ pub struct RelayAuthoringCapabilities {
     /// Native WhatsApp Form issuance is enabled by the operator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_forms_enabled: Option<bool>,
+    /// Effective admission switch for coexistence incoming edits and revokes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_message_events_enabled: Option<bool>,
     /// Managed static Flow creation/publication is enabled by the operator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_flow_writes_enabled: Option<bool>,

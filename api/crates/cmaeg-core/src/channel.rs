@@ -71,6 +71,9 @@ pub enum Source {
     NativeLark(NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
+        /// Incoming private edits and deletions for WhatsApp Business App coexistence accounts.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        message_events: bool,
         /// Owner consent to create and publish managed static native Flow assets.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         forms_enabled: bool,
