@@ -441,10 +441,16 @@ fn forms_consent_does_not_change_existing_group_or_control_source_hashes() {
         let original: Source = serde_json::from_str(old_bytes).unwrap();
         for enabled in [false, true] {
             let mut source = original.clone();
-            let Source::Whatsapp { forms_enabled, .. } = &mut source else {
+            let Source::Whatsapp {
+                forms_enabled,
+                message_events,
+                ..
+            } = &mut source
+            else {
                 panic!();
             };
             *forms_enabled = enabled;
+            *message_events = enabled;
             assert_eq!(crate::whatsapp::legacy_source(&source), original);
             assert_eq!(
                 serde_json::to_string(&crate::whatsapp::legacy_source(&source)).unwrap(),

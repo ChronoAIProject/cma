@@ -958,3 +958,12 @@ fence across process restart, different keys and event expiry. Never retry an
 unknown result with a new key. Discovery describes scope; current Telegram bot
 administrator topic permissions are checked at execution. Source support and
 local tests do not establish connected-account native acceptance.
+
+Native WhatsApp incoming changes use optional source `message_events` consent and
+optional discovery `native_whatsapp_message_events_enabled`. Both default off.
+Meta supplies private edit/revoke callbacks only for Business App coexistence
+accounts. Events use existing `cma.message.updated.v1` (`data.patch.text`) and
+`cma.message.deleted.v1`, bound to the retained incoming message and its original
+consumer/conversation. Caption changes preserve original attachments; outgoing
+edit/delete and history import are outside this feature. See
+[the incoming-change contract](../../../docs/CMAEG_Native_WhatsApp_Message_Events.md).
