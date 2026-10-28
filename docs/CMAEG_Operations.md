@@ -559,6 +559,14 @@ stream lifetime. Normal certificate verification remains enabled. The transport
 uses the workspace's existing locked Hyper, h2, Tokio, and Rustls dependency
 versions; it does not add an alternative TLS stack.
 
+The isolated `turn_metrics` test retains its separate 20-ms first-socket-write
+ceiling. It checks readiness through agent-card discovery on a separate HTTP
+client and initializes process-global tracing/metrics on a disposable fixture.
+Its measured fixture uses a fresh Responses transport and must make exactly one
+POST: its first connection, request serialization and real socket write remain
+inside the timing window. No connection from initialization is reused, and the
+actual socket timestamp and the 20-ms assertion are unchanged.
+
 Run the executable latency gate from `api/`:
 
 ```sh
@@ -576,9 +584,15 @@ The warm run sends 500 callbacks with 16 concurrent callers. Its p50 must stay
 below 50 ms and p99 at or below 1000 ms. It asserts there are no CMA reads or
 additional JWKS fetches. The cold run sends 200 callbacks in 25 rounds of eight;
 each round builds and signs all eight HTTP requests before invalidating the
-cache, then polls their sends concurrently. Synchronous RSA signing during the
-batch's first poll could otherwise let the first restore finish before later
-callers arrive. The eight callers share one restore flight. It asserts 25
+cache, then polls their sends concurrently. A fixture-only gate holds the fake
+CMA read until all eight real HTTP callbacks are pending on the cold resolver;
+the configured read delay starts after that gate. This prevents signing or HTTP
+scheduling from turning a late batch member into a warm hit. The fixture buffers
+each body unchanged, then polls the production callback through its first pending
+restore await; signature verification and timing still run in the real handler.
+A regression deliberately withholds the eighth request past the normal read
+delay and proves the first seven cannot finish. The eight callers share one
+restore flight. It asserts 25
 additional CMA reads, no additional JWKS fetches, every restore wait above
 0.5 ms, launch p99 at most 2000 ms, and restore wait p99 at most 800 ms. The
 initiating caller owns the `cold=true` metric sample; all eight wait on the cold cache.
