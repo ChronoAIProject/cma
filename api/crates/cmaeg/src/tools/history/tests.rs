@@ -16,9 +16,15 @@ async fn body(response: reqwest::Response) -> Value {
 async fn mixed_history_opt_in_refuses_discord_before_platform_io() {
     let app = App::new(0, false).await;
     let response = reqwest::Client::new()
-        .get(format!("{}/v1/events/{}/history?include_media=true", app.base, app.reference().as_str()))
+        .get(format!(
+            "{}/v1/events/{}/history?include_media=true",
+            app.base,
+            app.reference().as_str()
+        ))
         .bearer_auth(&app.key)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), 400);
     assert!(app.memory.lock().unwrap().calls.is_empty());
 }

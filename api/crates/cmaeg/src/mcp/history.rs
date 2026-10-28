@@ -57,7 +57,12 @@ pub(super) async fn call(
         )
     })?;
     let result = state
-        .read_event_history_with_media(caller, &args.event_ref, args.cursor.as_ref(), args.include_media)
+        .read_event_history_with_media(
+            caller,
+            &args.event_ref,
+            args.cursor.as_ref(),
+            args.include_media,
+        )
         .await?;
     let expires_at = result.expires_at;
     let value = serde_json::to_value(result)
