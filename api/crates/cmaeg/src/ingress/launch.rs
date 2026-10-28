@@ -25,7 +25,7 @@ pub struct LaunchRequest {
 }
 #[derive(Debug)]
 pub enum LaunchOutcome {
-    /// Committed at the gateway; provider execution is recovered separately.
+    /// Committed at the gateway, or an exact retained provider admission.
     Admitted {
         admission_id: String,
         conversation_id: ConversationId,
