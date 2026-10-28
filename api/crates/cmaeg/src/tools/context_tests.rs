@@ -359,6 +359,14 @@ fn native_lark_media_discovery_is_independent_and_reports_bounded_subset() {
             "image/png",
             "application/pdf",
             "text/plain",
+            "application/msword",
+            "application/vnd.ms-excel",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/zip",
+            "application/octet-stream",
             "audio/ogg",
             "video/mp4"
         ]
