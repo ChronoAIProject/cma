@@ -2,6 +2,33 @@
   display: grid;
   gap: 18px;
 }
+.agent-lifecycle-machine {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+}
+.agent-lifecycle-machine__control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-strong-14);
+  cursor: pointer;
+}
+.agent-lifecycle-machine__control input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--dsw-alias-brand-primary);
+}
+.agent-lifecycle-machine__control input:disabled {
+  cursor: not-allowed;
+}
+.agent-lifecycle-machine > p {
+  margin: 0 0 0 26px;
+}
 /*
  * A summary, not a control: no hover, no chevron, nothing to press. The
  * border only groups the defaults so they read as one fact about the Agent.

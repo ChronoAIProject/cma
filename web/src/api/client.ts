@@ -51,6 +51,7 @@ export interface AgentStreamOptions extends ReadOptions {
 
 export interface AgentLifecycleCreateInput {
   readonly name: string;
+  readonly machine_included?: boolean;
   readonly workspace_id?: string;
   readonly sandbox_id?: string;
   readonly image?: { readonly id: string; readonly version?: string };

@@ -206,10 +206,15 @@ pub(super) fn repository_location(
 }
 
 pub(super) fn setup_message(request: &AgentLifecycleCreateRequest) -> String {
-    if request.repository.is_some() {
-        return first_message(request);
+    let mut message = if request.repository.is_some() {
+        first_message(request)
+    } else {
+        "You are running in a CMA workspace. Preserve existing files and changes. This is local workspace readiness only; no repository or external-service task has been requested. Do not probe GitHub or other optional services, or request access merely for readiness. Briefly report readiness and wait for the user's next task. For a later user task, request access only when that task requires it.".into()
+    };
+    if request.machine_included {
+        message.push_str(" This Sandbox also includes a shared Linux desktop on DISPLAY=:99 with Chromium already open. The owner sees and controls that same display in CMA. For requested desktop tasks, use your existing shell tools with xdotool for pointer/keyboard input, wmctrl for windows, and scrot plus your image-viewing tool to inspect screenshots. Preserve the existing browser profile and use the visible Chromium window. If the browser is closed, run /usr/local/bin/cma-desktop-session --browser to reopen it. Report only observed desktop results; wait for a user task before interacting with the desktop.");
     }
-    "You are running in a CMA workspace. Preserve existing files and changes. This is local workspace readiness only; no repository or external-service task has been requested. Do not probe GitHub or other optional services, or request access merely for readiness. Briefly report readiness and wait for the user's next task. For a later user task, request access only when that task requires it.".into()
+    message
 }
 
 pub(super) fn admitted_first_message(input: &crate::store::LifecycleInput) -> Option<String> {
