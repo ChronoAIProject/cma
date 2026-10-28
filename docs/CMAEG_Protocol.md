@@ -4549,3 +4549,7 @@ and source URLs are not retained there. Existing content/control edits preserve
 the image, original lifetime and callback recovery; image replacement/removal and
 forms remain unsupported. Uncertain operations never issue a usable reference or
 fallback message. See [native image controls](CMAEG_Native_Lark_Image_Controls.md).
+
+### Native Lark / Feishu thread starts
+
+When verified context advertises `capabilities.native_thread_start: true`, `replyToEvent` may send one plain-text reply with `thread_reply: true` to start the exact originally admitted group message thread. The text must contain 1–4,000 characters and no blocks, attachments or explicit reply target. Only that root can be selected; no caller-selected chat, message or thread ID is accepted. The operation may continue that same root’s thread if it already exists, confirms the returned root/parent/chat/thread identity, and never falls back to top-level delivery. The feature is independently default-off; existing retained-thread replies keep their behavior. This is not the Discord `createThread` name/archive operation and grants no list/manage authority. See [native thread starts](CMAEG_Native_Lark_Thread_Start.md).

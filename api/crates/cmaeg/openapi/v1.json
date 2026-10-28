@@ -1744,6 +1744,13 @@
               }
             ]
           },
+          "native_thread_start": {
+            "description": "One text reply can start the exact original native Lark group message thread.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "thread_history": {
             "description": "A fixed 20-message prior window is available on explicit request.",
             "type": [
@@ -4921,7 +4928,7 @@
             ]
           },
           "thread_reply": {
-            "description": "Request the verified source thread; never fall back when unavailable.",
+            "description": "Request the verified source thread; native Lark may start the exact admitted\ngroup root thread with one text reply when explicitly advertised. Never fall back.",
             "type": "boolean"
           },
           "whatsapp_template": {
