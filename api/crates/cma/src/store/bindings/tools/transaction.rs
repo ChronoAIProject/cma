@@ -27,7 +27,7 @@ impl Operation<'_> {
 }
 
 pub(super) enum Outcome {
-    Resolved(Option<HostedProviderToolBinding>),
+    Resolved(Option<Box<HostedProviderToolBinding>>),
     Confirmed,
 }
 
@@ -88,7 +88,7 @@ impl MongoProviderToolSource {
                 Operation::Resolve(runtime, request, fence) => self
                     .resolve_in(runtime, request, fence, &mut session)
                     .await
-                    .map(|value| Outcome::Resolved(value.map(|(binding, _)| binding))),
+                    .map(|value| Outcome::Resolved(value.map(|(binding, _)| Box::new(binding)))),
                 Operation::Confirm(binding, conversation) => self
                     .confirm_in(binding, conversation, &mut session)
                     .await
