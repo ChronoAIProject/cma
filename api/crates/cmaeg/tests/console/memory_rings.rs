@@ -265,6 +265,7 @@ fn activities() -> Vec<Activity> {
                 attachments: vec![attachment.clone()],
                 mentions_bot: true,
                 reply_to: None,
+                quoted_message: None,
                 album_id: None,
             },
             actor: actor.clone(),

@@ -93,6 +93,73 @@
         "sender_kind": "human",
         "version": 1
       }
+    },
+    {
+      "actor": {
+        "id": "447700900123",
+        "kind": "human"
+      },
+      "conversation": {
+        "id": "447700900123",
+        "kind": "private"
+      },
+      "event_id": "quoted-fixture",
+      "kind": {
+        "attachments": [],
+        "mentions_bot": false,
+        "text": "Current message",
+        "type": "message",
+        "quoted_message": {
+          "content": {
+            "kinds": [
+              "image"
+            ],
+            "text": {
+              "origin": "selected_quote",
+              "text": "A sender-selected passage",
+              "truncated": false
+            }
+          },
+          "message_id": "81",
+          "relation": "reply"
+        }
+      },
+      "occurred_at": "2026-10-28T00:00:00Z",
+      "schema_version": 1,
+      "source": {
+        "platform": "telegram",
+        "type": "telegram",
+        "bot_id": "77"
+      }
+    },
+    {
+      "actor": {
+        "id": "447700900123",
+        "kind": "human"
+      },
+      "conversation": {
+        "id": "447700900123",
+        "kind": "private"
+      },
+      "event_id": "quoted-fixture",
+      "kind": {
+        "attachments": [],
+        "mentions_bot": false,
+        "text": "Current message",
+        "type": "message",
+        "quoted_message": {
+          "message_id": "wamid.parent",
+          "relation": "context"
+        }
+      },
+      "occurred_at": "2026-10-28T00:00:00Z",
+      "schema_version": 1,
+      "source": {
+        "type": "whatsapp",
+        "app_id": "12345",
+        "phone_number_id": "34567",
+        "waba_id": "23456"
+      }
     }
   ],
   "ActivityConsumer": [
@@ -310,6 +377,36 @@
         "exampleextension": true
       },
       "type": "event"
+    },
+    {
+      "attachments": [],
+      "mentions_bot": false,
+      "text": "Current message",
+      "type": "message",
+      "quoted_message": {
+        "content": {
+          "kinds": [
+            "image"
+          ],
+          "text": {
+            "origin": "selected_quote",
+            "text": "A sender-selected passage",
+            "truncated": false
+          }
+        },
+        "message_id": "81",
+        "relation": "reply"
+      }
+    },
+    {
+      "attachments": [],
+      "mentions_bot": false,
+      "text": "Current message",
+      "type": "message",
+      "quoted_message": {
+        "message_id": "wamid.parent",
+        "relation": "context"
+      }
     }
   ],
   "Actor": [
@@ -1157,6 +1254,67 @@
       "kind": "event",
       "event_type": "cma.message.updated.v1",
       "source_occurred_at": "2026-10-27T03:00:00Z"
+    },
+    {
+      "event_id": "fixture-event",
+      "source": {
+        "type": "custom"
+      },
+      "actor": {
+        "kind": "human",
+        "id": "fixture-actor",
+        "display_name": "Fixture User"
+      },
+      "conversation": {
+        "id": "fixture-conversation",
+        "kind": "private",
+        "thread_id": "fixture-thread"
+      },
+      "occurred_at": "2026-10-27T03:00:00Z",
+      "received_at": "2026-10-27T03:00:01Z",
+      "consumers": [
+        {
+          "consumer_id": "default",
+          "state": "completed",
+          "display_name": "Fixture Agent",
+          "provider": "cma",
+          "agent_id": "agt_0123456789abcdef0123456789abcdef",
+          "conversation_id": "fixture-conversation",
+          "response_id": "fixture-response",
+          "dispatched_at": "2026-10-27T03:00:01Z",
+          "accepted_at": "2026-10-27T03:00:02Z",
+          "produced_at": "2026-10-27T03:00:04Z",
+          "completed_at": "2026-10-27T03:00:05Z",
+          "deliveries": [
+            {
+              "step": "answer",
+              "destination": "origin",
+              "outcome": "confirmed",
+              "observed_at": "2026-10-27T03:00:05Z",
+              "confirmed_at": "2026-10-27T03:00:05Z",
+              "platform_message_id": "fixture-reply",
+              "recipients": [
+                {
+                  "kind": "custom",
+                  "id": "fixture-recipient",
+                  "thread_id": "fixture-thread"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kind": "event",
+      "event_type": "custom.build.completed",
+      "source_occurred_at": "2026-10-27T03:00:00Z",
+      "quoted_context": {
+        "content_kinds": [
+          "image"
+        ],
+        "relation": "reply",
+        "text_available": true,
+        "text_truncated": false
+      }
     }
   ],
   "ChannelId": [
@@ -3688,6 +3846,429 @@
           }
         }
       }
+    },
+    {
+      "activity": {
+        "actor": {
+          "id": "447700900123",
+          "kind": "human"
+        },
+        "conversation": {
+          "id": "447700900123",
+          "kind": "private"
+        },
+        "kind": {
+          "attachments": [],
+          "mentions_bot": false,
+          "text": "Current message",
+          "type": "message",
+          "quoted_message": {
+            "content": {
+              "kinds": [
+                "image"
+              ],
+              "text": {
+                "origin": "selected_quote",
+                "text": "A sender-selected passage",
+                "truncated": false
+              }
+            },
+            "message_id": "81",
+            "relation": "reply"
+          }
+        },
+        "occurred_at": "2026-10-28T00:00:00Z"
+      },
+      "activity_verified": true,
+      "capabilities": {
+        "attachments": "fixture",
+        "buttons": "fixture",
+        "cards": "fixture",
+        "edit": true,
+        "inbound_media": {
+          "downloads": true,
+          "read_tool": true,
+          "transcripts": true,
+          "visuals": "keyframes"
+        },
+        "max_text_chars": 1,
+        "typing": true,
+        "native_media": {
+          "kinds": [
+            "image",
+            "file",
+            "audio",
+            "video"
+          ],
+          "max_attachments": 4,
+          "max_inline_bytes": 65536,
+          "sources": [
+            "url",
+            "base64"
+          ],
+          "mime_types": [
+            "image/jpeg",
+            "image/png",
+            "application/pdf",
+            "audio/mpeg",
+            "video/mp4"
+          ],
+          "max_total_bytes": 8388608,
+          "max_image_bytes": 5000000,
+          "max_caption_chars": 1024,
+          "sticker": {
+            "width": 512,
+            "height": 512,
+            "max_static_bytes": 100000,
+            "max_animated_bytes": 500000,
+            "max_frames": 128,
+            "max_duration_ms": 10000,
+            "min_frame_duration_ms": 8
+          },
+          "video": {
+            "audio_codec": "aac_lc",
+            "fast_start_required": true,
+            "max_audio_tracks": 1,
+            "max_duration_ms": 600000,
+            "max_frame_rate": 60,
+            "max_height": 1080,
+            "max_samples": 65536,
+            "max_slices_per_frame": 1,
+            "max_width": 1920,
+            "progressive_only": true,
+            "video_codec": "h264",
+            "video_profile": "baseline"
+          }
+        },
+        "whatsapp_templates": true,
+        "message_effects": {
+          "delete": true,
+          "expires_at": 1800000000,
+          "max_reactions": 1,
+          "reaction": true,
+          "scope": "confirmed_native_bot_message",
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
+        },
+        "thread_history": true,
+        "whatsapp_template_components": [
+          "header",
+          "body"
+        ],
+        "thread_lifecycle": {
+          "create_from_original_message": true,
+          "list": "public_children_of_original_parent",
+          "manage_original_thread": false,
+          "actions": [
+            "archive",
+            "reopen",
+            "join",
+            "leave",
+            "rename"
+          ],
+          "expires_at": 1800000600
+        },
+        "native_media_edits": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        },
+        "forms": false,
+        "conversation_history": {
+          "page_size": 25,
+          "direction": "backward",
+          "attachment_facts_only": true,
+          "max_text_bytes": 32768,
+          "max_metadata_bytes": 16384,
+          "max_output_bytes": 262144,
+          "expires_at": 1793179800
+        },
+        "topic_lifecycle": {
+          "manage_original_topic": true,
+          "actions": [
+            "close",
+            "reopen"
+          ],
+          "expires_at": 1800000600
+        }
+      },
+      "channel_id": "fixture",
+      "consumer": {
+        "id": "csm_00000000000a",
+        "label": "Reviewer",
+        "name": "reviewer"
+      },
+      "conversation_id": "fixture",
+      "event_id": "fixture",
+      "provider_binding_id": "fixture",
+      "source": {
+        "type": "telegram",
+        "bot_id": "77",
+        "platform": "telegram"
+      },
+      "expires_at": 1,
+      "thread_history": {
+        "thread_id": "99",
+        "before_message_id": "700",
+        "messages": [
+          {
+            "message_id": "698",
+            "author": {
+              "id": "51",
+              "display_name": "Reader",
+              "kind": "human"
+            },
+            "text": "Earlier thread text",
+            "occurred_at": "2026-10-27T01:00:00Z",
+            "edited_at": "2026-10-27T01:01:00Z",
+            "attachment_count": 0
+          }
+        ],
+        "text_truncated": false
+      },
+      "received_message": {
+        "message_ref": "fixture-received-message-reference",
+        "effects": {
+          "delete": false,
+          "reaction": true,
+          "scope": "received_native_user_message",
+          "max_reactions": 1,
+          "expires_at": 1800000000,
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "activity": {
+        "actor": {
+          "id": "447700900123",
+          "kind": "human"
+        },
+        "conversation": {
+          "id": "447700900123",
+          "kind": "private"
+        },
+        "kind": {
+          "attachments": [],
+          "mentions_bot": false,
+          "text": "Current message",
+          "type": "message",
+          "quoted_message": {
+            "message_id": "wamid.parent",
+            "relation": "context"
+          }
+        },
+        "occurred_at": "2026-10-28T00:00:00Z"
+      },
+      "activity_verified": true,
+      "capabilities": {
+        "attachments": "fixture",
+        "buttons": "fixture",
+        "cards": "fixture",
+        "edit": true,
+        "inbound_media": {
+          "downloads": true,
+          "read_tool": true,
+          "transcripts": true,
+          "visuals": "keyframes"
+        },
+        "max_text_chars": 1,
+        "typing": true,
+        "native_media": {
+          "kinds": [
+            "image",
+            "file",
+            "audio",
+            "video"
+          ],
+          "max_attachments": 4,
+          "max_inline_bytes": 65536,
+          "sources": [
+            "url",
+            "base64"
+          ],
+          "mime_types": [
+            "image/jpeg",
+            "image/png",
+            "application/pdf",
+            "audio/mpeg",
+            "video/mp4"
+          ],
+          "max_total_bytes": 8388608,
+          "max_image_bytes": 5000000,
+          "max_caption_chars": 1024,
+          "sticker": {
+            "width": 512,
+            "height": 512,
+            "max_static_bytes": 100000,
+            "max_animated_bytes": 500000,
+            "max_frames": 128,
+            "max_duration_ms": 10000,
+            "min_frame_duration_ms": 8
+          },
+          "video": {
+            "audio_codec": "aac_lc",
+            "fast_start_required": true,
+            "max_audio_tracks": 1,
+            "max_duration_ms": 600000,
+            "max_frame_rate": 60,
+            "max_height": 1080,
+            "max_samples": 65536,
+            "max_slices_per_frame": 1,
+            "max_width": 1920,
+            "progressive_only": true,
+            "video_codec": "h264",
+            "video_profile": "baseline"
+          }
+        },
+        "whatsapp_templates": true,
+        "message_effects": {
+          "delete": true,
+          "expires_at": 1800000000,
+          "max_reactions": 1,
+          "reaction": true,
+          "scope": "confirmed_native_bot_message",
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
+        },
+        "thread_history": true,
+        "whatsapp_template_components": [
+          "header",
+          "body"
+        ],
+        "thread_lifecycle": {
+          "create_from_original_message": true,
+          "list": "public_children_of_original_parent",
+          "manage_original_thread": false,
+          "actions": [
+            "archive",
+            "reopen",
+            "join",
+            "leave",
+            "rename"
+          ],
+          "expires_at": 1800000600
+        },
+        "native_media_edits": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        },
+        "forms": false,
+        "conversation_history": {
+          "page_size": 25,
+          "direction": "backward",
+          "attachment_facts_only": true,
+          "max_text_bytes": 32768,
+          "max_metadata_bytes": 16384,
+          "max_output_bytes": 262144,
+          "expires_at": 1793179800
+        },
+        "topic_lifecycle": {
+          "manage_original_topic": true,
+          "actions": [
+            "close",
+            "reopen"
+          ],
+          "expires_at": 1800000600
+        }
+      },
+      "channel_id": "fixture",
+      "consumer": {
+        "id": "csm_00000000000a",
+        "label": "Reviewer",
+        "name": "reviewer"
+      },
+      "conversation_id": "fixture",
+      "event_id": "fixture",
+      "provider_binding_id": "fixture",
+      "source": {
+        "type": "whatsapp",
+        "app_id": "12345",
+        "phone_number_id": "34567",
+        "waba_id": "23456"
+      },
+      "expires_at": 1,
+      "thread_history": {
+        "thread_id": "99",
+        "before_message_id": "700",
+        "messages": [
+          {
+            "message_id": "698",
+            "author": {
+              "id": "51",
+              "display_name": "Reader",
+              "kind": "human"
+            },
+            "text": "Earlier thread text",
+            "occurred_at": "2026-10-27T01:00:00Z",
+            "edited_at": "2026-10-27T01:01:00Z",
+            "attachment_count": 0
+          }
+        ],
+        "text_truncated": false
+      },
+      "received_message": {
+        "message_ref": "fixture-received-message-reference",
+        "effects": {
+          "delete": false,
+          "reaction": true,
+          "scope": "received_native_user_message",
+          "max_reactions": 1,
+          "expires_at": 1800000000,
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
+        }
+      }
     }
   ],
   "ConversationId": [
@@ -4338,6 +4919,58 @@
           }
         ]
       }
+    },
+    {
+      "actor": {
+        "id": "447700900123",
+        "kind": "human"
+      },
+      "conversation": {
+        "id": "447700900123",
+        "kind": "private"
+      },
+      "kind": {
+        "attachments": [],
+        "mentions_bot": false,
+        "text": "Current message",
+        "type": "message",
+        "quoted_message": {
+          "content": {
+            "kinds": [
+              "image"
+            ],
+            "text": {
+              "origin": "selected_quote",
+              "text": "A sender-selected passage",
+              "truncated": false
+            }
+          },
+          "message_id": "81",
+          "relation": "reply"
+        }
+      },
+      "occurred_at": "2026-10-28T00:00:00Z"
+    },
+    {
+      "actor": {
+        "id": "447700900123",
+        "kind": "human"
+      },
+      "conversation": {
+        "id": "447700900123",
+        "kind": "private"
+      },
+      "kind": {
+        "attachments": [],
+        "mentions_bot": false,
+        "text": "Current message",
+        "type": "message",
+        "quoted_message": {
+          "message_id": "wamid.parent",
+          "relation": "context"
+        }
+      },
+      "occurred_at": "2026-10-28T00:00:00Z"
     }
   ],
   "PublicChannelDefinition": [
@@ -7841,6 +8474,74 @@
         "reopen"
       ],
       "expires_at": 1800000600
+    }
+  ],
+  "QuoteRelation": [
+    "reply",
+    "context"
+  ],
+  "QuoteTextOrigin": [
+    "selected_quote",
+    "parent_text",
+    "parent_caption"
+  ],
+  "QuotedContent": [
+    {
+      "kinds": [
+        "image"
+      ],
+      "text": {
+        "origin": "parent_text",
+        "text": "A bounded quoted passage",
+        "truncated": false
+      }
+    }
+  ],
+  "QuotedContentKind": [
+    "image",
+    "video",
+    "audio",
+    "file",
+    "sticker",
+    "contact",
+    "location",
+    "poll"
+  ],
+  "QuotedContextSummary": [
+    {
+      "content_kinds": [
+        "image"
+      ],
+      "relation": "reply",
+      "text_available": true,
+      "text_truncated": false
+    }
+  ],
+  "QuotedMessage": [
+    {
+      "content": {
+        "kinds": [
+          "image"
+        ],
+        "text": {
+          "origin": "parent_text",
+          "text": "A bounded quoted passage",
+          "truncated": false
+        }
+      },
+      "message_id": "81",
+      "relation": "reply"
+    },
+    {
+      "message_id": "wamid.parent",
+      "relation": "context"
+    }
+  ],
+  "QuotedText": [
+    {
+      "origin": "parent_text",
+      "text": "A bounded quoted passage",
+      "truncated": false
     }
   ]
 }

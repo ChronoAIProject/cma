@@ -10,7 +10,7 @@ use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Instant};
 use tokio::sync::OwnedSemaphorePermit;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LaunchRequest {
     pub channel: Arc<ResolvedChannel>,
     pub activity: Activity,

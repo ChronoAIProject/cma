@@ -205,6 +205,13 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         PublicActivity,
         PublicChannelDefinition,
         PublicSecrets,
+        QuoteRelation,
+        QuoteTextOrigin,
+        QuotedContent,
+        QuotedContentKind,
+        QuotedContextSummary,
+        QuotedMessage,
+        QuotedText,
         RecordId,
         Refusal,
         RekeyResponse,
@@ -367,9 +374,15 @@ fn check_shape(schema: &Value, example: &Value, schemas: &Value, path: &str) -> 
             .as_object()
             .ok_or_else(|| format!("{path}: expected object"))?;
         for (key, field) in fields {
-            let value = object
-                .get(key)
-                .ok_or_else(|| format!("{path}/{key}: missing example property"))?;
+            let Some(value) = object.get(key) else {
+                if schema["required"]
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|field| field == key))
+                {
+                    return Err(format!("{path}/{key}: missing required example property"));
+                }
+                continue;
+            };
             check_shape(field, value, schemas, &format!("{path}/{key}"))?;
         }
         if schema
@@ -393,6 +406,59 @@ fn check_shape(schema: &Value, example: &Value, schemas: &Value, path: &str) -> 
     Ok(())
 }
 
+// Optional additive fields may be absent from legacy examples. Require their
+// coverage across the complete example set, while check_shape validates every
+// present field and recursively rejects properties removed from the snapshot.
+fn check_property_coverage(schema: &Value, examples: &[Value], schemas: &Value, path: &str) {
+    // Referenced types have their own complete top-level example collection.
+    if schema["$ref"].is_string() {
+        return;
+    }
+    let schema = properties(schema, schemas);
+    if let Some(variants) = schema["oneOf"].as_array() {
+        for variant in variants.iter().filter(|variant| variant["type"] != "null") {
+            if variant["$ref"].is_string() {
+                continue;
+            }
+            let expanded = properties(variant, schemas);
+            let discriminator = expanded["properties"]
+                .as_object()
+                .and_then(|fields| fields.iter().find(|(_, field)| field["enum"].is_array()));
+            let matching: Vec<_> = examples
+                .iter()
+                .filter(|example| {
+                    discriminator.is_none_or(|(key, field)| example[key] == field["enum"][0])
+                })
+                .cloned()
+                .collect();
+            assert!(!matching.is_empty(), "{path}: missing variant examples");
+            check_property_coverage(&expanded, &matching, schemas, path);
+        }
+    }
+    if let Some(fields) = schema["properties"].as_object() {
+        for (key, field) in fields {
+            let values: Vec<_> = examples
+                .iter()
+                .filter_map(|example| example.get(key).cloned())
+                .collect();
+            assert!(
+                !values.is_empty(),
+                "{path}/{key}: missing example property coverage"
+            );
+            check_property_coverage(field, &values, schemas, &format!("{path}/{key}"));
+        }
+    }
+    if let Some(items) = schema.get("items") {
+        let values: Vec<_> = examples
+            .iter()
+            .filter_map(Value::as_array)
+            .flatten()
+            .cloned()
+            .collect();
+        check_property_coverage(items, &values, schemas, path);
+    }
+}
+
 #[test]
 fn examples_exercise_every_snapshot_property_including_optional_and_nested_fields() {
     let snapshot = snapshot();
@@ -403,6 +469,7 @@ fn examples_exercise_every_snapshot_property_including_optional_and_nested_field
         fixtures.as_object().unwrap().keys().collect::<Vec<_>>()
     );
     for (name, examples) in fixtures.as_object().unwrap() {
+        check_property_coverage(&schemas[name], examples.as_array().unwrap(), schemas, name);
         for example in examples.as_array().unwrap() {
             check_shape(&schemas[name], example, schemas, name).unwrap();
         }
@@ -427,6 +494,18 @@ fn removing_a_snapshot_property_fails_the_sdk_contract_check() {
         .unwrap_err()
         .contains("removed schema property")
     );
+}
+
+#[test]
+#[should_panic(expected = "quoted_message: missing example property coverage")]
+fn omitting_an_optional_property_from_every_example_fails_contract_coverage() {
+    let snapshot = snapshot();
+    let schemas = &snapshot["components"]["schemas"];
+    let mut examples = fixtures()["ActivityKind"].as_array().unwrap().clone();
+    for example in &mut examples {
+        example.as_object_mut().unwrap().remove("quoted_message");
+    }
+    check_property_coverage(&schemas["ActivityKind"], &examples, schemas, "ActivityKind");
 }
 
 #[test]

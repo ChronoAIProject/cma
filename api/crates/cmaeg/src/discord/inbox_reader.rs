@@ -27,6 +27,7 @@ pub enum InboxLaunch {
 /// Verified immutable intake for durable routed admission. These bytes are the
 /// stored dispatch + public channel snapshot, not original WebSocket wire octets.
 pub struct VerifiedInboxLaunch {
+    pub(crate) quote_projection: Option<crate::ingress::quoted_context::Snapshot>,
     pub request: LaunchRequest,
     pub source_bytes: Vec<u8>,
     pub received_at: i64,
@@ -39,6 +40,8 @@ pub struct InboxReader {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Body {
+    #[serde(default)]
+    pub quote_projection: Option<crate::ingress::quoted_context::Snapshot>,
     #[serde(default)]
     pub pending_reaction: Option<super::reaction_pending::Pending>,
     pub dispatch: serde_json::Value,
@@ -297,6 +300,7 @@ impl InboxReader {
             .message_event
             .as_ref()
             .and_then(|event| event.outbound_consumer.clone());
+        let quote_projection = body.quote_projection.clone();
         let request = LaunchRequest {
             idempotency_key: consumer.as_ref().map_or_else(
                 || IdempotencyKey::from_event(&activity.event_id),
@@ -322,6 +326,7 @@ impl InboxReader {
             consumer,
         };
         Ok(InboxLaunch::Launch(Box::new(VerifiedInboxLaunch {
+            quote_projection,
             request,
             source_bytes: bytes,
             received_at: inbox.received_at,
@@ -371,6 +376,11 @@ impl Body {
         };
         let mut activity = normalize(&self.dispatch, bot, admission)?;
         if let Normalized::Activity(activity) = &mut activity {
+            if let Some(snapshot) = &self.quote_projection {
+                snapshot
+                    .apply(activity)
+                    .map_err(|_| GatewayError::Protocol)?;
+            }
             let proven = self
                 .native_channel
                 .as_ref()

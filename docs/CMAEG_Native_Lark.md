@@ -89,3 +89,10 @@ admission-time custody and require current consent. Thread scans can
 return empty pages while advancing past newer messages. See the
 [history contract](CMAEG_Native_Lark_History.md) for custody, pagination, content
 omissions, reader-before-writer rollout and platform limits.
+
+## Native reply and context data
+
+The default-off native context writer exposes bounded data through Activity and
+authenticated context reads. See [native quoted-message context](CMAEG_Native_Quoted_Context.md)
+for exact per-platform fields, reference-only limits, replay compatibility and
+reader-first rollout requirements.

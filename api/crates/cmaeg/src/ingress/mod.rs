@@ -6,6 +6,7 @@ pub(crate) mod media_guard;
 pub(crate) mod message_event;
 pub(crate) mod native_interaction;
 mod native_mentions;
+pub(crate) mod quoted_context;
 pub mod receipts;
 pub mod relay;
 pub mod routed;

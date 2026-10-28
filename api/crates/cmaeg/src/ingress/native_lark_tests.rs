@@ -1,4 +1,6 @@
 //! Durable retained-route contracts through the native admission seam.
+#[path = "native_lark_quote_tests.rs"]
+mod quote_tests;
 use super::{
     launch::{LaunchOutcome, UnavailableLauncher},
     routed::RoutedIngress,

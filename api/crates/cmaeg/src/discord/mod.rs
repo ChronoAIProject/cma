@@ -86,6 +86,8 @@ mod media_tests;
 #[cfg(test)]
 mod normalization_tests;
 #[cfg(test)]
+mod quote_tests;
+#[cfg(test)]
 pub(crate) mod rest_fixture;
 #[cfg(test)]
 mod rest_tests;
