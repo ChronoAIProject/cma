@@ -41,14 +41,27 @@ for name in ('SingletonLock', 'SingletonCookie', 'SingletonSocket'):
         path.unlink()
 PY
 children=()
-trap 'trap - INT TERM EXIT; kill "${children[@]}" 2>/dev/null || true; wait "${children[@]}" 2>/dev/null || true' INT TERM EXIT
+desktop_stage=display
+stop_desktop() {
+  local result=$?
+  trap - INT TERM EXIT
+  if ((result != 0)); then
+    printf 'desktop stopped during %s (exit %s)\n' "$desktop_stage" "$result" >&2
+    tail -c 4000 /tmp/cma-{xvfb,openbox,chromium,x11vnc,websockify}.log >&2 2>/dev/null || true
+  fi
+  kill "${children[@]}" 2>/dev/null || true
+  wait "${children[@]}" 2>/dev/null || true
+}
+trap stop_desktop INT TERM EXIT
 require_process() {
   if ! kill -0 "$1" 2>/dev/null; then
     tail -c 4000 "$2" >&2
     exit 1
   fi
 }
-Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp -ac >/tmp/cma-xvfb.log 2>&1 &
+# The readiness client disconnects before the window manager starts. Keep the
+# same display alive across that gap instead of resetting all X11 state.
+Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp -ac -noreset >/tmp/cma-xvfb.log 2>&1 &
 children+=("$!")
 for ((attempt=0; attempt<100; attempt++)); do
   xdotool getdisplaygeometry >/dev/null 2>&1 && break
@@ -56,8 +69,20 @@ for ((attempt=0; attempt<100; attempt++)); do
   sleep 0.1
 done
 xdotool getdisplaygeometry >/dev/null
+desktop_stage=window-manager
 openbox >/tmp/cma-openbox.log 2>&1 &
 children+=("$!")
+wm_ready=0
+for ((attempt=0; attempt<100; attempt++)); do
+  if wmctrl -m >/dev/null 2>&1; then
+    wm_ready=1
+    break
+  fi
+  require_process "${children[1]}" /tmp/cma-openbox.log
+  sleep 0.1
+done
+[[ "$wm_ready" == 1 ]]
+desktop_stage=browser
 "$0" --browser >/tmp/cma-chromium.log 2>&1 &
 chrome_pid=$!
 children+=("$chrome_pid")
@@ -74,6 +99,7 @@ done
 # successful observation outside the retry loop, where BadWindow would tear
 # down an otherwise healthy display under set -e.
 [[ "$chrome_ready" == 1 ]]
+desktop_stage=listeners
 x11vnc -display "$DISPLAY" -rfbport 5900 -localhost -forever -shared -nopw >/tmp/cma-x11vnc.log 2>&1 &
 children+=("$!")
 websockify --host-token --token-plugin=TokenFile --token-source=/tmp/cma-desktop-token 127.0.0.1:6080 >/tmp/cma-websockify.log 2>&1 &
@@ -81,5 +107,6 @@ children+=("$!")
 # Closing the browser is normal. Keep the desktop available, and let the user
 # reopen Chromium from the desktop's right-click menu (or ask their Agent).
 # Display/window-manager/stream failure still tears down the session.
+desktop_stage=running
 wait -n "${children[0]}" "${children[1]}" "${children[3]}" "${children[4]}"
 exit 1

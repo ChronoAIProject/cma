@@ -22,7 +22,7 @@ async function waitReady() {
     if (check === '0') return;
     if (i % 5 === 0) {
       startupDiagnostics = docker(['exec', name, 'sh', '-c',
-        'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-websockify.log /tmp/cma-x11vnc.log 2>/dev/null || true']);
+        'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-openbox.log /tmp/cma-websockify.log /tmp/cma-x11vnc.log 2>/dev/null || true']);
     }
     await delay(1000);
   }
@@ -74,7 +74,7 @@ try {
   try { process.stderr.write(docker(['logs', '--tail', '40', name]).replaceAll(token, '[fixture-token]')); }
   catch { /* The container may not have been created. */ }
   try {
-    const diagnostics = docker(['exec', name, 'sh', '-c', 'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-websockify.log /tmp/cma-x11vnc.log 2>/dev/null']);
+    const diagnostics = docker(['exec', name, 'sh', '-c', 'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-openbox.log /tmp/cma-websockify.log /tmp/cma-x11vnc.log 2>/dev/null']);
     process.stderr.write(diagnostics.replaceAll(token, '[fixture-token]'));
   } catch { /* The container may already have stopped. */ }
   try {
