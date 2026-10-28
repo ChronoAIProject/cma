@@ -177,6 +177,7 @@ impl Candidate {
                 .checked_add(RETENTION_SECONDS)
                 .ok_or(AdmissionError::Invalid)?,
             quote_projection,
+            binding_preparation_version: None,
             activity: plan.activity.clone(),
             source: plan.source.clone(),
             targets: plan
@@ -249,6 +250,8 @@ impl AdmittedPlan {
         let native = discord_native || whatsapp_native || lark_native || flow_native;
         let message_event = self.kind == MESSAGE_EVENT_KIND;
         if self.quote_projection.is_some_and(|v| v != 1)
+            || self.binding_preparation_version.is_some_and(|v| v != 1)
+            || (self.binding_preparation_version.is_some() && !self.permits_binding_preparation())
             || (self.quote_projection.is_some()
                 && (self.kind != PAYLOAD_KIND
                     || !matches!(self.activity.kind, ActivityKind::Message { .. })))

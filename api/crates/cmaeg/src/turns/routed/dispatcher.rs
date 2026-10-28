@@ -248,6 +248,11 @@ impl Dispatcher {
             return Ok(RunResult::Done(DispatchOutcome::Unknown));
         }
         if lease.state.phase == Phase::Pending {
+            // Reader-first release: never fall through to legacy conversation
+            // creation for an admission requiring preparation we cannot perform.
+            if plan.prepares_binding(target) {
+                return Err(ExecutionError::Unsupported);
+            }
             let body = self.port.prepare(plan, target, &current).await?;
             validate_delivery(&body, &current, target)?;
             self.journal.freeze(lease, plan, target, &body).await?;
