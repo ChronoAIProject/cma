@@ -21,6 +21,7 @@ mod home;
 mod home_tests;
 mod managed_context;
 mod memory;
+mod nonexecuting;
 mod provider_backend;
 mod provider_endpoint;
 mod provider_http;
@@ -54,6 +55,8 @@ pub use deployment::{
 };
 pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
+#[doc(hidden)]
+pub use nonexecuting::NonexecutingRuntimeProof;
 pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
 pub use provider_tools::{
     HostedProviderToolBinding, HostedProviderToolSource, HostedToolOpenReceipt,

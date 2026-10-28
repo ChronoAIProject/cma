@@ -53,6 +53,31 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    async fn inspect_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<super::super::NonexecutingRuntimeProof>> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .inspect_nonexecuting_runtime(handle, request, home)
+            .await
+    }
+
+    async fn verify_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        proof: &super::super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .verify_nonexecuting_runtime(handle, request, home, proof)
+            .await
+    }
+
     async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,
