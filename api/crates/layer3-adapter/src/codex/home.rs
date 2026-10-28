@@ -11,7 +11,7 @@ pub const BRIDGE_PROGRAM: &str = "codex-acp";
 /// The ACP bridge must delegate to the runtime's reviewed Codex CLI. Without
 /// this explicit path, older ACP packages can silently start their nested
 /// dependency instead of the image's current native computer-use binary.
-pub const CODEX_PROGRAM: &str = "/usr/local/bin/codex";
+pub(crate) const CODEX_PROGRAM: &str = "/usr/local/bin/codex";
 pub const SHARED_AUTH_PATH: &str = "/home/cma/.cma/provider/codex/auth.json";
 pub const AGENT_HOME_ROOT: &str = "/home/cma/.cma/agents";
 const HOME_ENVIRONMENT_NAME: &str = "CODEX_HOME";
