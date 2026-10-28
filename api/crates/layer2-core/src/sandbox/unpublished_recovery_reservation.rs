@@ -32,6 +32,7 @@ impl SandboxUnpublishedRecoveryProof {
         &self,
         snapshot: &SandboxUnpublishedRecoverySnapshot,
     ) -> Result<(), SandboxStoreError> {
+        self.validate_observed_provision(snapshot)?;
         if let Some(reservation) = &self.reserved_provision {
             if snapshot.recovery_provision_reservation()? != Some(reservation)
                 || !snapshot.agents.is_empty()
@@ -54,6 +55,7 @@ impl SandboxUnpublishedRecoveryState {
         &self,
         sandbox: &Sandbox,
     ) -> Result<(), SandboxModelError> {
+        self.validate_observed_provision_for(sandbox)?;
         let Some(reservation) = &self.proof.reserved_provision else {
             return Ok(());
         };

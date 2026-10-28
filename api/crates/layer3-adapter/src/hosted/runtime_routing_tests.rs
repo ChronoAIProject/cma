@@ -26,6 +26,7 @@ impl HostedBackend for RecoveryBackend {
     ) -> Result<Option<super::super::NonexecutingRuntimeProof>> {
         Ok(Some(super::super::NonexecutingRuntimeProof {
             version: 1,
+            idle_bootstrap: None,
             handle: handle.clone(),
             request_sha256: crate::provider_request_digest(request)?,
             home_identity: home.identity()?,
