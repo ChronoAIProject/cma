@@ -480,6 +480,10 @@ pub(super) fn io_error(operation: &'static str, error: std::io::Error) -> Runtim
     )
 }
 
+#[path = "workspace_journal_recovery.rs"]
+mod recovery;
+pub(crate) use recovery::indeterminate_prepare_digest;
+
 #[cfg(test)]
 #[path = "workspace_journal_tests.rs"]
 mod tests;

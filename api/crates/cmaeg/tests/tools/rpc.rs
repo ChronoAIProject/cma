@@ -193,6 +193,15 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
                     == "The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy."
         );
         *media_description = previous_description.clone();
+        let thread_description = &mut tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            ["thread_reply"]["description"];
+        assert_eq!(
+            *thread_description,
+            "Request the verified source thread; native Lark may start the exact admitted\ngroup root thread with one text reply when explicitly advertised. Never fall back."
+        );
+        *thread_description = previous["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            ["thread_reply"]["description"]
+            .clone();
         let key = tool["inputSchema"]["$defs"]["ReplyArguments"]["properties"]
             .as_object_mut()
             .unwrap()

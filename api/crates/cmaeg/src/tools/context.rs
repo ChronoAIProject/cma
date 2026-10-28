@@ -56,6 +56,9 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// One text reply can start the exact original native Lark group message thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_thread_start: Option<bool>,
     /// Exact admitted Telegram forum topic; no creation or enumeration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topic_lifecycle: Option<cmaeg_core::thread_lifecycle::TopicLifecycleCapabilities>,
@@ -224,6 +227,10 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        native_thread_start: (state.native_lark_thread_start_enabled
+            && activity_verified
+            && crate::native_lark::thread_start::eligible(channel, event, &activity))
+        .then_some(true),
         native_media_edits: crate::native_media::Capabilities::context(
             state, channel, event, &activity,
         ),

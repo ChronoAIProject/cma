@@ -414,6 +414,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "DELETE /api/v1/workspaces/{id}" => {
             c.check(client.workspaces().delete(c.param("id"), &c.key()?).await)
         }
+        "POST /api/v1/workspaces/{id}/recover-prepare" => c.check(
+            client
+                .workspaces()
+                .recover_prepare(c.param("id"), &c.key()?)
+                .await,
+        ),
         "GET /api/v1/workspaces/{id}/worktrees" => {
             c.check(client.worktrees().list_accessible(c.param("id")).await)
         }

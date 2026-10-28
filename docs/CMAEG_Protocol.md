@@ -3077,24 +3077,39 @@ enable a new native connection.
 
 An optional `native_media.controls` object reports an explicitly supported
 same-message media/control combination: `max_attachments`, `buttons`, `choices`,
-`caption_max_chars`, and `update`. Absence does not grant combined delivery.
+`caption_max_chars`, and `update`. Optional `kinds` restricts this combination to
+the declared attachment kinds; when absent, the parent media kinds apply.
+Absence of `controls` does not grant combined delivery.
 Native Discord advertises one upload with buttons/choices only for verified
 eligible human context when its media-controls and interaction issuance gates
 are enabled (plus the named-consumer gate when applicable). It uses the existing
 `native_attachments` and `blocks` request fields and one delivered card/message;
 `update: false` excludes media-card edits. With its separate media-card-edit
 and ordinary card-edit gates, `update: true` permits content/control edits while
-preserving the exact confirmed upload; binary/caption replacement remains
-unsupported. Historical cards do not acquire new authority. See
+preserving the exact confirmed upload. Its independent replacement gate may
+add `replace_media: true` for one same-card upload replacement with complete
+content/controls. Historical cards do not acquire new authority. See
 [native Discord controls](CMAEG_Native_Discord_Interactions.md). Historical context
 serialization omits this optional capability; no existing wire field is removed.
 
+Native private WhatsApp can separately advertise `controls.kinds: ["image", "file", "video"]`,
+`max_attachments: 1`, `buttons: true`, `choices: false`, `caption_max_chars: 0`
+and `update: false` when its media-controls, ordinary-media and interaction gates
+permit the verified original owner. Use one existing `native_attachments` item
+without a caption and one buttons block; message text supplies the body. Lists,
+audio/sticker headers, groups, relay, multiple uploads and media/form mixtures
+remain unsupported. Upload and send recheck current app/WABA/phone and original
+consumer/provider custody independently. See
+[native WhatsApp media headers](CMAEG_Native_WhatsApp_Controls.md#one-media-header-with-reply-buttons).
+
 Native Lark/Feishu advertises `kinds: ["image", "file", "audio", "video"]`,
-`mime_types: ["image/jpeg", "image/png", "application/pdf", "text/plain", "audio/ogg", "video/mp4"]`,
+the fourteen MIME types documented in its [native media profile](CMAEG_Native_Lark_Outbound_Media.md),
 `max_total_bytes: 8388608`, `max_image_bytes: 8388608` and `max_caption_chars: 0`.
-It supports RGB/RGBA PNG/JPEG, PDF, UTF-8 text, mono Opus Ogg and the shared
-Baseline H.264/AAC-LC MP4 structural profile. Explanation text remains separate;
-unsupported captions/control mixtures fail before upload. Every upload and send
+It supports RGB/RGBA PNG/JPEG, TXT/PDF/DOC/DOCX/XLS/XLSX/PPT/PPTX/ZIP and opaque
+files, mono Opus Ogg and the shared
+Baseline H.264/AAC-LC MP4 structural profile. Ordinary explanation text remains
+separate; the independent image-card capability combines one PNG/JPEG with
+controls. Captions and other unsupported control mixtures fail before upload. Every upload and send
 rechecks regional bot custody and exact current default/named consumer/provider
 and source authority. Confirmed messages retain durable receipts; unknown or
 partial delivery never automatically resends. See [native Lark outbound media](CMAEG_Native_Lark_Outbound_Media.md)
@@ -4226,9 +4241,14 @@ The separate default-off `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` gate,
 durable routing admission/recovery and existing optional persistent fence storage
 are required. Eligible contexts advertise `capabilities.topic_lifecycle` with
 `manage_original_topic`, `actions: ["close", "reopen"]` and the original expiry.
+This action list remains a conservative subset for strict older readers; rename
+uses the existing shared request schema and does not add a capability field.
 
 Use existing `POST /v1/thread-operations` / MCP `manageThread` with the original
-`{ "type": "event", "event_ref": "…" }` target and `close` or `reopen`.
+`{ "type": "event", "event_ref": "…" }` target and `close`, `reopen`, or
+`rename` with an explicit `name` of 1–100 printable characters. Telegram itself
+accepts 128 characters; CMA preserves the narrower shared request limit. Rename
+changes only the topic name, preserving its icon and open/closed state.
 The gateway restores exact native human-message custody and the original selected
 consumer, verifies forum-supergroup bot permissions, rechecks current custody,
 and dispatches one operation. Telegram does not accept a `thread_ref` or expose
@@ -4514,3 +4534,22 @@ replacement with controls and multipart references remain separate capabilities.
 Turning issuance off preserves already-issued edit and callback readers; it is
 not permission to roll back to an image predating either retained marker while
 such cards remain live.
+
+### Native Lark image/control cards
+
+The independent default-off `CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED` gate
+authorizes one confirmed PNG/JPEG image plus buttons/choices in the existing
+native JSON 2.0 card path. Discovery adds optional
+`native_media.controls.kinds: ["image"]`, `max_attachments: 1`,
+`caption_max_chars: 0` and `update: true`. Other ordinary media kinds are not
+combined-control capabilities. Exact app/chat/thread/source and consumer custody
+is checked before upload and again before the one card send. The compact image
+key is retained inside the existing encrypted card authority; attachment bytes
+and source URLs are not retained there. Existing content/control edits preserve
+the image, original lifetime and callback recovery; image replacement/removal and
+forms remain unsupported. Uncertain operations never issue a usable reference or
+fallback message. See [native image controls](CMAEG_Native_Lark_Image_Controls.md).
+
+### Native Lark / Feishu thread starts
+
+When verified context advertises `capabilities.native_thread_start: true`, `replyToEvent` may send one plain-text reply with `thread_reply: true` to start the exact originally admitted group message thread. The text must contain 1–4,000 characters and no blocks, attachments or explicit reply target. Only that root can be selected; no caller-selected chat, message or thread ID is accepted. The operation may continue that same root’s thread if it already exists, confirms the returned root/parent/chat/thread identity, and never falls back to top-level delivery. The feature is independently default-off; existing retained-thread replies keep their behavior. This is not the Discord `createThread` name/archive operation and grants no list/manage authority. See [native thread starts](CMAEG_Native_Lark_Thread_Start.md).

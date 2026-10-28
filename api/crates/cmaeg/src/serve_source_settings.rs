@@ -2,6 +2,29 @@
 use crate::{http::ManagementState, Config};
 use std::sync::Arc;
 
+pub(super) fn lark_issuance(config: &Config, state: &ManagementState) -> (bool, bool) {
+    let admitted = config.native_lark_intake_enabled && state.native_lark_admission_enabled;
+    (
+        admitted && config.native_lark_controls_enabled,
+        admitted && config.native_lark_thread_start_enabled,
+    )
+}
+
+/// Keep native card/effect client construction and its issuance gates together.
+pub(super) fn lark_effects(
+    config: &Config,
+    controls: bool,
+) -> Result<Arc<crate::tools::NativeLarkEffectsClient>, crate::ConfigError> {
+    Ok(Arc::new(
+        crate::tools::NativeLarkEffectsClient::new(
+            crate::native_lark::Client::production()?,
+            config.native_lark_message_effects_enabled,
+            config.native_lark_received_reactions_enabled,
+        )
+        .with_controls(controls, config.native_lark_forms_enabled),
+    ))
+}
+
 /// Build only enabled native history readers; preserve startup failure on invalid clients.
 pub(super) fn lark_history(
     enabled: bool,
@@ -87,4 +110,14 @@ pub(super) async fn configure(
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
     Ok(whatsapp_forms_ready)
+}
+
+impl crate::delivery::relay_client::RelayClient {
+    pub(super) fn with_native_whatsapp_config(self, config: &Config) -> Self {
+        self.with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
+            .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
+            .with_native_whatsapp_interactions(config.native_whatsapp_interactions_enabled)
+            .with_native_whatsapp_media_controls(config.native_whatsapp_media_controls_enabled)
+            .with_native_whatsapp_groups(config.native_whatsapp_groups_enabled)
+    }
 }

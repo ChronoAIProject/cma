@@ -13,6 +13,14 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    (
+        "workspace-prepare-recovery-missing-key",
+        Classification::Local,
+    ),
+    (
+        "workspace-prepare-recovery-invalid-key",
+        Classification::Local,
+    ),
     ("document-create-missing-key", Classification::Local),
     ("document-create-invalid-key", Classification::Local),
     ("document-create-malformed-json", Classification::RawJson),

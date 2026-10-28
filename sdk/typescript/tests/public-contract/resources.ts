@@ -226,6 +226,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.workspaces.readAccessible(param('id')),
   'DELETE /api/v1/workspaces/{id}': ({ client, param, command }) =>
     client.workspaces.delete(param('id'), command),
+  'POST /api/v1/workspaces/{id}/recover-prepare': ({ client, param, command }) =>
+    client.workspaces.recoverPrepare(param('id'), command),
   'GET /api/v1/workspaces/{id}/worktrees': ({ client, param, options }) =>
     client.worktrees.listAccessible(param('id'), options),
   'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.readAccessible(param('id')),
