@@ -15,6 +15,7 @@ mod native_lark_tests;
 mod native_whatsapp_control_tests;
 mod native_whatsapp_document_tests;
 mod native_whatsapp_group_tests;
+mod native_whatsapp_media_control_tests;
 mod native_whatsapp_sticker_tests;
 mod native_whatsapp_template_tests;
 mod native_whatsapp_tests;

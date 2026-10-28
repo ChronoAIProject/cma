@@ -3077,7 +3077,9 @@ enable a new native connection.
 
 An optional `native_media.controls` object reports an explicitly supported
 same-message media/control combination: `max_attachments`, `buttons`, `choices`,
-`caption_max_chars`, and `update`. Absence does not grant combined delivery.
+`caption_max_chars`, and `update`. Optional `kinds` restricts this combination to
+the declared attachment kinds; when absent, the parent media kinds apply.
+Absence of `controls` does not grant combined delivery.
 Native Discord advertises one upload with buttons/choices only for verified
 eligible human context when its media-controls and interaction issuance gates
 are enabled (plus the named-consumer gate when applicable). It uses the existing
@@ -3088,6 +3090,16 @@ preserving the exact confirmed upload; binary/caption replacement remains
 unsupported. Historical cards do not acquire new authority. See
 [native Discord controls](CMAEG_Native_Discord_Interactions.md). Historical context
 serialization omits this optional capability; no existing wire field is removed.
+
+Native private WhatsApp can separately advertise `controls.kinds: ["image", "file", "video"]`,
+`max_attachments: 1`, `buttons: true`, `choices: false`, `caption_max_chars: 0`
+and `update: false` when its media-controls, ordinary-media and interaction gates
+permit the verified original owner. Use one existing `native_attachments` item
+without a caption and one buttons block; message text supplies the body. Lists,
+audio/sticker headers, groups, relay, multiple uploads and media/form mixtures
+remain unsupported. Upload and send recheck current app/WABA/phone and original
+consumer/provider custody independently. See
+[native WhatsApp media headers](CMAEG_Native_WhatsApp_Controls.md#one-media-header-with-reply-buttons).
 
 Native Lark/Feishu advertises `kinds: ["image", "file", "audio", "video"]`,
 the fourteen MIME types documented in its [native media profile](CMAEG_Native_Lark_Outbound_Media.md),

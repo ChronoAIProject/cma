@@ -14,16 +14,23 @@ impl Client {
         recipient: &str,
         parent: &str,
         prepared: &crate::interactions::PreparedCard,
+        uploaded: Option<super::outbound::UploadedMedia>,
     ) -> Result<String, Error> {
         if !valid_meta_id(phone) || !valid_meta_id(recipient) || !valid_message_id(parent) {
             return Err(Error::Invalid);
         }
-        let (interactive, _) = crate::interactions::whatsapp::render(
+        let (mut interactive, _) = crate::interactions::whatsapp::render(
             &prepared.card.message,
             &prepared.card.id,
             prepared.card.revision,
         )
         .map_err(|_| Error::Invalid)?;
+        if let Some(uploaded) = uploaded {
+            if interactive["type"] != "button" || prepared.card.native_whatsapp.is_none() {
+                return Err(Error::Invalid);
+            }
+            interactive["header"] = uploaded.into_interactive_header(phone)?;
+        }
         let result = self
             .call(
                 reqwest::Method::POST,

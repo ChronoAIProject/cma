@@ -48,6 +48,7 @@ pub struct ToolsState {
     pub whatsapp_interactions_enabled: bool,
     /// Native issuance only; retained callback consumption is independent.
     pub native_whatsapp_interactions_enabled: bool,
+    pub native_whatsapp_media_controls_enabled: bool,
     pub consumer_interactions_enabled: bool,
     /// Advertise native relay media only after the deployed NyxID contract is verified.
     pub native_media_enabled: bool,

@@ -248,6 +248,7 @@ impl App {
             native_discord_media_card_replacements_enabled: false,
             whatsapp_interactions_enabled: false,
             native_whatsapp_interactions_enabled: false,
+            native_whatsapp_media_controls_enabled: false,
             consumer_interactions_enabled: true,
             native_media_enabled: false,
             native_lark_outbound_media_enabled: false,

@@ -153,6 +153,7 @@ impl Fixture {
             native_discord_media_card_replacements_enabled: false,
             whatsapp_interactions_enabled: false,
             native_whatsapp_interactions_enabled: false,
+            native_whatsapp_media_controls_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
             native_telegram_media_controls_enabled: false,
