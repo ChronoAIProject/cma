@@ -6,6 +6,7 @@ SIGTERM only to ACP Node, allowing native app-server's stdin EOF shutdown. It
 never signals a native process or process group, nor invokes lifecycle APIs.
 """
 BRIDGES = {
+    "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4",
     "4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888",
     "ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66",
     "84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c",
@@ -68,6 +69,34 @@ def history_summary(agent, previous=None):
     return {**agent, "historySha256": digest, "files": files}
 
 
+def native_history_clock(native, home, identity):
+    btime = int(re.search(rb"^btime ([0-9]+)$", read(PROC + "/stat", 1048576, True), re.M)[1])
+    uptime = float(read(PROC + "/uptime", 128, True).split()[0])
+    require(abs(time.time() - uptime - btime) < 3, "process_clock_uncertain")
+    started = int((btime + identity["start"] / os.sysconf("SC_CLK_TCK")) * 1000)
+    opened = set()
+    for fd in os.listdir(f"{PROC}/{native}/fd"):
+        try:
+            path = os.readlink(f"{PROC}/{native}/fd/{fd}")
+            if path.startswith(home + "/sessions/") or path.startswith(home + "/archived_sessions/"):
+                require(path.endswith(".jsonl"), "history_descriptor")
+                opened.add(path[len(home) + 1:])
+        except FileNotFoundError:
+            pass
+    require(len(opened) <= 128, "history_limit")
+    return {"nativeStartEpochMs": started, "openHistoryPaths": sorted(opened)}
+
+
+def historical_turns(file, topology):
+    cutoff = topology.get("nativeStartEpochMs", 0) - 60000
+    opened = file["path"] in topology.get("openHistoryPaths", [])
+    terminal = file["lastTerminal"]
+    return sorted(turn for turn, start in file["openTurnStarts"].items()
+                  if start["at"] is not None and start["at"] < cutoff
+                  and (not opened or (terminal and terminal["at"] is not None
+                       and terminal["at"] > start["at"] and terminal["ordinal"] > start["ordinal"])))
+
+
 def topology(agent, processes, supervisor):
     home = HOME + "/.cma/agents/" + agent["agentId"] + "/home"
     candidates = []
@@ -113,7 +142,7 @@ def topology(agent, processes, supervisor):
     return {"agentId": agent["agentId"], "home": home, "cwdSha256": sha(cwd.encode()), "processes": owned,
             "bridgePid": bridge, "nativePid": native, "launcherPid": launcher,
             "bridgeSha256": bridge_hash, "launcherPath": launcher_path,
-            "stdin": stdin_owner(native, bridge, processes)}
+            "stdin": stdin_owner(native, bridge, processes, launcher), **native_history_clock(native, home, identity)}
 
 
 def inspect(request):
@@ -128,11 +157,19 @@ def inspect(request):
                 pass
         require(len(supervisors) == 1, "supervisor_identity")
         supervisor = proc_identity(supervisors[0])
+        require(supervisor["pid"] == 1 and supervisor["ppid"] == 0, "supervisor_topology")
         agents = [topology(a, processes, supervisor) for a in request["agents"]]
+        permitted = {1, os.getpid()} | {p["pid"] for a in agents for p in a["processes"]}
+        require(set(processes) <= permitted, "unowned_process")
+        history = [history_summary(a) for a in request["agents"]]
+        for item, tree in zip(history, agents):
+            require(set(tree.get("openHistoryPaths", [])) <= {f["path"] for f in item["files"]}, "history_descriptor")
+            for file in item["files"]:
+                file["historicalOpenTurns"] = historical_turns(file, tree)
         plan = {"version": 1, "processesAbsent": False, "runtime": request["runtime"], "agents": request["agents"],
                 "supervisor": supervisor, "topology": agents,
                 "baseline": [{"pid": p["pid"], "start": p["start"]} for p in processes.values() if p["pid"] != os.getpid()],
-                "histories": [history_summary(a) for a in request["agents"]]}
+                "histories": history}
         require(len(encode(plan)) <= 56 * 1024, "plan_limit")
         verify_boot(request["runtime"])
         return {"version": 1, "status": "inspected", "plan": plan, "planSha256": sha(encode(plan))}
@@ -166,13 +203,21 @@ def validate_live(plan, allow_missing):
             if current is None and allow_missing:
                 continue
             require(same_process(process, current), "process_changed")
-            # Parent may become init when ACP exits; executable and command must not change.
-            live = proc_identity(process["pid"])
-            require(all(live[k] == process[k] for k in ("pid", "start", "commandSha256", "exeSha256")), "process_changed")
+            # Tool children may exec while their admitted native turn is running.
+            # We never signal them; preserve their start identity until absent.
+            if process["pid"] in (item["bridgePid"], item["launcherPid"], item["nativePid"]):
+                live = proc_identity(process["pid"])
+                require(all(live[k] == process[k] for k in ("pid", "start", "commandSha256", "exeSha256")), "process_changed")
         if item["processes"] and item["bridgePid"] in processes:
+            for original in item["processes"]:
+                if original["pid"] in (item["bridgePid"], item["launcherPid"], item["nativePid"]):
+                    current = processes.get(original["pid"])
+                    require(current is not None and all(current[k] == original[k] for k in ("ppid", "sid")), "native_topology_changed")
             require(proc_identity(item["bridgePid"]) == next(p for p in item["processes"] if p["pid"] == item["bridgePid"]), "bridge_changed")
             require(digest_file(BRIDGE_PATH) == item["bridgeSha256"] and digest_file(item["launcherPath"]) == LAUNCHER, "binary_changed")
-            require(stdin_owner(item["nativePid"], item["bridgePid"], processes) == item["stdin"], "stdin_owner_mismatch")
+            require(stdin_owner(item["nativePid"], item["bridgePid"], processes, item["launcherPid"]) == item["stdin"], "stdin_owner_mismatch")
+    owned = {p["pid"] for a in plan["topology"] for p in a["processes"]}
+    require(set(processes) <= descendants(owned, processes) | {plan["supervisor"]["pid"], os.getpid()}, "unowned_process")
     return processes
 
 
@@ -197,18 +242,24 @@ def final_history(plan):
     result = []
     for agent, previous in zip(plan["agents"], plan["histories"]):
         item = history_summary(agent, previous["files"])
-        require(all(not file["openTurns"] for file in item["files"]), "native_turn_unsettled")
+        prior = {f["path"]: f for f in previous["files"]}
+        for file in item["files"]:
+            historical = prior.get(file["path"], {}).get("historicalOpenTurns", [])
+            require(set(file["openTurns"]) <= set(historical), "native_turn_unsettled")
+            require(all(file["openTurnStarts"][turn] == prior[file["path"]]["openTurnStarts"][turn]
+                        for turn in file["openTurns"]), "native_turn_restarted")
+            file["historicalOpenTurns"] = [turn for turn in historical if turn in file["openTurns"]]
         result.append(item)
     return result
 
 
 def absent(plan, current):
-    original = {p["pid"]: p["start"] for p in plan["baseline"]}
     owned = {p["pid"]: p["start"] for a in plan["topology"] for p in a["processes"]}
     require(all(pid not in current or current[pid]["start"] == start for pid, start in owned.items()), "pid_reused")
     if owned.keys() & current.keys():
         return False
-    require(all(pid == os.getpid() or original.get(pid) == p["start"] for pid, p in current.items()), "untracked_process")
+    supervisor = plan["supervisor"]
+    require(all(pid == os.getpid() or (pid == supervisor["pid"] and p["start"] == supervisor["start"]) for pid, p in current.items()), "untracked_process")
     return True
 
 

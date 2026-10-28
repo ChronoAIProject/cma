@@ -133,6 +133,18 @@ class Files(Fixture):
             with m.boot_guard(self.runtime):
                 self.fail("stale boot admitted")
 
+    def test_historical_turns_require_preboot_time_and_later_terminal_if_open(self):
+        file = {"path": "sessions/old.jsonl", "openTurnStarts": {TURN: {"at": 1000, "ordinal": 2}},
+                "lastTerminal": {"at": 2000, "ordinal": 3}}
+        tree = {"nativeStartEpochMs": 100000, "openHistoryPaths": [file["path"]]}
+        self.assertEqual(m.historical_turns(file, tree), [TURN])
+        for terminal in (None, {"at": 500, "ordinal": 3}, {"at": 2000, "ordinal": 1}):
+            self.assertEqual(m.historical_turns({**file, "lastTerminal": terminal}, tree), [])
+        for at in (None, 50000, 100001):
+            changed = {**file, "openTurnStarts": {TURN: {"at": at, "ordinal": 2}}}
+            self.assertEqual(m.historical_turns(changed, tree), [])
+        self.assertEqual(m.historical_turns({**file, "lastTerminal": None}, {**tree, "openHistoryPaths": []}), [TURN])
+
 
 class Quiesce(Fixture):
     def setUp(self):
@@ -214,6 +226,42 @@ class Quiesce(Fixture):
             m.quiesce(self.request)
         self.assertFalse(self.signals)
 
+    def test_changed_parent_or_source_digest_never_signals(self):
+        self.live[40] = {**self.native, "ppid": 99}
+        with self.assertRaisesRegex(m.Refused, "native_topology_changed"):
+            m.quiesce(self.request)
+        self.live[40] = self.native
+        with patch.dict(m.__dict__, digest_file=lambda *_: "0" * 64):
+            with self.assertRaisesRegex(m.Refused, "binary_changed"):
+                m.quiesce(self.request)
+        self.assertFalse(self.signals)
+
+    def test_tool_child_exec_does_not_retarget_or_block_native_drain(self):
+        self.live[50] = {**self.tool, "commandSha256": "a" * 64, "exeSha256": "b" * 64}
+        self.assertEqual(m.quiesce(self.request)["status"], "quiesced")
+        self.assertEqual(self.signals, [signal.SIGTERM])
+
+    def test_unrequested_process_is_never_exempted_by_old_baseline(self):
+        extra = process(99, 1)
+        self.live[99] = extra
+        self.plan["baseline"].append({"pid": 99, "start": extra["start"]})
+        with self.assertRaisesRegex(m.Refused, "unowned_process"):
+            m.quiesce(self.request)
+        self.assertFalse(self.signals)
+        with self.assertRaisesRegex(m.Refused, "untracked_process"):
+            m.absent(self.plan, {10: self.supervisor, 99: extra})
+
+    def test_preboot_unmatched_turns_preserved_but_same_id_new_start_refused(self):
+        self.plan["histories"][0]["files"][0]["historicalOpenTurns"] = [TURN]
+        self.live = {10: self.supervisor}
+        result = m.quiesce(self.request)
+        self.assertEqual(result["histories"][0]["files"][0]["historicalOpenTurns"], [TURN])
+        self.assertEqual(self.history.read_bytes(), self.initial)
+        with self.history.open("ab") as file:
+            file.write(line("event_msg", {"type": "task_started", "turn_id": TURN}))
+        with self.assertRaisesRegex(m.Refused, "native_turn_restarted"):
+            m.quiesce(self.request)
+
     def test_boot_changes_between_pidfd_open_and_signal(self):
         def replaced(pid, flags):
             self.writer["boot_id"] = OP
@@ -268,6 +316,40 @@ class Quiesce(Fixture):
 
 
 class Proc(unittest.TestCase):
+    def test_source_stdio_refuses_missing_extra_shared_or_named_endpoints(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "net").mkdir()
+            endpoints = []
+            for pid in (20, 30, 40, 50):
+                (root / str(pid) / "fd").mkdir(parents=True)
+            for fd in range(3):
+                (root / "20/fd" / str(21 + fd * 2)).symlink_to("socket:[" + str(100 + fd) + "]")
+                for pid in (30, 40):
+                    (root / str(pid) / "fd" / str(fd)).symlink_to("socket:[" + str(200 + fd) + "]")
+                endpoints.extend([100 + fd, 200 + fd])
+            text = "Num RefCount Protocol Flags Type St Inode\n" + "".join(
+                "0: 00000003 00000000 00000000 0001 03 " + str(i) + "\n" for i in endpoints)
+            (root / "net/unix").write_text(text)
+            with patch.dict(m.__dict__, PROC=str(root), DEADLINE=float("inf")):
+                result = m.source_stdio(40, 30, 20, [20, 30, 40, 50])
+                self.assertEqual(result["mode"], "pinned_source_stdio")
+                (root / "20/fd/21").unlink()
+                with self.assertRaisesRegex(m.Refused, "stdio_shape"):
+                    m.source_stdio(40, 30, 20, [20, 30, 40, 50])
+                (root / "20/fd/21").symlink_to("socket:[100]")
+                (root / "20/fd/99").symlink_to("socket:[999]")
+                with self.assertRaisesRegex(m.Refused, "stdio_shape"):
+                    m.source_stdio(40, 30, 20, [20, 30, 40, 50])
+                (root / "20/fd/99").unlink()
+                (root / "50/fd/7").symlink_to("socket:[100]")
+                with self.assertRaisesRegex(m.Refused, "stdio_shared"):
+                    m.source_stdio(40, 30, 20, [20, 30, 40, 50])
+                (root / "50/fd/7").unlink()
+                (root / "net/unix").write_text(text.replace("100\n", "100 /unrelated/socket\n"))
+                with self.assertRaisesRegex(m.Refused, "stdio_socket_kind"):
+                    m.source_stdio(40, 30, 20, [20, 30, 40, 50])
+
     def test_exact_pipe_and_socket_peer_owner(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -291,12 +373,17 @@ class Proc(unittest.TestCase):
     @unittest.skipUnless(os.uname().sysname == "Linux", "Linux UNIX_DIAG and pidfd evidence")
     def test_real_linux_socket_peer_and_pidfd_available(self):
         import socket
-        first, second = socket.socketpair()
-        with first, second:
-            self.assertEqual(m.unix_peer(os.fstat(first.fileno()).st_ino), os.fstat(second.fileno()).st_ino)
         fd = os.pidfd_open(os.getpid(), 0)
         os.close(fd)
         self.assertTrue(hasattr(signal, "pidfd_send_signal"))
+        first, second = socket.socketpair()
+        with first, second:
+            try:
+                self.assertEqual(m.unix_peer(os.fstat(first.fileno()).st_ino), os.fstat(second.fileno()).st_ino)
+            except m.Refused as error:
+                if str(error) != "socket_diagnostic_unsupported":
+                    raise
+                self.skipTest("kernel UNIX_DIAG absent; exact source stdio fallback tested separately")
 
 
 if __name__ == "__main__":
