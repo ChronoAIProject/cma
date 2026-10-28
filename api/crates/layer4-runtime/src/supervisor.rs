@@ -79,12 +79,14 @@ pub(crate) struct Supervisor {
     writer_boundary: SupervisorBoundary,
     http: reqwest::Client,
     // Dropping the supervisor terminates the isolated desktop session.
-    _desktop_process: Option<crate::desktop_process::DesktopProcess>,
+    desktop_process: Option<crate::desktop_process::DesktopProcess>,
 }
 
 impl Supervisor {
-    pub(crate) fn desktop_enabled(&self) -> bool {
-        self.config.machine_included
+    pub(crate) fn desktop_websocket_token(&self) -> Option<&str> {
+        self.desktop_process
+            .as_ref()
+            .map(crate::desktop_process::DesktopProcess::websocket_token)
     }
 
     pub(crate) async fn start(
@@ -184,7 +186,7 @@ impl Supervisor {
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .expect("skill HTTP client builds"),
-            _desktop_process: desktop_process,
+            desktop_process,
         }))
     }
 

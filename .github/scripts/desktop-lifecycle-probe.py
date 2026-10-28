@@ -1,4 +1,5 @@
 """Exercise live process ownership and clean browser closure in a fixture Pod."""
+import base64
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,14 @@ import types
 
 m = types.ModuleType("desktop_recovery_probe")
 source = Path("/opt/codex-fixtures")
+# A web page in the shared browser cannot bypass CMA through the local listener.
+with socket.create_connection(("127.0.0.1", 6080), timeout=3) as direct:
+    key = base64.b64encode(os.urandom(16)).decode()
+    direct.sendall(("GET /websockify HTTP/1.1\r\nHost: 127.0.0.1:6080\r\n"
+                   "Origin: https://untrusted.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+                   f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+    first = direct.recv(4096)
+    assert not first.startswith(b"HTTP/1.1 101"), "loopback desktop bypassed CMA authentication"
 exec(compile((source / "recovery_io.py").read_text() + "\n" +
              (source / "recovery.py").read_text(), "recovery", "exec"), m.__dict__)
 deadline = time.monotonic() + 10
@@ -69,4 +78,4 @@ with socket.create_connection(("127.0.0.1", 5900), timeout=3) as stream:
     assert stream.recv(12).startswith(b"RFB ")
 assert m.validate_services(plan, m.inventory())
 print(json.dumps({"checks": ["desktop-recovery-ownership", "unrelated-process-refused",
-                             "chromium-sandbox-active", "browser-close-keeps-desktop"]}))
+                             "chromium-sandbox-active", "loopback-page-refused", "browser-close-keeps-desktop"]}))
