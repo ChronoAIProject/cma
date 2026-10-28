@@ -3028,6 +3028,8 @@ bot/chat/topic fence held without a TTL; new keys and event expiry must not rese
 it. This increment exposes no reconciliation/reset command. Read the
 [topic contract](CMAEG_Native_Telegram_Topics.md) before operator acceptance.
 
+## Native WhatsApp incoming changes gate
+
 Native WhatsApp coexistence incoming edits/revokes have separate owner consent
 `message_events` and false-default `CMAEG_NATIVE_WHATSAPP_MESSAGE_EVENTS_ENABLED`.
 Enable only after compatible readers and durable routing are available. Existing
