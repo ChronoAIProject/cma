@@ -487,3 +487,6 @@ async fn requests_without_keys_keep_the_old_guard_shape_and_storage_count() {
     );
     assert!(h.rx.try_recv().is_err());
 }
+
+#[path = "split_receipt_tests.rs"]
+mod split_receipts;

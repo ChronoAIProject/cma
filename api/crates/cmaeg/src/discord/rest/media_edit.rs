@@ -74,6 +74,13 @@ impl DiscordRest {
             return Err(RestError::Rejected);
         }
         let payload = payload(patch, current, file.as_ref())?;
+        self.prepare_media_payload(payload, file).await
+    }
+    pub(super) async fn prepare_media_payload(
+        &self,
+        payload: Value,
+        file: Option<PreparedFile>,
+    ) -> Result<PreparedEdit, RestError> {
         let Some(file) = file else {
             return Ok(PreparedEdit {
                 headers: HeaderMap::from_iter([(

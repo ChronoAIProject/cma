@@ -2328,6 +2328,25 @@
         ],
         "type": "object"
       },
+      "ConfirmedMessagePart": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "description": "Zero-based position in the rendered text, not a delivery retry counter.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message_ref": {
+            "$ref": "#/components/schemas/MessageRef"
+          }
+        },
+        "required": [
+          "index",
+          "message_ref"
+        ],
+        "type": "object"
+      },
       "ConformanceLevel": {
         "enum": [
           "l1",
@@ -3845,7 +3864,8 @@
           "components",
           "stickers",
           "poll",
-          "forwarded_snapshot"
+          "forwarded_snapshot",
+          "media"
         ],
         "type": "string"
       },
@@ -3951,6 +3971,13 @@
         "properties": {
           "delivery": {
             "$ref": "#/components/schemas/DeliveryOutcome"
+          },
+          "message_parts": {
+            "description": "Confirmed native split-text parts in rendered order; absent for legacy receipts.\nAn unknown aggregate outcome can retain confirmed earlier parts.",
+            "items": {
+              "$ref": "#/components/schemas/ConfirmedMessagePart"
+            },
+            "type": "array"
           },
           "message_ref": {
             "oneOf": [
@@ -4121,6 +4148,44 @@
         "required": [
           "url",
           "auth"
+        ],
+        "type": "object"
+      },
+      "MediaControlsCapabilities": {
+        "description": "Exact media/control combination supported for this event's verified destination.",
+        "properties": {
+          "buttons": {
+            "type": "boolean"
+          },
+          "caption_max_chars": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "choices": {
+            "type": "boolean"
+          },
+          "max_attachments": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "replace_media": {
+            "description": "Replace one upload on the same durable card through a confirmed native PATCH.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "update": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "max_attachments",
+          "buttons",
+          "choices",
+          "caption_max_chars",
+          "update"
         ],
         "type": "object"
       },
@@ -4418,6 +4483,17 @@
       },
       "NativeMediaCapabilities": {
         "properties": {
+          "controls": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaControlsCapabilities",
+                "description": "One upload and native controls in the same message; absent while issuance is disabled."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "kinds": {
             "items": {
               "type": "string"
@@ -9960,6 +10036,15 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/HistoryCursor"
+            }
+          },
+          {
+            "description": "Opt in to text from supported mixed Lark/Feishu posts and the media omission enum. Default false; requires the mixed-history gate and source consent. Repeat the same value for every cursor page. No media downloads or file authority.",
+            "in": "query",
+            "name": "include_media",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],

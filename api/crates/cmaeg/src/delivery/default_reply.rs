@@ -94,6 +94,7 @@ impl Sender {
                 drop(permit);
                 context.gate.progress();
                 IntentReceipt {
+                    message_parts: vec![],
                     message_ref: None,
                     rendering,
                     delivery,

@@ -267,6 +267,7 @@ pub(crate) fn receipt(card: &Card) -> Result<IntentReceipt, Error> {
         },
     };
     Ok(IntentReceipt {
+        message_parts: vec![],
         message_ref: card.reference.clone(),
         rendering: compile::compile(&card.message)?.rendering,
         delivery,
