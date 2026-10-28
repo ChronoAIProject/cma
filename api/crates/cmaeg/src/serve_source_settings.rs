@@ -37,6 +37,9 @@ pub(super) async fn configure(
     state.native_telegram_durable_admission_enabled =
         config.routing.recovery_enabled && config.routing.admission_enabled;
     state.native_discord_thread_history_enabled = config.native_discord_thread_history_enabled;
+    state.native_telegram_topic_lifecycle_enabled = config.native_telegram_topic_lifecycle_enabled
+        && state.native_telegram_durable_admission_enabled
+        && state.records.thread_fences_ready().await;
     state.native_discord_thread_lifecycle_enabled =
         config.native_discord_thread_lifecycle_enabled && state.records.thread_fences_ready().await;
     state.native_discord_conversation_history_enabled =

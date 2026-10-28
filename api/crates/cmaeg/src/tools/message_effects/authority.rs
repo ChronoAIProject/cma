@@ -130,7 +130,7 @@ pub(super) fn check(
         || authority.owner != channel.definition.owner
         || authority.provider != *consumer.provider
         || !caller.matches(&authority.agent_key_hash)
-        || authority.routing_sha256 != routing_hash(channel)
+        || !routing_matches(channel, message, &authority.routing_sha256)
     {
         return Err(denied());
     }
@@ -211,6 +211,13 @@ pub(crate) fn routing_hash(channel: &ResolvedChannel) -> String {
             .as_bytes()
         )
     )
+}
+fn routing_matches(channel: &ResolvedChannel, message: &MessageRefPayload, original: &str) -> bool {
+    original == routing_hash(channel)
+        || (crate::telegram::messaging_compat::accepts_unrouted_default(
+            &channel.definition,
+            message.consumer.as_ref(),
+        ) && original == format!("{:x}", Sha256::digest(b"null")))
 }
 fn denied() -> Problem {
     Problem::new(ProblemCode::Forbidden, 403, "message_effect_revoked")

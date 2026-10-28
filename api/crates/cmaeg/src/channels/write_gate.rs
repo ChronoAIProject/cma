@@ -52,6 +52,7 @@ pub struct WriteFlags {
     pub native_discord: bool,
     pub telegram_message_events: bool,
     pub discord_thread_history: bool,
+    pub telegram_topic_lifecycle: bool,
     pub discord_thread_lifecycle: bool,
     pub discord_conversation_history: bool,
     pub discord_reactions: bool,
@@ -76,6 +77,21 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Telegram {
+                topic_lifecycle: true,
+                ..
+            }
+        ) && !flags.telegram_topic_lifecycle
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/topic_lifecycle"),
+            "native_telegram_topic_lifecycle_disabled",
+        ));
+    }
     if let Some(index) = next.sources.iter().position(|source| {
         matches!(
             source,

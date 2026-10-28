@@ -43,7 +43,7 @@ fn revision(channel: &ResolvedChannel, message: &MessageRefPayload) -> Option<St
         .filter(|c| !c.pending && c.credential.is_some())?;
     Some(hash(&serde_json::json!({
         "domain":"cmaeg.received-reaction-custody.v1",
-        "source":source,"channel":channel.id,"record":channel.pointer.record_id,
+        "source":crate::telegram::messaging_source(source),"channel":channel.id,"record":channel.pointer.record_id,
         "event":message.event_id,"message":message.platform_message_id,"original_event":a.event_sha256,
         "platform":a.platform,"bot":a.bot_id,"chat":a.chat_id,"actor":a.actor_id,"thread":a.thread_id,
         "received_at":a.received_at,"expires_at":a.expires_at,

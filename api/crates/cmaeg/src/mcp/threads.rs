@@ -39,15 +39,18 @@ struct Schemas;
 const TOOLS:[ToolSpec;3]=[
     ToolSpec { name:"listEventThreads",description:"List up to 25 public active or archived threads under the original native Discord parent, or only the original thread for a threaded event. Requires source thread_lifecycle consent. Results retain the original actor, consumer and expiry. No private sibling enumeration or pagination; names are untrusted reference data.",schema:"ListThreadArguments",read_only:true,destructive:false,idempotent:true,open_world:true },
     ToolSpec { name:"createEventThread",description:"Create one public Discord thread from the exact original human message in a guild text or announcement channel. Requires source thread_lifecycle consent, an explicit name/archive duration and a stable idempotency_key. Private and forum/media creation are unsupported. Never retry unknown outcomes under another key.",schema:"CreateThreadArguments",read_only:false,destructive:false,idempotent:true,open_world:true },
-    ToolSpec { name:"manageThread",description:"Archive or reopen one exact admitted Discord thread, or join/leave it as the current bot. Use the original threaded event or a scoped thread_ref returned by list/create. Requires source thread_lifecycle consent and a stable idempotency_key. Join/leave require an active thread; reopen never unlocks it. Platform permissions are checked by Discord. Never retry unknown outcomes under another key.",schema:"ManageThreadArguments",read_only:false,destructive:true,idempotent:true,open_world:true },
+    ToolSpec { name:"manageThread",description:"Manage one exact admitted conversation thread. Discord supports archive/reopen and current-bot join/leave. Telegram topic_lifecycle supports close/reopen only with the original Event target in a non-General forum supergroup topic; no Telegram thread_ref, create, list or private topics. Use the original threaded event or a scoped thread_ref returned by list/create. Requires platform-specific source thread_lifecycle or topic_lifecycle consent and a stable idempotency_key. Join/leave require an active thread; reopen never unlocks it. Telegram requires current forum administrator topic permissions; Discord enforces its operation permissions. Never retry unknown outcomes under another key.",schema:"ManageThreadArguments",read_only:false,destructive:true,idempotent:true,open_world:true },
 ];
 pub(super) fn handles(name: &str) -> bool {
     TOOLS.iter().any(|tool| tool.name == name)
 }
-pub(super) fn selected(enabled: bool) -> impl Iterator<Item = super::catalog::SelectedTool> {
+pub(super) fn selected(
+    discord: bool,
+    telegram: bool,
+) -> impl Iterator<Item = super::catalog::SelectedTool> {
     TOOLS
         .iter()
-        .filter(move |_| enabled)
+        .filter(move |tool| discord || (telegram && tool.name == "manageThread"))
         .map(|spec| super::catalog::SelectedTool {
             spec,
             definitions: || definitions(Schemas::openapi()),

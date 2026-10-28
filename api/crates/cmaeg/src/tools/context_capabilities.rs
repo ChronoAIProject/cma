@@ -19,6 +19,7 @@ impl Capabilities {
             whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
+            topic_lifecycle: None,
             thread_lifecycle: None,
             conversation_history: None,
         }
@@ -45,6 +46,7 @@ impl Capabilities {
             whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
+            topic_lifecycle: None,
             thread_lifecycle: None,
             conversation_history: None,
         }
@@ -67,6 +69,7 @@ impl Capabilities {
             whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
+            topic_lifecycle: None,
             thread_lifecycle: None,
             conversation_history: None,
         }

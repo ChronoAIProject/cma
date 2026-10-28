@@ -25,6 +25,8 @@ pub struct CreateThreadRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadAction {
+    /// Close the exact admitted Telegram forum topic. Discord does not support this action.
+    Close,
     /// Archive without changing the lock.
     Archive,
     /// Reopen without implicitly unlocking.
@@ -101,7 +103,7 @@ pub struct ThreadList {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ThreadOutcome {
-    /// Discord confirmed the operation.
+    /// The platform confirmed the operation.
     Confirmed,
     /// The requested operation is outside the supported scope.
     Unsupported {
@@ -148,4 +150,25 @@ pub struct ThreadCapabilities {
     pub actions: Vec<ThreadAction>,
     /// Original event expiry in Unix seconds.
     pub expires_at: i64,
+}
+
+/// Exact admitted Telegram forum topic, without creation or enumeration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TopicLifecycleCapabilities {
+    /// The original event targets a manageable forum topic.
+    pub manage_original_topic: bool,
+    /// Telegram close/reopen only; distinct from Discord archiving.
+    pub actions: Vec<TopicAction>,
+    /// Original event expiry in Unix seconds.
+    pub expires_at: i64,
+}
+/// Supported Telegram topic operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TopicAction {
+    /// Close the original topic.
+    Close,
+    /// Reopen the original topic.
+    Reopen,
 }

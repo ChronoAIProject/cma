@@ -1,5 +1,5 @@
 import { ConversationHistoryCapabilitiesSchema } from './conversation-history.js';
-import { ThreadCapabilitiesSchema } from './thread-lifecycle.js';
+import { ThreadCapabilitiesSchema, TopicLifecycleCapabilitiesSchema } from './thread-lifecycle.js';
 import { LarkRegionSchema } from './primitives.js';
 import { LarkResourceBindingSchema } from './channels.js';
 import { NativeMediaCapabilitiesSchema, NativeMediaEditCapabilitiesSchema } from './messages.js';
@@ -306,6 +306,7 @@ export type ThreadHistory = Output<typeof ThreadHistorySchema>;
 export const CapabilitiesSchema = object({
   native_media_edits: optional(nullable(NativeMediaEditCapabilitiesSchema)),
   thread_history: optional(nullable(boolean)),
+  topic_lifecycle: optional(nullable(TopicLifecycleCapabilitiesSchema)),
   thread_lifecycle: optional(nullable(ThreadCapabilitiesSchema)),
   conversation_history: optional(nullable(ConversationHistoryCapabilitiesSchema)),
   message_effects: optional(nullable(MessageEffectsCapabilitiesSchema)),

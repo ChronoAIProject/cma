@@ -4153,6 +4153,29 @@ Native Lark/Feishu interactive replies use distinct encrypted card authority, na
 
 Only encrypted signed v2 `card.action.trigger` callbacks can consume these cards. Both `header.token` and `event.token` are redacted. The canonical click and recoverable admission are one durable card CAS, and local recovery runs without platform retries. HTTP `{}` acknowledgement follows durable routed admission. Dispatch reopens stored card custody. Card PATCH, delete, own-reaction changes and initial callback consumption use one exact-message fence. A consumed click blocks mutations until its durable admission marker is saved, and recovery of that exact click does not depend on any later external fence. Uncertain external writes cannot be retried through a new key or restarted process. Replacement keeps the original lifetime and activates only after durable success. See [native control contract](CMAEG_Native_Lark_Controls.md) for limits and callback configuration.
 
+## Exact native Telegram forum topic lifecycle
+
+Native Telegram sources may independently consent with `topic_lifecycle:true`.
+The separate default-off `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` gate,
+durable routing admission/recovery and existing optional persistent fence storage
+are required. Eligible contexts advertise `capabilities.topic_lifecycle` with
+`manage_original_topic`, `actions: ["close", "reopen"]` and the original expiry.
+
+Use existing `POST /v1/thread-operations` / MCP `manageThread` with the original
+`{ "type": "event", "event_ref": "…" }` target and `close` or `reopen`.
+The gateway restores exact native human-message custody and the original selected
+consumer, verifies forum-supergroup bot permissions, rechecks current custody,
+and dispatches one operation. Telegram does not accept a `thread_ref` or expose
+list/create/private/General-topic operations. Discord rejects `close` before
+platform IO. Confirmed results omit `thread`.
+
+Stable idempotency keys and non-TTL bot/chat/topic fences prevent uncertain
+writes from being repeated through another key or expired event. Source consent
+transparently enrolls previously unrouted default-only channels; the narrow
+reader compatibility preserves unrelated existing message references without
+normalizing their issuance hashes. See [Telegram topics](CMAEG_Native_Telegram_Topics.md)
+for the exact scope, permission checks, compatibility and recovery limits.
+
 ## Bounded native Discord thread lifecycle
 
 `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED=true` and the native Discord
