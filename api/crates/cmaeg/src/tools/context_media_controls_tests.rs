@@ -12,6 +12,8 @@ async fn discord_media_controls_discovery_requires_verified_source_and_each_issu
             FixtureState::new().await
         };
         let mut state = state(&f, false);
+        state.native_telegram_media_controls_enabled = true;
+        state.native_telegram_media_control_edits_enabled = true;
         for media in [false, true] {
             for controls in [false, true] {
                 for consumer in [false, true] {

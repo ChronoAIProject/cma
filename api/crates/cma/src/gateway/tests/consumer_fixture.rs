@@ -72,6 +72,7 @@ impl ConsumerGateway {
             .with_state(platform.clone());
         let platform_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config = cmaeg::Config {
+            native_split_text_refs_enabled: false,
             native_telegram_message_events_writes_enabled: false,
             native_lark_writes_enabled: false,
         native_lark_intake_enabled: false,
