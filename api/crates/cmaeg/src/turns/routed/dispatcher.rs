@@ -23,6 +23,7 @@ pub trait Authority: Send + Sync {
     ) -> BoxFuture<'a, Result<(), ExecutionError>> {
         Box::pin(async move {
             if native_lark_control(plan)
+                || crate::whatsapp::message_context::shape(&plan.activity)
                 || crate::interactions::whatsapp_flow::shape(&plan.activity)
             {
                 Err(ExecutionError::AuthorityChanged)
@@ -54,6 +55,16 @@ impl Authority for ChannelResolver {
                     .map_err(|e| match e {
                         crate::interactions::Error::Denied => ExecutionError::AuthorityChanged,
                         crate::interactions::Error::Unavailable => ExecutionError::Unavailable,
+                    })?;
+            }
+            if crate::whatsapp::message_context::shape(&plan.activity) {
+                self.whatsapp_message_change_current(current, plan)
+                    .await
+                    .map_err(|error| match error {
+                        crate::whatsapp::message_context::Error::Unavailable => {
+                            ExecutionError::Unavailable
+                        }
+                        _ => ExecutionError::AuthorityChanged,
                     })?;
             }
             Ok(())
@@ -433,6 +444,7 @@ pub(super) fn validate_current(
             .is_some_and(|source| {
                 if matches!(source, cmaeg_core::channel::Source::Whatsapp { .. })
                     && !crate::interactions::whatsapp_flow::shape(&plan.activity)
+                    && !crate::whatsapp::message_context::shape(&plan.activity)
                 {
                     crate::whatsapp::legacy_source(source)
                         == crate::whatsapp::legacy_source(&plan.source)

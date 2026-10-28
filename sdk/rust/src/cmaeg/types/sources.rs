@@ -32,6 +32,9 @@ pub enum Source {
         /// Explicit owner consent to create and publish managed static WhatsApp Flows.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         forms_enabled: Option<bool>,
+        /// Incoming private edits/deletions on Business App coexistence accounts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
         /// Explicit existing-group opt-in for an Official Business Account phone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group_ids: Option<Vec<String>>,
@@ -147,6 +150,9 @@ pub enum SourceRequest {
         /// Explicit owner consent to create and publish managed static WhatsApp Flows.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         forms_enabled: Option<bool>,
+        /// Incoming private edits/deletions on Business App coexistence accounts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
         /// Explicit existing-group opt-in for an Official Business Account phone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group_ids: Option<Vec<String>>,
@@ -260,6 +266,9 @@ pub enum SourceKind {
         /// Explicit owner consent to create and publish managed static WhatsApp Flows.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         forms_enabled: Option<bool>,
+        /// Incoming private edits/deletions on Business App coexistence accounts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
     },
     /// Native Discord ingress.
     #[serde(rename = "discord")]
