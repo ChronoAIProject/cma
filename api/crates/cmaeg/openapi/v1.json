@@ -4172,6 +4172,13 @@
           "choices": {
             "type": "boolean"
           },
+          "clear_media": {
+            "description": "Explicit clear_native_attachments removes every upload on a confirmed card.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "kinds": {
             "description": "Exact attachment kinds supported with controls; absent means the parent kinds apply.",
             "items": {
@@ -4947,6 +4954,10 @@
               "$ref": "#/components/schemas/Block"
             },
             "type": "array"
+          },
+          "clear_native_attachments": {
+            "description": "Explicitly remove every native attachment; updateMessage only when advertised.",
+            "type": "boolean"
           },
           "native_attachments": {
             "description": "Explicit native media delivery. Legacy attachment blocks remain links.",

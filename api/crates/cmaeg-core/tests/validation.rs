@@ -64,6 +64,7 @@ fn rejects_structured_cloud_event_too_large() {
 fn rejects_empty_outbound_message() {
     assert!(OutboundMessage {
         whatsapp_template: None,
+        clear_native_attachments: false,
         native_media_update: None,
         native_attachments: Vec::new(),
         thread_reply: false,
@@ -166,4 +167,38 @@ fn scoped_identity_allowlists_have_a_serializable_wire_shape() {
         serde_json::to_value(IdentityAdmission::Deny).unwrap(),
         serde_json::json!({"type":"deny"})
     );
+}
+
+#[test]
+fn clear_native_attachments_requires_an_unambiguous_complete_update() {
+    let parse = |value| serde_json::from_value::<OutboundMessage>(value).unwrap();
+    assert!(
+        parse(serde_json::json!({"text":"Clear files", "clear_native_attachments":true}))
+            .validate()
+            .is_ok()
+    );
+    assert!(parse(serde_json::json!({"clear_native_attachments":true}))
+        .validate()
+        .is_err());
+    assert!(parse(
+        serde_json::json!({"text":"Clear files", "clear_native_attachments":true,
+        "native_attachments":[{"kind":"file","source":{"type":"base64","data":"AQ=="}}]})
+    )
+    .validate()
+    .is_err());
+    assert!(parse(
+        serde_json::json!({"clear_native_attachments":true,"native_media_update":{"caption":""}})
+    )
+    .validate()
+    .is_err());
+    assert!(serde_json::from_value::<OutboundMessage>(
+        serde_json::json!({"text":"Clear files","clear_native_attachments":null})
+    )
+    .is_err());
+    let legacy = parse(serde_json::json!({"text":"Keep files","native_attachments":[]}));
+    assert!(!legacy.clear_native_attachments);
+    assert!(serde_json::to_value(legacy)
+        .unwrap()
+        .get("clear_native_attachments")
+        .is_none());
 }

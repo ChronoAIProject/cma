@@ -27,6 +27,7 @@ pub(crate) mod discord_form_store;
 mod discord_form_tests;
 pub(crate) mod discord_form_values;
 mod discord_media;
+mod discord_media_set;
 mod discord_receipts;
 #[cfg(test)]
 mod discord_tests;
@@ -168,13 +169,11 @@ impl InteractionStore {
         prepared: &mut PreparedCard,
         destination: Destination,
     ) -> Result<MessageRef, Error> {
-        if prepared
-            .card
-            .discord
-            .as_ref()
-            .and_then(|i| i.media.as_ref())
-            .is_some_and(|media| media.pending_replacement)
-        {
+        if prepared.card.discord.as_ref().is_some_and(|identity| {
+            identity.media_items().map_or(true, |items| {
+                items.iter().any(|media| media.pending_replacement)
+            })
+        }) {
             return Err(Error::Denied);
         }
         prepared.card.destination = Some(destination);

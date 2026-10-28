@@ -105,11 +105,15 @@ impl ToolsState {
         message: OutboundMessage,
     ) -> Result<IntentReceipt, Problem> {
         validate(&message)?;
-        if message.native_media_update.is_some() {
+        if message.native_media_update.is_some() || message.clear_native_attachments {
             return Err(Problem::new(
                 ProblemCode::InvalidRequest,
                 400,
-                "native_media_update_requires_updateMessage",
+                if message.clear_native_attachments {
+                    "native_attachment_clear_requires_updateMessage"
+                } else {
+                    "native_media_update_requires_updateMessage"
+                },
             ));
         }
         if request_id.is_empty()
