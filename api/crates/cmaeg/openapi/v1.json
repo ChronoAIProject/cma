@@ -4187,7 +4187,7 @@
             "type": "integer"
           },
           "replace_media": {
-            "description": "Replace one upload on the same durable card through a confirmed native PATCH.",
+            "description": "Replace the supported upload set on the same durable card through a confirmed PATCH.",
             "type": [
               "boolean",
               "null"

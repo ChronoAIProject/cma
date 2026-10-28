@@ -388,7 +388,7 @@ pub struct MediaControlsCapabilities {
     pub caption_max_chars: u32,
     /// Whether content/control edits may preserve this message's confirmed upload.
     pub update: bool,
-    /// Replace one upload on the same durable card through a confirmed native PATCH.
+    /// Replace the supported upload set on the same durable card through a confirmed PATCH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replace_media: Option<bool>,
 }

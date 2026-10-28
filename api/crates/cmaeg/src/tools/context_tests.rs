@@ -439,29 +439,34 @@ async fn native_lark_image_control_discovery_is_image_only_and_requires_current_
         cmaeg_core::channel::LarkRegion::Lark,
     )
     .await;
-    for multiple in [false, true] {
-        app.state.native_lark_multi_image_controls_enabled = multiple;
-        for media in [false, true] {
-            for controls in [false, true] {
-                for verified in [false, true] {
-                    app.state.native_lark_outbound_media_enabled = media;
-                    app.state.native_lark_media_controls_enabled = controls;
-                    let caps = NativeMediaCapabilities::for_event(
-                        &app.state,
-                        &f.channel,
-                        &f.event,
-                        &f.context.activity,
-                        verified,
-                    );
-                    assert_eq!(caps.is_some(), media);
-                    let combination = caps.and_then(|caps| caps.controls);
-                    assert_eq!(combination.is_some(), media && controls && verified);
-                    if let Some(combination) = combination {
-                        assert_eq!(combination.kinds, Some(vec!["image".into()]));
-                        assert_eq!(combination.max_attachments, if multiple { 4 } else { 1 });
-                        assert_eq!(combination.caption_max_chars, 0);
-                        assert!(combination.buttons && combination.choices && combination.update);
-                        assert!(combination.replace_media.is_none());
+    for replacement in [false, true] {
+        app.state.native_lark_media_card_replacements_enabled = replacement;
+        for multiple in [false, true] {
+            app.state.native_lark_multi_image_controls_enabled = multiple;
+            for media in [false, true] {
+                for controls in [false, true] {
+                    for verified in [false, true] {
+                        app.state.native_lark_outbound_media_enabled = media;
+                        app.state.native_lark_media_controls_enabled = controls;
+                        let caps = NativeMediaCapabilities::for_event(
+                            &app.state,
+                            &f.channel,
+                            &f.event,
+                            &f.context.activity,
+                            verified,
+                        );
+                        assert_eq!(caps.is_some(), media);
+                        let combination = caps.and_then(|caps| caps.controls);
+                        assert_eq!(combination.is_some(), media && controls && verified);
+                        if let Some(combination) = combination {
+                            assert_eq!(combination.kinds, Some(vec!["image".into()]));
+                            assert_eq!(combination.max_attachments, if multiple { 4 } else { 1 });
+                            assert_eq!(combination.caption_max_chars, 0);
+                            assert!(
+                                combination.buttons && combination.choices && combination.update
+                            );
+                            assert_eq!(combination.replace_media, replacement.then_some(true));
+                        }
                     }
                 }
             }

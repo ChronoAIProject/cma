@@ -113,6 +113,23 @@ pub(super) async fn configure(
 }
 
 impl crate::delivery::relay_client::RelayClient {
+    pub(super) fn with_native_lark_config(
+        self,
+        config: &Config,
+        controls: bool,
+        thread_start: bool,
+    ) -> Self {
+        self.with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
+            .with_native_lark_effects(config.native_lark_message_effects_enabled)
+            .with_native_lark_controls(controls, config.native_lark_forms_enabled)
+            .with_native_lark_media_controls(config.native_lark_media_controls_enabled)
+            .with_native_lark_multi_image_controls(config.native_lark_multi_image_controls_enabled)
+            .with_native_lark_media_card_replacements(
+                config.native_lark_media_card_replacements_enabled,
+            )
+            .with_native_lark_thread_start(thread_start)
+    }
+
     pub(super) fn with_native_whatsapp_config(self, config: &Config) -> Self {
         self.with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
             .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
