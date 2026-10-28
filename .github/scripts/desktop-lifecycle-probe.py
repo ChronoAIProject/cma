@@ -41,7 +41,9 @@ def status(pid):
 renderers = []
 for p in services:
     try:
-        command = Path(f"/proc/{p['pid']}/cmdline").read_bytes().split(b"\0")
+        # Chromium can rewrite argv into one process-title string. Match whole
+        # flags in either that representation or the original NUL-separated argv.
+        command = Path(f"/proc/{p['pid']}/cmdline").read_bytes().replace(b"\0", b" ").split()
         if b"--type=renderer" in command:
             assert b"--no-sandbox" not in command
             state = status(p["pid"])
