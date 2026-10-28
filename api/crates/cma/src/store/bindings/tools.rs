@@ -120,7 +120,7 @@ impl HostedProviderToolSource for MongoProviderToolSource {
             .run(Operation::Resolve(runtime, request, authority_fence))
             .await?
         {
-            Outcome::Resolved(binding) => Ok(binding),
+            Outcome::Resolved(binding) => Ok(binding.map(|binding| *binding)),
             Outcome::Confirmed => unreachable!("resolve returns a binding"),
         }
     }
