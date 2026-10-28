@@ -161,6 +161,24 @@ impl SandboxUnpublishedRecoveryState {
 }
 
 impl Sandbox {
+    /// Recovery admission and receipt publication require their dedicated
+    /// transactions. Generic saves may only retain this authority or retire it.
+    pub fn validate_unpublished_recovery_save(&self, next: &Self) -> Result<(), SandboxModelError> {
+        let retiring = next.lifecycle.unpublished_recovery.is_none()
+            && matches!(
+                next.status,
+                super::SandboxStatus::Retiring | super::SandboxStatus::Retired
+            );
+        if !retiring
+            && (self.lifecycle.unpublished_recovery != next.lifecycle.unpublished_recovery
+                || self.lifecycle.unpublished_recovery_attempted
+                    != next.lifecycle.unpublished_recovery_attempted)
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
     pub(super) fn validate_unpublished_recovery_successor(
         &self,
         next: &Self,
