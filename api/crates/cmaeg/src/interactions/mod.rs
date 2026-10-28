@@ -168,6 +168,15 @@ impl InteractionStore {
         prepared: &mut PreparedCard,
         destination: Destination,
     ) -> Result<MessageRef, Error> {
+        if prepared
+            .card
+            .discord
+            .as_ref()
+            .and_then(|i| i.media.as_ref())
+            .is_some_and(|media| media.pending_replacement)
+        {
+            return Err(Error::Denied);
+        }
         prepared.card.destination = Some(destination);
         prepared.card.reference = Some(self.reference(&prepared.card)?);
         prepared.version = self.save(&prepared.card, Some(prepared.version)).await?;

@@ -219,7 +219,9 @@ keeps the revision fenced and never blindly resends. Retained replay and subsequ
 revisions remain readable when issuance gates are disabled.
 
 For this contract `native_media.controls.update: true` means content/control
-edits that preserve the upload. It does not authorize binary replacement, caption
-replacement, multiple uploads, adding uploads to text-only cards, or forms mixed
-with uploads. Those remain explicitly unavailable. Current source/consumer
-custody, original actor, exact destination/thread and expiry checks still apply.
+edits that preserve the upload. Upload replacement additionally requires
+`native_media.controls.replace_media: true` and the separate replacement gate;
+see [same-card media replacement](CMAEG_Native_Discord_Card_Edits.md#same-card-media-replacement).
+Caption-only updates, multiple uploads, adding uploads to text-only cards and
+forms mixed with uploads remain unavailable. Current source/consumer custody,
+original actor, exact destination/thread and expiry checks still apply.
