@@ -223,6 +223,26 @@ impl IngressState {
                 return outcome;
             }
             let source = VerifiedIngress {
+                quote: if matches!(request.activity.kind, ActivityKind::Message { .. }) {
+                    if crate::ingress::quoted_context::whatsapp_batch_conflicts(
+                        &verified.body,
+                        &verified.source,
+                    )
+                    .contains(&verified.message.id)
+                    {
+                        crate::ingress::quoted_context::Intake::Ambiguous
+                    } else {
+                        crate::ingress::quoted_context::Intake::Candidate(
+                            crate::ingress::quoted_context::whatsapp(
+                                &verified.body,
+                                &request.activity,
+                                &verified.message.id,
+                            ),
+                        )
+                    }
+                } else {
+                    crate::ingress::quoted_context::Intake::Legacy
+                },
                 oversized: body.len() > MAX_SOURCE_BYTES,
                 body,
                 attributes_signed: true,
