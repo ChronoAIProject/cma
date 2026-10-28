@@ -44,6 +44,7 @@ mod upstream_guard;
 mod upstream_target;
 mod wire_operation;
 mod workspace_journal;
+mod workspace_prepare_recovery;
 mod workspace_removal_intent;
 mod workspace_removal_paths;
 mod workspace_removal_writer;

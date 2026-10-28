@@ -258,6 +258,14 @@ impl SandboxAdapter for HostedAdapter {
         }
     }
 
+    async fn recover_workspace_prepare(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspacePrepareRecoveryRequest,
+    ) -> crate::Result<crate::WorkspacePrepareRecoveryReceipt> {
+        workspace::recover_prepare(self, handle, request).await
+    }
+
     async fn run_workspace_setup(
         &self,
         handle: &RuntimeHandle,

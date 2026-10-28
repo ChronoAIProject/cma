@@ -100,6 +100,39 @@ fn writer_states(
         .collect()
 }
 
+/// Unlike checkpoint quiescence, recovery does not stop an unknown writer. All
+/// processes outside the supervisor's own ancestry must already have exited.
+#[cfg(any(target_os = "linux", test))]
+fn unexpected_live_processes(table: &BTreeMap<i32, ProcessRecord>, supervisor: i32) -> Vec<i32> {
+    let mut ancestors = BTreeSet::new();
+    let mut current = supervisor;
+    while current > 0 && ancestors.insert(current) {
+        let Some(record) = table.get(&current) else {
+            break;
+        };
+        current = record.parent;
+    }
+    table
+        .iter()
+        .filter_map(|(pid, record)| {
+            (!ancestors.contains(pid) && !matches!(record.state, 'Z' | 'X')).then_some(*pid)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn require_no_other_processes(supervisor: i32) -> Result<(), String> {
+    let processes = unexpected_live_processes(&process_table()?, supervisor);
+    if processes.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} live processes remain outside the supervisor ancestry",
+            processes.len()
+        ))
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub(super) fn process_table() -> Result<BTreeMap<i32, ProcessRecord>, String> {
     process_table_from(std::path::Path::new("/proc"), |path| {
@@ -232,3 +265,42 @@ fn resume_best_effort_set(members: &BTreeSet<i32>) {
 #[cfg(test)]
 #[path = "writer_process_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn workspace_recovery_refuses_descendants_siblings_and_stopped_writers() {
+    let mut table = BTreeMap::from([
+        (
+            1,
+            ProcessRecord {
+                parent: 0,
+                session: 1,
+                state: 'S',
+            },
+        ),
+        (
+            10,
+            ProcessRecord {
+                parent: 1,
+                session: 10,
+                state: 'S',
+            },
+        ),
+    ]);
+    assert!(unexpected_live_processes(&table, 10).is_empty());
+    for (pid, parent, state) in [(20, 10, 'S'), (21, 1, 'S'), (22, 10, 'T')] {
+        table.insert(
+            pid,
+            ProcessRecord {
+                parent,
+                session: pid,
+                state,
+            },
+        );
+    }
+    assert_eq!(unexpected_live_processes(&table, 10), [20, 21, 22]);
+    for record in table.values_mut() {
+        record.state = 'Z';
+    }
+    assert!(unexpected_live_processes(&table, 10).is_empty());
+}
