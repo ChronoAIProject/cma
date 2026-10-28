@@ -6,15 +6,16 @@ native WhatsApp private controls/templates/existing-group messaging, native
 Lark controls/forms/history, Telegram/Discord single-media edits, bounded native
 thread/topic lifecycle, and native WhatsApp Forms and incoming message changes.
 The composed source also includes single-upload Telegram/Discord controls,
-Telegram caption/keyboard edits, Discord media-preserving content/control edits,
-Lark mixed-post history text, and individually confirmed split-text receipts.
+Telegram caption/keyboard edits, Discord media-preserving content/control edits
+and single-upload card replacement, Lark mixed-post history text, and individually
+confirmed split-text receipts.
 
 “Implemented” means a composed CMA code path with local contract coverage.
 Feature gates, source credentials, provider permissions and connected acceptance
 are separate requirements. “Default-off” describes the code default. The
 checked-in ConfigMap keeps the newer Lark mixed-history, Telegram media-control
-and media-control-edit, Discord media-control and media-card-edit, and native
-split-text-reference gates false. This document does not claim that the new
+and media-control-edit, Discord media-control, media-card-edit and media-card-
+replacement, and native split-text-reference gates false. This document does not claim that the new
 increments are deployed or that four-platform support is complete.
 
 The [accepted PR #1157 activation](CMAEG_Operations.md#native-lark-and-whatsapp-owner-testing-activation-2026-10-28)
@@ -44,7 +45,7 @@ this implementation; this source note is not a live acceptance claim.
 | Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Independently gated native JPEG/PNG, TXT/PDF/DOC/XLS/PPT/DOCX/XLSX/PPTX documents and bounded AAC/AMR/MP3/M4A/mono Opus Ogg audio plus static/animated WebP stickers and bounded Baseline H.264 MP4/3GPP video; gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads; independently gated native JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and bounded Baseline H.264 MP4 replies | Native multipart REST uploads; gated relay uploads |
 | Existing threads | Native topic identity remains bound to the reply | Relay quote/context correlation; default-off native received context projection carries an ID-only context relationship; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
 | Thread lifecycle | Default-off exact original non-General forum-topic close/reopen with independent source consent; no list/create/private/General topic support | No group/thread management | Retained existing-thread replies; no creation or lifecycle management | New default-off source-consented public creation from the original message, bounded public listing, exact rename/archive/reopen and current-bot join/leave; private/forum creation and private sibling enumeration remain unsupported |
-| Edit a sent message | Native text/control updates; gated relay text edits; explicit revisioned authority for one confirmed native attachment supports same-kind replacement and caption. Separate default-off media-control edits change a confirmed single-upload card’s caption/keyboard while preserving its file | Unsupported by the current CMA relay contract | Gated ordinary relay text edits and issued-card updates; independently gated exact confirmed native text edits and separate-app native card replacement | Gated native text/link part edits and native card replacement; explicit revisioned authority for one confirmed attachment supports same-kind replacement, description and visible content. Separate default-off media-card edits preserve a confirmed upload while changing content/controls; gated relay text edits |
+| Edit a sent message | Native text/control updates; gated relay text edits; explicit revisioned authority for one confirmed native attachment supports same-kind replacement and caption. Separate default-off media-control edits change a confirmed single-upload card’s caption/keyboard while preserving its file | Unsupported by the current CMA relay contract | Gated ordinary relay text edits and issued-card updates; independently gated exact confirmed native text edits and separate-app native card replacement | Gated native text/link part edits and native card replacement; explicit revisioned authority for one confirmed attachment supports same-kind replacement, description and visible content. Separate default-off media-card edits preserve a confirmed upload while changing content/controls; another default-off gate replaces one upload on the same card with complete content/controls; gated relay text edits |
 | Delete/react to a sent message | Gated effects on confirmed bot messages; a separate default-off gate adds effects-only references for one individual native upload. Subject to permissions, age and reaction limits | No CMA relay operation | Separate opt-in CMA adapter through the existing NyxID bot-service proxy: exact confirmed text/cards, own retained reaction ID, durable uncertainty fences. Independent default-off native app effects grant recall and own reactions for one confirmed text/media message; live acceptance unverified | Gated native effects on confirmed single-part bot text/link replies; separately gated effects-only uploads contained in one exact native message. Durable idempotency and per-message serialization; no arbitrary message IDs or relay effects |
 | React to the received user message | Independent default-off reaction-only scope for the exact retained native human message, including topics; albums excluded; no edit/delete authority | Independent native reaction gate for exact retained private received messages; relay unchanged | Independent default-off reaction-only scope for the exact retained native human message; separate regional app authority | Independent default-off reaction-only scope for the exact retained native human message/thread; verifies original author and changes only the bot's own ordinary reactions |
 | Interactive controls | Inline keyboards/choices and durable verified callbacks; a separate default-off gate combines one supported native upload and a bounded caption with its keyboard. Named-consumer issuance has its own gate; albums and multiple attachments are excluded | Gated relay controls and independently gated native private buttons/single-choice lists with signed durable callbacks; approved templates have separate relay and native reply gates. Groups do not gain controls | Gated JSON 2.0 cards and durable verified callbacks through the existing relay connection; separately gated typed Form submissions. Separate native app sources now have independently default-off direct cards/buttons/choices and typed Forms, with signed encrypted v2 callbacks, exact original-actor custody and durable routed recovery | Gated native buttons/single-select controls, separately gated multi-select and modal Forms, and durable type-3/type-5 callbacks bound to the original actor, message, consumer and conversation. A separate default-off gate combines one upload with buttons/choices; media/forms and multiple attachments remain unsupported. Relay controls remain blocked by the pinned upstream contract |
@@ -252,12 +253,16 @@ empty selection; old buttons/single-selects keep their existing result shapes.
 The separate default-off native media-controls gate supports one confirmed upload
 with buttons/choices on the same exact message. Native media-card edits have a
 separate default-off gate and preserve the verified attachment while changing
-content/controls through the existing durable revision chain. Earlier cards
-without an exact attachment proof remain callback-only. Media/forms and multiple
+content/controls through the existing durable revision chain. An additional
+default-off replacement gate changes one upload on that same exact card with
+complete replacement content/controls, after upload validation and under the
+existing revision fence. Unknown outcomes retain the frozen revision; they do
+not authorize resend. Earlier cards without an exact attachment proof remain
+callback-only. Media/forms and multiple
 attachments remain unsupported. Text-only completion of a media card removes
 controls while preserving its upload. See
 [native media controls](CMAEG_Native_Discord_Interactions.md#preserve-an-upload-while-editing-its-controls)
-and [native card edits](CMAEG_Native_Discord_Card_Edits.md).
+and [native card edits and replacement](CMAEG_Native_Discord_Card_Edits.md#same-card-media-replacement).
 
 Native receipt is persisted and observed before provider execution. Immutable
 inbox snapshots preserve routing and receipt time across replay. Verified thread
