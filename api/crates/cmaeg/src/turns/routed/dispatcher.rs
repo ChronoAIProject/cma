@@ -1,4 +1,7 @@
-use super::{journal::valid_response, model::*, Journal};
+use super::{
+    journal::valid_response, model::*, BindingPreparation, Journal, PreparationIntent,
+    PreparationReceipt,
+};
 use crate::{
     channels::resolver::{ChannelResolver, ResolveError, ResolvedChannel},
     ingress::routing_store::{
@@ -98,6 +101,35 @@ pub trait ExecutionPort: Send + Sync {
         target: &'a StoredTarget,
         current: &'a ResolvedChannel,
     ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>>;
+    fn inspect_binding<'a>(
+        &'a self,
+        _plan: &'a AdmittedPlan,
+        _target: &'a StoredTarget,
+        _current: &'a ResolvedChannel,
+    ) -> BoxFuture<'a, Result<BindingPreparation, ExecutionError>> {
+        Box::pin(async { Err(ExecutionError::Unsupported) })
+    }
+    fn reserve_binding<'a>(
+        &'a self,
+        _target: &'a StoredTarget,
+        _current: &'a ResolvedChannel,
+        _intent: &'a PreparationIntent,
+    ) -> BoxFuture<'a, Result<PreparationReceipt, ExecutionError>> {
+        Box::pin(async { Err(ExecutionError::Unsupported) })
+    }
+    fn prepare_at_generation<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+        generation: Option<u64>,
+    ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
+        if generation.is_some() {
+            Box::pin(async { Err(ExecutionError::Unsupported) })
+        } else {
+            self.prepare(plan, target, current)
+        }
+    }
     fn start<'a>(
         &'a self,
         body: &'a FrozenTurn,
@@ -205,6 +237,75 @@ impl Dispatcher {
     ) -> Result<Arc<ResolvedChannel>, ExecutionError> {
         current_target(self.authority.as_ref(), plan, target).await
     }
+    /// A retained checkpoint is the only retry authority. Never re-inspect
+    /// after marker acknowledgement, including an ambiguous reservation reply.
+    async fn prepare_binding(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        lease: &mut Lease,
+    ) -> Result<Option<u64>, ExecutionError> {
+        const BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+        if lease.state.binding_preparation.is_none() {
+            let current = self.current(plan, target).await?;
+            self.journal.renew(lease).await?;
+            self.journal.guard(lease).await?;
+            let observed = tokio::time::timeout(BUDGET, async {
+                use super::generation_provenance::GenerationProvenance;
+                match self
+                    .journal
+                    .inherited_binding_generation(&self.plans, plan, target)
+                    .await?
+                {
+                    GenerationProvenance::Fresh => {
+                        self.port.inspect_binding(plan, target, &current).await
+                    }
+                    GenerationProvenance::Inherited {
+                        original_admission_id,
+                        original_target_id,
+                        generation,
+                    } => Ok(BindingPreparation::Inherited {
+                        version: 1,
+                        binding_id: target.launch.provider.binding_id.to_string(),
+                        original_admission_id,
+                        original_target_id,
+                        generation,
+                    }),
+                }
+            })
+            .await
+            .map_err(|_| ExecutionError::Unavailable)??;
+            self.journal
+                .pin_binding_preparation(lease, plan, target, observed)
+                .await?;
+        }
+        if let Some(BindingPreparation::Pending { intent }) =
+            lease.state.binding_preparation.clone()
+        {
+            // Any revocation, routing edit or credential rotation prevents the
+            // mutation even when the original plan/marker remains durable.
+            let current = self.current(plan, target).await?;
+            self.journal.renew(lease).await?;
+            self.journal.guard(lease).await?;
+            if lease.state.event_expires_at <= (self.journal.clock)() {
+                return Err(ExecutionError::Expired);
+            }
+            let receipt =
+                tokio::time::timeout(BUDGET, self.port.reserve_binding(target, &current, &intent))
+                    .await
+                    .map_err(|_| ExecutionError::Unavailable)??;
+            self.journal
+                .record_binding_preparation(lease, plan, target, receipt)
+                .await?;
+        }
+        lease
+            .state
+            .binding_preparation
+            .as_ref()
+            .ok_or(ExecutionError::Corrupt)?
+            .resolved_generation()
+    }
+
     async fn run(
         &self,
         plan: &AdmittedPlan,
@@ -248,12 +349,23 @@ impl Dispatcher {
             return Ok(RunResult::Done(DispatchOutcome::Unknown));
         }
         if lease.state.phase == Phase::Pending {
-            // Reader-first release: never fall through to legacy conversation
-            // creation for an admission requiring preparation we cannot perform.
-            if plan.prepares_binding(target) {
-                return Err(ExecutionError::Unsupported);
-            }
-            let body = self.port.prepare(plan, target, &current).await?;
+            let generation = if plan.prepares_binding(target) {
+                self.prepare_binding(plan, target, lease).await?
+            } else {
+                None
+            };
+            let current = if plan.prepares_binding(target) {
+                let current = self.current(plan, target).await?;
+                self.journal.renew(lease).await?;
+                self.journal.guard(lease).await?;
+                current
+            } else {
+                current
+            };
+            let body = self
+                .port
+                .prepare_at_generation(plan, target, &current, generation)
+                .await?;
             validate_delivery(&body, &current, target)?;
             self.journal.freeze(lease, plan, target, &body).await?;
         }
