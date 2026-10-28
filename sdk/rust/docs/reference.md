@@ -705,6 +705,6 @@ fetches a continuation automatically. Native Lark/Feishu mixed posts may preserv
 their textual content with `HistoryOmittedContent::Media` and empty `attachments`;
 this marker conveys no media count, type, keys or download authority. Whole-row
 omission counts exclude retained mixed posts, while `text_truncated` independently
-reports clipped text. Older SDK decoders reject `media`, so the gateway's separate
+reports clipped or sanitized text. Older SDK decoders reject `media`, so the gateway's separate
 `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag stays off until all consumers and
 rollback readers support this value. See [native history](../../../docs/CMAEG_Native_Lark_History.md).

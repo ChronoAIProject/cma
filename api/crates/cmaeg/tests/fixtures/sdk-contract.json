@@ -7711,13 +7711,13 @@
         "id": "ou_historical",
         "kind": "human"
       },
-      "text": "Earlier post\nText before and after omitted media",
+      "text": "Earlier postText before and after omitted media",
       "occurred_at": "2026-10-28T00:00:00Z",
       "attachments": [],
       "omitted_content": [
         "media"
       ],
-      "text_truncated": false,
+      "text_truncated": true,
       "metadata_truncated": false
     }
   ],
@@ -7847,19 +7847,19 @@
             "id": "ou_historical",
             "kind": "human"
           },
-          "text": "Earlier post\nText before and after omitted media",
+          "text": "Earlier postText before and after omitted media",
           "occurred_at": "2026-10-28T00:00:00Z",
           "attachments": [],
           "omitted_content": [
             "media"
           ],
-          "text_truncated": false,
+          "text_truncated": true,
           "metadata_truncated": false
         }
       ],
       "scanned_messages": 1,
       "omitted_message_count": 0,
-      "text_truncated": false,
+      "text_truncated": true,
       "metadata_truncated": false,
       "content_coverage": "platform_returned_only",
       "continuation": {
