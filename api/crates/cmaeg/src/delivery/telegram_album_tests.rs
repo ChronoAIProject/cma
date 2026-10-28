@@ -101,6 +101,72 @@ async fn native_telegram_album_preserves_order_captions_and_topic_with_one_autho
 }
 
 #[tokio::test]
+async fn native_telegram_channel_album_accepts_optional_sender_and_fences_conflicting_identity() {
+    for case in [
+        "channel_sender",
+        "absent_sender",
+        "wrong_sender_chat",
+        "wrong_sender_type",
+        "wrong_destination",
+        "non_channel",
+        "wrong_bot",
+        "human",
+    ] {
+        let f = Fixture::new().await;
+        let (mut sender, channel, mut event) = setup(&f);
+        sender.relay = sender.relay.with_native_telegram_albums(true);
+        if let ReplyAddress::Telegram { thread_id, .. } = &mut event.reply {
+            *thread_id = None;
+        }
+        let message = album(&[NativeMediaKind::Image; 2]);
+        let mut value = result(&message, None);
+        for member in value.as_array_mut().unwrap() {
+            member.as_object_mut().unwrap().remove("from");
+            member["chat"]["type"] = "channel".into();
+            member["sender_chat"] = json!({"id":-42,"type":"channel"});
+        }
+        match case {
+            "channel_sender" => {}
+            "absent_sender" => {
+                for member in value.as_array_mut().unwrap() {
+                    member.as_object_mut().unwrap().remove("sender_chat");
+                }
+            }
+            "wrong_sender_chat" => value[1]["sender_chat"]["id"] = (-43).into(),
+            "wrong_sender_type" => value[1]["sender_chat"]["type"] = "supergroup".into(),
+            "wrong_destination" => value[1]["chat"]["id"] = (-43).into(),
+            "non_channel" => value[1]["chat"]["type"] = "supergroup".into(),
+            "wrong_bot" => value[1]["from"] = json!({"id":78,"is_bot":true}),
+            "human" => value[1]["from"] = json!({"id":77,"is_bot":false}),
+            _ => unreachable!(),
+        }
+        f.answer(answer(value));
+        let receipt = send(
+            &sender,
+            &channel,
+            &event,
+            &message,
+            &RecordingGate::new(true),
+        )
+        .await;
+        if matches!(case, "channel_sender" | "absent_sender") {
+            assert!(
+                matches!(receipt.delivery, DeliveryOutcome::Confirmed { platform_message_id: Some(ref id) } if id == "800"),
+                "{case}"
+            );
+        } else {
+            assert!(
+                matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }),
+                "{case}"
+            );
+        }
+        assert!(receipt.message_ref.is_none(), "{case}");
+        assert_eq!(f.calls().len(), 1, "{case}");
+        assert!(f.calls()[0].path.ends_with("/sendMediaGroup"), "{case}");
+    }
+}
+
+#[tokio::test]
 async fn native_telegram_album_gate_off_and_incompatible_kinds_keep_separate_uploads() {
     use NativeMediaKind::{Audio, File, Image};
     for (enabled, kinds) in [
