@@ -32,8 +32,9 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
     ) -> Result<SandboxUnpublishedRecoveryProof, SandboxStoreError> {
         snapshot.validate()?;
         if snapshot.sandbox.legacy_unpublished_allocation() {
-            // A former worker's bounded assignment request must have expired
-            // before inspecting an idle bootstrap. No sleeping or lease bypass.
+            // Avoid overlap with ordinary bounded assignment calls. This age is
+            // not a cancellation receipt: remote assignment can survive a lost
+            // exec response, so fresh process/identity proof remains mandatory.
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| refused())?
