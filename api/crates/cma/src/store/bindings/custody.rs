@@ -136,6 +136,21 @@ impl BindingCredentialCustody for MongoBindingCredentials {
         self.rotate(binding, credential).await
     }
 
+    async fn retry_recovered_binding(
+        &self,
+        binding: &ProviderBinding,
+        credential: &ProvidedCredential,
+    ) -> Result<ProviderBinding, CoreError> {
+        self.retry_recovered(binding, Some(credential)).await
+    }
+
+    async fn recover_binding(
+        &self,
+        binding: &ProviderBinding,
+    ) -> Result<ProviderBinding, CoreError> {
+        self.retry_recovered(binding, None).await
+    }
+
     async fn forget_binding(
         &self,
         binding: &ProviderBinding,

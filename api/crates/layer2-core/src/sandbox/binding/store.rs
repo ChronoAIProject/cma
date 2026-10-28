@@ -222,6 +222,16 @@ pub fn binding_has_work(binding: &ProviderBinding) -> bool {
     )
 }
 
+/// Failed records retain their original intent without being rewritten merely
+/// to rediscover them. Parent/custody recovery is proved only at admission.
+pub fn binding_is_recovery_candidate(binding: &ProviderBinding) -> bool {
+    matches!(binding.state, BindingState::Failed { .. })
+        && binding.work == BindingWork::Idle
+        && binding.previous.is_none()
+        && binding.existing_agent.is_none()
+        && binding.profile.environment.is_some()
+}
+
 pub fn conversation_storage_key(value: &BindingConversation) -> String {
     format!(
         "{}:{:020}:{}",
