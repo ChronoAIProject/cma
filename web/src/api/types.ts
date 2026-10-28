@@ -252,6 +252,7 @@ export interface AgentDetail {
     readonly status: SandboxStatus;
     readonly profile: ProfileReference;
   };
+  readonly desktop?: boolean;
   readonly conformsTo: readonly string[];
   readonly reach: readonly string[];
   readonly title?: string;

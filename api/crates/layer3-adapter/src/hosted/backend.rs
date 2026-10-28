@@ -60,6 +60,15 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    async fn open_desktop(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<crate::DesktopConnectionHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime desktop is unavailable".into(),
+        ))
+    }
+
     async fn reserve_home_request(
         &self,
         _runtime: &ProviderSandboxRequest,

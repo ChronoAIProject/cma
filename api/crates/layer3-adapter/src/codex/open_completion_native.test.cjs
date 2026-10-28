@@ -71,7 +71,7 @@ async function localFixture() {
 
 async function fixture(family = "cma_access") {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   const program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
   assert.equal(createHash("sha256").update(withoutOpenCompletion(readFileSync(program, "utf8"))).digest("hex"), sourceSha256);
   const directory = mkdtempSync(join(tmpdir(), "cma-open-completion-test-"));
@@ -108,7 +108,7 @@ async function fixture(family = "cma_access") {
   return { binary, program, directory, home, params, server, connect, read, prompt, history,
     async close() {
       await Promise.all(bridges.map(bridge => bridge.close()));
-      await server.close(); rmSync(directory, { recursive: true, force: true });
+      await server.close(); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       if (server.state.error) throw server.state.error;
     } };
 }

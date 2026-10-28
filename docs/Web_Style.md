@@ -3815,3 +3815,22 @@ anchor and the single availability explanation; Overview describes the tools'
 purpose without repeating that explanation.
 
 | 2026-10-28 | Remove the redundant tool catalog heading and overview availability copy while retaining the Event tools section anchor and accessible catalog region. |
+
+The optional **Machine Included** choice on Agent creation uses the existing
+selection-card spacing and surface tokens. Desktop-capable owned Agents expose
+**Machine desktop** beside the conversation header. Its desktop panel uses a
+12px viewport inset and radius, the layer-1 background, layer-2 border, and
+level-3 shadow tokens; below 30rem it fills the viewport. The header uses 12px
+by 16px padding and the standard 14px strong title. Actions wrap when needed.
+The locally bundled desktop canvas fills the remaining space and supports the
+browser's full-screen action. Connection status remains visible above it.
+**Control desktop** opts into keyboard and pointer input; while the Agent is
+working, the panel stays view-only. **Reconnect** resets input control.
+
+| 2026-10-29 | Add the Machine Included creation choice and a bundled desktop viewer with explicit input control, connection status, reconnect and full-screen actions. |
+
+| 2026-10-29 | Describe Machine Included as a shared Linux desktop with Chromium; avoid claiming a bundled native computer-use tool or exposing runtime-image implementation details in creation copy. |
+
+| 2026-10-29 | Scope the Machine Included hint alignment to its component class while retaining the shared field hint typography. |
+
+| 2026-10-29 | Apply Machine Included hint alignment through its containing section while using the existing shared field hint class. |

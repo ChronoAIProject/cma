@@ -20,6 +20,14 @@ use utoipa::ToSchema;
 #[serde(deny_unknown_fields)]
 pub struct AgentLifecycleCreateRequest {
     pub name: String,
+    /// Provision a desktop-capable Linux runtime for this Agent.
+    ///
+    /// Desktop runtimes are immutable Sandbox configuration.  The option is
+    /// therefore supported only when this request creates a new Sandbox.
+    /// Omit the option when adding an Agent to an existing Sandbox or Workspace;
+    /// those requests retain the parent's immutable desktop configuration.
+    #[serde(default)]
+    pub machine_included: bool,
     /// Add an Agent to this owned, ready Workspace using its existing Sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
