@@ -10,7 +10,7 @@ use layer2_core::sandbox::*;
 use layer2_core::{AgentProfileId, RuntimeCapabilities, RuntimeCapability};
 use layer3_adapter::hosted::HostedAccessToolSource;
 
-async fn setup(
+pub(super) async fn setup(
     store: &MongoSandboxStore,
 ) -> (ProviderBinding, BindingConversation, AgentOpenRequest) {
     let mut binding = mongo_tests::binding();
