@@ -59,7 +59,9 @@ def validate(request):
     require(type(runtime["generation"]) is int and 0 < runtime["generation"] < 2 ** 64, "request_invalid")
     require(re.fullmatch(r"[0-9a-f]{32}", runtime["bootId"]), "request_invalid")
     agents = request["agents"]
-    require(isinstance(agents, list) and 0 < len(agents) <= 16, "request_invalid")
+    # A retained runtime can outlive its last live Agent. Empty admission still
+    # proves this exact boot/home and rejects every unowned process below.
+    require(isinstance(agents, list) and len(agents) <= 16, "request_invalid")
     for agent in agents:
         require(set(agent) == {"agentId", "conversationId"}, "request_invalid")
         require(re.fullmatch(r"agt_[0-9a-f]{32}", agent["agentId"]), "request_invalid")
