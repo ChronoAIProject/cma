@@ -4,18 +4,18 @@ use std::sync::Arc;
 
 /// Build only enabled native history readers; preserve startup failure on invalid clients.
 pub(super) fn lark_history(
-    config: &Config,
+    enabled: bool,
+    mixed_media: bool,
 ) -> Result<
     Option<Arc<crate::tools::NativeLarkConversationHistory>>,
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    Ok(config
-        .native_lark_conversation_history_enabled
+    Ok(enabled
         .then(|| {
             crate::native_lark::Client::history_reader().map(|api| {
                 Arc::new(crate::tools::NativeLarkConversationHistory::new(
                     api,
-                    config.native_lark_mixed_history_enabled,
+                    mixed_media,
                 ))
             })
         })
@@ -23,13 +23,12 @@ pub(super) fn lark_history(
 }
 
 pub(super) fn discord_history(
-    config: &Config,
+    enabled: bool,
 ) -> Result<
     Option<Arc<crate::tools::DiscordConversationHistory>>,
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    Ok(config
-        .native_discord_conversation_history_enabled
+    Ok(enabled
         .then(|| {
             crate::discord::DiscordRest::new()
                 .map(crate::tools::DiscordConversationHistory::new)
