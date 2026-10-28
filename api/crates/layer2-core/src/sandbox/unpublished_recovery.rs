@@ -40,6 +40,10 @@ pub struct SandboxUnpublishedRecoveryProof {
     pub sandbox_id: SandboxId,
     pub runtime_id: String,
     pub runtime_generation: u64,
+    /// Exact uncompleted allocation whose provider authority was independently
+    /// proved. The retained source generation and binding remain unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserved_provision: Option<super::SandboxRuntimeProvisionReservation>,
     pub home_identity: String,
     pub boot_id: Option<String>,
     /// Fresh provider evidence proves the old runtime cannot execute. This is
@@ -94,7 +98,7 @@ impl Sandbox {
         })
     }
 
-    fn stalled_unpublished_revival(&self) -> bool {
+    pub(super) fn stalled_unpublished_revival(&self) -> bool {
         self.status == SandboxStatus::Reviving
             && self.runtime.is_none()
             && self.work.step == SandboxWorkStep::RunLifecycleOperation
@@ -361,6 +365,7 @@ impl SandboxUnpublishedRecoveryProof {
     ) -> Result<(), SandboxStoreError> {
         snapshot.validate()?;
         self.validate_provider_plan().map_err(|_| refused())?;
+        self.validate_reserved_provision(snapshot)?;
         let runtime = snapshot
             .sandbox
             .unpublished_recovery_binding()
