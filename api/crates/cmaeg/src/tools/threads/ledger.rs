@@ -17,6 +17,7 @@ pub(super) struct Store {
     claims: RecordClient,
     fences: RecordClient,
     keys: Arc<MasterKeyRing>,
+    telegram: bool,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,6 +53,13 @@ impl Store {
             claims: records.clone().interactions(),
             fences: records.thread_fences(),
             keys,
+            telegram: false,
+        }
+    }
+    pub fn telegram(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
+        Self {
+            telegram: true,
+            ..Self::new(records, keys)
         }
     }
     pub async fn claim(
@@ -63,8 +71,20 @@ impl Store {
         expires_at: i64,
     ) -> Result<Admission, Problem> {
         let mut claim = Claim {
-            kind: "discord_thread_claim_v1".into(),
-            id: index_id("discord-thread-claim-v1", &[&scope, request_id]),
+            kind: if self.telegram {
+                "telegram_topic_claim_v1"
+            } else {
+                "discord_thread_claim_v1"
+            }
+            .into(),
+            id: index_id(
+                if self.telegram {
+                    "telegram-topic-claim-v1"
+                } else {
+                    "discord-thread-claim-v1"
+                },
+                &[&scope, request_id],
+            ),
             owner: owner.into(),
             scope,
             request_hash,
@@ -121,9 +141,40 @@ impl Store {
         owner: &str,
     ) -> Result<Option<Fence>, Problem> {
         let destination = super::hash(&serde_json::json!({"bot":bot,"thread":thread}));
+        self.acquire_destination(destination, owner).await
+    }
+    pub async fn acquire_topic(
+        &self,
+        bot: &str,
+        chat: &str,
+        topic: &str,
+        owner: &str,
+    ) -> Result<Option<Fence>, Problem> {
+        let destination = super::hash(
+            &serde_json::json!({"platform":"telegram","bot":bot,"chat":chat,"topic":topic}),
+        );
+        self.acquire_destination(destination, owner).await
+    }
+    async fn acquire_destination(
+        &self,
+        destination: String,
+        owner: &str,
+    ) -> Result<Option<Fence>, Problem> {
         let mut fence = Fence {
-            kind: "discord_thread_fence_v1".into(),
-            id: index_id("discord-thread-fence-v1", &[&destination]),
+            kind: if self.telegram {
+                "telegram_topic_fence_v1"
+            } else {
+                "discord_thread_fence_v1"
+            }
+            .into(),
+            id: index_id(
+                if self.telegram {
+                    "telegram-topic-fence-v1"
+                } else {
+                    "discord-thread-fence-v1"
+                },
+                &[&destination],
+            ),
             owner: owner.into(),
             destination,
             held: true,

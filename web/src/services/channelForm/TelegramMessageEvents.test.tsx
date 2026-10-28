@@ -94,3 +94,54 @@ it('keeps channel posts separate and clears them when retained message events ar
     ),
   ).toThrow(/disabled/);
 });
+
+it('keeps topic management independent, preserves saved opt-in and supports opt-out', () => {
+  const onChange = vi.fn();
+  const view = render(<SourceFields value={source} onChange={onChange} />);
+  expect(screen.getByLabelText('Manage the original forum topic')).toBeDisabled();
+  const opted = { ...source, topic_lifecycle: true };
+  view.rerender(<SourceFields value={opted} onChange={onChange} />);
+  expect(screen.getByLabelText('Manage the original forum topic')).toBeChecked();
+  fireEvent.click(screen.getByLabelText('Manage the original forum topic'));
+  expect(onChange).toHaveBeenLastCalledWith(source);
+  const topics: RelayDiscovery = {
+    ...available,
+    authoring: {
+      ...available.authoring!,
+      native_telegram_message_events_enabled: false,
+      native_telegram_topic_lifecycle_enabled: true,
+    },
+  };
+  view.rerender(
+    <RelayCapabilitiesContext value={topics}>
+      <SourceFields value={source} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByLabelText('Manage the original forum topic'));
+  expect(onChange).toHaveBeenLastCalledWith(opted);
+  expect(() => validateRelayAuthoring(topics, { sources: [opted] })).not.toThrow();
+  expect(() => validateRelayAuthoring({ status: 'legacy' }, { sources: [opted] })).toThrow(
+    /disabled/,
+  );
+  expect(() =>
+    validateRelayAuthoring({ status: 'legacy' }, { sources: [opted] }, { sources: [opted] }),
+  ).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring({ status: 'legacy' }, { sources: [source] }, { sources: [opted] }),
+  ).not.toThrow();
+  const events = { ...source, message_events: true };
+  expect(() =>
+    validateRelayAuthoring(
+      topics,
+      { sources: [{ ...events, topic_lifecycle: true }] },
+      { sources: [events] },
+    ),
+  ).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring(
+      { status: 'legacy' },
+      { sources: [events] },
+      { sources: [{ ...events, topic_lifecycle: true }] },
+    ),
+  ).not.toThrow();
+});

@@ -603,3 +603,66 @@ fn native_thread_lifecycle_is_independent_consent_and_retained_settings_can_be_r
 
 #[path = "write_gate_history_tests.rs"]
 mod conversation_history;
+
+#[test]
+fn telegram_topic_lifecycle_consent_is_independent_and_removable() {
+    let mut next = definition(
+        json!([{"type":"telegram","bot_id":"77","admission":{"type":"all"},"topic_lifecycle":true}]),
+    );
+    next.secrets.telegram_bot_token = Some(cmaeg_core::channel::Secret::new("77:fixture"));
+    next.secrets.telegram_webhook_secret =
+        Some(cmaeg_core::channel::Secret::new("fixture-webhook"));
+    let flags = WriteFlags {
+        telegram_message_events: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        check(None, &next, flags).unwrap_err(),
+        ValidationError::new(
+            "/sources/0/topic_lifecycle",
+            "native_telegram_topic_lifecycle_disabled"
+        )
+    );
+    check(
+        None,
+        &next,
+        WriteFlags {
+            telegram_topic_lifecycle: true,
+            ..flags
+        },
+    )
+    .unwrap();
+    check(Some(&next), &next, flags).unwrap();
+    let prior = next.clone();
+    let cmaeg_core::channel::Source::Telegram {
+        topic_lifecycle, ..
+    } = &mut next.sources[0]
+    else {
+        panic!()
+    };
+    *topic_lifecycle = false;
+    check(Some(&prior), &next, flags).unwrap();
+    assert!(serde_json::to_value(&next.sources[0])
+        .unwrap()
+        .get("topic_lifecycle")
+        .is_none());
+    let prior = next.clone();
+    let cmaeg_core::channel::Source::Telegram {
+        topic_lifecycle,
+        message_events,
+        ..
+    } = &mut next.sources[0]
+    else {
+        panic!()
+    };
+    *topic_lifecycle = true;
+    *message_events = true;
+    let flags = WriteFlags {
+        telegram_topic_lifecycle: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        check(Some(&prior), &next, flags).unwrap_err().pointer,
+        "/sources/0/message_events"
+    );
+}

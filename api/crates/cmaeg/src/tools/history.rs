@@ -78,6 +78,11 @@ impl ToolsState {
         event: &EventRefPayload,
         authorized: &ResolvedChannel,
     ) -> Option<ConversationHistoryCapabilities> {
+        if matches!(event.reply, ReplyAddress::NativeLark(_)) {
+            return self
+                .native_history_capabilities(caller, event, authorized)
+                .await;
+        }
         // Ordinary context must never incur history I/O for unrelated platforms or sources.
         let ReplyAddress::Discord { bot_id, .. } = &event.reply else {
             return None;
@@ -128,6 +133,15 @@ impl ToolsState {
         cursor: Option<&HistoryCursor>,
     ) -> Result<ConversationHistoryPage, Problem> {
         let started = Instant::now();
+        let event = reference
+            .open(&self.keys, now())
+            .map_err(reference_problem)?
+            .payload;
+        if matches!(event.reply, ReplyAddress::NativeLark(_)) {
+            return self
+                .read_native_lark_history(caller, reference, cursor, event, started)
+                .await;
+        }
         let client = self.history_client()?;
         let end = started + client.budget;
         let _permit = client.slots.try_acquire().map_err(|_| {
@@ -264,7 +278,7 @@ fn invalid_cursor() -> Problem {
         "history_cursor_invalid_or_expired",
     )
 }
-fn reference_problem(error: OpenError) -> Problem {
+pub(super) fn reference_problem(error: OpenError) -> Problem {
     match error {
         OpenError::Expired => Problem::new(ProblemCode::EventRefExpired, 410, "event_ref_expired"),
         _ => Problem::new(ProblemCode::EventRefInvalid, 400, "event_ref_invalid"),

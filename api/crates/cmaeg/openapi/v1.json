@@ -1751,6 +1751,17 @@
               }
             ]
           },
+          "topic_lifecycle": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TopicLifecycleCapabilities",
+                "description": "Exact admitted Telegram forum topic; no creation or enumeration."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "typing": {
             "type": "boolean"
           },
@@ -2692,6 +2703,7 @@
             "type": "string"
           },
           "before_message_id": {
+            "description": "Original/last scanned pre-cutoff ID. Native provider scan position remains in the cursor.",
             "type": "string"
           },
           "content_coverage": {
@@ -2708,7 +2720,7 @@
             "type": "integer"
           },
           "fetched_at": {
-            "description": "Gateway fetch time, not a Discord snapshot timestamp.",
+            "description": "Gateway fetch time, not a platform snapshot timestamp.",
             "type": "string"
           },
           "messages": {
@@ -2722,11 +2734,13 @@
             "type": "boolean"
           },
           "omitted_message_count": {
+            "description": "Scanned rows omitted by cutoff, deletion, unsupported content or actor policy.",
             "format": "int32",
             "minimum": 0,
             "type": "integer"
           },
           "scanned_messages": {
+            "description": "Raw rows scanned, including native thread rows at/after the original timestamp.",
             "format": "int32",
             "minimum": 0,
             "type": "integer"
@@ -3708,6 +3722,7 @@
       "HistoryContinuation": {
         "oneOf": [
           {
+            "description": "More provider rows remain to scan; native thread pages may contain no earlier messages.",
             "properties": {
               "cursor": {
                 "$ref": "#/components/schemas/HistoryCursor"
@@ -4018,6 +4033,12 @@
         "properties": {
           "action": {
             "$ref": "#/components/schemas/ThreadAction"
+          },
+          "name": {
+            "description": "Required only for rename: 1–100 printable characters. Omit for every other action.",
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
           },
           "target": {
             "$ref": "#/components/schemas/ThreadTarget"
@@ -4353,6 +4374,10 @@
         "properties": {
           "admission": {
             "$ref": "#/components/schemas/AdmissionPolicy"
+          },
+          "conversation_history": {
+            "description": "Owner consent to earlier visible messages in the exact original chat/thread.",
+            "type": "boolean"
           },
           "identity": {
             "$ref": "#/components/schemas/NativeLarkIdentity"
@@ -5546,6 +5571,12 @@
               "null"
             ]
           },
+          "native_lark_conversation_history_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_lark_forms_enabled": {
             "type": [
               "boolean",
@@ -5573,6 +5604,12 @@
             ]
           },
           "native_telegram_message_events_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_telegram_topic_lifecycle_enabled": {
             "type": [
               "boolean",
               "null"
@@ -6302,6 +6339,10 @@
                 "description": "Retain original message routing for edits and attributable reactions.",
                 "type": "boolean"
               },
+              "topic_lifecycle": {
+                "description": "Owner consent to close/reopen only the exact admitted forum topic.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "telegram"
@@ -6758,6 +6799,10 @@
                 "description": "Retain original message routing for edits and attributable reactions.",
                 "type": "boolean"
               },
+              "topic_lifecycle": {
+                "description": "Owner consent to close/reopen only the exact admitted forum topic.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "telegram"
@@ -7010,10 +7055,12 @@
       },
       "ThreadAction": {
         "enum": [
+          "close",
           "archive",
           "reopen",
           "join",
-          "leave"
+          "leave",
+          "rename"
         ],
         "type": "string"
       },
@@ -7437,6 +7484,38 @@
             "type": "object"
           }
         ]
+      },
+      "TopicAction": {
+        "description": "Telegram forum-topic scope only; this grants no listing or creation authority.",
+        "enum": [
+          "close",
+          "reopen"
+        ],
+        "type": "string"
+      },
+      "TopicLifecycleCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/TopicAction"
+            },
+            "type": "array"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "manage_original_topic": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "manage_original_topic",
+          "actions",
+          "expires_at"
+        ],
+        "type": "object"
       },
       "TypingOutcome": {
         "enum": [

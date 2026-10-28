@@ -19,9 +19,13 @@ pub struct RelayAuthoringCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_history_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_telegram_topic_lifecycle_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_lifecycle_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_conversation_history_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_lark_conversation_history_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_reactions_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -120,7 +124,15 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
                 && state.native_telegram_durable_admission_enabled
                 && state.multi_consumer_writes_enabled,
         ),
+        native_telegram_topic_lifecycle_enabled: Some(
+            state.native_telegram_topic_lifecycle_enabled
+                && state.native_telegram_durable_admission_enabled
+                && state.multi_consumer_writes_enabled,
+        ),
         native_discord_thread_history_enabled: Some(state.native_discord_thread_history_enabled),
+        native_lark_conversation_history_enabled: Some(
+            state.native_lark_conversation_history_enabled,
+        ),
         native_discord_conversation_history_enabled: Some(
             state.native_discord_conversation_history_enabled,
         ),

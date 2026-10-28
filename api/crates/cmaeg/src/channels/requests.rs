@@ -82,6 +82,9 @@ pub enum SourceRequest {
         admission: AdmissionPolicy,
     },
     Telegram {
+        /// Owner consent to close/reopen only the exact admitted forum topic.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        topic_lifecycle: bool,
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         message_events: bool,

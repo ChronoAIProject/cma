@@ -25,6 +25,16 @@ use reqwest::Client;
 use serde_json::json;
 use tokio::sync::oneshot;
 
+fn keep_log_callsite_registry_shared() {
+    // A callsite first reached by a parallel test with no subscriber must not
+    // cache `never` for the only registered thread-scoped capture. Keeping a
+    // second dispatcher alive makes tracing consult every live dispatcher.
+    static KEEP_REGISTRY_SHARED: std::sync::OnceLock<tracing::Dispatch> =
+        std::sync::OnceLock::new();
+    KEEP_REGISTRY_SHARED
+        .get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()));
+}
+
 fn registry(provider_url: &str) -> ProviderRegistry {
     ProviderRegistry::parse(&format!(
         r#"[{{"slug":"cma_codex","base_url":"{provider_url}","kind":"responses_http","paths":{{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{{binding_id}}","conversation":"/api/v1/cmaeg/bindings/{{binding_id}}/conversations/{{conversation_id}}","responses":"/api/v2/responses"}},"max_inflight":8}}]"#

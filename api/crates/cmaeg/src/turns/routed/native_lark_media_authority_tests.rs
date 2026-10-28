@@ -48,6 +48,24 @@ async fn native_media_keeps_immutable_original_consumer_provider_and_message_aut
     )
     .await
     .is_ok());
+    let mut history_enabled = (*source_request.channel).clone();
+    let Source::NativeLark(source) = &mut history_enabled.definition.sources[0] else {
+        panic!()
+    };
+    source.conversation_history = true;
+    assert!(
+        current_received_message(
+            server.records.clone(),
+            keys.clone(),
+            &authority(Arc::new(history_enabled)),
+            caller,
+            &event,
+            &activity
+        )
+        .await
+        .is_ok(),
+        "history consent does not revoke the original messaging/media admission"
+    );
     for defect in ["provider", "source", "credential", "consumer"] {
         let mut channel = (*source_request.channel).clone();
         let mut event = event.clone();

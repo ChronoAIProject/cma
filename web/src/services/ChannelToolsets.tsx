@@ -23,11 +23,39 @@ const labels: Readonly<Record<string, string>> = {
 };
 /** Known source prerequisites from the public tool descriptions; never an execution grant. */
 function missingSetup(tool: string, channel: Channel): string | undefined {
+  if (tool === 'readEventHistory') {
+    const sources = channel.definition.sources
+      .map(object)
+      .filter((s) => s.type === 'discord' || s.type === 'native_lark');
+    if (sources.some((s) => s.conversation_history === true)) return undefined;
+    if (sources.length === 0) return 'Requires a direct Discord or Lark / Feishu source';
+    const discord = sources.some((s) => s.type === 'discord');
+    const lark = sources.some((s) => s.type === 'native_lark');
+    return discord && lark
+      ? 'Enable Discord or Lark / Feishu conversation history'
+      : discord
+        ? 'Enable Discord conversation history'
+        : 'Enable Lark / Feishu conversation history';
+  }
+  if (tool === 'manageThread') {
+    const sources = channel.definition.sources.map(object);
+    if (
+      sources.some(
+        (source) =>
+          (source.type === 'discord' && source.thread_lifecycle === true) ||
+          (source.type === 'telegram' && source.topic_lifecycle === true),
+      )
+    )
+      return undefined;
+    if (sources.some((source) => source.type === 'telegram'))
+      return 'Enable Telegram topic management';
+    if (sources.some((source) => source.type === 'discord'))
+      return 'Enable Discord thread management';
+    return 'Requires a direct Discord or Telegram source';
+  }
   const requirements: Readonly<Record<string, readonly [string, string, string]>> = {
     listEventThreads: ['discord', 'thread_lifecycle', 'Enable Discord thread management'],
     createEventThread: ['discord', 'thread_lifecycle', 'Enable Discord thread management'],
-    manageThread: ['discord', 'thread_lifecycle', 'Enable Discord thread management'],
-    readEventHistory: ['discord', 'conversation_history', 'Enable Discord conversation history'],
     prepareFormReply: ['whatsapp', 'forms_enabled', 'Enable WhatsApp Forms'],
   };
   const requirement = Object.hasOwn(requirements, tool) ? requirements[tool] : undefined;
