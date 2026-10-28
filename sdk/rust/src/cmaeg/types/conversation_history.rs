@@ -81,7 +81,7 @@ pub struct HistoryMessage {
 pub enum HistoryContinuation {
     /// Another raw row was visible when this page was read.
     MoreVisibleRows {
-        /// Issued exclusive continuation boundary.
+        /// Issued provider continuation, bound to the original event.
         cursor: HistoryCursor,
     },
     /// End of currently visible results; not proof of complete history.
@@ -90,9 +90,9 @@ pub enum HistoryContinuation {
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Coverage cannot prove the absence of content restricted by Discord.
+/// Coverage cannot prove the absence of content restricted by the platform.
 pub enum HistoryContentCoverage {
-    /// Only fields returned by Discord are represented.
+    /// Only fields returned by the platform are represented.
     PlatformReturnedOnly,
 }
 
@@ -104,17 +104,17 @@ pub struct ConversationHistoryPage {
     pub conversation: ActivityConversation,
     /// Anchor message id.
     pub anchor_message_id: String,
-    /// Before message id.
+    /// Original/last scanned pre-cutoff boundary. Native provider scan position is sealed in the cursor.
     pub before_message_id: String,
-    /// Gateway fetch time, not a Discord snapshot timestamp.
+    /// Gateway fetch time, not a platform snapshot timestamp.
     pub fetched_at: String,
     /// Original event expiry in Unix seconds.
     pub expires_at: i64,
     /// Chronological within the page; continuation travels backward.
     pub messages: Vec<HistoryMessage>,
-    /// Scanned messages.
+    /// Raw rows scanned, including newer native thread rows omitted before reaching the cutoff.
     pub scanned_messages: u8,
-    /// Omitted message count.
+    /// Scanned rows not returned, including newer/equal-time, deleted and unsupported native content.
     pub omitted_message_count: u8,
     /// Text exceeded a message or page budget.
     pub text_truncated: bool,

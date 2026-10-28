@@ -50,14 +50,28 @@ Unknown targets receive HTTP 503 for a bounded two-minute window after the event
 
 ## Native replies and confirmed outbound targets
 
-Text replies use the exact retained app and chat through the region's official API. Non-thread replies send to the retained chat, so a recalled original can still receive a conversational response. A thread reply uses the retained message with `reply_in_thread`; failure to address that thread is reported and never falls back to another conversation. Native thread contracts, history tools and thread creation are not advertised.
+Text replies use the exact retained app and chat through the region's official API. Non-thread replies send to the retained chat, so a recalled original can still receive a conversational response. A thread reply uses the retained message with `reply_in_thread`; failure to address that thread is reported and never falls back to another conversation. Thread creation remains unsupported. Original-conversation history has its own consent and gate, described below.
 
 The sender checks current source/credential authority before each send, respects the shared delivery gate and pacing, and requires a successful official receipt with an exact chat and new message ID. It then seals a receipt bound to the original plan, sending consumer, provider, partition, conversation, app identity and credential revision. Reactions or recalls on a confirmed outbound target reach only its original sending consumer. Missing or malformed send responses remain uncertain and are never blindly retried. Partial multipart delivery and uncertain receipt persistence are reported as unknown.
 
 The regional endpoints follow the official [v3 custom-app token](https://open.feishu.cn/document/server-docs/authentication-management/access-token/tenant_access_token_internal.md), [create-message](https://open.feishu.cn/document/server-docs/im-v1/message/create.md), and [reply-message](https://open.feishu.cn/document/server-docs/im-v1/message/reply.md) contracts. The platform marks this v3 token endpoint as historical; its newer OAuth token endpoint has a different request/response contract and is not used by this increment. Text is rendered into chunks of at most 6,000 characters; the client additionally bounds UTF-8 text at 28 KiB and the full serialized request at 150 KiB. Redirects are disabled and response reads are bounded.
 
-The native source supports text and independently gated [bounded native outbound media](CMAEG_Native_Lark_Outbound_Media.md). Inbound image/file/audio/video and rich-post resources use the independent [native media gate](CMAEG_Native_Lark_Media.md) and existing attachment read pipeline. [Ordinary native message effects](CMAEG_Native_Lark_Message_Effects.md) independently enable confirmed text edits, recalls, own reactions and reactions to retained received human messages. Cards/forms, cross-app adoption and incoming edit propagation remain outside this increment. Native output attachments are advertised only under their independent default-off gate; controls remain unsupported. No verified incoming edit delivery/revision contract has been established; `update_time` alone is insufficient.
+The native source supports text and independently gated [bounded native outbound media](CMAEG_Native_Lark_Outbound_Media.md). Inbound image/file/audio/video and rich-post resources use the independent [native media gate](CMAEG_Native_Lark_Media.md) and existing attachment read pipeline. [Ordinary native message effects](CMAEG_Native_Lark_Message_Effects.md) independently enable confirmed text edits, recalls, own reactions and reactions to retained received human messages. Cards/forms use the independent gates described below. Cross-app adoption and incoming edit propagation remain unsupported. Native output attachments are advertised only under their independent default-off gate. No verified incoming edit delivery/revision contract has been established; `update_time` alone is insufficient.
 
 ## Interactive replies
 
 Direct-app cards, buttons, choices and bounded forms have separate false-default issuance gates and callback subscriptions. See [native controls and forms](CMAEG_Native_Lark_Controls.md) for exact actor/thread authority, recovery without provider retries and message mutation fences.
+
+## Original-conversation history
+
+Original chat and exact-thread history is available through `readEventHistory`
+with separate `conversation_history: true` source consent and the default-off
+`CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` gate. Enable
+`im:message:readonly` and group `im:message.group_msg` permissions in the separate
+native app. Consent applies to new original admissions and includes earlier
+messages from other participants/apps under bot visibility. Toggling history consent
+preserves existing messaging/media/control authority; history reads retain separate
+admission-time custody and require current consent. Thread scans can
+return empty pages while advancing past newer messages. See the
+[history contract](CMAEG_Native_Lark_History.md) for custody, pagination, content
+omissions, reader-before-writer rollout and platform limits.

@@ -57,6 +57,7 @@ export const AdmissionPolicySchema = tagged(
 export type AdmissionPolicy = Output<typeof AdmissionPolicySchema>;
 
 export const NativeLarkSourceSchema = object({
+  conversation_history: optional(boolean),
   separate_app: boolean,
   identity: NativeLarkIdentitySchema,
   admission: AdmissionPolicySchema,
@@ -137,6 +138,7 @@ export const SourceRequestSchema = tagged(
   {
     native_lark: object({
       type: enumeration('native_lark'),
+      conversation_history: optional(boolean),
       separate_app: boolean,
       identity: NativeLarkIdentitySchema,
       admission: AdmissionPolicySchema,
@@ -359,6 +361,7 @@ export const SourceSchema = tagged(
   {
     native_lark: object({
       type: enumeration('native_lark'),
+      conversation_history: optional(boolean),
       separate_app: boolean,
       identity: NativeLarkIdentitySchema,
       admission: AdmissionPolicySchema,

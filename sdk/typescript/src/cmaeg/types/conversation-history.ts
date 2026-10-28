@@ -68,7 +68,10 @@ export const HistoryContinuationSchema = tagged(
 export type HistoryContinuation = Output<typeof HistoryContinuationSchema>;
 export const HistoryContentCoverageSchema = enumeration('platform_returned_only');
 export type HistoryContentCoverage = Output<typeof HistoryContentCoverageSchema>;
-/** Live read; chronological within the page, backward between pages. No complete archive guarantee. */
+/** One live scan page. Native threads can return empty pages while scanning newer rows.
+ * scanned_messages counts raw rows; omitted_message_count includes cutoff/unsupported rows.
+ * before_message_id stays at the original/last pre-cutoff boundary; cursor carries provider progress.
+ * Chronological output, backward scanning, original expiry; no complete archive guarantee. */
 export const ConversationHistoryPageSchema = object({
   conversation: object({
     id: text,
