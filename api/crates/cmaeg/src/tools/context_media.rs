@@ -86,7 +86,9 @@ impl NativeMediaCapabilities {
                         && (event.consumer.is_none() || state.consumer_interactions_enabled)
                         && crate::interactions::discord::eligible(channel, event, activity)
                     {
-                        capabilities.controls = Some(MediaControlsCapabilities::single(1024));
+                        let mut controls = MediaControlsCapabilities::single(1024);
+                        controls.update = state.native_discord_media_card_edits_enabled;
+                        capabilities.controls = Some(controls);
                     }
                     capabilities
                 },

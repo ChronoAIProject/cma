@@ -163,6 +163,7 @@ pub struct Config {
     pub native_telegram_media_edits_enabled: bool,
     pub native_discord_media_edits_enabled: bool,
     pub native_discord_media_controls_enabled: bool,
+    pub native_discord_media_card_edits_enabled: bool,
     pub native_lark_controls_enabled: bool,
     pub native_lark_forms_enabled: bool,
     pub native_lark_message_effects_enabled: bool,
@@ -327,6 +328,9 @@ impl Config {
             )?,
             native_discord_media_controls_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED",
+            )?,
+            native_discord_media_card_edits_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED",
             )?,
             native_discord_media_edits_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED",

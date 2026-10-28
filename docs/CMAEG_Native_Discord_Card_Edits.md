@@ -105,3 +105,15 @@ extending expiry and clears operation-local effect state. Unknown writes or lost
 final acknowledgements keep the destination fenced across revisions. See
 [native card effects](CMAEG_Native_Discord_Card_Effects.md) for reader rollout and
 accepted callback recovery after deletion.
+
+
+## Media-bearing control cards
+
+The separate `CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED` gate extends this
+same destination lock, CAS and replay chain to cards issued with an exact
+confirmed upload proof. `updateMessage` changes content/controls and preserves
+the upload by omitting `attachments` from PATCH. Both the native pre-read and
+write response must match retained attachment identity, metadata and presentation.
+Uncertain writes do not resend or bind a new reference. Historical media cards
+without proof remain callback-only. Binary/caption replacement and media/form
+combinations remain unsupported; see [media-control edits](CMAEG_Native_Discord_Interactions.md#preserve-an-upload-while-editing-its-controls).
