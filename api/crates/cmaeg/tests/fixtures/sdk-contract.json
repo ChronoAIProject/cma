@@ -812,7 +812,7 @@
         "create_from_original_message": true,
         "list": "public_children_of_original_parent",
         "manage_original_thread": false,
-        "actions": ["archive", "reopen", "join", "leave"],
+        "actions": ["archive", "reopen", "join", "leave", "rename"],
         "expires_at": 1800000600
       },
       "native_media_edits": {
@@ -3050,7 +3050,7 @@
           "create_from_original_message": true,
           "list": "public_children_of_original_parent",
           "manage_original_thread": false,
-          "actions": ["archive", "reopen", "join", "leave"],
+          "actions": ["archive", "reopen", "join", "leave", "rename"],
           "expires_at": 1800000600
         },
         "native_media_edits": {
@@ -3275,7 +3275,7 @@
           "create_from_original_message": true,
           "list": "public_children_of_original_parent",
           "manage_original_thread": false,
-          "actions": ["archive", "reopen", "join", "leave"],
+          "actions": ["archive", "reopen", "join", "leave", "rename"],
           "expires_at": 1800000600
         },
         "native_media_edits": {
@@ -6648,7 +6648,7 @@
       "auto_archive_duration": 1440
     }
   ],
-  "ThreadAction": ["archive", "reopen", "join", "leave", "close"],
+  "ThreadAction": ["archive", "reopen", "join", "leave", "close", "rename"],
   "ThreadTarget": [
     {
       "type": "event",
@@ -6665,14 +6665,8 @@
         "type": "thread",
         "thread_ref": "cmaeg1.tr.fixture"
       },
-      "action": "archive"
-    },
-    {
-      "target": {
-        "type": "event",
-        "event_ref": "cmaeg1.ev.fixture"
-      },
-      "action": "close"
+      "action": "rename",
+      "name": "Incident triage"
     }
   ],
   "ThreadSummary": [
@@ -6746,7 +6740,7 @@
       "create_from_original_message": true,
       "list": "public_children_of_original_parent",
       "manage_original_thread": false,
-      "actions": ["archive", "reopen", "join", "leave"],
+      "actions": ["archive", "reopen", "join", "leave", "rename"],
       "expires_at": 1800000600
     }
   ],

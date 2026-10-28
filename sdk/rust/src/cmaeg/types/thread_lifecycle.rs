@@ -35,6 +35,8 @@ pub enum ThreadAction {
     Join,
     /// Leave as the current bot; requires an active thread.
     Leave,
+    /// Rename an active exact thread without reopening it or changing its lock.
+    Rename,
 }
 /// The only supported destinations for a thread mutation.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +61,18 @@ pub struct ManageThreadRequest {
     pub target: ThreadTarget,
     /// Action on the thread, or current bot membership.
     pub action: ThreadAction,
+    /// Required only for rename: 1–100 printable characters. Omit for every other action.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_name"
+    )]
+    pub name: Option<String>,
+}
+fn present_name<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
 }
 /// Bounded current metadata and original-event authority for one thread.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

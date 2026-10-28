@@ -478,6 +478,20 @@ it('round-trips bounded thread lifecycle contracts and preserves absent consent'
   });
 });
 
+it('requires a rename name and rejects it on every existing thread action', () => {
+  const target = { type: 'event', event_ref: 'cmaeg1.ev.fixture' };
+  const rename = { target, action: 'rename', name: 'Incident triage' };
+  expect(ManageThreadRequestSchema(rename)).toEqual(rename);
+  expect(() => ManageThreadRequestSchema({ target, action: 'rename' })).toThrow();
+  expect(() => ManageThreadRequestSchema({ target, action: 'rename', name: null })).toThrow();
+  for (const action of ['archive', 'reopen', 'join', 'leave']) {
+    const legacy = { target, action };
+    expect(ManageThreadRequestSchema(legacy)).toEqual(legacy);
+    expect(() => ManageThreadRequestSchema({ ...legacy, name: 'Unexpected' })).toThrow();
+    expect(() => ManageThreadRequestSchema({ ...legacy, name: null })).toThrow();
+  }
+});
+
 it('round-trips paginated history facts and keeps consent independent', () => {
   const fixtures = JSON.parse(
     readFileSync(

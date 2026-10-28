@@ -23,15 +23,7 @@ pub struct CreateThreadRequest {
 }
 impl CreateThreadRequest {
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if self.name.trim().is_empty()
-            || self.name.chars().count() > 100
-            || self.name.chars().any(crate::activity::forbidden_text_char)
-        {
-            return Err(ValidationError::new(
-                "/name",
-                "must contain 1..100 printable characters",
-            ));
-        }
+        validate_name(&self.name)?;
         if !matches!(self.auto_archive_duration, 60 | 1440 | 4320 | 10080) {
             return Err(ValidationError::new(
                 "/auto_archive_duration",
@@ -40,6 +32,18 @@ impl CreateThreadRequest {
         }
         Ok(())
     }
+}
+fn validate_name(name: &str) -> Result<(), ValidationError> {
+    if name.trim().is_empty()
+        || name.chars().count() > 100
+        || name.chars().any(crate::activity::forbidden_text_char)
+    {
+        return Err(ValidationError::new(
+            "/name",
+            "must contain 1..100 printable characters",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -51,6 +55,7 @@ pub enum ThreadAction {
     Reopen,
     Join,
     Leave,
+    Rename,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -70,6 +75,34 @@ pub enum ThreadTarget {
 pub struct ManageThreadRequest {
     pub target: ThreadTarget,
     pub action: ThreadAction,
+    /// Required only for rename: 1–100 printable characters. Omit for every other action.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_name"
+    )]
+    #[schema(nullable = false, min_length = 1, max_length = 100)]
+    pub name: Option<String>,
+}
+impl ManageThreadRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        match (self.action, &self.name) {
+            (ThreadAction::Rename, Some(name)) => validate_name(name),
+            (ThreadAction::Rename, None) => {
+                Err(ValidationError::new("/name", "is required for rename"))
+            }
+            (_, Some(_)) => Err(ValidationError::new(
+                "/name",
+                "must be omitted unless action is rename",
+            )),
+            (_, None) => Ok(()),
+        }
+    }
+}
+fn present_name<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

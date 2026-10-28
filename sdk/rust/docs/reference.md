@@ -621,9 +621,14 @@ original event scope. `list_event_threads(event_ref, ThreadListView::Active)`
 returns a bounded `ThreadList`; `Archived` selects archived results.
 `create_event_thread(event_ref, key, &CreateThreadRequest { name, auto_archive_duration: 1440 })`
 creates a public thread from the exact original message.
-`manage_thread(key, &ManageThreadRequest { target, action })` accepts
+`manage_thread(key, &ManageThreadRequest { target, action, name: None })` accepts
 `ThreadTarget::Event` for the event's own thread or `ThreadTarget::Thread` for a
 scoped returned reference, and `ThreadAction::{Archive, Reopen, Join, Leave}`.
+To rename an active exact thread, use `ThreadAction::Rename` and
+`name: Some("Incident triage".into())`. The name must contain 1–100 printable
+characters. Every other action requires `name: None`, preserving its existing
+wire bytes. Rename never reopens an archived thread or changes its lock;
+Discord enforces the bot's permission.
 Keep a stable key; unknown writes remain fenced and must not be resent with a
 new key. References retain the original consumer and expiry. Set the new source
 option to `None` to preserve legacy wire bytes. Private/forum creation and
@@ -655,7 +660,7 @@ edit/reaction retention.
 Use the existing method:
 
 ```rust
-client.manage_thread("stable-close", &ManageThreadRequest { target: ThreadTarget::Event { event_ref }, action: ThreadAction::Close }).await?
+client.manage_thread("stable-close", &ManageThreadRequest { target: ThreadTarget::Event { event_ref }, action: ThreadAction::Close, name: None }).await?
 ```
 
 Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the

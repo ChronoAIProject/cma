@@ -449,4 +449,16 @@ it('uses scoped thread references, explicit stable keys and exact lifecycle wire
   await client.manageThread('leave-stable', request);
   expect(fetch.mock.calls[2]?.[0]).toBe('https://gateway.example/v1/thread-operations');
   expect(JSON.parse(fetch.mock.calls[2]?.[1]?.body as string)).toEqual(request);
+  const rename = { ...request, action: 'rename' as const, name: 'Incident triage' };
+  fetch.mockResolvedValueOnce(
+    json({ outcome: { status: 'unknown', reason: 'thread_write_unconfirmed' } }),
+  );
+  const renamed = await client.manageThread('rename-stable', rename);
+  expect(renamed.outcome.status).toBe('unknown');
+  expect(fetch).toHaveBeenCalledTimes(4);
+  expect(fetch.mock.calls[3]?.[0]).toBe('https://gateway.example/v1/thread-operations');
+  expect(new Headers(fetch.mock.calls[3]?.[1]?.headers).get('Idempotency-Key')).toBe(
+    'rename-stable',
+  );
+  expect(JSON.parse(fetch.mock.calls[3]?.[1]?.body as string)).toEqual(rename);
 });
