@@ -11,6 +11,7 @@ import {
   type Output,
 } from '../../schema.js';
 import { EventRefSchema } from './primitives.js';
+import { ProtocolError } from '../../errors.js';
 
 /** Opaque original-event authority. Never log or transfer across consumers. */
 export const ThreadRefSchema = text;
@@ -19,7 +20,7 @@ export const ThreadListViewSchema = enumeration('active', 'archived');
 export type ThreadListView = Output<typeof ThreadListViewSchema>;
 export const CreateThreadRequestSchema = object({ name: text, auto_archive_duration: integer });
 export type CreateThreadRequest = Output<typeof CreateThreadRequestSchema>;
-export const ThreadActionSchema = enumeration('archive', 'reopen', 'join', 'leave');
+export const ThreadActionSchema = enumeration('archive', 'reopen', 'join', 'leave', 'rename');
 export type ThreadAction = Output<typeof ThreadActionSchema>;
 export const ThreadTargetSchema = tagged(
   {
@@ -29,10 +30,18 @@ export const ThreadTargetSchema = tagged(
   'type',
 );
 export type ThreadTarget = Output<typeof ThreadTargetSchema>;
-export const ManageThreadRequestSchema = object({
+const ManageThreadFieldsSchema = object({
   target: ThreadTargetSchema,
   action: ThreadActionSchema,
+  name: optional(text),
 });
+/** Rename requires a name; all other actions preserve the original request shape. */
+export const ManageThreadRequestSchema = (value: unknown) => {
+  const request = ManageThreadFieldsSchema(value);
+  if ((request.action === 'rename') !== (request.name !== undefined))
+    throw new ProtocolError('name is required only for rename and must be omitted otherwise');
+  return request;
+};
 export type ManageThreadRequest = Output<typeof ManageThreadRequestSchema>;
 export const ThreadSummarySchema = object({
   thread_ref: ThreadRefSchema,

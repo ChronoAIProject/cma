@@ -901,6 +901,13 @@ addresses only the thread containing that event. References preserve original
 consumer custody and expiry. Unknown outcomes must not be retried under a new
 key. Private/forum creation and private sibling enumeration are unsupported.
 
+Rename an active exact thread with
+`client.manageThread(key, { target: { type: 'thread', thread_ref }, action: 'rename', name: 'Incident triage' })`.
+The name must contain 1–100 printable characters and must be omitted for every
+other action. Rename never reopens an archived thread or changes its lock;
+Discord enforces the bot's permission. An unknown rename result keeps the same
+persistent fence as every other thread mutation.
+
 Native WhatsApp Forms use `prepareFormReply(eventRef, message, stablePreparationKey)`,
 then `readFormPreparation(eventRef)`. Poll Pending after `retry_after_ms`. Ready has
 not sent a customer message. Commit the exact message with
