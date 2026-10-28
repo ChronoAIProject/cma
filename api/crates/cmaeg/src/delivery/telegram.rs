@@ -224,6 +224,22 @@ impl Sender {
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
         let effects = SendEffects::default();
+        if let Some(id) = reference.interaction_record_id.as_deref() {
+            let Some(store) = &self.relay.interactions else {
+                return (unsupported(), effects);
+            };
+            match store.load(id).await {
+                Ok((card, _)) if card.native_telegram_media.is_some() => {
+                    return (
+                        self.telegram_media_card_update(ctx, reference, message)
+                            .await,
+                        effects,
+                    );
+                }
+                Err(_) => return (unsupported(), effects),
+                _ => {}
+            }
+        }
         if reference
             .telegram_effect
             .as_ref()

@@ -26,6 +26,7 @@ pub(crate) fn state(f: &FixtureState, enabled: bool) -> ToolsState {
         complete_replies_enabled: false,
         telegram_effects_issuance_enabled: false,
         native_telegram_media_controls_enabled: false,
+        native_telegram_media_control_edits_enabled: false,
         native_media_edits: None,
         native_whatsapp_forms: None,
         native_lark_effects: None,

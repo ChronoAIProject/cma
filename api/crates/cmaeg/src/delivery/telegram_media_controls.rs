@@ -199,6 +199,21 @@ impl Sender {
             receipt.delivery = outcome(Error::Unconfirmed);
             return (receipt, effects);
         };
+        if self.relay.telegram_media_control_edits {
+            let snapshot = crate::telegram::media_card_edit::observe(
+                &value,
+                bot_id,
+                chat_id,
+                thread_id.as_deref(),
+                &id,
+                kind,
+                &card.markup,
+            )
+            .ok();
+            if let Some(authority) = &mut card.card.native_telegram_media {
+                authority.snapshot = snapshot;
+            }
+        }
         match timeout_at(
             deadline,
             store.bind_telegram_media(
