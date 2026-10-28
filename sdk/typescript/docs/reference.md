@@ -530,6 +530,17 @@ every platform can edit every message. For Discord and WhatsApp sources,
 `verify_raw_event: true` opts into signed raw-event correlation and requires the
 deployment's extended-source writer support; omission preserves existing trust.
 
+When native split-text receipt issuance is enabled, an ordinary Telegram or
+Discord reply can also return `message_parts`. Each entry has a zero-based
+rendered `index` and an opaque `message_ref` for one confirmed part. Older
+receipts omit the field. Keep the existing singular `message_ref` separately;
+its meaning is unchanged. An `unknown` / `partial_delivery` receipt can contain
+confirmed earlier parts, but those entries do not prove that the whole reply
+completed. Preserve the exact operation key and never resend an unknown reply.
+Retained receipt replay preserves the original part tokens and does not renew
+their authority or expiry. Existing edit/effect gates and consumer ownership
+still apply to each reference.
+
 An enabled native Discord upload can return an opaque `message_ref` for delete
 and own-reaction effects when the complete upload fits one confirmed Discord
 message. This reference does not authorize text or attachment updates. Query its
@@ -969,3 +980,31 @@ accounts. Events use existing `cma.message.updated.v1` (`data.patch.text`) and
 consumer/conversation. Caption changes preserve original attachments; outgoing
 edit/delete and history import are outside this feature. See
 [the incoming-change contract](../../../docs/CMAEG_Native_WhatsApp_Message_Events.md).
+
+`readEventHistory(eventRef, cursor?, options?)` returns one bounded history page and never
+fetches a continuation automatically. Set `{ includeMedia: true }` in options to
+opt in to native Lark/Feishu mixed posts, which may preserve
+their textual content with `omitted_content: ['media']` and empty `attachments`;
+this marker conveys no media count, type, keys or download authority. Whole-row
+omission counts exclude retained mixed posts, while `text_truncated` independently
+reports clipped or sanitized text. Absent/false options retain whole-row omission
+even when the gateway's `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag is enabled,
+preserving old strict decoders. Opt-in requires that flag and original history
+consent. Repeat the same mode for each cursor page; mismatches return 400 before
+platform I/O. This does not provide media downloads. See
+[native history](../../../docs/CMAEG_Native_Lark_History.md).
+
+### Native media with controls
+
+Check the optional `capabilities.native_media.controls` object before combining
+`native_attachments` with buttons or choices. It declares `max_attachments`,
+`buttons`, `choices`, `caption_max_chars` and `update`; absence grants no combined
+send capability. The gated Telegram and Discord combinations each use one upload and one
+native message/card. Its `update: false` excludes media-card edits. Existing
+attachment bounds and event/consumer authority still apply.
+
+For native Discord, `native_media.controls.update` is true only with the separate
+media-card-edit gates. It permits changing message content/controls while keeping
+the exact confirmed upload. It does not grant binary/caption replacement or
+media/form combinations. Historical cards without a retained native file proof
+remain callback-only.

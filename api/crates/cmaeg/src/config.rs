@@ -160,8 +160,14 @@ pub struct Config {
     pub native_lark_media_enabled: bool,
     pub native_whatsapp_groups_writes_enabled: bool,
     pub native_whatsapp_groups_enabled: bool,
+    pub native_split_text_refs_enabled: bool,
     pub native_telegram_media_edits_enabled: bool,
+    pub native_telegram_media_controls_enabled: bool,
+    pub native_telegram_media_control_edits_enabled: bool,
     pub native_discord_media_edits_enabled: bool,
+    pub native_discord_media_controls_enabled: bool,
+    pub native_discord_media_card_edits_enabled: bool,
+    pub native_discord_media_card_replacements_enabled: bool,
     pub native_lark_controls_enabled: bool,
     pub native_lark_forms_enabled: bool,
     pub native_lark_message_effects_enabled: bool,
@@ -185,6 +191,7 @@ pub struct Config {
     pub native_telegram_topic_lifecycle_enabled: bool,
     pub native_discord_thread_lifecycle_enabled: bool,
     pub native_lark_conversation_history_enabled: bool,
+    pub native_lark_mixed_history_enabled: bool,
     pub native_discord_conversation_history_enabled: bool,
     pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
@@ -297,6 +304,9 @@ impl Config {
             native_lark_conversation_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED",
             )?,
+            native_lark_mixed_history_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED",
+            )?,
             native_discord_conversation_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED",
             )?,
@@ -321,8 +331,26 @@ impl Config {
             native_whatsapp_groups_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED",
             )?,
+            native_telegram_media_control_edits_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED",
+            )?,
+            native_telegram_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED",
+            )?,
+            native_split_text_refs_enabled: routing::write_flag(
+                "CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED",
+            )?,
             native_telegram_media_edits_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED",
+            )?,
+            native_discord_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED",
+            )?,
+            native_discord_media_card_edits_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED",
+            )?,
+            native_discord_media_card_replacements_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED",
             )?,
             native_discord_media_edits_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED",

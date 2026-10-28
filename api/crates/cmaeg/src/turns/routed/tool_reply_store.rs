@@ -6,7 +6,10 @@ use super::{
     ExecutionError, Journal,
 };
 use crate::{
-    delivery::intents::{DeliveryOutcome, IntentReceipt},
+    delivery::{
+        intents::{DeliveryOutcome, IntentReceipt},
+        retained_receipt::StoredReceipt,
+    },
     ingress::routing_store::{AdmittedPlan, StoredTarget},
 };
 use serde::{Deserialize, Serialize};
@@ -32,7 +35,7 @@ pub(super) struct Attempt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) content_hash: Option<String>,
     pub(super) until: i64,
-    pub(super) receipt: Option<IntentReceipt>,
+    pub(super) receipt: Option<StoredReceipt>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -147,7 +150,13 @@ impl ReplyStore {
             if previous.operation == operation {
                 if let Some(receipt) = &previous.receipt {
                     if matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }) {
-                        return Ok(Admission::Replay(receipt.clone()));
+                        return Ok(Admission::Replay(
+                            self.0
+                                .receipts(&previous.operation, &record.owner, record.retained_until)
+                                .load(receipt)
+                                .await
+                                .map_err(|_| ExecutionError::Unavailable)?,
+                        ));
                     }
                 }
             }
@@ -274,16 +283,28 @@ impl ReplyStore {
         &self,
         claim: &ReplyClaim,
         receipt: &IntentReceipt,
-    ) -> Result<(), ExecutionError> {
+    ) -> Result<StoredReceipt, ExecutionError> {
         self.guard(claim).await?;
         let mut next = claim.record.clone();
-        let receipt = if storage::bytes(receipt)?.len() > 16 * 1024 {
-            crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
-                reason: "reply_receipt_too_large".into(),
-            })
-        } else {
-            receipt.clone()
-        };
+        let receipt =
+            if receipt.message_parts.is_empty() && storage::bytes(receipt)?.len() > 16 * 1024 {
+                crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
+                    reason: "reply_receipt_too_large".into(),
+                })
+            } else {
+                receipt.clone()
+            };
+        let receipt = self
+            .0
+            .receipts(
+                &claim.attempt().operation,
+                &claim.record.owner,
+                claim.record.retained_until,
+            )
+            .retain(&receipt)
+            .await
+            .map_err(|_| ExecutionError::Unavailable)?;
+        self.guard(claim).await?;
         if claim.attempt().content_hash.is_some() {
             OperationStore(self.0.clone())
                 .finish(&claim.record, claim.attempt(), &receipt)
@@ -298,7 +319,7 @@ impl ReplyStore {
             Kind::Tool => &mut next.tool,
             Kind::Automatic => &mut next.automatic,
         };
-        attempt.as_mut().unwrap().receipt = Some(receipt);
+        attempt.as_mut().unwrap().receipt = Some(receipt.clone());
         self.0
             .write(
                 &next.id,
@@ -308,18 +329,17 @@ impl ReplyStore {
                 Some(claim.record.version),
             )
             .await?;
-        Ok(())
+        Ok(receipt)
     }
     fn unsettled(&self, record: &Record) -> Option<ToolReplyStatus> {
         let mut result = None;
         for attempt in [&record.tool, &record.automatic].into_iter().flatten() {
             match &attempt.receipt {
                 None if attempt.until > (self.0.clock)() => result = Some(ToolReplyStatus::Pending),
-                None
-                | Some(IntentReceipt {
-                    delivery: DeliveryOutcome::Unknown { .. },
-                    ..
-                }) => return Some(ToolReplyStatus::Unknown),
+                None => return Some(ToolReplyStatus::Unknown),
+                Some(receipt) if matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }) => {
+                    return Some(ToolReplyStatus::Unknown);
+                }
                 _ => {}
             }
         }

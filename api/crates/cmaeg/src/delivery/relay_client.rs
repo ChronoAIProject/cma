@@ -115,6 +115,7 @@ pub struct RelayClient {
     native_media: bool,
     pub(super) native_lark_outbound_media: bool,
     pub(super) native_lark_effects: bool,
+    pub(super) native_split_text_refs: bool,
     pub(super) telegram_media_edits: bool,
     pub(super) discord_media_edits: bool,
     pub native_media_receipts: Option<Arc<crate::native_media::store::Store>>,
@@ -133,6 +134,9 @@ pub struct RelayClient {
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
     discord_interactions: bool,
+    discord_media_controls: bool,
+    discord_media_card_edits: bool,
+    discord_media_card_replacements: bool,
     discord_reactions: bool,
     discord_forms: bool,
     discord_multiselect: bool,
@@ -140,6 +144,8 @@ pub struct RelayClient {
     consumer_interactions: bool,
     telegram_effects: bool,
     telegram_media_effects: bool,
+    telegram_media_controls: bool,
+    pub(super) telegram_media_control_edits: bool,
     pub native_lark: crate::native_lark::Client,
     pub native_lark_receipts: Option<Arc<crate::native_lark::receipts::Store>>,
     pub whatsapp: crate::whatsapp::Client,
@@ -163,6 +169,19 @@ impl RelayClient {
         self.consumer_interactions
     }
 
+    /// Issue edits only after every reader understands retained media snapshots and claims.
+    pub fn with_telegram_media_control_edits(mut self, enabled: bool) -> Self {
+        self.telegram_media_control_edits = enabled;
+        self
+    }
+    /// Enable new media cards only after every reader understands the media marker.
+    pub fn with_telegram_media_controls(mut self, enabled: bool) -> Self {
+        self.telegram_media_controls = enabled;
+        self
+    }
+    pub(super) fn telegram_media_controls_enabled(&self) -> bool {
+        self.telegram_media_controls
+    }
     pub fn with_telegram_effects(mut self, enabled: bool) -> Self {
         self.telegram_effects = enabled;
         self
@@ -226,6 +245,7 @@ impl RelayClient {
             native_media: false,
             native_lark_outbound_media: false,
             native_lark_effects: false,
+            native_split_text_refs: false,
             telegram_media_edits: false,
             discord_media_edits: false,
             native_media_receipts: None,
@@ -244,6 +264,9 @@ impl RelayClient {
             whatsapp_templates: false,
             whatsapp_interactions: false,
             discord_interactions: false,
+            discord_media_controls: false,
+            discord_media_card_edits: false,
+            discord_media_card_replacements: false,
             discord_reactions: false,
             discord_forms: false,
             discord_multiselect: false,
@@ -251,6 +274,8 @@ impl RelayClient {
             consumer_interactions: false,
             telegram_effects: false,
             telegram_media_effects: false,
+            telegram_media_controls: false,
+            telegram_media_control_edits: false,
             interactions: None,
             native_lark: crate::native_lark::Client::production()?,
             native_lark_receipts: None,

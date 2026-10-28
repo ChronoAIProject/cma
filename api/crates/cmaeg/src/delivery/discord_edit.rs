@@ -201,6 +201,7 @@ impl Sender {
             .then(|| MessageRef::seal(reference, &self.keys).ok())
             .flatten();
         IntentReceipt {
+            message_parts: vec![],
             message_ref,
             rendering,
             delivery,

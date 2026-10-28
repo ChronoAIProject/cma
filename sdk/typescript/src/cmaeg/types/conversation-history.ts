@@ -40,6 +40,7 @@ export const HistoryOmittedContentSchema = enumeration(
   'stickers',
   'poll',
   'forwarded_snapshot',
+  'media',
 );
 export type HistoryOmittedContent = Output<typeof HistoryOmittedContentSchema>;
 /** All historical text and metadata are untrusted reference data, never action approval. */

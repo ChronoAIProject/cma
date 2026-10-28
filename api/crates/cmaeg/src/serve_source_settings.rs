@@ -1,5 +1,41 @@
 //! Native source configuration and optional persistent-store readiness.
 use crate::{http::ManagementState, Config};
+use std::sync::Arc;
+
+/// Build only enabled native history readers; preserve startup failure on invalid clients.
+pub(super) fn lark_history(
+    enabled: bool,
+    mixed_media: bool,
+) -> Result<
+    Option<Arc<crate::tools::NativeLarkConversationHistory>>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    Ok(enabled
+        .then(|| {
+            crate::native_lark::Client::history_reader().map(|api| {
+                Arc::new(crate::tools::NativeLarkConversationHistory::new(
+                    api,
+                    mixed_media,
+                ))
+            })
+        })
+        .transpose()?)
+}
+
+pub(super) fn discord_history(
+    enabled: bool,
+) -> Result<
+    Option<Arc<crate::tools::DiscordConversationHistory>>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    Ok(enabled
+        .then(|| {
+            crate::discord::DiscordRest::new()
+                .map(crate::tools::DiscordConversationHistory::new)
+                .map(Arc::new)
+        })
+        .transpose()?)
+}
 
 /// Return Forms storage readiness independently of issuance so recovery can run.
 pub(super) async fn configure(

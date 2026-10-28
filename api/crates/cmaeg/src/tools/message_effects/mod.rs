@@ -371,6 +371,7 @@ impl ToolsState {
             },
         };
         let receipt = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering: RenderingReport {
                 outcome: RenderingOutcome::Unsupported,
