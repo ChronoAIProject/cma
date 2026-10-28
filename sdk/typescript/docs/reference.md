@@ -942,7 +942,7 @@ See `docs/CMAEG_Native_WhatsApp_Forms.md` for the supported subset and retained 
 ### Native Telegram forum topic lifecycle
 
 The source's independent `topic_lifecycle: true` consent and the gateway's
-separate default-off topic gate enable exact original non-General forum-topic
+separate default-off topic gate enable exact original numbered forum-topic
 rename/close/reopen. Rename uses the existing manage-thread request with `action: "rename"`
 and a required `name` of 1–100 printable characters. It changes only the original
 topic name, preserving its icon and open/closed state. Check `context.capabilities.topic_lifecycle` for
@@ -969,7 +969,11 @@ export function closeOriginalTopic(client: Cmaeg, eventRef: string) {
 
 Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the
 original Event target and issues no `thread_ref`. There is no list, create,
-private-chat or General-topic operation. Discord rejects the additive Close
+or private-chat topic operation. General uses the same Event request only when
+`relay_authoring.native_telegram_general_topic_lifecycle_enabled` is true and
+the retained native human message proves the original forum. It keeps the public
+thread absent; clients must never synthesize topic ID `1` from a missing thread.
+General reopen also unhides General. Discord rejects the additive Close
 action before platform IO. A confirmed receipt can omit `thread`.
 
 Keep a stable idempotency key. Same-key replay returns the saved outcome;
