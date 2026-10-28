@@ -318,6 +318,23 @@ pub fn apply_unpublished_runtime_recovery(
         return Err(SandboxStoreError::Conflict);
     }
     request.proof.validate_for(current)?;
+    if request.automatic
+        && (current.sandbox.lifecycle.unpublished_recovery_attempted
+            || current.sandbox.lifecycle.unpublished_recovery.is_some()
+            || current
+                .sandbox
+                .admitted_runtime_update_target()
+                .or_else(|| {
+                    current
+                        .sandbox
+                        .runtime
+                        .as_ref()
+                        .map(|binding| binding.runtime_version.as_str())
+                })
+                != Some(request.target_runtime_version.as_str()))
+    {
+        return Err(refused());
+    }
     let now = crate::seconds_from_rfc3339(&request.requested_at).ok_or_else(refused)?;
     if crate::seconds_from_rfc3339(&current.sandbox.updated_at).is_none_or(|at| at > now)
         || request.target_runtime_version.trim().is_empty()
