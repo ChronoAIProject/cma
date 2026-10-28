@@ -201,6 +201,7 @@ impl App {
             ))),
             discord_interactions_enabled: false,
             native_discord_media_controls_enabled: false,
+            native_discord_media_card_edits_enabled: false,
             telegram_effects_issuance_enabled: false,
             native_telegram_media_controls_enabled: false,
             native_media_edits: None,

@@ -90,7 +90,9 @@ impl NativeMediaCapabilities {
                                     channel, event, activity,
                                 )))
                     {
-                        capabilities.controls = Some(MediaControlsCapabilities::single(1024));
+                        let mut controls = MediaControlsCapabilities::single(1024);
+                        controls.update = state.native_discord_media_card_edits_enabled;
+                        capabilities.controls = Some(controls);
                     }
                     capabilities
                 },

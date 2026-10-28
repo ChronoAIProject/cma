@@ -141,7 +141,7 @@ impl Sender {
         let sent = self
             .relay
             .discord
-            .send_components(
+            .send_components_result(
                 token,
                 bot_id,
                 channel_id,
@@ -154,7 +154,37 @@ impl Sender {
         drop(permit);
         ctx.gate.progress();
         match sent {
-            Ok(id) => {
+            Ok(body) => {
+                let id = body["id"]
+                    .as_str()
+                    .expect("REST confirmed message ID")
+                    .to_owned();
+                if self.relay.discord_media_card_edits_enabled() {
+                    if let Some(media) = card.card.discord.as_mut().and_then(|i| i.media.as_mut()) {
+                        let confirmed = crate::discord::rest::media_card_snapshot(
+                            &body,
+                            bot_id,
+                            channel_id,
+                            &id,
+                            media.kind,
+                            &parts[0].text,
+                            &card.markup,
+                        )
+                        .ok()
+                        .is_some_and(|snapshot| media.confirm(&snapshot).is_ok());
+                        if !confirmed {
+                            return (
+                                refused(
+                                    rendering,
+                                    DeliveryOutcome::Unknown {
+                                        reason: "discord_media_card_receipt_unconfirmed".into(),
+                                    },
+                                ),
+                                effects,
+                            );
+                        }
+                    }
+                }
                 let target_confirmed = match &target_receipt {
                     Some(receipt) => receipt.confirm(&id).await.is_ok(),
                     None => true,
