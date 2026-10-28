@@ -40,6 +40,7 @@ pub(crate) mod owner;
 mod prepare;
 mod replacement;
 pub(crate) mod telegram_media;
+pub(crate) mod telegram_media_edit;
 mod telegram_media_store;
 pub(crate) mod whatsapp;
 pub(crate) mod whatsapp_authority;

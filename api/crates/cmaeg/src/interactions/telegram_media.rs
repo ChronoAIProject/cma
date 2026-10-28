@@ -16,6 +16,10 @@ use sha2::{Digest, Sha256};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Authority {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) snapshot: Option<crate::native_media::model::Snapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) edit: Option<super::telegram_media_edit::Edit>,
     pub(crate) owner: owner::DispatchOwner,
     provider: ProviderBinding,
     source: SourceKind,
@@ -58,6 +62,18 @@ fn revision(channel: &ResolvedChannel, source: &SourceKind) -> Result<String, Er
     ))
 }
 impl Authority {
+    pub(super) fn same_custody(&self, other: &Self) -> bool {
+        self.owner == other.owner
+            && self.provider == other.provider
+            && self.source == other.source
+            && self.source_revision == other.source_revision
+            && self.record_id == other.record_id
+            && self.kind == other.kind
+            && self.sha256 == other.sha256
+            && self.bytes == other.bytes
+            && self.filename == other.filename
+            && self.mime == other.mime
+    }
     pub(super) fn prepare(
         channel: &ResolvedChannel,
         event: &EventRefPayload,
@@ -86,6 +102,8 @@ impl Authority {
             return Err(Error::Denied);
         };
         Ok(Self {
+            snapshot: None,
+            edit: None,
             owner: owner::DispatchOwner {
                 consumer: event.consumer.clone(),
                 conversation_id: event.conversation_id.clone(),
@@ -181,8 +199,9 @@ pub(super) fn valid(card: &Card) -> bool {
                     | Block::Link { .. }
             )
         })
-        && super::has_controls(&card.message)
-        && card.revision == 1
+        && (card.revision > 1 || super::has_controls(&card.message))
+        && card.revision > 0
+        && super::telegram_media_edit::valid(card)
         && card.thread.as_deref().is_none_or(positive)
         && a.owner.conversation_id.is_wellformed()
         && !a.owner.partition_key.is_empty()

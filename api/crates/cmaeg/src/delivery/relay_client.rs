@@ -144,6 +144,7 @@ pub struct RelayClient {
     telegram_effects: bool,
     telegram_media_effects: bool,
     telegram_media_controls: bool,
+    pub(super) telegram_media_control_edits: bool,
     pub native_lark: crate::native_lark::Client,
     pub native_lark_receipts: Option<Arc<crate::native_lark::receipts::Store>>,
     pub whatsapp: crate::whatsapp::Client,
@@ -167,6 +168,11 @@ impl RelayClient {
         self.consumer_interactions
     }
 
+    /// Issue edits only after every reader understands retained media snapshots and claims.
+    pub fn with_telegram_media_control_edits(mut self, enabled: bool) -> Self {
+        self.telegram_media_control_edits = enabled;
+        self
+    }
     /// Enable new media cards only after every reader understands the media marker.
     pub fn with_telegram_media_controls(mut self, enabled: bool) -> Self {
         self.telegram_media_controls = enabled;
@@ -267,6 +273,7 @@ impl RelayClient {
             telegram_effects: false,
             telegram_media_effects: false,
             telegram_media_controls: false,
+            telegram_media_control_edits: false,
             interactions: None,
             native_lark: crate::native_lark::Client::production()?,
             native_lark_receipts: None,
