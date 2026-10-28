@@ -673,8 +673,11 @@ app's webhook would redirect its traffic. This source supports native text
 replies, retained recall notifications with unknown actors, and human reaction
 add/remove deltas. `SourceKind` carries the same regional app/tenant/bot identity.
 Targets retain the original conversation and consumer authority; these incoming
-notifications confer no outgoing delete/edit/reaction authority. Thread history
-and incoming edit propagation are not advertised for this source. Live platform
+notifications confer no outgoing delete/edit/reaction authority. Incoming edit
+propagation remains unsupported; original-conversation history has separate consent.
+Native received personal/group cards and locations become bounded message text
+without changing the authenticated sender, conversation, admission or reply target.
+Shared identities do not grant directory, group or attachment access. Live platform
 acceptance remains separate from local contract tests. See the repository's
 native Lark setup document and preserved incoming-event audit for provisioning
 and limits.
@@ -955,3 +958,14 @@ fence across process restart, different keys and event expiry. Never retry an
 unknown result with a new key. Discovery describes scope; current Telegram bot
 administrator topic permissions are checked at execution. Source support and
 local tests do not establish connected-account native acceptance.
+
+### Native WhatsApp incoming message changes
+
+Native WhatsApp incoming changes use optional source `message_events` consent and
+optional discovery `native_whatsapp_message_events_enabled`. Both default off.
+Meta supplies private edit/revoke callbacks only for Business App coexistence
+accounts. Events use existing `cma.message.updated.v1` (`data.patch.text`) and
+`cma.message.deleted.v1`, bound to the retained incoming message and its original
+consumer/conversation. Caption changes preserve original attachments; outgoing
+edit/delete and history import are outside this feature. See
+[the incoming-change contract](../../../docs/CMAEG_Native_WhatsApp_Message_Events.md).
