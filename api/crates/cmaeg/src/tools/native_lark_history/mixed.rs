@@ -52,11 +52,15 @@ async fn native_history_mixed_posts_preserve_text_and_report_media_without_autho
             let message = &page.messages[0];
             assert_eq!(
                 message.text,
-                "Earlier post\nBefore  after code source (https://example.test/reference)"
+                "Earlier postBefore  after code source (https://example.test/reference)"
             );
             assert_eq!(message.omitted_content, [HistoryOmittedContent::Media]);
             assert!(message.attachments.is_empty());
-            assert!(!message.text_truncated && !message.metadata_truncated);
+            assert!(
+                message.text_truncated,
+                "existing control/newline sanitization is reported"
+            );
+            assert!(!message.metadata_truncated);
             assert_eq!(page.expires_at, f.app.event.expires_at);
             let wire = serde_json::to_string(&page).unwrap();
             for forbidden in [
@@ -90,7 +94,7 @@ async fn native_history_mixed_posts_preserve_text_and_report_media_without_autho
                 None,
             );
             let next = f.read(Some(&old_cursor)).await.unwrap();
-            assert_eq!(next.messages[0].text, "Older\n");
+            assert_eq!(next.messages[0].text, "Older");
             assert_eq!(
                 next.messages[0].omitted_content,
                 [HistoryOmittedContent::Media]
