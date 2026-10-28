@@ -53,6 +53,17 @@ async fn advance_fixture(f: &Fixture, id: &SandboxId, now: SystemTime, phase: us
 }
 
 async fn admitted() -> (Fixture, Sandbox, Workspace, SystemTime) {
+    admitted_generation(None).await
+}
+
+pub(super) async fn stalled(
+    provider_generation: Option<u64>,
+) -> (
+    Fixture,
+    layer2_core::sandbox::SandboxUnpublishedRecoverySnapshot,
+    Workspace,
+    SystemTime,
+) {
     let f = Fixture::native().await;
     let created = f.harness.create().await;
     let mut now = start_time(&created);
@@ -129,6 +140,22 @@ async fn admitted() -> (Fixture, Sandbox, Workspace, SystemTime) {
     assert!(snapshot.agents.is_empty());
     assert_eq!(snapshot.runtime_generation().unwrap(), 1);
     assert_eq!(snapshot.sandbox.lifecycle.runtime_generation_high_water, 2);
+    if let Some(generation) = provider_generation {
+        let spec = crate::sandbox::runtime_mapping::sandbox_spec(&snapshot.sandbox, "test");
+        let request = CodexSandboxSpec::default()
+            .deployment
+            .render_runtime(&spec, generation)
+            .unwrap();
+        f.backend.stage_reserved_request(request).await;
+    }
+    (f, snapshot, workspace, now)
+}
+
+pub(super) async fn admitted_generation(
+    provider_generation: Option<u64>,
+) -> (Fixture, Sandbox, Workspace, SystemTime) {
+    let (f, snapshot, workspace, now) = stalled(provider_generation).await;
+    let original_home = snapshot.sandbox.lifecycle.home.clone();
     let verifier = crate::sandbox::unpublished_recovery::UnpublishedRuntimeRecovery::new(
         f.adapter(TARGET),
         "test".into(),
@@ -143,11 +170,11 @@ async fn admitted() -> (Fixture, Sandbox, Workspace, SystemTime) {
             proof,
             target_runtime_version: TARGET.into(),
             automatic: false,
-            requested_at: stamp,
+            requested_at: rfc3339_at(now),
         })
         .await
         .unwrap();
-    assert_eq!(next.lifecycle.home, active.lifecycle.home);
+    assert_eq!(next.lifecycle.home, original_home);
     assert_eq!(next.lifecycle.runtime_generation_high_water, 2);
     (f, next, workspace, now)
 }

@@ -45,11 +45,29 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
             )
             .map_err(store_failure)?;
             let recovery = self.adapter.runtime_recovery().ok_or_else(refused)?;
-            if let Some(evidence) = recovery
-                .inspect_nonexecuting_recovery(&source)
-                .await
-                .map_err(store_failure)?
-            {
+            let (evidence, reserved_provision) =
+                match recovery.inspect_nonexecuting_recovery(&source).await {
+                    Ok(evidence) => (evidence, None),
+                    Err(error) => {
+                        let Some(reserved) =
+                            super::runtime_attachment::reserved_recovery_runtime_request(
+                                snapshot,
+                                &self.deployment,
+                            )
+                            .map_err(store_failure)?
+                        else {
+                            return Err(store_failure(error));
+                        };
+                        (
+                            recovery
+                                .inspect_nonexecuting_recovery(&reserved)
+                                .await
+                                .map_err(store_failure)?,
+                            snapshot.recovery_provision_reservation()?.cloned(),
+                        )
+                    }
+                };
+            if let Some(evidence) = evidence {
                 if !evidence.runtime_process_absent || !evidence.histories.is_empty() {
                     return Err(refused());
                 }
@@ -57,6 +75,7 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
                     sandbox_id: snapshot.sandbox.id.clone(),
                     runtime_id: binding.runtime_id.clone(),
                     runtime_generation: generation,
+                    reserved_provision,
                     home_identity: home,
                     boot_id: None,
                     runtime_process_absent: true,
@@ -122,6 +141,7 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
             sandbox_id: snapshot.sandbox.id.clone(),
             runtime_id: binding.runtime_id.clone(),
             runtime_generation: generation,
+            reserved_provision: None,
             home_identity: home,
             boot_id: Some(boot),
             runtime_process_absent: evidence.runtime_process_absent,
