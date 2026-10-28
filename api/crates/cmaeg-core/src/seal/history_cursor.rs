@@ -111,6 +111,9 @@ impl HistoryCursor {
 #[serde(deny_unknown_fields)]
 pub struct NativeLarkHistoryCursorPayload {
     pub v: u8,
+    /// Explicit response-shape negotiation. Historical v2 cursors omit this field.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_media: bool,
     pub event_sha256: String,
     pub custody: String,
     pub origin: crate::channel::NativeLarkReply,
@@ -128,7 +131,7 @@ impl NativeLarkHistoryCursorPayload {
     pub fn valid(&self) -> bool {
         let hash = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
         let id = |s: &str| crate::channel::native_lark::safe_id(s) && s.starts_with("om_");
-        self.v == 2
+        ((self.v == 2 && !self.include_media) || (self.v == 3 && self.include_media))
             && hash(&self.event_sha256)
             && hash(&self.custody)
             && self.origin.validate().is_ok()

@@ -37,6 +37,11 @@ impl Sender {
         else {
             return (unsupported(), effects);
         };
+        if crate::interactions::has_controls(message) {
+            return self
+                .telegram_media_controls_reply(ctx, event, message)
+                .await;
+        }
         if message.validate().is_err()
             || message.whatsapp_template.is_some()
             || message.thread_reply
@@ -47,6 +52,7 @@ impl Sender {
         }
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_telegram());
         let mut receipt = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery: DeliveryOutcome::Rejected {

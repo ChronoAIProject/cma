@@ -1,7 +1,7 @@
 //! Native chat delivery using only the channel's encrypted platform credential.
 use super::{
     gate::expired,
-    intents::{DeliveryOutcome, IntentReceipt, TypingOutcome, TypingReceipt},
+    intents::{ConfirmedMessagePart, DeliveryOutcome, IntentReceipt, TypingOutcome, TypingReceipt},
     render::{RelayText, Renderer},
     send::{refused, unsupported, SendContext, SendEffects, Sender},
 };
@@ -35,6 +35,7 @@ impl Sender {
         };
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_telegram());
         let mut receipt = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery: DeliveryOutcome::Rejected {
@@ -56,6 +57,9 @@ impl Sender {
             }
         };
         let effect_issued_at = time::OffsetDateTime::now_utc().unix_timestamp();
+        let split_refs = self.relay.native_split_text_refs
+            && parts.len() > 1
+            && super::discord_edit::editable_content(message);
         let controls = crate::interactions::has_controls(message);
         if controls && event.consumer.is_some() && !self.relay.consumer_interactions_enabled() {
             return (unsupported(), effects);
@@ -111,11 +115,20 @@ impl Sender {
                 break;
             }
             let markup = prepared.as_ref().map(|p| &p.markup);
-            let mut sent = self
-                .relay
-                .telegram
-                .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
-                .await;
+            let send_part = || async {
+                if split_refs {
+                    self.relay
+                        .telegram
+                        .send_confirmed_text_part(token, chat_id, thread_id.as_deref(), &part.text)
+                        .await
+                } else {
+                    self.relay
+                        .telegram
+                        .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
+                        .await
+                }
+            };
+            let mut sent = send_part().await;
             drop(permit);
             if let Err(Error::RateLimited(delay)) = sent {
                 slot.cooldown(delay);
@@ -127,11 +140,7 @@ impl Sender {
                         break;
                     }
                 };
-                sent = self
-                    .relay
-                    .telegram
-                    .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
-                    .await;
+                sent = send_part().await;
             }
             ctx.gate.progress();
             match sent {
@@ -167,27 +176,23 @@ impl Sender {
                                 break;
                             }
                         }
-                    } else if receipt.message_ref.is_none() {
-                        receipt.message_ref = MessageRef::seal(
-                            &MessageRefPayload {
-                                discord_message: None,
-                                native_media_edit: None,
-                                received_reaction: None,
-                                native_lark_effect: None,
-                                whatsapp_reaction: None,
-                                lark_effect: None,
-                                telegram_effect: None,
-                                channel_id: event.channel_id.clone(),
-                                event_id: event.event_id.clone(),
-                                platform_message_id: platform_id,
-                                route_id: route.clone(),
-                                interaction_record_id: None,
-                                relay_message: None,
-                                consumer: event.consumer.clone(),
-                            },
-                            &self.keys,
-                        )
-                        .ok();
+                    } else {
+                        if receipt.message_ref.is_none() {
+                            receipt.message_ref = self.telegram_text_ref(event, &platform_id);
+                        }
+                        if split_refs {
+                            if let Some(message_ref) = self.telegram_part_ref(
+                                ctx.channel,
+                                event,
+                                &platform_id,
+                                effect_issued_at,
+                            ) {
+                                receipt.message_parts.push(ConfirmedMessagePart {
+                                    index: index as u16,
+                                    message_ref,
+                                });
+                            }
+                        }
                     }
                 }
                 Err(error) => {
@@ -224,6 +229,22 @@ impl Sender {
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
         let effects = SendEffects::default();
+        if let Some(id) = reference.interaction_record_id.as_deref() {
+            let Some(store) = &self.relay.interactions else {
+                return (unsupported(), effects);
+            };
+            match store.load(id).await {
+                Ok((card, _)) if card.native_telegram_media.is_some() => {
+                    return (
+                        self.telegram_media_card_update(ctx, reference, message)
+                            .await,
+                        effects,
+                    );
+                }
+                Err(_) => return (unsupported(), effects),
+                _ => {}
+            }
+        }
         if reference
             .telegram_effect
             .as_ref()
@@ -254,6 +275,7 @@ impl Sender {
         if parts.len() != 1 {
             return (
                 IntentReceipt {
+                    message_parts: vec![],
                     message_ref: None,
                     rendering,
                     delivery: DeliveryOutcome::Rejected {
@@ -281,6 +303,7 @@ impl Sender {
                 Err(_) => {
                     return (
                         IntentReceipt {
+                            message_parts: vec![],
                             message_ref: None,
                             rendering,
                             delivery: DeliveryOutcome::Rejected {
@@ -329,6 +352,7 @@ impl Sender {
             Err(error) => outcome(error),
         };
         let mut receipt = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery,

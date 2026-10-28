@@ -33,6 +33,8 @@ pub struct ToolsState {
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
+    pub native_telegram_media_controls_enabled: bool,
+    pub native_telegram_media_control_edits_enabled: bool,
     pub telegram_effects: Option<Arc<super::MessageEffectsClient>>,
     /// Advertise new Lark effects; retained references remain executable when false.
     pub lark_effects_issuance_enabled: bool,
@@ -40,6 +42,9 @@ pub struct ToolsState {
     /// Advertise templates only after the WhatsApp relay contract is verified.
     pub whatsapp_templates_enabled: bool,
     pub discord_interactions_enabled: bool,
+    pub native_discord_media_controls_enabled: bool,
+    pub native_discord_media_card_edits_enabled: bool,
+    pub native_discord_media_card_replacements_enabled: bool,
     pub whatsapp_interactions_enabled: bool,
     /// Native issuance only; retained callback consumption is independent.
     pub native_whatsapp_interactions_enabled: bool,
