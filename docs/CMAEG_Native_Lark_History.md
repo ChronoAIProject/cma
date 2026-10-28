@@ -80,8 +80,9 @@ and `deleted=false`. Text edits do not change original authority. Deleted or
 inaccessible originals, changed thread identity and final custody changes refuse
 even an empty page. These are live checks, not an atomic platform snapshot.
 
-Native history uses internal cursor payload version 2; Discord's existing version
-1 remains unchanged. Both retain the public opaque `cmaeg1.hc` wrapper. A native
+Legacy native history uses internal cursor payload version 2; explicit mixed
+history opt-in uses version 3. Discord's existing version 1 remains unchanged.
+All retain the public opaque `cmaeg1.hc` wrapper. A native
 cursor binds the original event digest, custody, native source/container, original
 millisecond cutoff, provider token and original expiry. It cannot select another
 event, source, region, consumer or destination, and never renews expiry. The
