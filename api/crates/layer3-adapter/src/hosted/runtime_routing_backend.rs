@@ -53,6 +53,16 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    async fn inspect_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        command: &super::super::RuntimeInspectionCommand,
+    ) -> Result<Vec<u8>> {
+        self.for_handle(handle)?
+            .inspect_runtime(handle, command)
+            .await
+    }
+
     async fn reserve_home_request(
         &self,
         request: &ProviderSandboxRequest,

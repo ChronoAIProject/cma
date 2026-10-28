@@ -198,6 +198,14 @@ impl HostedBackend for AgentSandboxBackend {
         self.inspect_native_context(handle, request, home).await
     }
 
+    async fn inspect_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        command: &super::RuntimeInspectionCommand,
+    ) -> Result<Vec<u8>> {
+        self.client.inspect_runtime(handle, command).await
+    }
+
     async fn reclaim(&self, expected: &RuntimeObservation) -> Result<()> {
         let Some(object) = self.client.get(&expected.handle).await? else {
             return Ok(());
