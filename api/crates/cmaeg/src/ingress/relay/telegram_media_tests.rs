@@ -376,6 +376,7 @@ fn activity(media: TelegramMedia, source: &SourceKind) -> Activity {
             attachments: media.attachments,
             mentions_bot: false,
             reply_to: None,
+            quoted_message: None,
             album_id: media.album_id,
         },
         actor: Actor {

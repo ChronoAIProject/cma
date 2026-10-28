@@ -101,10 +101,17 @@ pub(crate) fn reserved_recovery_runtime_request(
     deployment: &str,
 ) -> layer3_adapter::Result<Option<RuntimeAdoptionRequest>> {
     let invalid = || AdapterError::Rejected("failed recovery reservation changed".into());
-    let Some(reservation) = snapshot
+    let generation = snapshot
         .recovery_provision_reservation()
         .map_err(|_| invalid())?
-    else {
+        .map(|reservation| reservation.generation)
+        .or_else(|| {
+            snapshot
+                .sandbox
+                .legacy_unpublished_allocation()
+                .then_some(snapshot.sandbox.lifecycle.runtime_generation_high_water)
+        });
+    let Some(generation) = generation else {
         return Ok(None);
     };
     let sandbox = &snapshot.sandbox;
@@ -117,7 +124,9 @@ pub(crate) fn reserved_recovery_runtime_request(
     {
         return Err(invalid());
     }
-    request.generation = reservation.generation;
+    // This candidate is never authority by itself. The caller must prove the
+    // complete rendered request and original retained graph independently.
+    request.generation = generation;
     Ok(Some(request))
 }
 
@@ -141,6 +150,9 @@ pub(crate) fn recovery_runtime_request(
                 ));
             }
             request.generation = reservation.generation;
+        }
+        if let Some(generation) = state.proof.observed_provision_generation {
+            request.generation = generation;
         }
     }
     Ok(request)

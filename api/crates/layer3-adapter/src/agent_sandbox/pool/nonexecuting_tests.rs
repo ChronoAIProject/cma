@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "idle_bootstrap_tests.rs"]
+mod idle_bootstrap;
 #[path = "terminated_ephemeral_tests.rs"]
 mod terminated_ephemeral;
 

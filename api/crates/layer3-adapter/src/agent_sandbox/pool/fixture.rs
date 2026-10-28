@@ -17,6 +17,8 @@ pub(super) struct State {
     pub list_queries: Vec<String>,
     pub assignments: Vec<crate::runtime_bootstrap::RuntimeBootstrapRequest>,
     pub fail_exec: bool,
+    pub inspection_output: Option<Value>,
+    pub inspections: usize,
     pub exec_mutations: Vec<(String, String, Value)>,
     pub native_annotation_generation: bool,
     version: u64,
@@ -49,7 +51,7 @@ impl Fixture {
         let task = tokio::spawn(async move {
             loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut preview = vec![0; 8192];
+                let mut preview = vec![0; 128 * 1024];
                 let length = loop {
                     let count = socket.peek(&mut preview).await.unwrap();
                     assert_ne!(count, 0);

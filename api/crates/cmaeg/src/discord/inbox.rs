@@ -44,9 +44,22 @@ impl DurableJournal {
         );
         if let Some((existing, 1)) = self.store.load::<Inbox>(&id, true).await? {
             let bytes = self.verify_inbox(&existing, authority, message).await?;
+            verify_quote_replay(&bytes, &event.data, &authority.bot_id)?;
             return self.observe_inbox(&existing, authority, &bytes).await;
         }
         let mut body = json!({"dispatch":event.data,"channel":authority.public_definition});
+        if component.is_none() && self.api.quoted_context {
+            if let Ok(super::normalize::Normalized::Activity(activity)) =
+                super::normalize::normalize(&event.data, &authority.bot_id, &authority.admission)
+            {
+                let snapshot = crate::ingress::quoted_context::Snapshot {
+                    version: 1,
+                    quoted_message: crate::ingress::quoted_context::discord(&event.data, &activity),
+                };
+                body["quote_projection"] =
+                    serde_json::to_value(snapshot).map_err(|_| GatewayError::Protocol)?;
+            }
+        }
         if component.is_none()
             && self.api.thread_metadata
             && super::thread_context::candidate(
@@ -113,6 +126,7 @@ impl DurableJournal {
             Err(error) => match self.store.load::<Inbox>(&id, true).await? {
                 Some((existing, 1)) => {
                     let bytes = self.verify_inbox(&existing, authority, message).await?;
+                    verify_quote_replay(&bytes, &event.data, &authority.bot_id)?;
                     self.observe_inbox(&existing, authority, &bytes).await
                 }
                 Some(_) => Err(GatewayError::Protocol),
@@ -175,4 +189,27 @@ impl super::record_store::Store {
         }
         Ok(bytes)
     }
+}
+
+fn verify_quote_replay(
+    bytes: &[u8],
+    incoming: &serde_json::Value,
+    bot: &str,
+) -> Result<(), GatewayError> {
+    let body: super::inbox_reader::Body =
+        serde_json::from_slice(bytes).map_err(|_| GatewayError::Protocol)?;
+    let Some(snapshot) = &body.quote_projection else {
+        return Ok(());
+    };
+    let super::normalize::Normalized::Activity(activity) = body.activity(bot)? else {
+        return Err(GatewayError::Protocol);
+    };
+    if incoming["id"] != body.dispatch["id"]
+        || incoming["channel_id"] != body.dispatch["channel_id"]
+        || incoming["author"]["id"] != body.dispatch["author"]["id"]
+        || crate::ingress::quoted_context::discord(incoming, &activity) != snapshot.quoted_message
+    {
+        return Err(GatewayError::Protocol);
+    }
+    Ok(())
 }
