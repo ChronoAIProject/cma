@@ -13,6 +13,9 @@ use reqwest::{header::HeaderMap, StatusCode, Url};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Mutex, time::Duration};
 
+#[path = "rename_tests.rs"]
+mod rename;
+
 #[derive(Default)]
 struct Memory {
     calls: Vec<(String, Value)>,
@@ -55,7 +58,7 @@ impl TelegramTransport for Telegram {
                     "getChatMember" => {
                         json!({"user":{"id":77,"is_bot":true},"status":"administrator","can_manage_topics":true})
                     }
-                    "closeForumTopic" | "reopenForumTopic" => json!(true),
+                    "closeForumTopic" | "reopenForumTopic" | "editForumTopic" => json!(true),
                     other => panic!("unexpected native method {other}"),
                 };
                 let (status, value) = memory
@@ -95,9 +98,17 @@ impl Telegram {
     }
 }
 async fn fixture(named: bool, chat: i64, topic: i64) -> (App, Arc<Telegram>) {
+    fixture_with_consent(named, chat, topic, true).await
+}
+async fn fixture_with_consent(
+    named: bool,
+    chat: i64,
+    topic: i64,
+    consent: bool,
+) -> (App, Arc<Telegram>) {
     let mut app = App::new(None, named).await;
     app.definition.sources = vec![serde_json::from_value(
-        json!({"type":"telegram","bot_id":"77","admission":{"type":"all"},"topic_lifecycle":true}),
+        json!({"type":"telegram","bot_id":"77","admission":{"type":"all"},"topic_lifecycle":consent}),
     )
     .unwrap()];
     app.definition.secrets.telegram_bot_token = Some(Secret::new("77:topic-fixture"));
@@ -552,7 +563,7 @@ async fn topic_missing_custody_expiry_and_optional_store_refuse_before_platform_
 }
 
 #[tokio::test]
-async fn telegram_validates_names_before_dispatch_and_never_accepts_discord_rename() {
+async fn telegram_validates_names_on_non_rename_actions_before_dispatch() {
     let (app, telegram) = fixture(false, -100, 123).await;
     for action in ["close", "reopen"] {
         for name in [json!("Not allowed"), Value::Null] {
@@ -567,14 +578,5 @@ async fn telegram_validates_names_before_dispatch_and_never_accepts_discord_rena
             assert_eq!(response.status(), 400, "{action}");
         }
     }
-    let response = reqwest::Client::new()
-        .post(format!("{}/v1/thread-operations", app.base))
-        .bearer_auth(&app.key)
-        .header("idempotency-key", "rename")
-        .json(&json!({"target":app.target(),"action":"rename","name":"Valid Discord name"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(body(response).await["outcome"]["status"], "unsupported");
     assert!(telegram.0.lock().unwrap().calls.is_empty());
 }

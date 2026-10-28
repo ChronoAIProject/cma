@@ -4239,9 +4239,14 @@ The separate default-off `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` gate,
 durable routing admission/recovery and existing optional persistent fence storage
 are required. Eligible contexts advertise `capabilities.topic_lifecycle` with
 `manage_original_topic`, `actions: ["close", "reopen"]` and the original expiry.
+This action list remains a conservative subset for strict older readers; rename
+uses the existing shared request schema and does not add a capability field.
 
 Use existing `POST /v1/thread-operations` / MCP `manageThread` with the original
-`{ "type": "event", "event_ref": "…" }` target and `close` or `reopen`.
+`{ "type": "event", "event_ref": "…" }` target and `close`, `reopen`, or
+`rename` with an explicit `name` of 1–100 printable characters. Telegram itself
+accepts 128 characters; CMA preserves the narrower shared request limit. Rename
+changes only the topic name, preserving its icon and open/closed state.
 The gateway restores exact native human-message custody and the original selected
 consumer, verifies forum-supergroup bot permissions, rechecks current custody,
 and dispatches one operation. Telegram does not accept a `thread_ref` or expose

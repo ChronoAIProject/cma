@@ -553,4 +553,7 @@ it('keeps Telegram topic consent independent and discovers only close/reopen', (
   expect(TopicLifecycleCapabilitiesSchema({ ...caps, list: 'original_thread' })).toEqual(caps);
   const request = { target: { type: 'event', event_ref: 'cmaeg1.ev.fixture' }, action: 'close' };
   expect(ManageThreadRequestSchema(request)).toEqual(request);
+  const rename = { ...request, action: 'rename', name: 'Incident triage' };
+  expect(ManageThreadRequestSchema(rename)).toEqual(rename);
+  expect(() => TopicLifecycleCapabilitiesSchema({ ...caps, actions: ['rename'] })).toThrow();
 });
