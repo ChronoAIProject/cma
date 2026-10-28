@@ -90,8 +90,10 @@ impl NativeMediaCapabilities {
                         && (discord_controls || telegram_controls)
                     {
                         let mut controls = MediaControlsCapabilities::single(1024);
-                        controls.update =
-                            discord_controls && state.native_discord_media_card_edits_enabled;
+                        controls.update = (discord_controls
+                            && state.native_discord_media_card_edits_enabled)
+                            || (telegram_controls
+                                && state.native_telegram_media_control_edits_enabled);
                         capabilities.controls = Some(controls);
                     }
                     capabilities

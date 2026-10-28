@@ -239,6 +239,7 @@ fn config(media: MediaConfig) -> Config {
         native_split_text_refs_enabled: false,
         native_telegram_media_edits_enabled: false,
         native_telegram_media_controls_enabled: false,
+        native_telegram_media_control_edits_enabled: false,
         native_discord_media_edits_enabled: false,
         native_discord_media_controls_enabled: false,
         native_discord_media_card_edits_enabled: false,

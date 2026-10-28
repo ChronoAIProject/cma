@@ -50,6 +50,9 @@ mod step;
 pub mod sync;
 mod telegram;
 mod telegram_media;
+mod telegram_media_card_edit;
+#[cfg(test)]
+mod telegram_media_card_edit_tests;
 mod telegram_media_controls;
 #[cfg(test)]
 mod telegram_media_controls_fixture;
