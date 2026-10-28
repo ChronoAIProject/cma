@@ -33,6 +33,7 @@ pub struct ToolsState {
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
+    pub native_telegram_media_controls_enabled: bool,
     pub telegram_effects: Option<Arc<super::MessageEffectsClient>>,
     /// Advertise new Lark effects; retained references remain executable when false.
     pub lark_effects_issuance_enabled: bool,

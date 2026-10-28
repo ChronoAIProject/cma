@@ -4440,3 +4440,44 @@ whole-row omission count. The flag must remain off until all consumers and their
 rollback readers accept the additive `media` enum value; old strict SDKs reject it.
 Source consent authoring and capability discovery are
 optional additions. [Full native contract, setup, tests and platform limits](CMAEG_Native_Lark_History.md).
+
+### Native Telegram media with controls
+
+`CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED` is a separate default-off issuance
+gate. After every live reader understands the media-card marker, a verified
+native Telegram routed human event can advertise `native_media.controls` with
+`max_attachments: 1`, `buttons: true`, `choices: true`, `caption_max_chars: 1024`
+and `update: false`. Named consumers also require the existing consumer
+interaction gate. Legacy relay sources do not gain this capability.
+
+One image, document, audio or video upload can carry buttons, choices and links.
+The message text, text blocks, choice prompt and attachment caption are joined
+in that order into one plain caption, limited to 1,024 UTF-16 code units. The
+existing event's chat and exact forum topic are retained. Extra attachments,
+explicit thread/reply overrides, forms and card blocks refuse before a platform
+write; the gateway never splits a requested media card into separate text and
+media messages.
+
+Only compact media metadata and the SHA-256 of the actual prepared bytes are
+stored with the existing encrypted interaction card; neither upload base64 nor
+source URLs enter that record. The one multipart Bot API request contains the
+file, caption and inline keyboard. A confirmation must identify the same bot,
+chat, topic, message and keyboard before the destination is bound durably. An
+ambiguous reply or lost platform response never causes an automatic resend. A
+lost database acknowledgement is recovered only when the exact committed card
+and version can be read back; otherwise delivery remains unknown.
+
+Callbacks retain the original actor, chat, topic, consumer, provider binding and
+conversation. Current source configuration and credentials are checked again;
+rotation for the same bot/provider identity remains supported. Source removal,
+rebinding and expiry refuse old actions. Repeated identical callbacks share one
+durable consumption and retain the same dispatch identity. Unbound cards and
+storage contention return a retryable failure without consuming an action.
+
+This initial capability deliberately does not expose media-card updates: the
+existing `updateMessage` text route refuses these references before changing the
+card or calling `editMessageText`. Correct caption/markup replacement, media
+replacement with controls, and references for every part of a multipart batch
+remain separate capabilities. Turning issuance off preserves already-issued
+callback readers; it is not permission to roll back to an image predating the
+media-card marker while such cards remain live.

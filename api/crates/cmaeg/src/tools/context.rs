@@ -107,6 +107,9 @@ mod media;
 #[cfg(test)]
 #[path = "context_media_controls_tests.rs"]
 mod media_controls_tests;
+#[cfg(test)]
+#[path = "context_telegram_media_controls_tests.rs"]
+mod telegram_media_controls_tests;
 pub use media::NativeMediaCapabilities;
 #[path = "context_whatsapp.rs"]
 mod whatsapp;
