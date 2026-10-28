@@ -81,6 +81,25 @@ pub(crate) async fn bind_received_message_fixture(
     request: &crate::ingress::launch::LaunchRequest,
     consumer: Option<&ConsumerId>,
 ) -> (Activity, EventRefPayload) {
+    bind_received_message_fixture_with_source(
+        records,
+        keys,
+        request,
+        consumer,
+        &serde_json::to_vec(&request.activity).unwrap(),
+    )
+    .await
+}
+
+/// Preserve native verified bytes when exercising a tool that inspects the original wire message.
+#[cfg(test)]
+pub(crate) async fn bind_received_message_fixture_with_source(
+    records: RecordClient,
+    keys: Arc<MasterKeyRing>,
+    request: &crate::ingress::launch::LaunchRequest,
+    consumer: Option<&ConsumerId>,
+    bytes: &[u8],
+) -> (Activity, EventRefPayload) {
     use crate::ingress::{
         routing_plan::{plan, OrdinaryPlan, RoutingOptions},
         routing_store::Candidate,
@@ -105,8 +124,7 @@ pub(crate) async fn bind_received_message_fixture(
     .unwrap() else {
         panic!("received-message fixture needs durable routing")
     };
-    let bytes = serde_json::to_vec(&request.activity).unwrap();
-    let candidate = Candidate::prepare(request, &routed, &bytes, &keys, now).unwrap();
+    let candidate = Candidate::prepare(request, &routed, bytes, &keys, now).unwrap();
     let stored = PlanStore::new(records.clone(), keys.clone())
         .admit(&candidate)
         .await

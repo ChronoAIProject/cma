@@ -337,6 +337,7 @@ async fn telegram_app() -> (App, MessageRef, crate::telegram::media_fixture::Fix
     let (mut app, _) = media_app().await;
     let platform = crate::telegram::media_fixture::Fixture::new().await;
     app.definition.sources = vec![Source::Telegram {
+        topic_lifecycle: false,
         message_events: false,
         channel_posts: false,
         bot_username: None,
@@ -661,4 +662,193 @@ async fn native_telegram_media_same_bot_token_rotation_requires_fresh_identity_b
         .unwrap();
     assert_eq!(updated.expires_at, original.expires_at);
     assert_eq!(updated.revision, original.revision + 1);
+}
+
+#[tokio::test]
+async fn telegram_topic_enrollment_keeps_legacy_media_edits_and_exact_effect_custody() {
+    let (mut app, reference, platform) = telegram_app().await;
+    assert!(app.definition.routing.is_none());
+    let channel = app
+        .state
+        .resolver
+        .resolve_current(app.event.channel_id.as_str())
+        .await
+        .unwrap();
+    let mut base = reference.open(&app.state.keys).unwrap().payload;
+    base.native_media_edit = None;
+    let base = MessageRef::seal(&base, &app.state.keys).unwrap();
+    let effect = crate::tools::message_effects::authority::enrich(
+        &base,
+        &app.event,
+        &channel,
+        &app.state.keys,
+        now(),
+        false,
+    )
+    .unwrap()
+    .open(&app.state.keys)
+    .unwrap()
+    .payload;
+    let media = reference.open(&app.state.keys).unwrap().payload;
+    let original = Store::new(app.state.resolver.record_client(), app.state.keys.clone())
+        .load(&media.native_media_edit.as_ref().unwrap().original_sha256)
+        .await
+        .unwrap()
+        .0;
+    let caller = crate::auth::AgentCaller {
+        key_hash: *channel.consumer_key_hash(None).unwrap(),
+    };
+    let mut enrolled = app.definition.clone();
+    enrolled.routing = Some(crate::telegram::messaging_compat::default_routing());
+    let Source::Telegram {
+        topic_lifecycle, ..
+    } = &mut enrolled.sources[0]
+    else {
+        panic!()
+    };
+    *topic_lifecycle = true;
+    for defect in [
+        "none",
+        "name",
+        "consumers",
+        "targets",
+        "rules",
+        "publish",
+        "non_human",
+        "reply",
+        "addressing",
+        "provider",
+        "key",
+        "credential",
+        "source",
+    ] {
+        app.definition = enrolled.clone();
+        let routing = app.definition.routing.as_mut().unwrap();
+        match defect {
+            "none" => (),
+            "name" => {
+                routing.default_consumer.name = serde_json::from_value(json!("renamed")).unwrap()
+            }
+            "consumers" => {
+                routing.consumers = crate::channels::routing_fixture::definition(
+                    crate::channels::routing_fixture::routed(),
+                )
+                .routing
+                .unwrap()
+                .consumers
+            }
+            "targets" => routing.default_targets.clear(),
+            "rules" => {
+                routing.rules = serde_json::from_value(
+                    json!([{"id":"rul_000000000001","when":{},"targets":["default"]}]),
+                )
+                .unwrap()
+            }
+            "publish" => routing.default_consumer.publish.enabled = true,
+            "non_human" => routing.default_consumer.non_human = Some(false),
+            "reply" => routing.default_consumer.reply.auto_final = Some(false),
+            "addressing" => routing.addressing.mentions = !routing.addressing.mentions,
+            "provider" => definition_fixture::replace_default_binding(
+                &mut app.definition,
+                "binding-changed".parse().unwrap(),
+            ),
+            "key" => definition_fixture::replace_default_agent_key(
+                &mut app.definition,
+                "nyxid_ag_changed-fixture",
+            ),
+            "credential" => definition_fixture::replace_default_credential(
+                &mut app.definition,
+                Some("changed-fixture"),
+            ),
+            "source" => app.definition.sources.clear(),
+            _ => unreachable!(),
+        }
+        // Replace the encrypted definition exactly, including intentionally invalid routing,
+        // to prove retained readers cannot broaden the fallback.
+        app.backend.seed(
+            app.definition.record_id.as_str(),
+            &app.definition.owner.subject,
+            seal_blob(
+                &app.state.keys,
+                &serde_json::to_vec(&app.definition.to_blob_json()).unwrap(),
+            )
+            .unwrap(),
+        );
+        let current = app
+            .state
+            .resolver
+            .resolve_current(app.event.channel_id.as_str())
+            .await;
+        if defect == "none" {
+            let current = current.unwrap();
+            authority::check(&current, &media, &original, caller).unwrap();
+            crate::tools::message_effects::authority::check(&effect, &current, caller, now())
+                .unwrap();
+        } else if let Ok(current) = current {
+            assert!(
+                authority::check(&current, &media, &original, caller).is_err(),
+                "{defect}"
+            );
+            // Legacy sent effects did not bind provider credentials, but media custody does.
+            if defect != "credential" {
+                assert!(
+                    crate::tools::message_effects::authority::check(
+                        &effect,
+                        &current,
+                        caller,
+                        now()
+                    )
+                    .is_err(),
+                    "{defect}"
+                );
+            }
+        }
+    }
+    app.definition = enrolled;
+    app.backend.seed(
+        app.definition.record_id.as_str(),
+        &app.definition.owner.subject,
+        seal_blob(
+            &app.state.keys,
+            &serde_json::to_vec(&app.definition.to_blob_json()).unwrap(),
+        )
+        .unwrap(),
+    );
+    answer_telegram(&platform, telegram_body("after enrollment"));
+    let first = edit(
+        &app,
+        &reference,
+        "topic-enrollment",
+        json!({"caption":"after enrollment"}),
+    )
+    .await;
+    assert_eq!(first["delivery"]["outcome"], "confirmed");
+    let Source::Telegram {
+        topic_lifecycle, ..
+    } = &mut app.definition.sources[0]
+    else {
+        panic!()
+    };
+    *topic_lifecycle = false;
+    app.backend.seed(
+        app.definition.record_id.as_str(),
+        &app.definition.owner.subject,
+        seal_blob(
+            &app.state.keys,
+            &serde_json::to_vec(&app.definition.to_blob_json()).unwrap(),
+        )
+        .unwrap(),
+    );
+    answer_telegram(&platform, telegram_body("after opt-out"));
+    assert_eq!(
+        edit(
+            &app,
+            &next(&first),
+            "topic-opt-out",
+            json!({"caption":"after opt-out"})
+        )
+        .await["delivery"]["outcome"],
+        "confirmed"
+    );
+    assert_eq!(platform.calls().len(), 4);
 }

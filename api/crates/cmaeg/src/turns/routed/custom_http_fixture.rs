@@ -180,6 +180,7 @@ impl App {
         let tracker = TurnTracker::new(Readiness::initialized());
         let tools = ToolsState {
             discord_thread_history: None,
+            telegram_topics: None,
             discord_threads: None,
             discord_conversation_history: None,
             complete_replies_enabled: false,

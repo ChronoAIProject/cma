@@ -214,6 +214,7 @@ fn validate_source(
             ..
         } => super::discord::validate(bot_id, *intents, admission, secrets, pointer),
         Source::Telegram {
+            topic_lifecycle: _,
             bot_id,
             bot_username,
             admission,
