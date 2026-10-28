@@ -227,6 +227,7 @@ pub(crate) async fn serve(
             },
         ),
     );
+    let lark_effects = source_settings::lark_effects(&config, native_lark_controls)?;
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),
         state.master_keys.clone(),
@@ -288,10 +289,7 @@ pub(crate) async fn serve(
             config.native_discord_media_edits_enabled,
         ))),
         native_whatsapp_forms: Some(whatsapp_forms.clone()),
-        native_lark_effects: Some(source_settings::lark_effects(
-            &config,
-            native_lark_controls,
-        )?),
+        native_lark_effects: Some(lark_effects),
         lark_effects_issuance_enabled: config.lark_message_effects_writes_enabled,
         lark_effects: Some(std::sync::Arc::new(
             tools::message_effects::lark_transport::LarkEffectsClient::new(
