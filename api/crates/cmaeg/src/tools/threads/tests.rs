@@ -339,7 +339,10 @@ async fn revocation_after_preflight_stops_writes_for_default_and_named_consumers
                         .provider
                         .binding_id = "rebound".parse().unwrap()
                 }
-                2 => definition.provider.binding_id = "rebound".parse().unwrap(),
+                2 => crate::channels::definition::fixture::replace_default_binding(
+                    definition,
+                    "rebound".parse().unwrap(),
+                ),
                 3 if named => {
                     definition.secrets.consumer_keys[0].1 = Secret::new("revoked-key");
                     definition.routing.as_mut().unwrap().consumers[0].agent_key_hash =
@@ -350,7 +353,9 @@ async fn revocation_after_preflight_stops_writes_for_default_and_named_consumers
                     "revoked-key",
                 ),
                 _ if named => definition.routing.as_mut().unwrap().consumers[0].pending = true,
-                _ => definition.secrets.provider_credential = None,
+                _ => crate::channels::definition::fixture::replace_default_credential(
+                    definition, None,
+                ),
             });
             let value = body(app.manage(app.target(), "archive", "mutation").await).await;
             assert_eq!(

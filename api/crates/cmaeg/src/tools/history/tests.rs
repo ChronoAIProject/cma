@@ -165,11 +165,14 @@ async fn final_custody_and_anchor_checks_discard_even_empty_pages() {
                     "changed-agent-key",
                 ),
                 3 => definition.owner.subject = "changed-owner".into(),
-                4 => {
-                    definition.secrets.provider_credential =
-                        Some(Secret::new("changed-provider-token"))
-                }
-                5 => definition.provider.binding_id = "rebound".parse().unwrap(),
+                4 => crate::channels::definition::fixture::replace_default_credential(
+                    definition,
+                    Some("changed-provider-token"),
+                ),
+                5 => crate::channels::definition::fixture::replace_default_binding(
+                    definition,
+                    "rebound".parse().unwrap(),
+                ),
                 _ => definition.partition.version += 1,
             },
         );
