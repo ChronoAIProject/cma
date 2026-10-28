@@ -18,7 +18,7 @@ fn is_false(value: &bool) -> bool {
 pub struct AgentLifecycleCreateRequest {
     /// Agent display name.
     pub name: String,
-    /// Provision the immutable Linux desktop runtime with Chrome and native computer use.
+    /// Provision an immutable Linux desktop runtime shared by the owner and Agent.
     #[serde(default, skip_serializing_if = "is_false")]
     pub machine_included: bool,
     /// Existing owned Workspace; inherits its image, repository and Sandbox scope.

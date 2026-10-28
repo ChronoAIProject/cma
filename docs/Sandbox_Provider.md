@@ -39,9 +39,18 @@ authenticated framebuffer transfer, and subsequent user input in the same
 browser. This is tool execution evidence, not a live model task or production
 provider acceptance. The image must pass that check and a disposable production
 Sandbox demonstration before enabling its immutable digest. Audio and video
-playback are outside this prototype. Graceful recovery of unexpected desktop
-background processes and retained Chromium profile recovery remain acceptance
-items; they must not be inferred from a regular headless runtime test.
+playback are outside this prototype. The strict native recovery inspector
+currently rejects the desktop background services as unowned processes. That
+special recovery path needs explicit service ownership and execution evidence;
+its checks must not be relaxed to accept arbitrary background processes.
+Retained Chromium profile recovery also remains an acceptance item.
+
+Actions run `40732463842` built and scanned the desktop image successfully, then
+failed before runtime readiness. Its logs did not retain the underlying desktop
+startup error. The follow-up captures startup diagnostics; the click/type,
+screenshot and shared user-input acceptance has not passed yet. The deployment
+image setting remains empty while these checks and lifecycle acceptance are
+incomplete.
 
 The Sandbox/Agent implementation requires runtime contract **3**, declared by
 the image label `dev.chrono.cma.runtime-contract`. The control plane provisions

@@ -3828,3 +3828,5 @@ browser's full-screen action. Connection status remains visible above it.
 working, the panel stays view-only. **Reconnect** resets input control.
 
 | 2026-10-29 | Add the Machine Included creation choice and a bundled desktop viewer with explicit input control, connection status, reconnect and full-screen actions. |
+
+| 2026-10-29 | Describe Machine Included as a shared Linux desktop with Chromium; avoid claiming a bundled native computer-use tool or exposing runtime-image implementation details in creation copy. |
