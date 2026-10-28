@@ -100,22 +100,15 @@ fn writer_states(
         .collect()
 }
 
-/// Unlike checkpoint quiescence, recovery does not stop an unknown writer. All
-/// processes outside the supervisor's own ancestry must already have exited.
+/// Unlike checkpoint quiescence, recovery does not stop or trust an unknown
+/// writer, including an older supervisor ancestor. The pinned runtime executes
+/// as the container's PID 1; every other live process must already have exited.
 #[cfg(any(target_os = "linux", test))]
 fn unexpected_live_processes(table: &BTreeMap<i32, ProcessRecord>, supervisor: i32) -> Vec<i32> {
-    let mut ancestors = BTreeSet::new();
-    let mut current = supervisor;
-    while current > 0 && ancestors.insert(current) {
-        let Some(record) = table.get(&current) else {
-            break;
-        };
-        current = record.parent;
-    }
     table
         .iter()
         .filter_map(|(pid, record)| {
-            (!ancestors.contains(pid) && !matches!(record.state, 'Z' | 'X')).then_some(*pid)
+            (*pid != supervisor && !matches!(record.state, 'Z' | 'X')).then_some(*pid)
         })
         .collect()
 }
@@ -127,7 +120,7 @@ pub(super) fn require_no_other_processes(supervisor: i32) -> Result<(), String> 
         Ok(())
     } else {
         Err(format!(
-            "{} live processes remain outside the supervisor ancestry",
+            "{} live processes remain alongside the supervisor",
             processes.len()
         ))
     }
@@ -287,7 +280,8 @@ fn workspace_recovery_refuses_descendants_siblings_and_stopped_writers() {
             },
         ),
     ]);
-    assert!(unexpected_live_processes(&table, 10).is_empty());
+    assert_eq!(unexpected_live_processes(&table, 10), [1]);
+    table.remove(&1);
     for (pid, parent, state) in [(20, 10, 'S'), (21, 1, 'S'), (22, 10, 'T')] {
         table.insert(
             pid,

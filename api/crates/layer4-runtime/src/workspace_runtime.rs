@@ -147,7 +147,7 @@ async fn execute_prepare(
         Err(error) if error.retryable => Err(error),
         Err(error) if error.code == "workspace_prepare_indeterminate" => {
             let indeterminate = ticket.indeterminate(
-                "workspace preparation left ambiguous staged or published state; remove it before retrying",
+                "workspace preparation left ambiguous staged or published state; explicit Workspace recovery is required",
             )?;
             tracing::warn!(detail = %error, "workspace preparation recovery failed closed");
             Err(indeterminate)
