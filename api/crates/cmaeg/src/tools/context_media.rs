@@ -89,6 +89,9 @@ impl NativeMediaCapabilities {
                 {
                     let mut controls = MediaControlsCapabilities::single(0);
                     controls.kinds = Some(vec!["image".into()]);
+                    if state.native_lark_multi_image_controls_enabled {
+                        controls.max_attachments = cmaeg_core::message::MAX_NATIVE_ATTACHMENTS;
+                    }
                     controls.update = true;
                     capabilities.controls = Some(controls);
                 }
