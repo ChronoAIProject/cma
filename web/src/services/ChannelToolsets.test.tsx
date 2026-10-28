@@ -30,11 +30,19 @@ const context: AgentToolCapability = {
   open_world: false,
 };
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
-function Catalog({ owner = 'alice', visible = true }: { owner?: string; visible?: boolean }) {
+function Catalog({
+  owner = 'alice',
+  visible = true,
+  current = channel,
+}: {
+  owner?: string;
+  visible?: boolean;
+  current?: Channel;
+}) {
   return (
     <StrictMode>
       <RelayCapabilitiesProvider key={owner} denied={vi.fn()}>
-        {visible ? <ChannelToolsets channel={channel} /> : null}
+        {visible ? <ChannelToolsets channel={current} /> : null}
       </RelayCapabilitiesProvider>
     </StrictMode>
   );
@@ -88,6 +96,114 @@ it('shows only the advertised tools and server descriptions, reusing discovery a
     credentials: 'same-origin',
     cache: 'no-store',
   });
+});
+
+it.each([
+  ['no sources', [], 'Requires a direct Discord source', 'Requires a direct WhatsApp source'],
+  [
+    'relay sources',
+    [
+      { type: 'nyxid_relay', platform: 'discord' },
+      { type: 'nyxid_relay', platform: 'whatsapp' },
+    ],
+    'Requires a direct Discord source',
+    'Requires a direct WhatsApp source',
+  ],
+  [
+    'missing consent',
+    [{ type: 'discord' }, { type: 'whatsapp', forms_enabled: false }],
+    'Enable Discord thread management',
+    'Enable WhatsApp Forms',
+  ],
+])(
+  'keeps unrelated tools discoverable with setup hints for %s',
+  async (_, sources, discordHint, whatsappHint) => {
+    const names = [
+      'readEventContext',
+      'listEventThreads',
+      'createEventThread',
+      'manageThread',
+      'readEventHistory',
+      'prepareFormReply',
+      'readFormPreparation',
+      'futureTool',
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(response({ agent_tools: names.map((name) => ({ ...context, name })) })),
+    );
+    render(<Catalog current={{ ...channel, definition: { ...channel.definition, sources } }} />);
+    await screen.findByText('readEventContext');
+    const other = screen.getByText('Other advertised tools (5)').closest('details')!;
+    expect(other).not.toHaveAttribute('open');
+    for (const name of ['readEventContext', 'readFormPreparation', 'futureTool']) {
+      expect(screen.getByText(name)).toBeVisible();
+      expect(other).not.toContainElement(screen.getByText(name));
+    }
+    await userEvent.click(screen.getByText('Other advertised tools (5)'));
+    expect(within(other).getAllByRole('listitem')).toHaveLength(5);
+    expect(within(other).getAllByText(discordHint)).not.toHaveLength(0);
+    expect(within(other).getByText(whatsappHint)).toBeVisible();
+    expect(within(other).getByText('readEventHistory')).toBeVisible();
+    expect(
+      screen.getByText('Connection pending. Tool availability is not confirmed.'),
+    ).toBeVisible();
+  },
+);
+
+it('uses saved source consents without treating them as confirmed execution or installation', async () => {
+  const names = [
+    'readEventContext',
+    'listEventThreads',
+    'createEventThread',
+    'manageThread',
+    'readEventHistory',
+    'prepareFormReply',
+  ];
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(response({ agent_tools: names.map((name) => ({ ...context, name })) }));
+  vi.stubGlobal('fetch', fetcher);
+  const current = {
+    ...channel,
+    definition: {
+      ...channel.definition,
+      sources: [
+        { type: 'discord', thread_lifecycle: true, conversation_history: true },
+        { type: 'whatsapp', forms_enabled: true },
+      ],
+    },
+  };
+  const view = render(<Catalog current={current} />);
+  await screen.findByText('prepareFormReply');
+  expect(within(catalog()).getAllByRole('listitem')).toHaveLength(names.length);
+  expect(screen.queryByText(/Other advertised tools/)).not.toBeInTheDocument();
+  expect(screen.getByText(/Support depends on the event, platform and permissions/)).toBeVisible();
+  expect(screen.getByText(/does not confirm installation in an agent/)).toBeVisible();
+  view.rerender(
+    <Catalog
+      current={{
+        ...current,
+        definition: {
+          ...current.definition,
+          sources: [
+            { type: 'discord', thread_lifecycle: true, conversation_history: false },
+            { type: 'whatsapp', forms_enabled: false },
+          ],
+        },
+      }}
+    />,
+  );
+  const other = screen.getByText('Other advertised tools (2)').closest('details')!;
+  expect(within(other).getByText('readEventHistory')).toBeInTheDocument();
+  expect(within(other).getByText('prepareFormReply')).toBeInTheDocument();
+  expect(within(other).queryByText('listEventThreads')).not.toBeInTheDocument();
+  expect(screen.getByText('Enable Discord conversation history')).toBeInTheDocument();
+  view.rerender(<Catalog current={channel} />);
+  expect(screen.getByText('Other advertised tools (5)')).toBeVisible();
+  expect(fetcher).toHaveBeenCalledOnce();
 });
 
 it.each([

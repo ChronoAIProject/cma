@@ -313,7 +313,7 @@ export function NodeInspector({
                 {selection.kind === 'channel'
                   ? 'Shared routing, conversation and reply settings.'
                   : selection.kind === 'toolsets'
-                    ? 'What the channel’s agents can use to read events and respond.'
+                    ? 'Gateway-advertised tools and this channel’s source setup.'
                     : selection.kind === 'producer'
                       ? 'How this source sends events into the channel.'
                       : 'The agent that receives and responds to events.'}
