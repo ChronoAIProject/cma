@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 
 #[path = "idle_bootstrap_tests.rs"]
 mod idle_bootstrap;
@@ -48,9 +49,14 @@ async fn nonexecuting_proof_reads_original_graph_without_ready_exec_or_runtime_b
     let pod: k8s_openapi::api::core::v1::Pod = serde_json::from_value(before[POD].clone()).unwrap();
     assert_eq!(proof.version, 1);
     assert!(proof.idle_bootstrap.is_none());
+    // Retained v1 proofs hash the raw two-element state tuple. The provider
+    // request digest adds a domain prefix and is a different wire identity.
     assert_eq!(
         proof.state_sha256,
-        crate::provider_request_digest(&(&pod.spec, &pod.status)).unwrap()
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&(&pod.spec, &pod.status)).unwrap())
+        )
     );
     let encoded = serde_json::to_vec(&proof).unwrap();
     assert!(encoded.len() < 4096);
