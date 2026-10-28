@@ -13,6 +13,12 @@ use crate::{
     require_string, ValidationError,
 };
 
+mod quoted_message;
+pub use quoted_message::{
+    QuoteRelation, QuoteTextOrigin, QuotedContent, QuotedContentKind, QuotedMessage, QuotedText,
+    MAX_QUOTED_TEXT_BYTES,
+};
+
 mod attachment;
 pub use attachment::{
     forbidden_text_char, https_locator, mime_restricted_name, telegram_ids_valid,
@@ -58,6 +64,9 @@ pub enum ActivityKind {
         mentions_bot: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<MessageRef>,
+        /// Untrusted native reply context, scoped by this activity; grants no authority.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quoted_message: Option<QuotedMessage>,
         /// Shared by every message of one platform media group (a Telegram
         /// album). Each item of the group is still its own activity.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -220,9 +229,13 @@ impl Activity {
                 text,
                 attachments,
                 album_id,
+                quoted_message,
                 ..
             } => {
                 require_string(text, "/kind/text", 0, 32 * 1_024)?;
+                if let Some(quote) = quoted_message {
+                    quote.validate(&self.source)?;
+                }
                 validate_attachments(attachments, &self.source, "/kind/attachments")?;
                 if let Some(album_id) = album_id {
                     attachment::require_text(album_id, "/kind/album_id", MAX_ALBUM_ID_BYTES)?;
