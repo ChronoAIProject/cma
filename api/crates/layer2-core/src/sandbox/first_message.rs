@@ -83,6 +83,7 @@ pub struct FirstMessageRecord {
     pub attempt: u32,
     pub recovery_generation: u32,
     pub fence_sequence: u64,
+    /// Agent work-authority fence that admitted this dispatch, not a runtime generation.
     #[serde(default)]
     pub dispatch_generation: u64,
     pub queued_at: String,

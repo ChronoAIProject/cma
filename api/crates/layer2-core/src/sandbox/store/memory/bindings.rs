@@ -76,7 +76,9 @@ impl BindingStore for InMemorySandboxStore {
             .bindings
             .values()
             .filter(|b| {
-                binding_has_work(b) && after.is_none_or(|after| b.binding_id.as_str() > after)
+                (binding_has_work(b)
+                    || crate::sandbox::binding::store::binding_is_recovery_candidate(b))
+                    && after.is_none_or(|after| b.binding_id.as_str() > after)
             })
             .take(usize::from(limit))
             .cloned()

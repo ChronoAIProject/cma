@@ -381,34 +381,22 @@ pub(super) async fn open_agent(
         let conversation = channel.conversation_id.as_deref().ok_or_else(|| {
             AdapterError::Rejected("channel tool session has no conversation identity".into())
         })?;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            source.confirm_open(&binding, conversation),
-        )
-        .await
-        .map_err(|_| AdapterError::Unavailable("channel tool open receipt timed out".into()))??;
+        super::super::tool_confirmation::confirm(|| source.confirm_open(&binding, conversation))
+            .await?;
     }
     if let (Some(source), Some(binding)) = (&adapter.provider_tools, provider_tool) {
         let conversation = channel.conversation_id.as_deref().ok_or_else(|| {
             AdapterError::Rejected("provider tool session has no conversation identity".into())
         })?;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            source.confirm_open(&binding, conversation),
-        )
-        .await
-        .map_err(|_| AdapterError::Unavailable("provider tool open receipt timed out".into()))??;
+        super::super::tool_confirmation::confirm(|| source.confirm_open(&binding, conversation))
+            .await?;
     }
     if let (Some(source), Some(binding)) = (&adapter.access_tools, access_tool) {
         let conversation = channel.conversation_id.as_deref().ok_or_else(|| {
             AdapterError::Rejected("access tool session has no conversation identity".into())
         })?;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            source.confirm_open(&binding, conversation),
-        )
-        .await
-        .map_err(|_| AdapterError::Unavailable("access tool receipt timed out".into()))??;
+        super::super::tool_confirmation::confirm(|| source.confirm_open(&binding, conversation))
+            .await?;
     }
     Ok(channel)
 }

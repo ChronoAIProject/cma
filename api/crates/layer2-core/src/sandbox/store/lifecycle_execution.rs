@@ -330,6 +330,16 @@ pub fn validate_lifecycle_mutation(
             "sandbox lifecycle mutation is not bounded or ordered",
         ));
     }
+    if current
+        .lifecycle
+        .unpublished_recovery
+        .as_ref()
+        .is_some_and(|state| state.proof.boot_id.is_none())
+        && !agents.is_empty()
+        && mutation.sandbox.lifecycle != current.lifecycle
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
     if mutation.sandbox.lifecycle.runtime_provision != current.lifecycle.runtime_provision {
         if let Some(reservation) = mutation.sandbox.lifecycle.runtime_provision.as_ref() {
             if agents.iter().any(|(agent, _)| {

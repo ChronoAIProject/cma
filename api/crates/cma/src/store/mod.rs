@@ -100,6 +100,7 @@ mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_reconciliation;
 mod sandbox_transactions;
+mod sandbox_unpublished_recovery;
 mod sandbox_worker_store;
 mod sandboxes;
 #[cfg(test)]

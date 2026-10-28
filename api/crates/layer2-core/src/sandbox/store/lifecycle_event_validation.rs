@@ -57,6 +57,26 @@ fn sandbox_only_events(
     mutation: &SandboxLifecycleMutation,
 ) -> Result<Vec<SandboxEventKind>, SandboxStoreError> {
     let next = &mutation.sandbox;
+    if let Some(receipt) = next
+        .lifecycle
+        .unpublished_recovery
+        .as_ref()
+        .and_then(|recovery| recovery.quiescence.as_ref())
+        .filter(|_| {
+            current
+                .lifecycle
+                .unpublished_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.quiescence.is_none())
+        })
+    {
+        return Ok(vec![
+            SandboxEventKind::RuntimeRecoveryQuiesced {
+                receipt: Box::new(receipt.clone()),
+            },
+            work_completed(),
+        ]);
+    }
     if current.credential.current != next.credential.current {
         return Ok(vec![SandboxEventKind::CredentialChanged {
             key_generation: next.credential.key_generation,
