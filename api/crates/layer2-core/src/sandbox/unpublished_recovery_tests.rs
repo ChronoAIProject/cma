@@ -18,6 +18,9 @@ mod stalled;
 #[path = "unpublished_recovery_reservation_tests.rs"]
 mod reservation;
 
+#[path = "unpublished_recovery_failed_tests.rs"]
+mod failed;
+
 fn snapshot(parked_update: bool) -> SandboxUnpublishedRecoverySnapshot {
     let mut sandbox = native();
     let mut held = agent("agt_recovery", "native-original", 0);

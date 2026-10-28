@@ -29,6 +29,12 @@ impl Sandbox {
             .ok_or_else(invalid)?;
         let resume_pause = next
             .retained_home_recovery()
+            .or_else(|| {
+                next.lifecycle
+                    .failed_provision
+                    .as_ref()
+                    .map(|failed| &failed.home)
+            })
             .and_then(|source| source.resume_pause.clone());
         next.lifecycle.suspended_runtime = Some(Box::new(previous));
         let identity = SandboxRotationIdentity::capture(&next, agents)?;
