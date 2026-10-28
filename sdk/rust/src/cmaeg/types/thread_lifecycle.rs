@@ -172,12 +172,12 @@ pub struct ThreadCapabilities {
 pub struct TopicLifecycleCapabilities {
     /// The original event targets a manageable forum topic.
     pub manage_original_topic: bool,
-    /// Telegram close/reopen only; distinct from Discord archiving.
+    /// Conservative Telegram discovery subset; rename uses the existing request schema.
     pub actions: Vec<TopicAction>,
     /// Original event expiry in Unix seconds.
     pub expires_at: i64,
 }
-/// Supported Telegram topic operations.
+/// Conservative Telegram discovery actions; rename is accepted through ThreadAction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TopicAction {

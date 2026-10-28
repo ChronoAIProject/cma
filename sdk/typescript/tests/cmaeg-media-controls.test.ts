@@ -35,7 +35,37 @@ describe('native media/control discovery', () => {
     };
     expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
   });
+  it('preserves buttons-only header kinds without broadening the parent media list', () => {
+    const value = {
+      ...legacy,
+      kinds: ['image', 'file', 'audio', 'sticker', 'video'],
+      controls: {
+        kinds: ['image', 'file', 'video'],
+        max_attachments: 1,
+        buttons: true,
+        choices: false,
+        caption_max_chars: 0,
+        update: false,
+      },
+    };
+    expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
+  });
   it('keeps legacy capability bytes without inventing combined delivery', () => {
     expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);
+  });
+  it('preserves the Lark image-only combination without promising file controls', () => {
+    const value = {
+      ...legacy,
+      kinds: ['image', 'file', 'audio', 'video'],
+      controls: {
+        kinds: ['image'],
+        max_attachments: 1,
+        buttons: true,
+        choices: true,
+        caption_max_chars: 0,
+        update: true,
+      },
+    };
+    expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
   });
 });

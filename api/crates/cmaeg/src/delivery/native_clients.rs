@@ -3,6 +3,14 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    pub fn with_native_lark_thread_start(mut self, enabled: bool) -> Self {
+        self.native_lark_thread_start = enabled;
+        self
+    }
+    pub fn with_native_lark_media_controls(mut self, enabled: bool) -> Self {
+        self.native_lark_media_controls = enabled;
+        self
+    }
     /// Enable new receipt fields only after every retained-receipt reader is deployed.
     pub fn with_native_split_text_refs(mut self, enabled: bool) -> Self {
         self.native_split_text_refs = enabled;

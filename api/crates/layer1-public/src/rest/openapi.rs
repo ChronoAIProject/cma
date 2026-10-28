@@ -4,9 +4,7 @@ mod agent_manager;
 mod composition;
 mod identity;
 mod projections;
-use self::projections::{
-    EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, SignupOptions,
-};
+use self::projections::*;
 use super::admin::profiles::{ProfilePageView, ProfileSummaryView};
 use super::admin::sandboxes::{
     AgentSummaryView, SandboxDetailView, SandboxPageView, SandboxSummaryView, WorkspaceSummaryView,
@@ -190,6 +188,7 @@ use super::trigger_openapi_shapes::*;
         super::sandboxes::events,
         super::workspaces::create,
         super::workspaces::create_inline,
+        super::workspaces::recover_prepare,
         super::workspaces::list,
         super::workspaces::read,
         super::workspaces::remove,

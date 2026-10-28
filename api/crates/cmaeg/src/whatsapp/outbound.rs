@@ -60,6 +60,21 @@ pub(crate) struct UploadedMedia {
     metadata: Value,
 }
 
+impl UploadedMedia {
+    /// Only this phone's upload can become a button header. Header media has no caption.
+    pub(super) fn into_interactive_header(self, phone: &str) -> Result<Value, Error> {
+        if self.phone != phone
+            || !matches!(self.kind, "image" | "document" | "video")
+            || self.metadata.get("caption").is_some()
+        {
+            return Err(Error::Invalid);
+        }
+        let mut header = json!({"type": self.kind});
+        header[self.kind] = self.metadata;
+        Ok(header)
+    }
+}
+
 impl Client {
     /// Prepare the whole batch before any platform effect. Shared preparation has
     /// already bounded URLs, metadata, inline bytes and aggregate downloaded bytes.

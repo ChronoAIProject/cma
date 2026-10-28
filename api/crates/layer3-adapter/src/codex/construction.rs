@@ -1,6 +1,18 @@
 //! Configure the hosted Codex adapter and its runtime services.
 use super::*;
 
+/// Configuration for Codex inside a hosted sandbox.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CodexSandboxSpec {
+    pub deployment: HostedDeployment,
+    pub config: CodexConfig,
+}
+
+/// Complete Codex sandbox adapter.
+pub struct CodexAdapter {
+    pub(super) hosted: HostedAdapter,
+}
+
 impl CodexAdapter {
     pub fn new(backend: Arc<dyn HostedBackend>, spec: CodexSandboxSpec) -> Self {
         let runtime = Arc::new(CodexRuntime {

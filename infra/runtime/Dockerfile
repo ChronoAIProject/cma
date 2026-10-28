@@ -348,7 +348,7 @@ COPY api/crates/layer4-runtime/src/desktop-menu.xml /etc/xdg/openbox/menu.xml
 # These exact-source patches and restart proofs use synthetic credentials and
 # local model/tool fixtures only. Native tools must survive rotation and reload.
 RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
-    --mount=type=bind,source=api/crates/layer3-adapter/src/agent_sandbox/runtime_exec_relay.py,target=/tmp/agent_sandbox/runtime_exec_relay.py,readonly \
+    --mount=type=bind,source=api/crates/layer3-adapter/src/runtime_control_relay.py,target=/tmp/runtime_control_relay.py,readonly \
     node /tmp/cma-codex-source/persist_conversations.cjs \
     && node /tmp/cma-codex-source/subscription_auth.cjs \
     && node /tmp/cma-codex-source/managed_model_catalog.cjs \

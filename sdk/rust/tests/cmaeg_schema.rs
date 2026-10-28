@@ -13,6 +13,21 @@ fn fixtures() -> Value {
 }
 
 #[test]
+fn telegram_rename_keeps_strict_legacy_discovery_bytes_and_existing_request_shape() {
+    let legacy =
+        r#"{"manage_original_topic":true,"actions":["close","reopen"],"expires_at":1800000600}"#;
+    let caps: TopicLifecycleCapabilities = serde_json::from_str(legacy).unwrap();
+    assert_eq!(serde_json::to_string(&caps).unwrap(), legacy);
+    assert!(
+        serde_json::from_str::<TopicLifecycleCapabilities>(&legacy.replace("reopen", "rename"))
+            .is_err()
+    );
+    let request = r#"{"target":{"type":"event","event_ref":"cmaeg1.ev.fixture"},"action":"rename","name":"Incident triage"}"#;
+    let decoded: ManageThreadRequest = serde_json::from_str(request).unwrap();
+    assert_eq!(serde_json::to_string(&decoded).unwrap(), request);
+}
+
+#[test]
 fn historical_activity_receipts_roundtrip_without_inventing_event_facts() {
     let mut page = fixtures()["ActivityPage"][0].clone();
     for row in page["items"].as_array_mut().unwrap() {

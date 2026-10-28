@@ -64,7 +64,7 @@ contract; source implementation is not connected-platform acceptance.
 
 ## Native replies and confirmed outbound targets
 
-Text replies use the exact retained app and chat through the region's official API. Non-thread replies send to the retained chat, so a recalled original can still receive a conversational response. A thread reply uses the retained message with `reply_in_thread`; failure to address that thread is reported and never falls back to another conversation. Thread creation remains unsupported. Original-conversation history has its own consent and gate, described below.
+Text replies use the exact retained app and chat through the region's official API. Non-thread replies send to the retained chat, so a recalled original can still receive a conversational response. A thread reply uses the retained message with `reply_in_thread`; failure to address that thread is reported and never falls back to another conversation. An independently gated explicit text reply can [start the exact admitted group root thread](CMAEG_Native_Lark_Thread_Start.md). Original-conversation history has its own consent and gate, described below.
 
 The sender checks current source/credential authority before each send, respects the shared delivery gate and pacing, and requires a successful official receipt with an exact chat and new message ID. It then seals a receipt bound to the original plan, sending consumer, provider, partition, conversation, app identity and credential revision. Reactions or recalls on a confirmed outbound target reach only its original sending consumer. Missing or malformed send responses remain uncertain and are never blindly retried. Partial multipart delivery and uncertain receipt persistence are reported as unknown.
 
