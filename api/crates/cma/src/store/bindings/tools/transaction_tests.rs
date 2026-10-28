@@ -1,10 +1,11 @@
 use super::*;
 use crate::store::sandbox_mongo::{is_transient, start_transaction, TRANSACTION_ATTEMPTS};
 use layer2_core::sandbox::store::{AgentStore, SandboxStore};
-use layer2_core::sandbox::SandboxStatus;
-use mongodb::event::command::CommandEvent;
+use layer2_core::sandbox::{SandboxHome, SandboxStatus};
+use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
+use mongodb::event::{command::CommandEvent, EventHandler};
 use mongodb::options::ClientOptions;
-use mongodb::{Client, EventHandler};
+use mongodb::Client;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -45,6 +46,26 @@ async fn contended(confirm: bool, completion: Completion) {
             .unwrap()
             .unwrap();
         let revision = parent.revision;
+        let mut home = SandboxHome::reserve(
+            &parent.id,
+            HomeVolumePolicy {
+                mode: Default::default(),
+                storage_class: "storage".into(),
+                capacity_gib: 64,
+                template_name: "seed".into(),
+                template_generation: "seed-original".into(),
+            },
+        )
+        .unwrap();
+        home.bind(HomeVolumeReceipt {
+            native_authority: None,
+            volume_id: home.request.volume_id.clone(),
+            request_sha256: home.request.computed_sha256(),
+            storage_reference: "original-home".into(),
+            storage_generation: "original-volume".into(),
+        })
+        .unwrap();
+        parent.lifecycle.home = Some(Box::new(home));
         parent.runtime.as_mut().unwrap().boot_id = Some("b".repeat(32));
         parent.revision += 1;
         store.save_sandbox(revision, parent).await.unwrap();
@@ -94,14 +115,24 @@ async fn contended(confirm: bool, completion: Completion) {
             .await
             .unwrap()
             .unwrap();
+        let previous = parent.clone();
         match completion {
-            Completion::Revoke => parent.status = SandboxStatus::Paused,
+            Completion::Revoke => parent
+                .begin_retirement(super::super::mongo_tests::NOW.into())
+                .unwrap(),
             Completion::ReplaceBoot => {
-                parent.runtime.as_mut().unwrap().boot_id = Some("c".repeat(32));
+                let runtime = parent.runtime.as_mut().unwrap();
+                runtime.runtime_id = "replacement-provider-runtime".into();
+                runtime.provision_generation = Some(2);
+                runtime.boot_id = Some("c".repeat(32));
+                parent.lifecycle.runtime_generation_high_water = 2;
+                parent.revision += 1;
             }
             _ => unreachable!(),
         }
-        parent.revision += 1;
+        previous
+            .validate_runtime_generation_successor(&parent)
+            .unwrap();
         doc! {"$set": crate::store::sandboxes::sandbox_replacement_fields(&parent).unwrap()}
     } else {
         // The exact same document/fence written by durable reopen output.
@@ -211,7 +242,7 @@ async fn contended(confirm: bool, completion: Completion) {
                 .unwrap()
                 .unwrap();
             if matches!(completion, Completion::Revoke) {
-                assert_eq!(parent.status, SandboxStatus::Paused);
+                assert_eq!(parent.status, SandboxStatus::Retiring);
             } else {
                 assert_eq!(parent.status, SandboxStatus::Active);
                 assert_eq!(parent.runtime.unwrap().boot_id, Some("c".repeat(32)));
@@ -278,6 +309,15 @@ async fn mongo_provider_confirm_stops_after_bounded_conflicts_without_receipt() 
     contended(true, Completion::Exhaust).await;
 }
 
+#[derive(Default)]
+struct TransactionTrace {
+    starts: usize,
+    commits: usize,
+    sessions: Vec<mongodb::bson::Document>,
+}
+
+type SharedTransactionTrace = Arc<std::sync::Mutex<TransactionTrace>>;
+
 async fn failpoint_fixture() -> (
     Client,
     Client,
@@ -286,6 +326,7 @@ async fn failpoint_fixture() -> (
     Arc<MongoSandboxStore>,
     AgentOpenRequest,
     u64,
+    SharedTransactionTrace,
 ) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     let suffix = uuid::Uuid::new_v4().simple().to_string();
@@ -294,6 +335,23 @@ async fn failpoint_fixture() -> (
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let mut options = ClientOptions::parse(&uri).await.unwrap();
     options.app_name = Some(app.clone());
+    let trace = Arc::new(std::sync::Mutex::new(TransactionTrace::default()));
+    let observed = trace.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            let mut trace = observed.lock().unwrap();
+            if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
+                trace.starts += 1;
+                let session = event.command.get_document("lsid").unwrap().clone();
+                if !trace.sessions.contains(&session) {
+                    trace.sessions.push(session);
+                }
+            }
+            if event.command_name == "commitTransaction" {
+                trace.commits += 1;
+            }
+        }
+    }));
     let client = Client::with_options(options).unwrap();
     let store = Arc::new(MongoSandboxStore::open(&client, &database).await.unwrap());
     let (_, conversation, request) = tests::setup(&store).await;
@@ -304,7 +362,7 @@ async fn failpoint_fixture() -> (
         .unwrap()
         .work
         .next_fence;
-    (admin, client, database, app, store, request, fence)
+    (admin, client, database, app, store, request, fence, trace)
 }
 
 async fn disable(admin: &Client) {
@@ -315,10 +373,67 @@ async fn disable(admin: &Client) {
         .expect("disable failpoint before assertions");
 }
 
+async fn finish_injection(admin: &Client, trace: &SharedTransactionTrace) -> (usize, usize) {
+    disable(admin).await;
+    let (starts, commits, sessions) = {
+        let trace = trace.lock().unwrap();
+        (trace.starts, trace.commits, trace.sessions.clone())
+    };
+    // failCommand can refuse commit before the server executes it. The driver
+    // already considers that session committed and cannot send abortTransaction.
+    // Kill only the test operation's captured sessions, releasing its locks
+    // before fixture reuse or database cleanup; committed receipts are retained.
+    assert!(
+        !sessions.is_empty(),
+        "the injected operation must start a transaction"
+    );
+    admin
+        .database("admin")
+        .run_command(doc! {"killSessions": sessions})
+        .await
+        .expect("release only the injected operation's sessions");
+    (starts, commits)
+}
+
+async fn wait_for_confirmation(store: &MongoSandboxStore, expected_fence: i64) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let fence = store
+                .bindings
+                .records
+                .find_one(doc! {})
+                .await
+                .unwrap()
+                .unwrap()
+                .get_i64("tool_open_fence")
+                .unwrap();
+            let receipts = store
+                .bindings
+                .tool_opens
+                .count_documents(doc! {})
+                .await
+                .unwrap();
+            assert!(
+                fence <= expected_fence,
+                "the transaction body must not replay"
+            );
+            assert!(receipts <= 1, "confirmation must retain one exact receipt");
+            if fence == expected_fence && receipts == 1 {
+                return;
+            }
+            // An injected write-concern error skips the successful majority
+            // acknowledgement, so an immediate majority read may still be old.
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("committed confirmation must become majority-visible within five seconds");
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
 async fn mongo_provider_resolve_and_confirm_retry_transient_commit_failure() {
-    let (admin, client, database, app, store, request, fence) = failpoint_fixture().await;
+    let (admin, client, database, app, store, request, fence, trace) = failpoint_fixture().await;
     let source = MongoProviderToolSource::new(store.clone());
     for confirm in [false, true] {
         let attachment = if confirm {
@@ -326,6 +441,7 @@ async fn mongo_provider_resolve_and_confirm_retry_transient_commit_failure() {
         } else {
             None
         };
+        *trace.lock().unwrap() = TransactionTrace::default();
         admin
             .database("admin")
             .run_command(doc! {
@@ -343,7 +459,11 @@ async fn mongo_provider_resolve_and_confirm_retry_transient_commit_failure() {
                 .await
                 .map(|binding| assert!(binding.is_some()))
         };
-        disable(&admin).await;
+        let (starts, _) = finish_injection(&admin, &trace).await;
+        assert_eq!(
+            starts, 2,
+            "a transient commit restarts the transaction once"
+        );
         result.unwrap();
         assert_eq!(
             store
@@ -361,7 +481,7 @@ async fn mongo_provider_resolve_and_confirm_retry_transient_commit_failure() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
 async fn mongo_provider_unknown_commit_does_not_restart_or_claim_success() {
-    let (admin, client, database, app, store, request, fence) = failpoint_fixture().await;
+    let (admin, client, database, app, store, request, fence, trace) = failpoint_fixture().await;
     let source = MongoProviderToolSource::new(store.clone());
     let attachment = observed_binding(&source, &request, fence).await;
     let before = store
@@ -373,6 +493,7 @@ async fn mongo_provider_unknown_commit_does_not_restart_or_claim_success() {
         .unwrap()
         .get_i64("tool_open_fence")
         .unwrap();
+    *trace.lock().unwrap() = TransactionTrace::default();
     admin.database("admin").run_command(doc! {
         "configureFailPoint": "failCommand", "mode": {"times": 5_i32},
         "data": {"failCommands": ["commitTransaction"], "appName": &app,
@@ -381,8 +502,14 @@ async fn mongo_provider_unknown_commit_does_not_restart_or_claim_success() {
     let result = source
         .confirm_open(&attachment, "native-conversation")
         .await;
-    disable(&admin).await;
+    let (starts, commits) = finish_injection(&admin, &trace).await;
     assert!(matches!(result, Err(AdapterError::Unavailable(_))));
+    assert_eq!(
+        starts, 1,
+        "an unknown commit must not restart the transaction body"
+    );
+    assert_eq!(commits, 5, "only the same transaction's commit is retried");
+    wait_for_confirmation(&store, before + 1).await;
     assert_eq!(
         store
             .bindings
@@ -432,15 +559,16 @@ async fn mongo_provider_unknown_commit_does_not_restart_or_claim_success() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
 async fn mongo_provider_nontransient_error_does_not_retry_or_publish_receipt() {
-    let (admin, client, database, app, store, request, fence) = failpoint_fixture().await;
-    let source = MongoProviderToolSource::new(store.clone());
     for confirm in [false, true] {
-        let attachment = if confirm {
-            Some(observed_binding(&source, &request, fence).await)
-        } else {
-            None
-        };
         for (command, code) in [("update", 121_i32), ("commitTransaction", 2_i32)] {
+            let (admin, client, database, app, store, request, fence, trace) =
+                failpoint_fixture().await;
+            let source = MongoProviderToolSource::new(store.clone());
+            let attachment = if confirm {
+                Some(observed_binding(&source, &request, fence).await)
+            } else {
+                None
+            };
             let before = store
                 .bindings
                 .records
@@ -448,6 +576,7 @@ async fn mongo_provider_nontransient_error_does_not_retry_or_publish_receipt() {
                 .await
                 .unwrap()
                 .unwrap();
+            *trace.lock().unwrap() = TransactionTrace::default();
             admin
                 .database("admin")
                 .run_command(doc! {
@@ -465,8 +594,12 @@ async fn mongo_provider_nontransient_error_does_not_retry_or_publish_receipt() {
                     .await
                     .map(|_| ())
             };
-            disable(&admin).await;
-            // Retrying this one-shot failure would incorrectly become success.
+            let (starts, commits) = finish_injection(&admin, &trace).await;
+            assert_eq!(
+                starts, 1,
+                "nontransient {command} must not restart the body"
+            );
+            assert_eq!(commits, usize::from(command == "commitTransaction"));
             assert_eq!(result, Err(unavailable(())), "failed {command}");
             assert_eq!(
                 store
@@ -489,7 +622,7 @@ async fn mongo_provider_nontransient_error_does_not_retry_or_publish_receipt() {
                 after.get("tool_open_fence"),
                 "failed {command} must not publish the transaction's fence"
             );
+            client.database(&database).drop().await.unwrap();
         }
     }
-    client.database(&database).drop().await.unwrap();
 }
