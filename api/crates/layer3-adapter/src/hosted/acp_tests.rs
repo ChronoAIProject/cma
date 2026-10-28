@@ -18,6 +18,8 @@ mod access_tool_tests;
 mod channel_tool_tests;
 #[path = "acp_initialize_tests.rs"]
 mod initialize_tests;
+#[path = "acp_open_completion_tests.rs"]
+mod open_completion_tests;
 #[path = "acp_provider_tool_tests.rs"]
 mod provider_tool_tests;
 
@@ -126,6 +128,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
             "code": -32603, "message": "Internal error",
             "data": { "details": "Already initialized" },
         })),
+        open_completion: None,
         context_refresh: None,
         permission_mode: permission_mode.map(str::to_string),
         own_credential,

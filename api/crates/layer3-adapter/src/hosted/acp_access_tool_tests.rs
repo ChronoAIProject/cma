@@ -1,7 +1,7 @@
 use super::*;
 use crate::hosted::HostedAccessToolBinding;
 
-fn binding(retained: Option<&str>) -> HostedAccessToolBinding {
+pub(super) fn binding(retained: Option<&str>) -> HostedAccessToolBinding {
     let request = crate::AgentOpenRequest::new(
         "open-access-fixture",
         crate::RuntimeOptions {
