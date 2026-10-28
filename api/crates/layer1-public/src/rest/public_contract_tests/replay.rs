@@ -35,10 +35,16 @@ pub(super) async fn run(scenario: &Scenario, symbols: &mut Symbols, case: &mut C
             .extensions_mut()
             .insert(scenario.authorization.clone());
     }
-    let response = response_timeout(&case.scenario, scenario.router.clone().oneshot(request))
-        .await
-        .unwrap_or_else(|_| panic!("{} response timed out", case.id))
-        .unwrap();
+    let response = response_timeout(&case.scenario, async {
+        if case.operation == "GET /api/v1/agents/{id}/desktop/ws" {
+            Ok(Box::pin(super::desktop_cases::upgrade_response(scenario, request)).await)
+        } else {
+            scenario.router.clone().oneshot(request).await
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{} response timed out", case.id))
+    .unwrap();
     assert_eq!(
         response.status().as_u16(),
         case.response.status,
