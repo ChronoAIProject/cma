@@ -33,6 +33,26 @@ recover successful native setup evidence lost with the control-plane process.
 Those cases retain their existing authority checks. Increasing retry counts or
 copying an older receipt into a replacement runtime cannot repair them safely.
 
+Access and provider authority failures record the operation, stage, fixed error
+category and attempt number. Resolve and confirmation events include the Agent
+identity directly, even when informational spans are disabled. Bearer-only
+access authentication and setup events omit Agent identity. Credentials, raw
+driver messages and stored records are never included in these diagnostics.
+
+## Preserve the original opening error
+
+Failed opening retires the unpublished bridge and cancels its readers without
+waiting for socket cleanup. Startup-output recording still commits before
+acknowledging output. When that acknowledgement or the update channel closes,
+the drain returns an already-available opening failure in preference to the
+local channel error. It does not wait for a still-running open, and a successful
+open cannot conceal a failed output acknowledgement.
+
+Only the provider's exact pinned already-initialized response selects retained
+session recovery. Other initialization rejections retain their original class.
+Neither change supplies missing tool confirmation or authorizes a different
+conversation.
+
 ## Workspace preparation interrupted before completion
 
 A started preparation journal can outlive a Git clone that never completed.

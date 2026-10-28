@@ -548,7 +548,7 @@ output may write the same Sandbox and Agent records. A rejected authority or
 non-transient storage failure is not retried; an uncertain commit remains
 unavailable and never becomes an unproved successful confirmation. The
 `Provider tool authority transaction did not complete` log identifies the
-operation, stage, fixed error category and attempt number without driver error
+Agent identity, operation, stage, fixed error category and attempt number without driver error
 text or record contents. The public adapter error stays unchanged.
 
 A provider binding can retain one tool endpoint as part of its immutable supplied

@@ -11,6 +11,13 @@ pub(super) enum Operation<'a> {
 }
 
 impl Operation<'_> {
+    fn agent_id(&self) -> &str {
+        match self {
+            Self::Resolve(_, request, _) => &request.options.slot.0,
+            Self::Confirm(binding, _) => &binding.scope().1.options.slot.0,
+        }
+    }
+
     fn name(&self) -> &'static str {
         match self {
             Self::Resolve(..) => "resolve",
@@ -54,7 +61,6 @@ pub(super) type Result<T> = std::result::Result<T, Error>;
 
 impl MongoProviderToolSource {
     pub(super) async fn run(&self, operation: Operation<'_>) -> layer3_adapter::Result<Outcome> {
-        let name = operation.name();
         for attempt in 0..TRANSACTION_ATTEMPTS {
             if attempt > 0 {
                 // Startup output also fences the Sandbox/Agent. Give that writer
@@ -65,7 +71,7 @@ impl MongoProviderToolSource {
             let mut session = match self.store.client.start_session().await {
                 Ok(session) => session,
                 Err(error) => {
-                    if retry_driver(name, "start_session", attempt, &error) {
+                    if retry_driver(&operation, "start_session", attempt, &error) {
                         continue;
                     }
                     return Err(unavailable(()));
@@ -73,7 +79,7 @@ impl MongoProviderToolSource {
             };
             if let Err(error) = start_transaction(&mut session).await {
                 let _ = session.abort_transaction().await;
-                if retry_driver(name, "start_transaction", attempt, &error) {
+                if retry_driver(&operation, "start_transaction", attempt, &error) {
                     continue;
                 }
                 return Err(unavailable(()));
@@ -94,7 +100,7 @@ impl MongoProviderToolSource {
                     let _ = session.abort_transaction().await;
                     match error {
                         Error::Driver(error) => {
-                            if retry_driver(name, "read_write", attempt, &error) {
+                            if retry_driver(&operation, "read_write", attempt, &error) {
                                 continue;
                             }
                             return Err(unavailable(()));
@@ -104,7 +110,7 @@ impl MongoProviderToolSource {
                                 AdapterError::Rejected(_) => "authority_rejected",
                                 _ => "invalid_storage_record",
                             };
-                            diagnostic(name, "read_write", category, attempt);
+                            diagnostic(&operation, "read_write", category, attempt);
                             return Err(error);
                         }
                     }
@@ -114,28 +120,33 @@ impl MongoProviderToolSource {
                 CommitOutcome::Committed => return Ok(outcome),
                 CommitOutcome::Retry(_) => {
                     let _ = session.abort_transaction().await;
-                    diagnostic(name, "commit", "transient_transaction", attempt);
+                    diagnostic(&operation, "commit", "transient_transaction", attempt);
                 }
                 // An unknown commit may have installed the receipt. Do not
                 // start a new transaction or report success without proof.
                 CommitOutcome::Unknown(_) => {
-                    diagnostic(name, "commit", "unknown_commit", attempt);
+                    diagnostic(&operation, "commit", "unknown_commit", attempt);
                     return Err(unavailable(()));
                 }
                 CommitOutcome::Failed(_) => {
                     let _ = session.abort_transaction().await;
-                    diagnostic(name, "commit", "driver_failure", attempt);
+                    diagnostic(&operation, "commit", "driver_failure", attempt);
                     return Err(unavailable(()));
                 }
             }
         }
-        diagnostic(name, "retry", "retry_exhausted", TRANSACTION_ATTEMPTS - 1);
+        diagnostic(
+            &operation,
+            "retry",
+            "retry_exhausted",
+            TRANSACTION_ATTEMPTS - 1,
+        );
         Err(unavailable(()))
     }
 }
 
 fn retry_driver(
-    operation: &'static str,
+    operation: &Operation<'_>,
     stage: &'static str,
     attempt: usize,
     error: &mongodb::error::Error,
@@ -155,7 +166,7 @@ fn retry_driver(
 }
 
 fn diagnostic(
-    operation: &'static str,
+    operation: &Operation<'_>,
     stage: &'static str,
     category: &'static str,
     attempt: usize,
@@ -163,7 +174,8 @@ fn diagnostic(
     // Driver text and BSON may contain capabilities or owner data. Log only
     // fixed categories and the bounded attempt number, never error bodies.
     tracing::warn!(
-        operation,
+        operation = operation.name(),
+        agent_id = operation.agent_id(),
         stage,
         category,
         attempt = attempt + 1,
