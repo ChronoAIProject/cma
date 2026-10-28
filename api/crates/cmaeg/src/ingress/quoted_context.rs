@@ -118,7 +118,9 @@ pub(crate) fn discord(raw: &Value, activity: &Activity) -> Option<QuotedMessage>
     if reference.get("type").is_some_and(|v| v.as_u64() != Some(0))
         || reference["channel_id"].as_str() != Some(&activity.conversation.id)
         || raw["channel_id"].as_str() != Some(&activity.conversation.id)
-        || reference.get("guild_id") != raw.get("guild_id")
+        || reference
+            .get("guild_id")
+            .is_some_and(|guild| Some(guild) != raw.get("guild_id"))
     {
         return None;
     }
@@ -230,7 +232,7 @@ pub(crate) fn whatsapp(
                 let Some(id) = context["id"].as_str().filter(|id| *id != current_id) else {
                     continue;
                 };
-                // The provider's context.from is the quoted sender, never the current actor.
+                // context.from describes the referenced sender; it never assigns the current actor.
                 if !context["from"]
                     .as_str()
                     .is_some_and(cmaeg_core::channel::whatsapp::valid_meta_id)

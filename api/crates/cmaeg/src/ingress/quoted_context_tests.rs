@@ -90,6 +90,14 @@ fn discord_quote_uses_only_exact_reply_scope_and_truthfully_reports_missing_cont
     assert!(!serde_json::to_string(&quote)
         .unwrap()
         .contains("private.invalid"));
+    // Discord's reference guild_id is optional; the authenticated current
+    // channel and exact same-channel parent still establish the quote's scope.
+    let mut omitted_guild = raw.clone();
+    omitted_guild["message_reference"]
+        .as_object_mut()
+        .unwrap()
+        .remove("guild_id");
+    assert_eq!(discord(&omitted_guild, &activity), Some(quote));
     for unavailable in [false, true] {
         let mut r = raw.clone();
         if unavailable {
