@@ -39,6 +39,8 @@ use tokio::{
 
 #[path = "discord_media_tests.rs"]
 mod media;
+#[path = "native_media_edit_tests.rs"]
+mod media_edits;
 
 struct App {
     backend: fake_cma::FakeCma,
@@ -72,6 +74,8 @@ impl App {
         definition.record_id = uuid::Uuid::new_v4().to_string().parse().unwrap();
         definition.sources = vec![Source::Discord {
             thread_history: false,
+            thread_lifecycle: false,
+            conversation_history: false,
             bot_id: "77".into(),
             intents: 37377,
             admission: AdmissionPolicy::All {},
@@ -128,9 +132,13 @@ impl App {
         let (sender, _) = mpsc::channel(16);
         let state = ToolsState {
             discord_thread_history: None,
+            discord_threads: None,
+            discord_conversation_history: None,
             complete_replies_enabled: false,
             discord_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_media_edits: None,
+            native_whatsapp_forms: None,
             native_lark_effects: None,
             lark_effects_issuance_enabled: false,
             lark_effects: None,
@@ -205,6 +213,25 @@ impl App {
             .with_native_discord_effects(self.state.discord_effects_issuance_enabled)
             .with_native_discord_media_effects(self.media_effects);
         transport.discord = self.platform.api.clone();
+        if let Some(media) = &self.state.native_media_edits {
+            transport = transport
+                .with_telegram((*media.telegram).clone())
+                .with_telegram_effects(true)
+                .with_telegram_media_effects(true)
+                .with_interactions(Arc::new(crate::interactions::InteractionStore::new(
+                    RecordClient::new(&self.backend.base_url, "cma-service").unwrap(),
+                    self.state.keys.clone(),
+                    self.state.providers.clone(),
+                )))
+                .with_native_media_edits(
+                    media.telegram_issuance,
+                    media.discord_issuance,
+                    Arc::new(crate::native_media::store::Store::new(
+                        self.state.resolver.record_client(),
+                        self.state.keys.clone(),
+                    )),
+                );
+        }
         self.state.delivery = Arc::new(ShardedScheduler::new(sender));
         self.engine = Some(DeliveryEngine::start(
             receiver,

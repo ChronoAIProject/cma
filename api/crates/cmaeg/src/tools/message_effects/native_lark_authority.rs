@@ -52,6 +52,7 @@ fn message(
     MessageRefPayload {
         route_id: a.route(),
         platform_message_id: a.reply.message_id.clone(),
+        native_media_edit: None,
         received_reaction: None,
         native_lark_effect: Some(Box::new(a)),
         channel_id,

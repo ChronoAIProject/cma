@@ -44,7 +44,7 @@ async fn restarted_executor_uses_durable_tool_receipt_without_process_tracker() 
             AgentCaller { key_hash: [9; 32] },
             &channel,
             &event,
-            message,
+            *message,
             false
         ),
         async {

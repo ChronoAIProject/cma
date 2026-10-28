@@ -845,13 +845,57 @@
         "expires_at": 1800000000,
         "max_reactions": 1,
         "reaction": true,
-        "scope": "confirmed_native_bot_message"
+        "scope": "confirmed_native_bot_message",
+        "media_edit": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        }
       },
       "thread_history": true,
       "whatsapp_template_components": [
         "header",
         "body"
-      ]
+      ],
+      "thread_lifecycle": {
+        "create_from_original_message": true,
+        "list": "public_children_of_original_parent",
+        "manage_original_thread": false,
+        "actions": [
+          "archive",
+          "reopen",
+          "join",
+          "leave"
+        ],
+        "expires_at": 1800000600
+      },
+      "native_media_edits": {
+        "caption": true,
+        "content": true,
+        "expires_at": 1800000000,
+        "idempotency_key_required": true,
+        "max_attachments": 1,
+        "max_bytes": 8388608,
+        "replacement_kinds": [
+          "file"
+        ]
+      },
+      "forms": false,
+      "conversation_history": {
+        "page_size": 25,
+        "direction": "backward",
+        "attachment_facts_only": true,
+        "max_text_bytes": 32768,
+        "max_metadata_bytes": 16384,
+        "max_output_bytes": 262144,
+        "expires_at": 1793179800
+      }
     }
   ],
   "ChannelCreateRequest": [
@@ -3270,13 +3314,57 @@
           "expires_at": 1800000000,
           "max_reactions": 1,
           "reaction": true,
-          "scope": "confirmed_native_bot_message"
+          "scope": "confirmed_native_bot_message",
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
         },
         "thread_history": true,
         "whatsapp_template_components": [
           "header",
           "body"
-        ]
+        ],
+        "thread_lifecycle": {
+          "create_from_original_message": true,
+          "list": "public_children_of_original_parent",
+          "manage_original_thread": false,
+          "actions": [
+            "archive",
+            "reopen",
+            "join",
+            "leave"
+          ],
+          "expires_at": 1800000600
+        },
+        "native_media_edits": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        },
+        "forms": false,
+        "conversation_history": {
+          "page_size": 25,
+          "direction": "backward",
+          "attachment_facts_only": true,
+          "max_text_bytes": 32768,
+          "max_metadata_bytes": 16384,
+          "max_output_bytes": 262144,
+          "expires_at": 1793179800
+        }
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3317,7 +3405,18 @@
           "reaction": true,
           "scope": "received_native_user_message",
           "max_reactions": 1,
-          "expires_at": 1800000000
+          "expires_at": 1800000000,
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
         }
       }
     },
@@ -3457,13 +3556,57 @@
           "expires_at": 1800000000,
           "max_reactions": 1,
           "reaction": true,
-          "scope": "confirmed_native_bot_message"
+          "scope": "confirmed_native_bot_message",
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
         },
         "thread_history": true,
         "whatsapp_template_components": [
           "header",
           "body"
-        ]
+        ],
+        "thread_lifecycle": {
+          "create_from_original_message": true,
+          "list": "public_children_of_original_parent",
+          "manage_original_thread": false,
+          "actions": [
+            "archive",
+            "reopen",
+            "join",
+            "leave"
+          ],
+          "expires_at": 1800000600
+        },
+        "native_media_edits": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        },
+        "forms": false,
+        "conversation_history": {
+          "page_size": 25,
+          "direction": "backward",
+          "attachment_facts_only": true,
+          "max_text_bytes": 32768,
+          "max_metadata_bytes": 16384,
+          "max_output_bytes": 262144,
+          "expires_at": 1793179800
+        }
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3504,7 +3647,18 @@
           "reaction": true,
           "scope": "received_native_user_message",
           "max_reactions": 1,
-          "expires_at": 1800000000
+          "expires_at": 1800000000,
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
         }
       }
     }
@@ -3945,6 +4099,19 @@
             ]
           }
         ]
+      },
+      "native_media_update": {
+        "caption": "",
+        "replacement": {
+          "filename": "report.bin",
+          "kind": "file",
+          "mime_type": "application/octet-stream",
+          "source": {
+            "data": "AQIDBA==",
+            "type": "base64"
+          }
+        },
+        "text": "Updated visible content"
       }
     }
   ],
@@ -4698,7 +4865,9 @@
       "admission": {
         "type": "all"
       },
-      "thread_history": true
+      "thread_history": true,
+      "thread_lifecycle": true,
+      "conversation_history": true
     },
     {
       "type": "whatsapp",
@@ -4710,7 +4879,8 @@
       },
       "group_ids": [
         "opaque+group/id=="
-      ]
+      ],
+      "forms_enabled": true
     },
     {
       "type": "native_lark",
@@ -4724,6 +4894,17 @@
       "admission": {
         "type": "all"
       }
+    },
+    {
+      "type": "discord",
+      "bot_id": "77",
+      "intents": 37377,
+      "admission": {
+        "type": "all"
+      },
+      "conversation_history": true,
+      "thread_history": false,
+      "thread_lifecycle": false
     }
   ],
   "SourceKind": [
@@ -4886,7 +5067,9 @@
       "admission": {
         "type": "all"
       },
-      "thread_history": true
+      "thread_history": true,
+      "thread_lifecycle": true,
+      "conversation_history": true
     },
     {
       "type": "whatsapp",
@@ -4898,7 +5081,8 @@
       },
       "group_ids": [
         "opaque+group/id=="
-      ]
+      ],
+      "forms_enabled": true
     },
     {
       "type": "native_lark",
@@ -4912,6 +5096,17 @@
       "admission": {
         "type": "all"
       }
+    },
+    {
+      "type": "discord",
+      "bot_id": "77",
+      "intents": 37377,
+      "admission": {
+        "type": "all"
+      },
+      "conversation_history": true,
+      "thread_history": false,
+      "thread_lifecycle": false
     }
   ],
   "TestChannelResponse": [
@@ -5045,7 +5240,13 @@
         "native_whatsapp_writes_enabled": false,
         "native_lark_writes_enabled": false,
         "native_lark_intake_enabled": false,
-        "native_whatsapp_groups_writes_enabled": true
+        "native_whatsapp_groups_writes_enabled": true,
+        "native_discord_thread_lifecycle_enabled": false,
+        "native_lark_controls_enabled": false,
+        "native_lark_forms_enabled": false,
+        "native_whatsapp_forms_enabled": false,
+        "native_whatsapp_flow_writes_enabled": false,
+        "native_discord_conversation_history_enabled": false
       },
       "agent_tools": [
         {
@@ -5099,7 +5300,13 @@
         "native_whatsapp_writes_enabled": true,
         "native_lark_writes_enabled": false,
         "native_lark_intake_enabled": false,
-        "native_whatsapp_groups_writes_enabled": true
+        "native_whatsapp_groups_writes_enabled": true,
+        "native_discord_thread_lifecycle_enabled": false,
+        "native_lark_controls_enabled": false,
+        "native_lark_forms_enabled": false,
+        "native_whatsapp_forms_enabled": false,
+        "native_whatsapp_flow_writes_enabled": false,
+        "native_discord_conversation_history_enabled": false
       },
       "agent_tools": [
         {
@@ -5162,7 +5369,13 @@
         "native_whatsapp_writes_enabled": true,
         "native_lark_writes_enabled": false,
         "native_lark_intake_enabled": false,
-        "native_whatsapp_groups_writes_enabled": true
+        "native_whatsapp_groups_writes_enabled": true,
+        "native_discord_thread_lifecycle_enabled": false,
+        "native_lark_controls_enabled": false,
+        "native_lark_forms_enabled": false,
+        "native_whatsapp_forms_enabled": false,
+        "native_whatsapp_flow_writes_enabled": false,
+        "native_discord_conversation_history_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -6548,7 +6761,13 @@
       "native_whatsapp_writes_enabled": false,
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
-      "native_whatsapp_groups_writes_enabled": true
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false,
+      "native_discord_conversation_history_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6586,7 +6805,13 @@
       "native_telegram_message_events_enabled": true,
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
-      "native_whatsapp_groups_writes_enabled": true
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false,
+      "native_discord_conversation_history_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6624,7 +6849,13 @@
       "native_telegram_message_events_enabled": true,
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
-      "native_whatsapp_groups_writes_enabled": true
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false,
+      "native_discord_conversation_history_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6662,7 +6893,13 @@
       "native_telegram_message_events_enabled": true,
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
-      "native_whatsapp_groups_writes_enabled": true
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false,
+      "native_discord_conversation_history_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
@@ -6707,6 +6944,19 @@
               ]
             }
           ]
+        },
+        "native_media_update": {
+          "caption": "",
+          "replacement": {
+            "filename": "report.bin",
+            "kind": "file",
+            "mime_type": "application/octet-stream",
+            "source": {
+              "data": "AQIDBA==",
+              "type": "base64"
+            }
+          },
+          "text": "Updated visible content"
         }
       }
     }
@@ -6789,7 +7039,18 @@
       "expires_at": 1800000000,
       "max_reactions": 1,
       "reaction": true,
-      "scope": "confirmed_native_bot_message"
+      "scope": "confirmed_native_bot_message",
+      "media_edit": {
+        "caption": true,
+        "content": true,
+        "expires_at": 1800000000,
+        "idempotency_key_required": true,
+        "max_attachments": 1,
+        "max_bytes": 8388608,
+        "replacement_kinds": [
+          "file"
+        ]
+      }
     }
   ],
   "MessageReactionRequest": [
@@ -7003,8 +7264,448 @@
         "reaction": true,
         "scope": "received_native_user_message",
         "max_reactions": 1,
-        "expires_at": 1800000000
+        "expires_at": 1800000000,
+        "media_edit": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        }
       }
+    }
+  ],
+  "ThreadRef": [
+    "cmaeg1.tr.fixture"
+  ],
+  "ThreadListView": [
+    "active",
+    "archived"
+  ],
+  "CreateThreadRequest": [
+    {
+      "name": "Review",
+      "auto_archive_duration": 1440
+    }
+  ],
+  "ThreadAction": [
+    "archive",
+    "reopen",
+    "join",
+    "leave"
+  ],
+  "ThreadTarget": [
+    {
+      "type": "event",
+      "event_ref": "cmaeg1.ev.fixture"
+    },
+    {
+      "type": "thread",
+      "thread_ref": "cmaeg1.tr.fixture"
+    }
+  ],
+  "ManageThreadRequest": [
+    {
+      "target": {
+        "type": "thread",
+        "thread_ref": "cmaeg1.tr.fixture"
+      },
+      "action": "archive"
+    }
+  ],
+  "ThreadSummary": [
+    {
+      "thread_ref": "cmaeg1.tr.fixture",
+      "thread_id": "700",
+      "parent_id": "98",
+      "name": "Review",
+      "archived": false,
+      "locked": false,
+      "expires_at": 1800000600
+    }
+  ],
+  "ThreadListScope": [
+    "original_thread",
+    "public_children_of_original_parent"
+  ],
+  "ThreadList": [
+    {
+      "threads": [
+        {
+          "thread_ref": "cmaeg1.tr.fixture",
+          "thread_id": "700",
+          "parent_id": "98",
+          "name": "Review",
+          "archived": false,
+          "locked": false,
+          "expires_at": 1800000600
+        }
+      ],
+      "truncated": false,
+      "scope": "public_children_of_original_parent"
+    }
+  ],
+  "ThreadOutcome": [
+    {
+      "status": "confirmed"
+    },
+    {
+      "status": "unsupported",
+      "reason": "membership_requires_active_thread"
+    },
+    {
+      "status": "rejected",
+      "reason": "thread_permission_or_target_unavailable"
+    },
+    {
+      "status": "rate_limited",
+      "retry_after": 30
+    },
+    {
+      "status": "unknown",
+      "reason": "thread_write_unconfirmed"
+    }
+  ],
+  "ThreadReceipt": [
+    {
+      "outcome": {
+        "status": "confirmed"
+      },
+      "thread": {
+        "thread_ref": "cmaeg1.tr.fixture",
+        "thread_id": "700",
+        "parent_id": "98",
+        "name": "Review",
+        "archived": false,
+        "locked": false,
+        "expires_at": 1800000600
+      }
+    }
+  ],
+  "ThreadCapabilities": [
+    {
+      "create_from_original_message": true,
+      "list": "public_children_of_original_parent",
+      "manage_original_thread": false,
+      "actions": [
+        "archive",
+        "reopen",
+        "join",
+        "leave"
+      ],
+      "expires_at": 1800000600
+    }
+  ],
+  "NativeMediaUpdate": [
+    {
+      "caption": "",
+      "replacement": {
+        "filename": "report.bin",
+        "kind": "file",
+        "mime_type": "application/octet-stream",
+        "source": {
+          "data": "AQIDBA==",
+          "type": "base64"
+        }
+      },
+      "text": "Updated visible content"
+    }
+  ],
+  "NativeMediaReplacement": [
+    {
+      "filename": "report.bin",
+      "kind": "file",
+      "mime_type": "application/octet-stream",
+      "source": {
+        "data": "AQIDBA==",
+        "type": "base64"
+      }
+    }
+  ],
+  "NativeMediaEditCapabilities": [
+    {
+      "caption": true,
+      "content": true,
+      "expires_at": 1800000000,
+      "idempotency_key_required": true,
+      "max_attachments": 1,
+      "max_bytes": 8388608,
+      "replacement_kinds": [
+        "file"
+      ]
+    }
+  ],
+  "FormCustomerMessage": [
+    "not_sent",
+    "attempted"
+  ],
+  "FormPreparationReceipt": [
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "pending",
+      "retry_after_ms": 1000
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "ready",
+      "preparation_ref": "fixture"
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "declined",
+      "reason": "fixture"
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "uncertain",
+      "reason": "fixture"
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "revoked",
+      "reason": "fixture"
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "attempted",
+      "status": "delivery",
+      "receipt": {
+        "delivery": {
+          "outcome": "confirmed",
+          "platform_message_id": "fixture"
+        },
+        "message_ref": "fixture",
+        "rendering": {
+          "blocks": [
+            {
+              "index": 1,
+              "outcome": {
+                "type": "exact"
+              }
+            }
+          ],
+          "outcome": "rendered"
+        }
+      }
+    }
+  ],
+  "FormPreparationState": [
+    {
+      "status": "pending",
+      "retry_after_ms": 1000
+    },
+    {
+      "status": "ready",
+      "preparation_ref": "fixture"
+    },
+    {
+      "status": "declined",
+      "reason": "fixture"
+    },
+    {
+      "status": "uncertain",
+      "reason": "fixture"
+    },
+    {
+      "status": "revoked",
+      "reason": "fixture"
+    },
+    {
+      "status": "delivery",
+      "receipt": {
+        "delivery": {
+          "outcome": "confirmed",
+          "platform_message_id": "fixture"
+        },
+        "message_ref": "fixture",
+        "rendering": {
+          "blocks": [
+            {
+              "index": 1,
+              "outcome": {
+                "type": "exact"
+              }
+            }
+          ],
+          "outcome": "rendered"
+        }
+      }
+    }
+  ],
+  "HistoryCursor": [
+    "cmaeg1.hc.fixture"
+  ],
+  "HistoryAttachmentFacts": [
+    {
+      "attachment_id": "66",
+      "filename": "diagram.png",
+      "size_bytes": 42,
+      "mime_type": "image/png",
+      "description": "Reference diagram",
+      "width": 20,
+      "height": 30,
+      "duration_seconds": 1.5,
+      "ephemeral": false
+    }
+  ],
+  "HistoryOmittedContent": [
+    "embeds",
+    "components",
+    "stickers",
+    "poll",
+    "forwarded_snapshot"
+  ],
+  "HistoryMessage": [
+    {
+      "message_id": "699",
+      "author": {
+        "id": "51",
+        "display_name": "Earlier participant",
+        "kind": "human"
+      },
+      "text": "Untrusted earlier context",
+      "occurred_at": "2026-10-28T00:00:00Z",
+      "edited_at": "2026-10-28T00:01:00Z",
+      "attachments": [
+        {
+          "attachment_id": "66",
+          "filename": "diagram.png",
+          "size_bytes": 42,
+          "mime_type": "image/png",
+          "description": "Reference diagram",
+          "width": 20,
+          "height": 30,
+          "duration_seconds": 1.5,
+          "ephemeral": false
+        }
+      ],
+      "omitted_content": [
+        "embeds",
+        "components",
+        "stickers",
+        "poll",
+        "forwarded_snapshot"
+      ],
+      "text_truncated": false,
+      "metadata_truncated": false
+    }
+  ],
+  "HistoryContinuation": [
+    {
+      "status": "more_visible_rows",
+      "cursor": "cmaeg1.hc.fixture"
+    },
+    {
+      "status": "end_of_visible_history"
+    }
+  ],
+  "HistoryContentCoverage": [
+    "platform_returned_only"
+  ],
+  "ConversationHistoryPage": [
+    {
+      "conversation": {
+        "id": "99",
+        "kind": "group",
+        "thread_id": "99"
+      },
+      "anchor_message_id": "700",
+      "before_message_id": "700",
+      "fetched_at": "2026-10-28T00:02:00Z",
+      "expires_at": 1793179800,
+      "messages": [
+        {
+          "message_id": "699",
+          "author": {
+            "id": "51",
+            "display_name": "Earlier participant",
+            "kind": "human"
+          },
+          "text": "Untrusted earlier context",
+          "occurred_at": "2026-10-28T00:00:00Z",
+          "edited_at": "2026-10-28T00:01:00Z",
+          "attachments": [
+            {
+              "attachment_id": "66",
+              "filename": "diagram.png",
+              "size_bytes": 42,
+              "mime_type": "image/png",
+              "description": "Reference diagram",
+              "width": 20,
+              "height": 30,
+              "duration_seconds": 1.5,
+              "ephemeral": false
+            }
+          ],
+          "omitted_content": [
+            "embeds",
+            "components",
+            "stickers",
+            "poll",
+            "forwarded_snapshot"
+          ],
+          "text_truncated": false,
+          "metadata_truncated": false
+        }
+      ],
+      "scanned_messages": 25,
+      "omitted_message_count": 24,
+      "text_truncated": false,
+      "metadata_truncated": false,
+      "content_coverage": "platform_returned_only",
+      "continuation": {
+        "status": "more_visible_rows",
+        "cursor": "cmaeg1.hc.fixture"
+      }
+    },
+    {
+      "conversation": {
+        "id": "99",
+        "kind": "group",
+        "thread_id": "99"
+      },
+      "anchor_message_id": "700",
+      "before_message_id": "700",
+      "fetched_at": "2026-10-28T00:02:00Z",
+      "expires_at": 1793179800,
+      "messages": [],
+      "scanned_messages": 0,
+      "omitted_message_count": 0,
+      "text_truncated": false,
+      "metadata_truncated": false,
+      "content_coverage": "platform_returned_only",
+      "continuation": {
+        "status": "end_of_visible_history"
+      }
+    }
+  ],
+  "HistoryDirection": [
+    "backward"
+  ],
+  "ConversationHistoryCapabilities": [
+    {
+      "page_size": 25,
+      "direction": "backward",
+      "attachment_facts_only": true,
+      "max_text_bytes": 32768,
+      "max_metadata_bytes": 16384,
+      "max_output_bytes": 262144,
+      "expires_at": 1793179800
     }
   ]
 }

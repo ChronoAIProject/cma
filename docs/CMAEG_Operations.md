@@ -152,6 +152,10 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_LARK_INTAKE_ENABLED` | `true` or `false` | `false` | Admit encrypted signed callbacks on `/v1/native-lark/{channel_id}`. Retained work and replies continue through the durable recovery path when intake is paused. |
 | `CMAEG_NATIVE_LARK_MEDIA_ENABLED` | `true` or `false` | `false` | Admits new native image, file, audio, video and rich-post resources after compatible locator readers deploy. Requires `CMAEG_MEDIA_ENABLED`; pauses preserve exact duplicate admission and retained reads. Direct regional message-resource retrieval rechecks original consumer/provider and current source/credential authority, including cache hits. See [native Lark media](CMAEG_Native_Lark_Media.md). |
 | `CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED` | `true` or `false` | `false` | Independent bounded native JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and Baseline H.264 MP4 upload/send gate. Requires retained native source custody and exact routed default/named consumer/provider authority; rejects native captions and controls. Advertises exact MIME/size/video limits through `native_media`. See [native outbound media](CMAEG_Native_Lark_Outbound_Media.md). |
+| `CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED` | `true` or `false` | `false` | Issue revisioned single-upload caption/replacement references after durable media receipt storage. Retained references remain usable when issuance is disabled. See [native media edits](CMAEG_Native_Media_Edits.md). |
+| `CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED` | `true` or `false` | `false` | Issue revisioned single-upload content/attachment-description/replacement references after durable receipt storage. Historical effects-only references never gain edit authority. |
+| `CMAEG_NATIVE_LARK_CONTROLS_ENABLED` | `true` or `false` | `false` | Issue direct-app JSON 2.0 cards, buttons and choices for the exact original human, conversation and retained existing group thread. Requires native intake and durable routed recovery. Existing callbacks and references retain their authority when issuance is disabled. See [native controls](CMAEG_Native_Lark_Controls.md). |
+| `CMAEG_NATIVE_LARK_FORMS_ENABLED` | `true` or `false` | `false` | Enable the bounded one-form native subset only when native controls are enabled. Independent of relay cards/forms; no new app or callback configuration is created automatically. |
 | `CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue separate-app confirmed native Lark/Feishu text-edit, recall and own-reaction references only after durable exact-message receipt storage. Retained references remain usable when issuance is disabled. See [native message effects](CMAEG_Native_Lark_Message_Effects.md). |
 | `CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED` | `true` or `false` | `false` | Independently issue reaction-only references for the exact original human message after retained routed consumer/provider admission is verified. No received-message edit or recall authority. |
 | `CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED` | `true` or `false` | `false` | Allows native Meta WhatsApp source and atomic credential writes after all serving and rollback readers support them. The deployment manifest enables owner setup/testing after the compatible-reader rollout and isolated Custom verification; connected Meta acceptance remains unverified. Requires durable routed recovery/admission, routing writes and replay-capable providers; the source needs a dedicated Meta app callback. Retained native sources remain readable with authoring off. See [native WhatsApp](CMAEG_Native_WhatsApp.md). |
@@ -165,6 +169,8 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue 24-hour delete/reaction authority on exact confirmed native Discord messages. Text/link replies also require native edit issuance; native uploads instead require the separate media effects gate. Deploy compatible readers before enabling. Retained references remain readable with issuance off. Reactions change only the bot’s own reaction; custom emoji IDs resolve in the destination guild. |
 | `CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue effects-only references for native uploads fully contained in one confirmed Discord message, with up to four files. Requires the message effects gate, independently of text edits. Multiple native messages and uncertain sends get no reference; content/attachment edits remain unsupported. Deploy serving and rollback readers for the new sealed scope before enabling. Checked-in ConfigMap stays off. See [native media effects](CMAEG_Native_Discord_Media_Effects.md). |
 | `CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED` | `true` or `false` | `false` | Allows new native source `thread_history` opt-ins and explicit bounded `readEventContext` history reads after compatible readers are deployed. Both this gate and source consent are required for execution. Off revokes history reads, retained settings can be removed; ordinary context reads are unchanged. See [native thread history](CMAEG_Protocol.md#bounded-native-discord-thread-history). |
+| `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows native source `thread_lifecycle` consent and bounded create/list/archive/reopen/current-bot join/leave operations only when the optional persistent fence collection and grants are ready. Off revokes execution including retained references. See [lifecycle rollout](#native-discord-thread-lifecycle-rollout). |
+| `CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` | `true` or `false` | `false` | Allows independently consented, bounded original-conversation history pages through REST and MCP. Off disables execution and discovery. See [history gate](#native-discord-conversation-history-gate). |
 | `CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` | `true` or `false` | `false` | Persists verified native channel metadata in immutable inbox bodies and issues exact-thread reply evidence. Deploy compatible inbox and sealed-reference readers first. This uses one bounded authenticated channel read per new admitted message, with no per-channel cache; duplicate inbox messages reuse their original evidence. Disabling stops new metadata writes but retained evidence continues to replay. |
 | `CMAEG_NATIVE_DISCORD_ENABLED` | `true` or `false` | `false` | Enables supervised native source connections and durable inbox recovery for explicit canaries or bounded automatic discovery. Off starts no native worker, scans or Discord requests. Authoring remains separately gated. |
 | `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED` | `true` or `false` | `false` | Discovers eligible ready native sources from the persisted channel index in pages of 32, with at most 64 selections/workers per process. Requires native runtime and routed recovery. Explicit canaries take precedence; dynamic selection authorizes verified native inbox admission only. It does not activate arbitrary HTTP, Custom or relay routing. |
@@ -2813,10 +2819,9 @@ acceptance remains **unverified**; activation permits owner setup and testing.
 The exact pod template and ConfigMap were verified with the startup-source proof;
 the verifier did not read PID 1's environment directly.
 
-Five follow-up gates remain false: native Telegram/Discord received-message
+At the #1157 activation, five follow-up gates remained false: native Telegram/Discord received-message
 reactions, native Lark outbound media, native Lark message effects and native
-Lark received-message reactions. Their code in this branch is newer than the
-accepted production image. Rollback must retain a compatible reader for already
+Lark received-message reactions. Their later #1158 activation is recorded below. Rollback must retain a compatible reader for already
 issued authority; stopping issuance does not permit restoring an older reader.
 
 The automated full-inventory guard **did not pass**. Root separately accepted
@@ -2836,3 +2841,123 @@ and the selected CI publication receipt is
 `704641d15a07233396c40666ba7a36e9283ac61e647d4d6eba364f69460a4b1c`.
 The independent verifier recorded
 `bfde5ecef96ca12694ec1c4f0ac666c5e218d771d4883179dd36a23c6cf3ed40`.
+
+## Native Discord thread lifecycle rollout
+
+Native Discord lifecycle is separately gated by
+`CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED` (`true`/`false`, default `false`).
+The gate permits new source `thread_lifecycle:true` settings and executes bounded
+create/list/archive/reopen/current-bot join/leave operations. Turning it off
+revokes lifecycle execution, including retained references. Retained settings may
+be removed without enabling the gate. No runtime or infrastructure flag is
+activated by this source increment. See [thread lifecycle](CMAEG_Protocol.md#bounded-native-discord-thread-lifecycle)
+for authority boundaries, persistent uncertain-write fences, unsupported private
+and forum creation, and exact API semantics.
+
+Before enabling lifecycle, install its optional Mongo storage separately from
+the base schema. `--print-thread-fences-migration-role` emits
+`cma_eg_thread_fences_migrator`; use that credential with
+`--migrate-thread-fences` after the ordinary `--migrate` has completed.
+`--print-thread-fences-runtime-role` emits `cma_eg_thread_fences_runtime`, which
+must be added to the existing Gateway runtime credential. These commands use
+`CMAEG_MONGODB_DATABASE` and, for migration, `CMAEG_MONGODB_URI`.
+
+The optional `eg_thread_fence_records` collection has strict opaque-record
+validation, exactly the `_id` and `(owner, _id)` indexes, and no TTL index. Its
+generated runtime role grants no delete privilege, and the record client rejects
+fence deletion. Its `thread_fences:1` migration marker is independent
+of base `schema:2`. Base migrations retain optional Forms and thread markers;
+default deployments do not require either optional collection or grant.
+Thread claims retain their fixed event expiry in `eg_interaction_records`.
+An ambiguous bot/thread fence has no expiry and must not be deleted to retry a
+write whose platform result is unknown.
+
+Activation requires both the lifecycle flag and verified storage readiness;
+otherwise source authoring and lifecycle clients remain disabled. Execution and
+capability restoration recheck readiness before platform IO. A missing marker,
+missing grant, unexpected index, or TTL index fails closed. The legacy CMA HTTP
+record transport does not support persistent thread fences. Rollback may turn
+off the lifecycle flag while retaining its durable collection and grants.
+
+
+### Native received reactions and Lark media/effects activation (2026-10-28)
+
+PR #1158 candidate `73d24c2e8b949ab3f8186c0f651afdfeb94689e0` passed
+CI `40585431963`, attempt 1, and merged to develop as
+`8939e305d5bca2318a4831a1fedcfd173c562a1f`. Gateway generation 36 serves
+`sha256:4578a6f5abb70ea2bb3aa98859f3c452ebe68366d2a317d6196909606d6c0f32`;
+Web generation 162 serves
+`sha256:8835f2b64afc824f5b9f4128e9a3de3bc3b19b9d10cc85f083e037dfedc464d7`.
+The Web initializer retains the preceding `2a5fdf21a71f` release and all earlier
+retained asset images. Agent Manager generation 74 and the runtime default were
+not part of this release.
+
+After the compatible predecessor drained, the same Gateway image loaded exactly
+five additional flags: native Telegram/Discord received-message reactions and
+native Lark outbound media, message effects and received-message reactions.
+Their code defaults remain false. The five named container environment values,
+exact template/configuration, public health/schema and unchanged eight-tool
+owner discovery were verified. Native Lark controls/forms, media-edit issuance
+and Discord thread lifecycle remain separate disabled source increments.
+
+A new isolated Custom campaign completed two events once and rejected one invalid
+HMAC with 401. Activity arrived in 238 ms in the API observation; production Web
+inserted its receipt in 208 ms from send intent in one sample (DOM insertion, not
+first paint). The Activity dialog shared the existing stream and reconnect
+retained the exact completed turn. An authenticated attachment read returned the
+exact 29-byte file. The temporary channel, provider resources and key were retired
+once; a second cleanup observation waited for retirement without repeating DELETE.
+The browser used a bearer adapter and minimal owner-derived read-only bootstrap;
+normal cookie/OAuth bridge, configuration writes and connected platform behavior
+were not tested. Four settled configuration inspectors passed the shared desktop
+20% margins and section navigation checks.
+
+The release preserved 12 existing user Pod identities, 22 volumes, 39 Agent
+lineages and 2,329 sampled durable events. Exact known missing-workspace-identity
+crashloop drift and test-spare replacement were reviewed separately; do not report
+the original full runtime inventory as unchanged. Before activation, an unassigned
+warm spare changed while all actions were read-only. That capture was retained,
+its differences explicitly reviewed, and a new baseline captured before any flag
+patch. The final activation's exact runtime/PVC guard passed against that reviewed
+baseline. Connected native Telegram, WhatsApp, Lark/Feishu and Discord acceptance
+remains unverified and reserved for owner testing. Rollback must preserve a reader
+compatible with issued references.
+
+Publication SHA-256:
+`bed89e34f9c2b9c722b4804ebce9bdcb68732dcb3ddc5b6f96f4c4e5dce6e08c`.
+Accepted activation receipt SHA-256:
+`663b7eac1903988c1c284122e654a2357382ce1a9ac7ff49bad462e313d60516`.
+
+### Optional native WhatsApp Forms storage
+
+Native Forms require the separate persistent `eg_whatsapp_flow_records` collection; ordinary interaction writes keep their seven-day admission limit. The existing `expires_at` TTL index expires each record at its recorded deadline; the private WhatsApp reaction class retains its original 30-day deadline. Compatible readers accept optional exact Forms grants without requiring them for Gateway startup. Review `--print-whatsapp-forms-runtime-role` / `--print-whatsapp-forms-migration-role`, then run `--migrate-whatsapp-forms` only after compatible readers are deployed. Directly verify the optional marker, effective permissions and non-TTL indexes, then complete fresh Custom checks with issuance disabled. The feature-activation reload recomputes readiness while enabling the independently false-default `CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED` and `CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED` flags; no intervening restart is needed. In shared-schema mode, existing effective permissions may already cover the optional collections, so this sequence does not require new named roles or changes to broader existing grants. Preserve all asset/send tombstones. The source implementation does not migrate production, and native acceptance remains user-reserved. [Migration and rollback details](CMAEG_Native_WhatsApp_Forms.md#optional-persistent-storage).
+
+## Native Discord conversation history gate
+
+`CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` defaults to `false` and accepts
+`true`/`false`. It independently enables the `readEventHistory` MCP tool and execution
+of the exact original-conversation REST read. Owners must also opt into source
+`conversation_history` before the original human event is admitted. Turning it on
+after admission does not upgrade an old event. Saved consent can be retained or
+removed while the writer gate is disabled; normal native source gates still apply.
+
+Deploy readers that understand the additive source field before authoring it.
+When disabled, no history platform reads execute and the tool is omitted from
+discovery. This increment does not enable production history or establish connected
+Discord acceptance. Permission and Message Content behavior still require acceptance
+with the intended bot. The legacy 20-message thread context option retains its
+separate flag and consent.
+
+Each request is bounded by an entry-to-response eight-second deadline, eight
+in-flight slots, one 26-row list request, existing bot cooldowns and fixed response
+budgets. A source, owner, consumer, provider, credential, partition or original-anchor
+change can invalidate the result or continuation. Failures never return a partial
+page or mint new authority. An empty visible result is not a complete-history claim.
+See [conversation history design](CMAEG_Native_Discord_History_Pagination_Design.md)
+for the authenticated evidence, projection bounds and unsupported scope.
+
+Optional context discovery uses the channel already authorized by the context read,
+performs no enrichment I/O for other platforms or sources without consent, and
+allows at most 100 ms for retained history authority. Slow or busy discovery omits
+the capability hint. Explicit history reads still perform fresh authority checks
+under their independent eight-second total budget.

@@ -141,6 +141,7 @@ fn default_event_refs_keep_their_canonical_plaintext_for_every_reply_address() {
 fn default_message_refs_keep_their_canonical_plaintext() {
     let plain = MessageRefPayload {
         discord_message: None,
+        native_media_edit: None,
         received_reaction: None,
         native_lark_effect: None,
         whatsapp_reaction: None,
@@ -156,6 +157,7 @@ fn default_message_refs_keep_their_canonical_plaintext() {
     };
     let interaction = MessageRefPayload {
         discord_message: None,
+        native_media_edit: None,
         received_reaction: None,
         native_lark_effect: None,
         whatsapp_reaction: None,
@@ -218,13 +220,15 @@ fn default_cards_keep_their_json() {
     assert_no_consumer_keys("card", &serde_json::from_str(&stored).unwrap());
 }
 
-/// The write path seals a default card under kind `in`, with the exact bytes
-/// pinned above, and the read path opens it.
+/// The write path seals a default card under kind `in` without changing its
+/// bytes; the fixed wire snapshot is pinned separately above.
 #[tokio::test]
 async fn default_cards_are_stored_under_the_interaction_kind_with_identical_bytes() {
     let ring = Arc::new(keys());
     let cma = FakeCma::start(false).await;
-    let stored = serde_json::to_vec(&card()).unwrap();
+    let mut live_card = card();
+    live_card.expires_at = time::OffsetDateTime::now_utc().unix_timestamp() + 3600;
+    let stored = serde_json::to_vec(&live_card).unwrap();
     cma.seed(
         CARD_ID,
         "nyx-user-1",

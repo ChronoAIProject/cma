@@ -3781,3 +3781,37 @@ inert, and unavailable files keep their visible label instead of disappearing.
 | 2026-10-28 | Render authorized local and remote reply media with bounded layout, native playback, lazy file reads, and visible preview recovery. |
 
 | 2026-10-28 | Distinguish WhatsApp API acceptance from authenticated sent, delivered, read, played and failed receipts in the existing animated Channel Activity rows. Preserve provider timestamps, original recipients and independent failure evidence; add no polling, new layout or notifications. |
+
+New channel uses one 24px page inset for its header, fields and actions, reduced
+to 16px below 600px, matching the existing service-page spacing. The delivery map
+retains its full-width workspace.
+
+Agent toolsets describes the gateway's advertised catalog and current channel
+source setup. Known Discord thread/history and WhatsApp form preparation tools
+whose direct source or saved consent is absent remain available in the existing
+native disclosure pattern, **Other advertised tools**, with concise setup hints.
+Matching source settings do not promise event support, permissions or agent
+installation. Other tools, including future advertised names and historical form
+receipt reads, remain conditional on the event and retain their server text.
+Catalog associations are static dashed **Catalog reference** lines without
+arrowheads; pending consumers have no catalog association. This supersedes the
+earlier **Tool access** label and arrowheads while retaining routing arrows.
+
+| 2026-10-28 | Align New channel header, form and actions with shared page spacing; show source-specific setup hints for advertised tools, preserve the complete catalog, and distinguish catalog references from confirmed tool access. |
+
+The tool node and inspector use the plain title **Event tools** with **Tools and
+channel setup** on the map. Static dashed associations are labeled **Tools**.
+Tools with missing source settings remain under **Tools requiring setup** with
+the existing concise source hints. The inspector says that available tools depend
+on the event, platform and permissions. Connected agents state pending, existing
+setup or requested tools directly; internal installation and receipt caveats stay
+in implementation documentation. These labels supersede the catalog wording above.
+
+| 2026-10-28 | Use plain Event tools, Tools and Tools requiring setup labels; keep configuration states concise while preserving conditional availability and the complete server catalog. |
+
+The tool inspector keeps its catalog section's accessible name without a visible
+parent heading above the Event tools fieldset. The fieldset retains its sidebar
+anchor and the single availability explanation; Overview describes the tools'
+purpose without repeating that explanation.
+
+| 2026-10-28 | Remove the redundant tool catalog heading and overview availability copy while retaining the Event tools section anchor and accessible catalog region. |

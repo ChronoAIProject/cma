@@ -270,9 +270,18 @@ pub enum MediaVariant {
 /// CMAEG `Capabilities` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
+    /// Eligibility for issuing native media edit references on confirmed single uploads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_media_edits: Option<super::NativeMediaEditCapabilities>,
     /// Explicit bounded prior-thread text reads are available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_history: Option<bool>,
+    /// Bounded lifecycle scope, independent of actual bot permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_lifecycle: Option<super::ThreadCapabilities>,
+    /// Independent exact-conversation history scope and limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_history: Option<super::ConversationHistoryCapabilities>,
     /// Exact-message effect support, absent before compatible reader rollout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_effects: Option<super::MessageEffectsCapabilities>,
@@ -287,6 +296,9 @@ pub struct Capabilities {
     pub native_media: Option<super::NativeMediaCapabilities>,
     /// Wire field `attachments`.
     pub attachments: String,
+    /// Whether native forms may be issued for this exact event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forms: Option<bool>,
     /// Wire field `buttons`.
     pub buttons: String,
     /// Wire field `cards`.

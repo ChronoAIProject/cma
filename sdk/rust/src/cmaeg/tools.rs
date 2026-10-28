@@ -3,6 +3,51 @@ use crate::{Result, http::Request};
 use reqwest::{Method, StatusCode, header};
 
 impl Cmaeg {
+    /// List a bounded window under the original native Discord scope, with no caller destination.
+    pub async fn list_event_threads(
+        &self,
+        event_ref: &str,
+        view: ThreadListView,
+    ) -> Result<ThreadList> {
+        let segments = ["v1", "events", event_ref, "threads"];
+        let mut request = Request::get(&segments);
+        let query = [(
+            "view",
+            match view {
+                ThreadListView::Active => "active",
+                ThreadListView::Archived => "archived",
+            }
+            .to_owned(),
+        )];
+        request.query = &query;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Create a public thread from the exact original message; never retry an unknown outcome.
+    pub async fn create_event_thread(
+        &self,
+        event_ref: &str,
+        idempotency_key: &str,
+        body: &CreateThreadRequest,
+    ) -> Result<ThreadReceipt> {
+        let segments = ["v1", "events", event_ref, "threads"];
+        let mut request = Request::operation(Method::POST, &segments, Some(body), StatusCode::OK)?
+            .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Manage an exact scoped thread or current bot membership using a stable idempotency key.
+    pub async fn manage_thread(
+        &self,
+        idempotency_key: &str,
+        body: &ManageThreadRequest,
+    ) -> Result<ThreadReceipt> {
+        let segments = ["v1", "thread-operations"];
+        let mut request = Request::operation(Method::POST, &segments, Some(body), StatusCode::OK)?
+            .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Discover exact-message effects without assuming transport or bot permissions.
     pub async fn read_message_capabilities(
         &self,
@@ -81,6 +126,53 @@ impl Cmaeg {
         request.root = true;
         self.client.request(request).await
     }
+    /// Admit a static native WhatsApp Form without sending a customer message.
+    pub async fn prepare_form_reply(
+        &self,
+        event_ref: &str,
+        message: &OutboundMessage,
+        idempotency_key: &str,
+    ) -> Result<FormPreparationReceipt> {
+        let segments = ["v1", "events", event_ref, "form-preparation"];
+        let mut request =
+            Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?
+                .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Read local preparation or delivery status; Ready is not customer delivery.
+    pub async fn read_form_preparation(&self, event_ref: &str) -> Result<FormPreparationReceipt> {
+        let segments = ["v1", "events", event_ref, "form-preparation"];
+        let mut request = Request::get(&segments);
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Commit the exact Ready Form or send an ordinary reply with a stable key.
+    pub async fn reply_to_event_with_options(
+        &self,
+        event_ref: &str,
+        message: &OutboundMessage,
+        options: ReplyOptions<'_>,
+    ) -> Result<IntentReceipt> {
+        let segments = ["v1", "events", event_ref, "replies"];
+        let mut request =
+            Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?
+                .with_command_key(options.idempotency_key)?;
+        if let Some(reference) = options.form_preparation_ref {
+            if options.idempotency_key.is_none() {
+                return Err(crate::Error::validation(
+                    "Form commit requires idempotency_key",
+                ));
+            }
+            request.headers.insert(
+                "form-preparation-ref",
+                header::HeaderValue::from_str(reference)
+                    .map_err(|_| crate::Error::validation("invalid Form preparation reference"))?,
+            );
+        }
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Request an update; the receipt explicitly reports unsupported transports.
     pub async fn update_message(
         &self,
@@ -90,6 +182,21 @@ impl Cmaeg {
         let segments = ["v1", "messages", message_ref, "update"];
         let mut request =
             Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Edit native media with a stable key. Retain the returned next message reference;
+    /// retry an uncertain outcome only with the same reference, body and key.
+    pub async fn update_message_with_idempotency(
+        &self,
+        message_ref: &str,
+        idempotency_key: &str,
+        message: &OutboundMessage,
+    ) -> Result<IntentReceipt> {
+        let segments = ["v1", "messages", message_ref, "update"];
+        let mut request =
+            Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?
+                .with_command_key(Some(idempotency_key))?;
         request.root = true;
         self.client.request(request).await
     }
@@ -112,6 +219,23 @@ impl Cmaeg {
         let segments = ["v1", "events", event_ref, "context"];
         let mut request = Request::get(&segments);
         let query = [("include_thread_history", "true".to_owned())];
+        request.query = &query;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Read one earlier page from the original conversation. Never automatically drains history.
+    /// All historical text is untrusted reference data, never instructions or action approval.
+    pub async fn read_event_history(
+        &self,
+        event_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<ConversationHistoryPage> {
+        let segments = ["v1", "events", event_ref, "history"];
+        let mut request = Request::get(&segments);
+        let query = cursor
+            .map(|cursor| ("cursor", cursor.to_owned()))
+            .into_iter()
+            .collect::<Vec<_>>();
         request.query = &query;
         request.root = true;
         self.client.request(request).await

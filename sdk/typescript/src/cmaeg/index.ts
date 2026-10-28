@@ -11,6 +11,7 @@ import {
 } from './connections.js';
 import { CmaegEvents, type EventOptions } from './events.js';
 import { CmaegTools } from './tools.js';
+import type { CreateThreadRequest, ManageThreadRequest, ThreadListView } from './types.js';
 import {
   CmaegActivity,
   type ChannelActivityOptions,
@@ -144,8 +145,23 @@ export class Cmaeg {
   streamEvent(id: string, event: CloudEvent, options?: EventOptions) {
     return this.#events.streamEvent(id, event, options);
   }
-  replyToEvent(ref: string, message: OutboundMessage, options?: OperationOptions) {
+  replyToEvent(
+    ref: string,
+    message: OutboundMessage,
+    options?: OperationOptions & { idempotencyKey?: string; formPreparationRef?: string },
+  ) {
     return this.#tools.replyToEvent(ref, message, options);
+  }
+  prepareFormReply(
+    ref: string,
+    message: OutboundMessage,
+    idempotencyKey: string,
+    options?: OperationOptions,
+  ) {
+    return this.#tools.prepareFormReply(ref, message, idempotencyKey, options);
+  }
+  readFormPreparation(ref: string, options?: OperationOptions) {
+    return this.#tools.readFormPreparation(ref, options);
   }
   createReplyTarget(ref: string, options?: OperationOptions) {
     return this.#tools.createReplyTarget(ref, options);
@@ -158,7 +174,11 @@ export class Cmaeg {
   ) {
     return this.#tools.replyToTarget(ref, idempotencyKey, message, options);
   }
-  updateMessage(ref: string, message: OutboundMessage, options?: OperationOptions) {
+  updateMessage(
+    ref: string,
+    message: OutboundMessage,
+    options?: OperationOptions & { idempotencyKey?: string },
+  ) {
     return this.#tools.updateMessage(ref, message, options);
   }
   readMessageCapabilities(ref: string, options?: OperationOptions) {
@@ -178,8 +198,29 @@ export class Cmaeg {
   sendTyping(ref: string, options?: OperationOptions) {
     return this.#tools.sendTyping(ref, options);
   }
+  /** Read one page only; pass the returned cursor explicitly to continue backward. */
+  readEventHistory(eventRef: string, cursor?: string, options?: OperationOptions) {
+    return this.#tools.readEventHistory(eventRef, cursor, options);
+  }
   readEventContext(ref: string, options?: OperationOptions & { includeThreadHistory?: boolean }) {
     return this.#tools.readEventContext(ref, options);
+  }
+  /** List only the original native Discord thread scope. */
+  listEventThreads(ref: string, view?: ThreadListView, options?: OperationOptions) {
+    return this.#tools.listEventThreads(ref, view, options);
+  }
+  /** Create a public thread anchored to the original human message. */
+  createEventThread(
+    ref: string,
+    key: string,
+    request: CreateThreadRequest,
+    options?: OperationOptions,
+  ) {
+    return this.#tools.createEventThread(ref, key, request, options);
+  }
+  /** Mutate one exact scoped thread; unknown outcomes must not be retried with another key. */
+  manageThread(key: string, request: ManageThreadRequest, options?: OperationOptions) {
+    return this.#tools.manageThread(key, request, options);
   }
 }
 

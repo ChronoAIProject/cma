@@ -14,6 +14,8 @@ mod versions;
 pub const RECORDS: &str = "eg_channel_records";
 pub const CONNECTIONS: &str = "eg_connection_records";
 pub const INTERACTIONS: &str = "eg_interaction_records";
+pub const THREAD_FENCES: &str = "eg_thread_fence_records";
+pub const WHATSAPP_FLOWS: &str = "eg_whatsapp_flow_records";
 pub const MIGRATIONS: &str = "eg_schema_migrations";
 pub const SESSIONS: &str = "eg_auth_sessions";
 pub const COLLECTIONS: &[&str] = &[RECORDS, CONNECTIONS, INTERACTIONS, MIGRATIONS, SESSIONS];
@@ -98,18 +100,37 @@ impl MongoRecords {
         expected: Option<u64>,
         expires_at: Option<i64>,
     ) -> Result<u64, RecordError> {
+        self.put_with_retention(id, owner, blob, expected, expires_at, Default::default())
+            .await
+    }
+    pub(super) async fn put_with_retention(
+        &self,
+        id: &str,
+        owner: &str,
+        blob: &[u8],
+        expected: Option<u64>,
+        expires_at: Option<i64>,
+        retention: super::retention::InteractionRetention,
+    ) -> Result<u64, RecordError> {
         if owner.is_empty() || owner.len() > 512 || blob.is_empty() || blob.len() > 65536 {
             return Err(RecordError::Rejected("invalid record".into()));
+        }
+        if retention == super::retention::InteractionRetention::WhatsappReaction
+            && self.kind != RecordKind::Interaction
+        {
+            return Err(RecordError::Rejected(
+                "WhatsApp reaction retention requires Interaction records".into(),
+            ));
         }
         let expiry = match (self.kind, expires_at) {
             (RecordKind::Interaction, Some(seconds))
                 if seconds > DateTime::now().timestamp_millis() / 1000
-                    && seconds <= DateTime::now().timestamp_millis() / 1000 + 7 * 24 * 60 * 60 =>
+                    && seconds <= DateTime::now().timestamp_millis() / 1000 + retention.maximum_age() =>
             {
                 Some(DateTime::from_millis(seconds.checked_mul(1000).ok_or_else(|| RecordError::Rejected("invalid interaction expiry".into()))?))
             }
-            (RecordKind::Channel | RecordKind::Connection, None) => None,
-            _ => return Err(RecordError::Rejected("interaction expiry must be in the next seven days and only interactions may expire".into())),
+            (RecordKind::Channel | RecordKind::Connection | RecordKind::ThreadFence | RecordKind::WhatsappFlow, None) => None,
+            _ => return Err(RecordError::Rejected("expiry exceeds the selected interaction retention class or the record may not expire".into())),
         };
         let binary = Binary {
             subtype: BinarySubtype::Generic,
@@ -177,6 +198,11 @@ impl MongoRecords {
         })
     }
     pub async fn delete(&self, id: &str, expected: u64) -> Result<bool, RecordError> {
+        if self.kind == RecordKind::ThreadFence {
+            return Err(RecordError::Rejected(
+                "persistent thread fences cannot be deleted".into(),
+            ));
+        }
         let version =
             i64::try_from(expected).map_err(|_| RecordError::Rejected("invalid version".into()))?;
         if self
@@ -254,3 +280,10 @@ fn failure(_: mongodb::error::Error) -> RecordError {
 #[path = "mongo_schema.rs"]
 mod schema;
 pub use schema::{migrate, role, verify, verify_with_authority};
+
+#[path = "mongo_thread_fences.rs"]
+mod thread_fences;
+pub use thread_fences::{migrate as migrate_thread_fences, role as thread_fences_role};
+#[path = "mongo_whatsapp_flows.rs"]
+mod whatsapp_flows;
+pub use whatsapp_flows::{migrate as migrate_whatsapp_flows, role as whatsapp_flows_role};

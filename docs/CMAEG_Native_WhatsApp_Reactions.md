@@ -35,6 +35,18 @@ write or lost final receipt retains that fence. Both receipts and fences survive
 until 30 days after the source timestamp, even when the first reference expires
 earlier. Receipt identity excludes mutable credentials and authority revisions,
 so a freshly minted reference cannot resend an already claimed idempotency key.
+The two WhatsApp reaction safety record kinds use a private thirty-day retention
+class in the existing Gateway-owned interaction collection. Their record IDs,
+sealed payloads, expiry timestamps and TTL index are unchanged. Ordinary
+interaction writes retain their seven-day maximum, and other platforms do not
+opt into the WhatsApp class. No database migration or new grant is required.
+The legacy HTTP record transport cannot store this exact retention contract:
+it issues no new received-message reaction authority and refuses new writes with
+`whatsapp_reaction_retention_unsupported` before any Graph send. Previously stored
+confirmed and unknown receipts can still be read and replayed without new writes. Existing references
+remain valid with Gateway-owned Mongo storage under their original expiry and
+current-custody checks.
+
 A new key does not make an uncertain reaction safe to resend. Current source custody is checked again after
 the fence is acquired, immediately before the one native HTTP write.
 

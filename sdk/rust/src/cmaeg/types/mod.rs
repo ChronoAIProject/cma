@@ -3,6 +3,8 @@ mod channels;
 pub use channels::*;
 mod sources;
 pub use sources::*;
+mod native_media_update;
+pub use native_media_update::*;
 mod messages;
 pub use messages::*;
 mod message_effects;
@@ -35,5 +37,12 @@ pub use whatsapp_template::*;
 mod outbound;
 pub use outbound::*;
 
+mod conversation_history;
 mod thread_history;
+pub use conversation_history::*;
+mod thread_lifecycle;
 pub use thread_history::*;
+pub use thread_lifecycle::*;
+
+mod form_preparation;
+pub use form_preparation::*;

@@ -56,6 +56,14 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// Derived from retained native evidence; actual platform permissions are checked per call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_lifecycle: Option<cmaeg_core::thread_lifecycle::ThreadCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_history:
+        Option<cmaeg_core::conversation_history::ConversationHistoryCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_media_edits: Option<crate::native_media::Capabilities>,
     /// A fixed 20-message prior window is available on explicit request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_history: Option<bool>,
@@ -70,6 +78,8 @@ pub struct Capabilities {
     pub whatsapp_template_components: Option<Vec<String>>,
     pub edit: bool,
     pub typing: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forms: Option<bool>,
     pub buttons: String,
     pub cards: String,
     pub attachments: String,
@@ -95,87 +105,8 @@ pub use media::NativeMediaCapabilities;
 #[path = "context_whatsapp.rs"]
 mod whatsapp;
 use whatsapp::native_whatsapp_templates;
-
-impl Capabilities {
-    pub fn custom() -> Self {
-        Self {
-            edit: false,
-            typing: false,
-            buttons: "json".into(),
-            cards: "json".into(),
-            attachments: "reference".into(),
-            max_text_chars: 32768,
-            inbound_media: None,
-            native_media: None,
-            whatsapp_templates: None,
-            whatsapp_template_components: None,
-            message_effects: None,
-            thread_history: None,
-        }
-    }
-    pub fn native_telegram() -> Self {
-        Self {
-            typing: true,
-            ..Self::telegram()
-        }
-    }
-    pub fn telegram() -> Self {
-        Self {
-            edit: true,
-            typing: false,
-            buttons: "inline_keyboard".into(),
-            cards: "text".into(),
-            attachments: "link_text".into(),
-            max_text_chars: 4000,
-            inbound_media: None,
-            native_media: None,
-            whatsapp_templates: None,
-            whatsapp_template_components: None,
-            message_effects: None,
-            thread_history: None,
-        }
-    }
-    /// Text-only delivery through NyxID's generic relay reply: no native
-    /// controls or message updates, so choices degrade to numbered text.
-    pub fn plain_text() -> Self {
-        Self {
-            edit: false,
-            typing: false,
-            buttons: "numbered_text".into(),
-            cards: "text".into(),
-            attachments: "link_text".into(),
-            max_text_chars: 4000,
-            inbound_media: None,
-            native_media: None,
-            whatsapp_templates: None,
-            whatsapp_template_components: None,
-            message_effects: None,
-            thread_history: None,
-        }
-    }
-    /// Legacy capabilities before ordinary relay text-edit issuance is enabled.
-    pub fn relay(platform: Platform) -> Self {
-        match platform {
-            Platform::Telegram => Self::telegram(),
-            _ => Self::plain_text(),
-        }
-    }
-    /// The reader rollout enables bounded ordinary text edits, not native controls.
-    pub fn relay_with_text_edits(platform: Platform, enabled: bool) -> Self {
-        let mut capabilities = Self::relay(platform);
-        if enabled {
-            match platform {
-                Platform::Lark | Platform::Feishu => capabilities.edit = true,
-                Platform::Discord => {
-                    capabilities.edit = true;
-                    capabilities.max_text_chars = 2000;
-                }
-                _ => {}
-            }
-        }
-        capabilities
-    }
-}
+#[path = "context_capabilities.rs"]
+mod capabilities;
 /// The event's context as `matched`, the calling consumer, sees it: read
 /// through that consumer's own binding and credential.
 pub(super) async fn read(
@@ -284,6 +215,9 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        native_media_edits: crate::native_media::Capabilities::context(
+            state, channel, event, &activity,
+        ),
         thread_history: (state.discord_thread_history.is_some()
             && super::thread_history::eligible(channel, event, &activity))
         .then_some(true),
@@ -358,6 +292,7 @@ pub(super) fn project(
             }) = channel.definition.relay_source_for_route(route_id)
             {
                 capabilities.message_effects = Some(super::MessageEffectsCapabilities {
+                    media_edit: None,
                     delete: binding.delete,
                     reaction: binding.reaction,
                     scope: "confirmed_native_bot_message".into(),
@@ -375,7 +310,17 @@ pub(super) fn project(
         activity_verified,
         &mut capabilities,
     );
-    let consumer_controls = event.consumer.is_none()
+    whatsapp::project_forms(
+        state,
+        channel,
+        event,
+        &activity,
+        activity_verified,
+        &mut capabilities,
+    );
+    let consumer_controls = (activity_verified
+        && crate::interactions::native_lark::eligible(channel, event, &activity))
+        || event.consumer.is_none()
         || (state.consumer_interactions_enabled
             && activity_verified
             && crate::interactions::owner::eligible(channel, event, &activity));

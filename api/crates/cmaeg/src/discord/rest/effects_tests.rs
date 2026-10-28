@@ -8,20 +8,27 @@ use axum::{
 use cmaeg_core::{channel::Secret, message_effect::MessageReactionRequest};
 use serde_json::{json, Value};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 
 pub(crate) struct Memory {
     pub message: Value,
+    pub media_patch: bool,
+    pub media_wrong_response: bool,
+    pub media_after: Option<Value>,
+    pub bodies: Vec<(String, Vec<u8>)>,
     pub user: Value,
     pub emoji: Value,
     pub guild: Value,
+    pub media_channel_status: Option<StatusCode>,
     pub writes: Vec<(Method, String)>,
     pub reject_write: Option<(usize, StatusCode)>,
     pub exhaust_write: Option<usize>,
     pub fail_receipt: Option<Arc<AtomicBool>>,
+    pub fail_next_put: Option<Arc<AtomicU64>>,
     pub message_gate: Option<(Arc<tokio::sync::Semaphore>, Arc<tokio::sync::Semaphore>)>,
+    pub write_gate: Option<(Arc<tokio::sync::Semaphore>, Arc<tokio::sync::Semaphore>)>,
 }
 pub(crate) struct Fixture {
     pub api: DiscordRest,
@@ -38,14 +45,21 @@ impl Fixture {
     pub async fn new() -> Self {
         let memory = Arc::new(Mutex::new(Memory {
             message: json!({"id":"800","channel_id":"99","author":{"id":"77"},"content":"updated"}),
+            media_patch: false,
+            media_wrong_response: false,
+            media_after: None,
+            bodies: vec![],
             user: json!({"id":"77","bot":true}),
             emoji: json!({"id":"500","name":"party","available":true}),
             guild: json!({"id":"99","guild_id":"88"}),
+            media_channel_status: None,
             writes: vec![],
             reject_write: None,
             exhaust_write: None,
             fail_receipt: None,
+            fail_next_put: None,
             message_gate: None,
+            write_gate: None,
         }));
         let app = Router::new().fallback(handle).with_state(memory.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -73,10 +87,18 @@ async fn handle(
     method: Method,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Response {
     assert_eq!(headers["authorization"], "Bot discord-effects-fixture");
     let gate = memory.lock().unwrap().message_gate.clone();
     if method == Method::GET && uri.path() == "/api/v10/channels/99/messages/800" {
+        if let Some((entered, release)) = gate {
+            entered.add_permits(1);
+            release.acquire().await.unwrap().forget();
+        }
+    }
+    let gate = memory.lock().unwrap().write_gate.clone();
+    if method == Method::PATCH {
         if let Some((entered, release)) = gate {
             entered.add_permits(1);
             release.acquire().await.unwrap().forget();
@@ -87,12 +109,79 @@ async fn handle(
         return match uri.path() {
             "/api/v10/users/@me" => Json(memory.user.clone()).into_response(),
             "/api/v10/channels/99/messages/800" => Json(memory.message.clone()).into_response(),
-            "/api/v10/channels/99" => Json(memory.guild.clone()).into_response(),
+            "/api/v10/channels/99" => match memory.media_channel_status {
+                Some(status) => status.into_response(),
+                None => Json(memory.guild.clone()).into_response(),
+            },
             "/api/v10/guilds/88/emojis/500" => Json(memory.emoji.clone()).into_response(),
             _ => StatusCode::NOT_FOUND.into_response(),
         };
     }
     if method == Method::POST || method == Method::PATCH {
+        memory.bodies.push((
+            headers
+                .get("content-type")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("")
+                .into(),
+            body.to_vec(),
+        ));
+        if memory.media_patch && method == Method::PATCH {
+            memory.writes.push((method, uri.path().into()));
+            if let Some(fail) = &memory.fail_receipt {
+                fail.store(true, Ordering::SeqCst);
+            }
+            if let Some(failures) = &memory.fail_next_put {
+                failures.store(1, Ordering::SeqCst);
+            }
+            if let Some((at, status)) = memory.reject_write {
+                if memory.writes.len() == at {
+                    return (status, Json(json!({"retry_after":2}))).into_response();
+                }
+            }
+            let patch: Value = if headers
+                .get("content-type")
+                .is_some_and(|v| v.to_str().unwrap().starts_with("application/json"))
+            {
+                serde_json::from_slice(&body).unwrap()
+            } else {
+                let body = String::from_utf8_lossy(&body);
+                let field = body
+                    .split("name=\"payload_json\"\r\n\r\n")
+                    .nth(1)
+                    .unwrap()
+                    .split("\r\n--")
+                    .next()
+                    .unwrap();
+                serde_json::from_str(field).unwrap()
+            };
+            if let Some(text) = patch.get("content") {
+                memory.message["content"] = text.clone();
+            }
+            if let Some(files) = patch["attachments"].as_array() {
+                let item = &files[0];
+                if item["id"] == 0 {
+                    memory.message["attachments"] = json!([{"id":"901","filename":item["filename"],"size":4,"content_type":"application/octet-stream","description":item["description"]}]);
+                } else {
+                    memory.message["attachments"][0]["description"] = item["description"].clone();
+                }
+                let flags = memory.message["attachments"][0]["flags"]
+                    .as_u64()
+                    .unwrap_or(0);
+                memory.message["attachments"][0]["flags"] =
+                    ((flags & !8) | if item["is_spoiler"] == true { 8 } else { 0 }).into();
+            }
+            if let Some(after) = memory.media_after.clone() {
+                for (key, value) in after.as_object().unwrap() {
+                    memory.message[key] = value.clone();
+                }
+            }
+            let mut response = memory.message.clone();
+            if memory.media_wrong_response {
+                response["id"] = "801".into();
+            }
+            return Json(response).into_response();
+        }
         memory.writes.push((method, uri.path().into()));
         return Json(memory.message.clone()).into_response();
     }
