@@ -179,6 +179,7 @@ mod tests {
         assert_eq!(message.text.as_deref(), Some(text));
         receipt
             .send(IntentReceipt {
+                message_parts: vec![],
                 message_ref: None,
                 rendering: RenderingReport {
                     outcome: RenderingOutcome::Unsupported,

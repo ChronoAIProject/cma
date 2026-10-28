@@ -2328,6 +2328,25 @@
         ],
         "type": "object"
       },
+      "ConfirmedMessagePart": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "description": "Zero-based position in the rendered text, not a delivery retry counter.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message_ref": {
+            "$ref": "#/components/schemas/MessageRef"
+          }
+        },
+        "required": [
+          "index",
+          "message_ref"
+        ],
+        "type": "object"
+      },
       "ConformanceLevel": {
         "enum": [
           "l1",
@@ -3952,6 +3971,13 @@
         "properties": {
           "delivery": {
             "$ref": "#/components/schemas/DeliveryOutcome"
+          },
+          "message_parts": {
+            "description": "Confirmed native split-text parts in rendered order; absent for legacy receipts.\nAn unknown aggregate outcome can retain confirmed earlier parts.",
+            "items": {
+              "$ref": "#/components/schemas/ConfirmedMessagePart"
+            },
+            "type": "array"
           },
           "message_ref": {
             "oneOf": [
