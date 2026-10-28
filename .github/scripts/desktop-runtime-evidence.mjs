@@ -10,6 +10,7 @@ assert(imageRef && /^[0-9a-f]{40}$/.test(revision) && destination);
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', timeout: 90000, maxBuffer: 2 * 1024 * 1024 });
 const name = 'cma-desktop-test-' + randomUUID();
 const token = randomBytes(32).toString('hex');
+let startupDiagnostics = '';
 const result = { schema: 'cma-desktop-evidence-v1', revision, image: null, result: 'fail', cleanup: false };
 try {
   const inspected = JSON.parse(docker(['image', 'inspect', imageRef]))[0];
@@ -35,6 +36,10 @@ try {
     const check = docker(['exec', name, 'python3', '-c',
       'import socket; s=socket.socket(); s.settimeout(1); print(s.connect_ex(("127.0.0.1",9090)))']).trim();
     if (check === '0') { ready = true; break; }
+    if (i % 5 === 0) {
+      startupDiagnostics = docker(['exec', name, 'sh', '-c',
+        'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-websockify.log 2>/dev/null || true']);
+    }
     await delay(1000);
   }
   assert(ready, 'desktop runtime did not become ready');
@@ -47,7 +52,11 @@ try {
     name, 'node', '/opt/desktop-native-probe.cjs']).trim());
   result.result = 'pass';
 } catch (error) {
-  process.stderr.write('Desktop acceptance failed: ' + error.message.slice(0, 1000).replaceAll(token, '[fixture-token]') + '\n');
+  result.error = error.message.slice(0, 1000).replaceAll(token, '[fixture-token]');
+  process.stderr.write('Desktop acceptance failed: ' + result.error + '\n');
+  process.stderr.write(startupDiagnostics.replaceAll(token, '[fixture-token]'));
+  try { process.stderr.write(docker(['logs', '--tail', '40', name]).replaceAll(token, '[fixture-token]')); }
+  catch { /* The container may not have been created. */ }
   try {
     const diagnostics = docker(['exec', name, 'sh', '-c', 'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-websockify.log 2>/dev/null']);
     process.stderr.write(diagnostics.replaceAll(token, '[fixture-token]'));
