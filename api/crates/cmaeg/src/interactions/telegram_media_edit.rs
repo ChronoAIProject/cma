@@ -128,6 +128,7 @@ pub(crate) fn caption(message: &OutboundMessage, previous: &str) -> Result<Strin
 pub(crate) fn receipt(message: &OutboundMessage, delivery: DeliveryOutcome) -> IntentReceipt {
     let (_, rendering) = RelayText.render(message, &crate::tools::Capabilities::native_telegram());
     IntentReceipt {
+        message_parts: vec![],
         message_ref: None,
         rendering,
         delivery,
