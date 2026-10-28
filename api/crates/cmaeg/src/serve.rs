@@ -245,25 +245,8 @@ pub(crate) async fn serve(
     )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
-        native_lark_conversation_history: config
-            .native_lark_conversation_history_enabled
-            .then(|| {
-                crate::native_lark::Client::history_reader().map(|api| {
-                    std::sync::Arc::new(crate::tools::NativeLarkConversationHistory::new(
-                        api,
-                        config.native_lark_mixed_history_enabled,
-                    ))
-                })
-            })
-            .transpose()?,
-        discord_conversation_history: config
-            .native_discord_conversation_history_enabled
-            .then(|| {
-                crate::discord::DiscordRest::new()
-                    .map(crate::tools::DiscordConversationHistory::new)
-                    .map(std::sync::Arc::new)
-            })
-            .transpose()?,
+        native_lark_conversation_history: source_settings::lark_history(&config)?,
+        discord_conversation_history: source_settings::discord_history(&config)?,
         telegram_topics: state
             .native_telegram_topic_lifecycle_enabled
             .then(|| std::sync::Arc::new(tools::TelegramTopics::new(telegram.clone()))),
