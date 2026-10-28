@@ -12,8 +12,10 @@ const opening = `    const response = await this.codexClient.threadStart({
       cwd: request.cwd
     });`;
 
-// Codex 0.147.0 defers an empty rollout until metadata is persisted. Keep this
-// compatibility change tied to the reviewed ACP 1.4.0 bytes, never a loose match.
+// The ACP 1.4.0 bridge's empty-rollout path was first identified with Codex
+// 0.147.0 and remains source-pinned while the runtime uses the newer native
+// CLI. Keep this compatibility change tied to the reviewed bridge bytes, never
+// a loose match.
 function persistConversations(source) {
   assert.equal(
     createHash("sha256").update(source).digest("hex"),

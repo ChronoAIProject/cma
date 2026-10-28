@@ -18,7 +18,7 @@ pub use connections::{CODEX_SUBSCRIPTION_CONNECTION, CONNECTION_SERVICES, PUBLIC
 pub(crate) use home::RESERVED_ENVIRONMENT_NAMES;
 pub use home::{
     checkpoint_exclusions, render_agent_home, render_launch, AGENT_HOME_ROOT, BRIDGE_PROGRAM,
-    SHARED_AUTH_PATH,
+    CODEX_PROGRAM, SHARED_AUTH_PATH,
 };
 
 use crate::hosted::{
