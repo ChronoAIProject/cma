@@ -4,7 +4,8 @@ use kube::api::AttachParams;
 use tokio::io::AsyncReadExt;
 
 pub(super) const READY: &[u8] = b"CMA-EXEC-1\n";
-pub(super) const RELAY: &str = include_str!("runtime_exec_relay.py");
+#[cfg(test)]
+pub(super) const RELAY: &str = crate::runtime_control_relay::SCRIPT;
 
 pub(super) async fn open(
     client: &AgentSandboxClient,
@@ -23,7 +24,7 @@ pub(super) async fn open(
         .pods
         .exec(
             &expected.pod_name,
-            ["/usr/bin/python3", "-I", "-u", "-c", RELAY],
+            crate::runtime_control_relay::command(),
             &parameters,
         )
         .await

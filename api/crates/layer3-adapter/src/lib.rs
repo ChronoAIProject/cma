@@ -32,6 +32,7 @@ mod prompt_identity;
 mod provider_finality;
 mod runtime;
 pub mod runtime_bootstrap;
+pub mod runtime_control_relay;
 mod runtime_output;
 mod runtime_recovery;
 mod runtime_status;
