@@ -9,6 +9,7 @@ mod discord;
 mod discord_card_edit;
 #[cfg(test)]
 mod discord_card_edit_tests;
+mod discord_card_media;
 mod discord_controls;
 #[cfg(test)]
 mod discord_controls_tests;
@@ -17,6 +18,10 @@ pub(crate) mod discord_edit;
 mod discord_edit_tests;
 #[cfg(test)]
 mod discord_form_tests;
+#[cfg(test)]
+mod discord_media_card_edit_tests;
+#[cfg(test)]
+mod discord_media_controls_tests;
 #[cfg(test)]
 mod discord_reaction_tests;
 mod discord_receipts;
@@ -43,6 +48,11 @@ mod step;
 pub mod sync;
 mod telegram;
 mod telegram_media;
+mod telegram_media_controls;
+#[cfg(test)]
+mod telegram_media_controls_fixture;
+#[cfg(test)]
+mod telegram_media_controls_tests;
 #[cfg(test)]
 mod telegram_media_tests;
 pub mod webhook_client;
