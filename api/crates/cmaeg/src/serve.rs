@@ -128,6 +128,7 @@ pub(crate) async fn serve(
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
         .with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
         .with_native_lark_effects(config.native_lark_message_effects_enabled)
+        .with_native_split_text_refs(config.native_split_text_refs_enabled)
         .with_native_media_edits(
             config.native_telegram_media_edits_enabled,
             config.native_discord_media_edits_enabled,

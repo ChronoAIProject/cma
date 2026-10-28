@@ -268,6 +268,17 @@ When constructing these Rust types directly, add `native_attachments: None`,
 `native_media: None`, or `verify_raw_event: false` to the respective old literals.
 These are source-construction changes; existing JSON remains compatible.
 
+When native split-text receipt issuance is enabled, an ordinary Telegram or
+Discord reply can also return `message_parts`. Each entry has a zero-based
+rendered `index` and an opaque `message_ref` for one confirmed part. Older
+receipts omit the field. Keep the existing singular `message_ref` separately;
+its meaning is unchanged. An `unknown` / `partial_delivery` receipt can contain
+confirmed earlier parts, but those entries do not prove that the whole reply
+completed. Preserve the exact operation key and never resend an unknown reply.
+Retained receipt replay preserves the original part tokens and does not renew
+their authority or expiry. Existing edit/effect gates and consumer ownership
+still apply to each reference.
+
 An enabled native Discord upload can return an opaque `message_ref` for delete
 and own-reaction effects when the complete upload fits one confirmed Discord
 message. This reference does not authorize text or attachment updates. Query its

@@ -33,6 +33,7 @@ data:
   # Compatible #1158 readers and shared Custom acceptance verified; native owner testing is enabled.
   CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED: "true"
   # Native single-attachment Telegram edits are enabled after compatible reader rollout.
+  CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED: "true"
   # Native single-attachment Discord edits are enabled after compatible reader rollout.
   CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED: "true"

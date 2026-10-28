@@ -189,6 +189,7 @@ impl Sender {
         {
             Ok(reference) => (
                 IntentReceipt {
+                    message_parts: vec![],
                     rendering,
                     message_ref: Some(reference),
                     delivery: DeliveryOutcome::Confirmed {
