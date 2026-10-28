@@ -659,8 +659,19 @@ edit/reaction retention.
 
 Use the existing method:
 
-```rust
-client.manage_thread("stable-close", &ManageThreadRequest { target: ThreadTarget::Event { event_ref }, action: ThreadAction::Close, name: None }).await?
+```rust,no_run
+use cma_sdk::cmaeg::{Cmaeg, types::{ManageThreadRequest, ThreadAction, ThreadTarget}};
+
+async fn close_topic(client: &Cmaeg, event_ref: &str) -> cma_sdk::Result<()> {
+    let receipt = client.manage_thread("stable-close", &ManageThreadRequest {
+        target: ThreadTarget::Event { event_ref: event_ref.into() },
+        action: ThreadAction::Close,
+        name: None,
+    }).await?;
+    // Inspect the receipt before claiming that the topic was closed.
+    let _ = receipt;
+    Ok(())
+}
 ```
 
 Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the
