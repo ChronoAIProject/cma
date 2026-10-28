@@ -309,6 +309,16 @@ pub trait SandboxAdapter: Send + Sync {
         request: &WorkspaceSetupRequest,
     ) -> Result<SetupReceipt>;
 
+    async fn recover_workspace_prepare(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::WorkspacePrepareRecoveryRequest,
+    ) -> Result<crate::WorkspacePrepareRecoveryReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "preserving Workspace preparation recovery is unavailable".into(),
+        ))
+    }
+
     async fn remove_workspace(
         &self,
         handle: &RuntimeHandle,
