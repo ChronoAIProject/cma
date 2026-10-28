@@ -55,6 +55,8 @@ use super::trigger_openapi_shapes::*;
         super::bots::rotate,
         super::bots::delete,
         super::agent_attachments::upload,
+        super::desktop::describe,
+        super::desktop::websocket,
         super::agent_filesystem::list,
         super::agent_filesystem::read,
         super::agent_filesystem::download,
@@ -213,6 +215,7 @@ use super::trigger_openapi_shapes::*;
         super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation,
     ),
     components(schemas(
+        super::desktop::DesktopDescriptor,
         super::agent_access_requests::AgentAccessRequestView,
         super::agent_access_requests::AgentAccessRequestList,
         super::agent_access_requests::AgentAccessStatusView,
