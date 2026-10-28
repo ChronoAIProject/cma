@@ -1,6 +1,6 @@
 //! Acceptance budget is independent of the detached, bounded provider consumer.
 use super::{
-    consume,
+    consume, custom_replay,
     outcomes::TurnOutcome,
     preparation,
     preparation::has_attachments,
@@ -146,6 +146,17 @@ impl TurnRunner {
             // The successor may start once this start has returned, accepted
             // or not; a later failure is this turn's own.
             ticket.release();
+            if custom_replay::eligible(&turn)
+                && started.as_ref().is_err_and(custom_replay::command_conflict)
+            {
+                // Both first deliveries may have observed absence. The losing
+                // command reads the winner's admitted context before answering.
+                let replay = custom_replay::lookup(&self.providers, &turn)
+                    .await
+                    .and_then(|outcome| outcome.ok_or_else(custom_replay::conflict))
+                    .map(Some);
+                return Ok(custom_replay::answer(replay, &mut admitted).unwrap());
+            }
             let stream = started.map_err(|error| match error {
                 ProviderError::Capacity | ProviderError::Busy { .. } => {
                     (ProblemCode::ProviderBusy, "provider_busy")
@@ -167,7 +178,7 @@ impl TurnRunner {
         let error = match result {
             Ok(Ok(outcome)) => {
                 observation.finish(outcome);
-                if outcome != "completed" {
+                if !matches!(outcome, "completed" | "replayed" | "refused") {
                     provider_error(&provider, outcome);
                 }
                 return;
@@ -305,6 +316,14 @@ impl TurnRunner {
         );
         let fenced = ticket.waits();
         Box::pin(async move {
+            // Authority/retained-admission reads have their own bounded
+            // deadline. Do not turn a slow denied lookup into Deferred/202:
+            // at this point no new work has been submitted.
+            match custom_replay::lookup(&self.providers, &request).await {
+                Ok(Some(outcome)) => return outcome,
+                Err(error) => return LaunchOutcome::Refused(error),
+                Ok(None) => {}
+            }
             let deadline = request.received_at + self.config.accept_budget;
             request.trace = tracing::Span::current();
             let turn = Arc::new(request);

@@ -128,6 +128,7 @@ impl IngressState {
             timing: None,
         };
         let source = VerifiedIngress {
+            quote: crate::ingress::quoted_context::Intake::Legacy,
             oversized: body.len() > MAX_SOURCE_BYTES,
             body,
             attributes_signed: true,

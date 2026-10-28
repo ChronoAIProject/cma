@@ -9,6 +9,9 @@ use crate::sandbox::{
 };
 use std::sync::Arc;
 
+#[path = "failed_provision_tests.rs"]
+mod failed_provision;
+
 fn fixture() -> (InMemorySandboxStore, SandboxId) {
     let store = InMemorySandboxStore::default();
     let mut sandbox = native();
@@ -44,6 +47,7 @@ fn fixture() -> (InMemorySandboxStore, SandboxId) {
 fn proof(snapshot: &SandboxUnpublishedRecoverySnapshot) -> SandboxUnpublishedRecoveryProof {
     SandboxUnpublishedRecoveryProof {
         reserved_provision: None,
+        observed_provision_generation: None,
         sandbox_id: snapshot.sandbox.id.clone(),
         runtime_id: snapshot
             .sandbox
