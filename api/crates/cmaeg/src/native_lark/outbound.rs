@@ -120,10 +120,10 @@ impl Client {
             return Err(Error::Invalid);
         }
         if extensions.is_empty()
-            && !file
+            && file
                 .filename
                 .rsplit_once('.')
-                .is_some_and(|(_, ext)| !ext.is_empty())
+                .is_none_or(|(_, ext)| ext.is_empty())
         {
             // Both regional upload contracts require a filename with a suffix.
             file.filename.push_str(".bin");

@@ -39,7 +39,7 @@ async fn native_lark_office_receipts_preserve_selected_named_consumer_and_provid
         .unwrap()
         .load(
             &f.event.channel_id,
-            &SourceKind::NativeLark(native::test_support::identity()),
+            &SourceKind::NativeLark(native::identity()),
             "om_document",
             time::OffsetDateTime::now_utc().unix_timestamp(),
         )
