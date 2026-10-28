@@ -182,14 +182,7 @@ fn stopped_runtime(
         .ok_or_else(|| rejected("nonexecuting Pod spec missing"))?;
     if spec.containers.len() != 1
         || spec.containers[0].name != "runtime"
-        || spec
-            .ephemeral_containers
-            .as_ref()
-            .is_some_and(|v| !v.is_empty())
-        || status
-            .ephemeral_container_statuses
-            .as_ref()
-            .is_some_and(|v| !v.is_empty())
+        || !stopped_ephemeral_containers(pod)
     {
         return Ok(None);
     }
@@ -312,6 +305,62 @@ fn stopped_runtime(
         return Err(rejected("nonexecuting runtime container identity changed"));
     }
     Ok(Some((container_id, container.restart_count)))
+}
+
+fn stopped_ephemeral_containers(pod: &Pod) -> bool {
+    // Kubernetes never restarts ephemeral containers, and their entries cannot
+    // be changed or removed after creation. Require complete terminal evidence;
+    // merely retaining a diagnostic entry is not evidence of a live process.
+    // https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/
+    // The enclosing proof hashes the whole Pod spec/status and revalidates its
+    // UID/resourceVersion before suspension, including these exact identities.
+    let containers = pod
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.ephemeral_containers.as_deref())
+        .unwrap_or_default();
+    let statuses = pod
+        .status
+        .as_ref()
+        .and_then(|status| status.ephemeral_container_statuses.as_deref())
+        .unwrap_or_default();
+    let names: std::collections::BTreeSet<_> = containers.iter().map(|c| &c.name).collect();
+    containers.len() == statuses.len()
+        && names.len() == containers.len()
+        && containers.iter().all(|container| {
+            if container.name.is_empty() {
+                return false;
+            }
+            let mut matching = statuses
+                .iter()
+                .filter(|status| status.name == container.name);
+            let Some(status) = matching.next() else {
+                return false;
+            };
+            if matching.next().is_some()
+                || status.ready
+                || status.started == Some(true)
+                || status.restart_count != 0
+                || status.last_state.as_ref().is_some_and(|state| {
+                    state.running.is_some() || state.waiting.is_some() || state.terminated.is_some()
+                })
+            {
+                return false;
+            }
+            let Some(state) = &status.state else {
+                return false;
+            };
+            let Some(terminated) = &state.terminated else {
+                return false;
+            };
+            state.running.is_none()
+                && state.waiting.is_none()
+                && terminated.started_at.is_some()
+                && terminated.finished_at.is_some()
+                && terminated.started_at <= terminated.finished_at
+                && identifier(terminated.container_id.clone()).is_ok()
+                && status.container_id == terminated.container_id
+        })
 }
 
 fn completed_init(status: &ContainerStatus) -> bool {

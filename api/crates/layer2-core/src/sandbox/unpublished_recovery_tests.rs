@@ -15,6 +15,9 @@ mod history;
 #[path = "unpublished_recovery_stalled_tests.rs"]
 mod stalled;
 
+#[path = "unpublished_recovery_reservation_tests.rs"]
+mod reservation;
+
 fn snapshot(parked_update: bool) -> SandboxUnpublishedRecoverySnapshot {
     let mut sandbox = native();
     let mut held = agent("agt_recovery", "native-original", 0);
@@ -83,6 +86,7 @@ fn request(snapshot: SandboxUnpublishedRecoverySnapshot) -> SandboxUnpublishedRe
                 .runtime_id
                 .clone(),
             runtime_generation: snapshot.runtime_generation().unwrap(),
+            reserved_provision: None,
             home_identity: snapshot.home_identity().unwrap(),
             boot_id: snapshot
                 .sandbox
