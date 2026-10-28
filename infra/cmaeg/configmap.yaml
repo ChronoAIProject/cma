@@ -58,6 +58,7 @@ data:
   # Approved-template native replies enabled for owner testing; connected Meta acceptance remains unverified.
   CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED: "true"
   # Existing-group owner opt-ins and intake/sends enabled after separate compatible-reader rollout.
+  CMAEG_NATIVE_WHATSAPP_MESSAGE_EVENTS_ENABLED: "false"
   CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED: "false"
   CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED: "false"
   CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED: "true"

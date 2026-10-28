@@ -190,10 +190,20 @@ pub(crate) fn retained_or_reduced(previous: &Source, next: &Source) -> bool {
     if let Source::Whatsapp {
         group_ids,
         forms_enabled,
+        message_events,
         ..
     } = &mut stripped
     {
         *group_ids = old.clone();
+        if !*message_events {
+            if let Source::Whatsapp {
+                message_events: previous_events,
+                ..
+            } = previous
+            {
+                *message_events = *previous_events;
+            }
+        }
         if !*forms_enabled {
             if let Source::Whatsapp {
                 forms_enabled: previous_forms,

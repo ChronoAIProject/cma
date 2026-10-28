@@ -26,6 +26,7 @@ pub(super) async fn configure(
         config.native_whatsapp_forms_enabled && whatsapp_forms_ready;
     state.native_whatsapp_flow_writes_enabled =
         config.native_whatsapp_flow_writes_enabled && whatsapp_forms_ready;
+    state.native_whatsapp_message_events_enabled = config.native_whatsapp_message_events_enabled;
     state.native_whatsapp_writes_enabled = config.native_whatsapp_writes_enabled;
     state.native_whatsapp_groups_writes_enabled = config.native_whatsapp_groups_writes_enabled;
     state.native_whatsapp_admission_enabled =
