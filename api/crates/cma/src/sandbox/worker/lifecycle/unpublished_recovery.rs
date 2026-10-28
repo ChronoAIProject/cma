@@ -193,7 +193,7 @@ impl SandboxWorker {
             .suspended_runtime
             .as_deref()
             .ok_or_else(unavailable)?;
-        let source = crate::sandbox::runtime_attachment::retained_runtime_request(
+        let source = crate::sandbox::runtime_attachment::recovery_runtime_request(
             sandbox,
             binding,
             &self.config.deployment_id,

@@ -95,7 +95,7 @@ impl SandboxWorker {
         }
         let request = RuntimeProvisionRequest::new(generation, spec);
         let provisioned = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
-            match crate::sandbox::runtime_attachment::retained_runtime_request(
+            match crate::sandbox::runtime_attachment::recovery_runtime_request(
                 &sandbox,
                 binding,
                 &self.config.deployment_id,
