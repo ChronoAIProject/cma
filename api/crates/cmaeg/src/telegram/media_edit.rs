@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 pub(crate) struct PreparedEdit {
     method: &'static str,
     headers: HeaderMap,
-    body: Vec<u8>,
+    pub(super) body: Vec<u8>,
 }
 impl TelegramClient {
     pub(crate) async fn prepare_media_edit(

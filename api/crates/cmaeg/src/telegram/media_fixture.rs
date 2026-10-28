@@ -50,6 +50,7 @@ type OnSend = Arc<dyn Fn(&Capture) + Send + Sync>;
 pub(crate) struct Memory {
     pub echo_controls: AtomicBool,
     pub on_send: Mutex<Option<OnSend>>,
+    pub last_media: Mutex<Option<Value>>,
     pub calls: Mutex<Vec<Capture>>,
     pub answers: Mutex<VecDeque<Answer>>,
 }
@@ -68,6 +69,7 @@ impl Fixture {
         let memory = Arc::new(Memory {
             echo_controls: AtomicBool::new(false),
             on_send: Mutex::new(None),
+            last_media: Mutex::new(None),
             calls: Mutex::default(),
             answers: Mutex::default(),
         });
@@ -115,16 +117,30 @@ async fn endpoint(State(memory): State<Arc<Memory>>, request: Request) -> Respon
         .unwrap()
         .pop_front()
         .unwrap_or_else(|| {
-            if memory.echo_controls.load(Ordering::SeqCst) {
+            if memory.echo_controls.load(Ordering::SeqCst) && capture.path.ends_with("/editMessageCaption") {
+                let body: Value = serde_json::from_slice(&capture.body).unwrap();
+                let mut previous = memory.last_media.lock().unwrap();
+                let value = previous.as_mut().unwrap();
+                value["caption"] = body["caption"].clone();
+                value["reply_markup"] = body["reply_markup"].clone();
+                for key in ["caption_entities", "show_caption_above_media"] {
+                    if let Some(field) = body.get(key) { value[key] = field.clone(); }
+                }
+                Answer::json(StatusCode::OK, json!({"ok":true,"result":value}))
+            } else if memory.echo_controls.load(Ordering::SeqCst) {
                 let markup: Value = serde_json::from_str(&field(&capture, "reply_markup")).unwrap();
                 let caption = field(&capture, "caption");
                 let media = match capture.path.rsplit('/').next().unwrap() {
                     "sendPhoto"=>"photo", "sendDocument"=>"document", "sendAudio"=>"audio", "sendVideo"=>"video", _=>panic!("expected one media upload"),
                 };
-                Answer::json(StatusCode::OK, json!({"ok":true,"result":{
+                let asset = json!({"file_id":"file_locator","file_unique_id":"stable_file","file_size":4,"width":2,"height":2});
+                let asset = if media == "photo" { json!([asset]) } else { asset };
+                let value = json!({
                     "message_id":800,"from":{"id":77,"is_bot":true},"chat":{"id":-42},"message_thread_id":7,
-                    "reply_markup":markup,"caption":caption,media:{"file_id":"opaque"}
-                }}))
+                    "reply_markup":markup,"caption":caption,media:asset
+                });
+                *memory.last_media.lock().unwrap() = Some(value.clone());
+                Answer::json(StatusCode::OK, json!({"ok":true,"result":value}))
             } else { Answer::ok() }
         });
     tokio::time::sleep(answer.delay).await;

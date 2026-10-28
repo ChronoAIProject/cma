@@ -4477,10 +4477,32 @@ rebinding and expiry refuse old actions. Repeated identical callbacks share one
 durable consumption and retain the same dispatch identity. Unbound cards and
 storage contention return a retryable failure without consuming an action.
 
-This initial capability deliberately does not expose media-card updates: the
-existing `updateMessage` text route refuses these references before changing the
-card or calling `editMessageText`. Correct caption/markup replacement, media
-replacement with controls, and references for every part of a multipart batch
-remain separate capabilities. Turning issuance off preserves already-issued
-callback readers; it is not permission to roll back to an image predating the
-media-card marker while such cards remain live.
+With the separate default-off
+`CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED` gate, eligible Telegram
+discovery advertises `native_media.controls.update: true`. Only new media cards
+whose confirmed platform message has a bounded, verified file and presentation
+snapshot gain edit permission. Earlier cards remain uneditable even if the gate
+is enabled later. The existing `updateMessage` operation accepts an ordinary
+outbound message containing text, text blocks, buttons, choices and links. Its
+text and choice prompts form the new caption; a controls-only update keeps the
+old caption. Explicit `text: ""` clears the caption. The provided controls replace
+the entire keyboard; no controls clears it. Native attachments, native-media
+patches, forms, card blocks and reply/thread overrides are refused before mutation.
+
+An edit calls `editMessageCaption` once, without uploading the file again or
+calling `editMessageText`. It preserves the exact media file, bot, chat, topic,
+original expiry and callback owner. Caption position and spoiler presentation
+remain unchanged; unchanged captions also preserve automatic entities. Updates
+advance the existing interaction card chain under CAS and share the existing
+destination mutation fence. Fresh callbacks to a superseded keyboard refuse;
+an already-consumed identical callback can still recover its original result.
+The new keyboard uses the successor card and the original conversation owner.
+
+Identical update retries replay the stored result without another platform
+write. A lost final storage acknowledgement can recover the exact bound
+successor; an unknown provider result remains fenced. Recovery releases only
+the lock version held by that edit, never a newer operation's lock. File
+replacement with controls and multipart references remain separate capabilities.
+Turning issuance off preserves already-issued edit and callback readers; it is
+not permission to roll back to an image predating either retained marker while
+such cards remain live.

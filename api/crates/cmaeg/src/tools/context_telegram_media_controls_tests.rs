@@ -52,6 +52,20 @@ async fn telegram_media_controls_discovery_matches_source_destination_and_issuan
                         assert_eq!(controls.caption_max_chars, 1024);
                         assert!(!controls.update);
                     }
+                    state.native_telegram_media_control_edits_enabled = true;
+                    let editable = NativeMediaCapabilities::for_event(
+                        &state,
+                        &request.channel,
+                        &event,
+                        &request.activity,
+                        verified,
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        editable.controls.as_ref().map(|c| c.update),
+                        (enabled && verified && (!named || consumer)).then_some(true)
+                    );
+                    state.native_telegram_media_control_edits_enabled = false;
                 }
             }
         }
