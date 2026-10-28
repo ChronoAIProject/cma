@@ -4125,6 +4125,37 @@
         ],
         "type": "object"
       },
+      "MediaControlsCapabilities": {
+        "description": "Exact media/control combination supported for this event's verified destination.",
+        "properties": {
+          "buttons": {
+            "type": "boolean"
+          },
+          "caption_max_chars": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "choices": {
+            "type": "boolean"
+          },
+          "max_attachments": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "update": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "max_attachments",
+          "buttons",
+          "choices",
+          "caption_max_chars",
+          "update"
+        ],
+        "type": "object"
+      },
       "MediaDownload": {
         "additionalProperties": false,
         "description": "A ready download: one `curl` command that works once and expires at\n`expires_at`. Only `curl` carries the link; `url` never does.",
@@ -4419,6 +4450,17 @@
       },
       "NativeMediaCapabilities": {
         "properties": {
+          "controls": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaControlsCapabilities",
+                "description": "One upload and native controls in the same message; absent while issuance is disabled."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "kinds": {
             "items": {
               "type": "string"
