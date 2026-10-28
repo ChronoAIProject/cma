@@ -151,6 +151,13 @@ async fn complete(store: &PlanStore, journal: &Journal, count: usize) {
 
 #[tokio::test]
 async fn native_whatsapp_real_provider_retries_run_once_and_outbound_reactions_reply_natively() {
+    run(false).await;
+}
+#[tokio::test]
+async fn native_whatsapp_changes_real_provider_uses_original_conversation_and_replays_once() {
+    run(true).await;
+}
+async fn run(changes: bool) {
     let records = Server::start_realtime().await;
     let keys = Arc::new(fixture::keys());
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
@@ -158,6 +165,7 @@ async fn native_whatsapp_real_provider_retries_run_once_and_outbound_reactions_r
         |value| {
             value["record_id"] = uuid::Uuid::new_v4().to_string().into();
             value["sources"] = json!([source()]);
+            value["sources"][0]["message_events"] = changes.into();
             value["routing"]["consumers"] = json!([]);
             value["routing"]["default_targets"] = json!(["default"]);
             value["secrets"]["consumer_keys"] = json!([]);
@@ -279,7 +287,8 @@ async fn native_whatsapp_real_provider_retries_run_once_and_outbound_reactions_r
     )
     .unwrap()
     .with_routed(Some(Arc::new(routed)))
-    .with_whatsapp_receipts(receipts);
+    .with_whatsapp_receipts(receipts)
+    .with_whatsapp_message_events(changes);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!(
         "http://{}/v1/whatsapp/{channel}",
@@ -314,15 +323,34 @@ async fn native_whatsapp_real_provider_retries_run_once_and_outbound_reactions_r
     post(&url, chained.clone(), StatusCode::OK).await;
     post(&url, chained, StatusCode::OK).await;
     complete(&plans, &journal, 3).await;
+    if changes {
+        use crate::whatsapp::message_changes_tests::{edited_text, revoke};
+        for (index, mut change) in [
+            edited_text("wamid.e2e-edit", "wamid.e2e", "@another changed addressing"),
+            revoke("wamid.e2e-revoke", "wamid.e2e"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            change["timestamp"] = now.to_string().into();
+            post(&url, change.clone(), StatusCode::OK).await;
+            post(&url, change, StatusCode::OK).await;
+            complete(&plans, &journal, 4 + index).await;
+        }
+    }
     stop.send(true).unwrap();
     worker.await.unwrap();
     assert!(engine.drain(Instant::now() + Duration::from_secs(5)).await);
     server.abort();
     let calls = graph.calls.lock().unwrap();
-    assert_eq!(calls.len(), 3);
+    assert_eq!(calls.len(), if changes { 5 } else { 3 });
     assert_eq!(calls[0]["context"]["message_id"], "wamid.e2e");
     assert_eq!(calls[1]["context"]["message_id"], "wamid.sent-1");
     assert_eq!(calls[2]["context"]["message_id"], "wamid.sent-2");
+    if changes {
+        assert_eq!(calls[3]["context"]["message_id"], "wamid.e2e");
+        assert_eq!(calls[4]["context"]["message_id"], "wamid.e2e");
+    }
     for call in calls.iter() {
         assert_eq!(call["text"]["body"], "native response");
         assert_eq!(call["to"], "447700900123");
@@ -332,7 +360,26 @@ async fn native_whatsapp_real_provider_retries_run_once_and_outbound_reactions_r
         .iter()
         .filter(|call| call.method == "POST" && call.uri == "/api/v2/responses")
         .collect();
-    assert_eq!(turns.len(), 3);
+    assert_eq!(turns.len(), if changes { 5 } else { 3 });
+    if changes {
+        let original: Value = serde_json::from_slice(&turns[0].body).unwrap();
+        for (index, event_type) in [(3, "cma.message.updated.v1"), (4, "cma.message.deleted.v1")] {
+            let change: Value = serde_json::from_slice(&turns[index].body).unwrap();
+            assert_eq!(
+                change["event_context"]["activity"]["kind"]["ce"]["type"],
+                event_type
+            );
+            assert_eq!(
+                change["event_context"]["activity"]["conversation"],
+                original["event_context"]["activity"]["conversation"]
+            );
+            assert_eq!(
+                change["event_context"]["activity"]["routing"]["targets"],
+                original["event_context"]["activity"]["routing"]["targets"]
+            );
+            assert_eq!(change["conversation"], original["conversation"]);
+        }
+    }
     for turn in turns {
         let body: Value = serde_json::from_slice(&turn.body).unwrap();
         assert_eq!(

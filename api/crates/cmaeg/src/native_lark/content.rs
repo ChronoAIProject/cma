@@ -68,6 +68,49 @@ fn resource(kind: AttachmentKind, value: &Value) -> Result<Resource, ()> {
     })
 }
 
+fn shared_fact(kind: &str, value: &Value) -> Result<String, ()> {
+    if kind == "location" {
+        let coordinate = |field: &str, limit: f64| -> Result<&str, ()> {
+            let raw = value[field]
+                .as_str()
+                .filter(|s| !s.is_empty() && s.len() <= 64 && s.trim() == *s)
+                .ok_or(())?;
+            let number = raw.parse::<f64>().map_err(|_| ())?;
+            if !number.is_finite() || number.abs() > limit {
+                return Err(());
+            }
+            Ok(raw)
+        };
+        let latitude = coordinate("latitude", 90.0)?;
+        let longitude = coordinate("longitude", 180.0)?;
+        let name = value["name"]
+            .as_str()
+            .filter(|s| {
+                !s.is_empty()
+                    && s.len() <= 1024
+                    && !s.chars().any(cmaeg_core::activity::forbidden_text_char)
+            })
+            .ok_or(())?;
+        return Ok(format!(
+            "Shared location: {name}\nLatitude: {latitude}\nLongitude: {longitude}"
+        ));
+    }
+    let (field, prefix, label) = if kind == "share_user" {
+        ("user_id", "ou_", "contact")
+    } else {
+        ("chat_id", "oc_", "group")
+    };
+    let id = value[field]
+        .as_str()
+        .filter(|s| {
+            cmaeg_core::channel::native_lark::safe_id(s)
+                && s.starts_with(prefix)
+                && s.len() > prefix.len()
+        })
+        .ok_or(())?;
+    Ok(format!("Shared {label}: {id}"))
+}
+
 /// Preserve the inbound flat post, never search arbitrary nested objects for keys.
 /// In particular content_v2 markdown, cards and forwarded submessages grant no keys.
 pub(crate) fn parse(kind: &str, value: &Value) -> Result<Option<(String, Vec<Resource>)>, ()> {
@@ -78,6 +121,8 @@ pub(crate) fn parse(kind: &str, value: &Value) -> Result<Option<(String, Vec<Res
             .filter(|s| !s.is_empty())
             .ok_or(())?
             .to_owned(),
+        // These are display facts, never actor, destination or resource authority.
+        "share_user" | "share_chat" | "location" => shared_fact(kind, value)?,
         "image" | "file" | "audio" | "media" => {
             let kind = match kind {
                 "image" => AttachmentKind::Image,
