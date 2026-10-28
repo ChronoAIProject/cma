@@ -105,13 +105,16 @@ const server = createServer(async (request, response) => {
   const window = execFileSync('xdotool', ['search', '--onlyvisible', '--class', 'chromium'], { encoding: 'utf8' }).trim().split('\n')[0];
   assert(/^\d+$/.test(window));
   command = [
+    'set -e',
     'export DISPLAY=:99',
     'xdotool windowactivate --sync ' + window,
     'xdotool key --clearmodifiers ctrl+l',
     "xdotool type --clearmodifiers '" + origin + "/desktop-test'",
     'xdotool key Return',
     "for i in $(seq 1 30); do xdotool getactivewindow getwindowname | grep -q cma-desktop-ready && break; sleep 0.1; done",
-    'wmctrl -i -r ' + window + ' -b add,fullscreen', 'sleep 0.3',
+    // Chromium's own full-screen command hides its browser chrome. Merely
+    // changing the window-manager state leaves the page origin offset by it.
+    'xdotool key --clearmodifiers F11', 'sleep 0.5',
     'xdotool mousemove 120 120 click 1', 'xdotool type --clearmodifiers cma-codex',
     'xdotool mousemove 120 220 click 1', 'sleep 0.1',
     'scrot ' + screenshot,

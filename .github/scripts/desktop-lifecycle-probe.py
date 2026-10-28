@@ -68,6 +68,10 @@ finally:
 # The user can close a browser without losing the desktop. This also flushes
 # localStorage before the host restarts the container with the retained home.
 window = subprocess.check_output(["xdotool", "search", "--onlyvisible", "--class", "chromium"], text=True).splitlines()[0]
+# The input probe entered browser full screen. Leave it before saving the
+# window so the retained run starts from the same ordinary browser state.
+subprocess.run(["xdotool", "key", "--clearmodifiers", "F11"], check=True)
+time.sleep(0.2)
 subprocess.run(["wmctrl", "-i", "-c", window], check=True)
 deadline = time.monotonic() + 10
 while subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "chromium"], stdout=subprocess.DEVNULL).returncode == 0:
