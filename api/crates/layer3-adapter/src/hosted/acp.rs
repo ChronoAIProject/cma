@@ -50,6 +50,7 @@ use declaration::validate_ready;
 
 #[path = "acp_calls.rs"]
 mod calls;
+pub(super) use calls::rpc_result;
 
 #[path = "acp_recovery.rs"]
 mod recovery;
@@ -105,6 +106,7 @@ pub(super) struct OpenedBridge {
 }
 
 struct OpeningTasks {
+    bridge: Arc<Bridge>,
     reader: tokio::task::AbortHandle,
     relay: tokio::task::AbortHandle,
     armed: bool,
@@ -113,6 +115,10 @@ struct OpeningTasks {
 impl Drop for OpeningTasks {
     fn drop(&mut self) {
         if self.armed {
+            // Do not suspend error publication on socket/task cleanup: a startup
+            // recorder can otherwise see closed ACK ownership before the error.
+            // The unpublished input drops too, releasing its idle writer.
+            self.bridge.retired.store(true, Ordering::SeqCst);
             self.reader.abort();
             self.relay.abort();
         }
@@ -232,39 +238,23 @@ impl Bridge {
 
         let reader_task = reader::spawn(Arc::clone(&bridge), source, updates.clone(), acknowledged);
         let mut opening_tasks = OpeningTasks {
+            bridge: Arc::clone(&bridge),
             reader: reader_task.abort_handle(),
             relay: relay.abort_handle(),
             armed: true,
         };
 
-        if let Err(error) = bridge
+        bridge
             .handshake(resume_conversation, cwd, settings, &updates)
-            .await
-        {
-            bridge.retire().await;
-            reader_task.abort();
-            let _ = reader_task.await;
-            relay.abort();
-            let _ = relay.await;
-            return Err(error);
-        }
+            .await?;
         if reader_task.is_finished() {
-            bridge.retire().await;
-            let _ = reader_task.await;
-            relay.abort();
-            let _ = relay.await;
             return Err(AdapterError::Unavailable(
                 "conversation link ended while opening".into(),
             ));
         }
         let conversation_id = bridge.session().await?;
         bridge.release_recovered_prompt(&updates).await;
-        if let Err(error) = bridge.activate_output(&conversation_id, &updates).await {
-            bridge.retire().await;
-            reader_task.abort();
-            relay.abort();
-            return Err(error);
-        }
+        bridge.activate_output(&conversation_id, &updates).await?;
         opening_tasks.armed = false;
         Ok(OpenedBridge {
             channel: ConversationChannel {
