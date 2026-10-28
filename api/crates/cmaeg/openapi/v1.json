@@ -10037,6 +10037,15 @@
             "schema": {
               "$ref": "#/components/schemas/HistoryCursor"
             }
+          },
+          {
+            "description": "Opt in to text from supported mixed Lark/Feishu posts and the media omission enum. Default false; requires the mixed-history gate and source consent. Repeat the same value for every cursor page. No media downloads or file authority.",
+            "in": "query",
+            "name": "include_media",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
