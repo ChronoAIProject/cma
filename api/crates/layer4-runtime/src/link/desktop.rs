@@ -41,13 +41,13 @@ async fn relay(socket: WebSocket) {
         tokio::select! {
             incoming = source.next() => match incoming {
                 Some(Ok(axum::extract::ws::Message::Binary(bytes))) => {
-                    if upstream_sink.send(TungsteniteMessage::Binary(bytes.to_vec().into())).await.is_err() { return; }
+                    if upstream_sink.send(TungsteniteMessage::Binary(bytes.to_vec())).await.is_err() { return; }
                 }
                 Some(Ok(axum::extract::ws::Message::Text(text))) => {
-                    if upstream_sink.send(TungsteniteMessage::Text(text.to_string().into())).await.is_err() { return; }
+                    if upstream_sink.send(TungsteniteMessage::Text(text.to_string())).await.is_err() { return; }
                 }
                 Some(Ok(axum::extract::ws::Message::Ping(bytes))) => {
-                    if upstream_sink.send(TungsteniteMessage::Ping(bytes.to_vec().into())).await.is_err() { return; }
+                    if upstream_sink.send(TungsteniteMessage::Ping(bytes.to_vec())).await.is_err() { return; }
                 }
                 Some(Ok(axum::extract::ws::Message::Close(_))) | None => return,
                 Some(Ok(_)) => {}

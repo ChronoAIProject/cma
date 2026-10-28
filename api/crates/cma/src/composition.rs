@@ -408,7 +408,11 @@ impl ControlPlaneComposition {
             .merge(rest::profile_authoring_router(profile_authoring))
             .merge(rest::hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
-            .merge(desktop::router(projections.reads(), adapter.clone()))
+            .merge(desktop::router(
+                projections.reads(),
+                adapter.clone(),
+                &config.public_url,
+            ))
             .merge(projections.conversation_router(
                 context,
                 sandbox_lifecycle.updates(),
