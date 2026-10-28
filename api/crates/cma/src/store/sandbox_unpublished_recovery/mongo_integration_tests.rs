@@ -47,6 +47,7 @@ async fn fixture(store: &MongoSandboxStore, id: &str) -> SandboxUnpublishedRecov
         .unwrap();
     let proof = SandboxUnpublishedRecoveryProof {
         reserved_provision: None,
+        observed_provision_generation: None,
         sandbox_id: sandbox.id.clone(),
         runtime_id: sandbox.runtime.as_ref().unwrap().runtime_id.clone(),
         runtime_generation: 2,
@@ -366,6 +367,7 @@ async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_gener
     let reservation = snapshot.recovery_provision_reservation().unwrap().cloned();
     let proof = SandboxUnpublishedRecoveryProof {
         reserved_provision: reservation.clone(),
+        observed_provision_generation: None,
         sandbox_id: sandbox.id.clone(),
         runtime_id: sandbox.runtime.as_ref().unwrap().runtime_id.clone(),
         runtime_generation: 1,

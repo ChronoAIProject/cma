@@ -59,7 +59,7 @@ impl AgentSandboxClient {
         .map_err(|_| unavailable("runtime recovery command timed out"))?
     }
 
-    async fn inspect_pod(
+    pub(super) async fn inspect_pod(
         &self,
         pod_name: &str,
         command: &RuntimeRecoveryCommand,

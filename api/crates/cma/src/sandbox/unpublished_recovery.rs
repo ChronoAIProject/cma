@@ -31,6 +31,19 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
         snapshot: &SandboxUnpublishedRecoverySnapshot,
     ) -> Result<SandboxUnpublishedRecoveryProof, SandboxStoreError> {
         snapshot.validate()?;
+        if snapshot.sandbox.legacy_unpublished_allocation() {
+            // A former worker's bounded assignment request must have expired
+            // before inspecting an idle bootstrap. No sleeping or lease bypass.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| refused())?
+                .as_secs();
+            let failed_at = layer2_core::seconds_from_rfc3339(&snapshot.sandbox.updated_at)
+                .ok_or_else(refused)?;
+            if now.saturating_sub(failed_at) < 60 {
+                return Err(refused());
+            }
+        }
         let binding = snapshot
             .sandbox
             .unpublished_recovery_binding()
@@ -45,9 +58,9 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
             )
             .map_err(store_failure)?;
             let recovery = self.adapter.runtime_recovery().ok_or_else(refused)?;
-            let (evidence, reserved_provision) =
+            let (evidence, reserved_provision, observed_provision_generation) =
                 match recovery.inspect_nonexecuting_recovery(&source).await {
-                    Ok(evidence) => (evidence, None),
+                    Ok(evidence) => (evidence, None, None),
                     Err(error) => {
                         let Some(reserved) =
                             super::runtime_attachment::reserved_recovery_runtime_request(
@@ -64,6 +77,10 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
                                 .await
                                 .map_err(store_failure)?,
                             snapshot.recovery_provision_reservation()?.cloned(),
+                            snapshot
+                                .sandbox
+                                .legacy_unpublished_allocation()
+                                .then_some(reserved.generation),
                         )
                     }
                 };
@@ -76,6 +93,7 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
                     runtime_id: binding.runtime_id.clone(),
                     runtime_generation: generation,
                     reserved_provision,
+                    observed_provision_generation,
                     home_identity: home,
                     boot_id: None,
                     runtime_process_absent: true,
@@ -142,6 +160,7 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
             runtime_id: binding.runtime_id.clone(),
             runtime_generation: generation,
             reserved_provision: None,
+            observed_provision_generation: None,
             home_identity: home,
             boot_id: Some(boot),
             runtime_process_absent: evidence.runtime_process_absent,

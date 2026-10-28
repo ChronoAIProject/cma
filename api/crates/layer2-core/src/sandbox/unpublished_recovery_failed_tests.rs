@@ -86,8 +86,11 @@ fn failed_allocation_never_recovers_from_high_water_without_exact_retained_evide
     legacy.sandbox.lifecycle.failed_provision = None;
     legacy.sandbox.validate().unwrap();
     assert_eq!(legacy.sandbox.lifecycle.runtime_generation_high_water, 2);
-    assert!(!legacy.sandbox.unpublished_recovery_candidate());
-    assert!(legacy.validate().is_err());
+    assert!(legacy.sandbox.unpublished_recovery_candidate());
+    legacy.validate().unwrap();
+    // Selection permits a trusted fresh inspection, never admission from the
+    // ceiling alone or a recreated historical reservation.
+    assert!(apply_unpublished_runtime_recovery(&legacy, &request(legacy.clone())).is_err());
 }
 
 #[test]
