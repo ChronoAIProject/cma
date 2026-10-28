@@ -19,7 +19,9 @@ pub(crate) fn state(f: &FixtureState, enabled: bool) -> ToolsState {
     let (sender, _) = mpsc::channel(16);
     ToolsState {
         discord_thread_history: None,
+        telegram_topics: None,
         discord_threads: None,
+        native_lark_conversation_history: None,
         discord_conversation_history: None,
         complete_replies_enabled: false,
         telegram_effects_issuance_enabled: false,

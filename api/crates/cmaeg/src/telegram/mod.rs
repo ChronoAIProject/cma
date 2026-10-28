@@ -12,8 +12,10 @@ mod media_edit_tests;
 pub(crate) mod media_fixture;
 #[cfg(test)]
 mod media_tests;
+pub(crate) mod messaging_compat;
 #[cfg(test)]
 mod tests;
+pub(crate) mod topics;
 mod transport;
 use cmaeg_core::channel::Secret;
 pub use files::{FileError, TelegramFile};
@@ -239,4 +241,18 @@ pub fn route_chat<'a>(route: &'a str, bot_id: &str) -> Option<&'a str> {
             .parse::<i64>()
             .is_ok_and(|id| id != 0 && id.to_string() == chat))
     .then_some(chat)
+}
+
+/// Topic management consent never changes retained ordinary messaging custody.
+pub(crate) fn messaging_source(
+    source: &cmaeg_core::channel::Source,
+) -> cmaeg_core::channel::Source {
+    let mut source = source.clone();
+    if let cmaeg_core::channel::Source::Telegram {
+        topic_lifecycle, ..
+    } = &mut source
+    {
+        *topic_lifecycle = false;
+    }
+    source
 }

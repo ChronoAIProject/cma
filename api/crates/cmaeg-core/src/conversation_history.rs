@@ -59,7 +59,10 @@ pub struct HistoryMessage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HistoryContinuation {
-    MoreVisibleRows { cursor: HistoryCursor },
+    /// More provider rows remain to scan; native thread pages may contain no earlier messages.
+    MoreVisibleRows {
+        cursor: HistoryCursor,
+    },
     EndOfVisibleHistory,
 }
 
@@ -74,13 +77,16 @@ pub enum HistoryContentCoverage {
 pub struct ConversationHistoryPage {
     pub conversation: ActivityConversation,
     pub anchor_message_id: String,
+    /// Original/last scanned pre-cutoff ID. Native provider scan position remains in the cursor.
     pub before_message_id: String,
-    /// Gateway fetch time, not a Discord snapshot timestamp.
+    /// Gateway fetch time, not a platform snapshot timestamp.
     pub fetched_at: String,
     pub expires_at: i64,
     /// Chronological within the page; continuation travels backward.
     pub messages: Vec<HistoryMessage>,
+    /// Raw rows scanned, including native thread rows at/after the original timestamp.
     pub scanned_messages: u8,
+    /// Scanned rows omitted by cutoff, deletion, unsupported content or actor policy.
     pub omitted_message_count: u8,
     pub text_truncated: bool,
     pub metadata_truncated: bool,

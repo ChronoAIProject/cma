@@ -277,3 +277,25 @@ async fn received_reaction_original_source_and_provider_binding_required_for_rem
         }
     }
 }
+
+#[tokio::test]
+async fn telegram_topic_consent_does_not_revoke_retained_reaction_authority() {
+    let mut f = Fixture::new(Native::Telegram, false, true).await;
+    let reference = f.reference().await;
+    for (enabled, key) in [(true, "topics-on"), (false, "topics-off")] {
+        let Source::Telegram {
+            topic_lifecycle, ..
+        } = &mut f.app.definition.sources[0]
+        else {
+            panic!()
+        };
+        *topic_lifecycle = enabled;
+        f.app.replace();
+        f.app
+            .state
+            .set_message_reaction(f.app.caller(), &reference, key, request("👍"))
+            .await
+            .unwrap();
+    }
+    assert_eq!(f.writes(), 2);
+}

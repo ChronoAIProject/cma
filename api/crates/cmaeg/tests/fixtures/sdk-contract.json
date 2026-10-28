@@ -871,7 +871,8 @@
           "archive",
           "reopen",
           "join",
-          "leave"
+          "leave",
+          "rename"
         ],
         "expires_at": 1800000600
       },
@@ -895,6 +896,14 @@
         "max_metadata_bytes": 16384,
         "max_output_bytes": 262144,
         "expires_at": 1793179800
+      },
+      "topic_lifecycle": {
+        "manage_original_topic": true,
+        "actions": [
+          "close",
+          "reopen"
+        ],
+        "expires_at": 1800000600
       }
     }
   ],
@@ -3340,7 +3349,8 @@
             "archive",
             "reopen",
             "join",
-            "leave"
+            "leave",
+            "rename"
           ],
           "expires_at": 1800000600
         },
@@ -3364,6 +3374,14 @@
           "max_metadata_bytes": 16384,
           "max_output_bytes": 262144,
           "expires_at": 1793179800
+        },
+        "topic_lifecycle": {
+          "manage_original_topic": true,
+          "actions": [
+            "close",
+            "reopen"
+          ],
+          "expires_at": 1800000600
         }
       },
       "channel_id": "fixture",
@@ -3582,7 +3600,8 @@
             "archive",
             "reopen",
             "join",
-            "leave"
+            "leave",
+            "rename"
           ],
           "expires_at": 1800000600
         },
@@ -3606,6 +3625,14 @@
           "max_metadata_bytes": 16384,
           "max_output_bytes": 262144,
           "expires_at": 1793179800
+        },
+        "topic_lifecycle": {
+          "manage_original_topic": true,
+          "actions": [
+            "close",
+            "reopen"
+          ],
+          "expires_at": 1800000600
         }
       },
       "channel_id": "fixture",
@@ -4856,7 +4883,8 @@
       "bot_username": "fixture_bot",
       "type": "telegram",
       "message_events": false,
-      "channel_posts": false
+      "channel_posts": false,
+      "topic_lifecycle": true
     },
     {
       "type": "discord",
@@ -4893,7 +4921,8 @@
       },
       "admission": {
         "type": "all"
-      }
+      },
+      "conversation_history": false
     },
     {
       "type": "discord",
@@ -4905,6 +4934,20 @@
       "conversation_history": true,
       "thread_history": false,
       "thread_lifecycle": false
+    },
+    {
+      "type": "native_lark",
+      "separate_app": true,
+      "identity": {
+        "region": "feishu",
+        "app_id": "cli_separate_app",
+        "tenant_key": "native_tenant",
+        "bot_open_id": "ou_separate_bot"
+      },
+      "admission": {
+        "type": "all"
+      },
+      "conversation_history": true
     }
   ],
   "SourceKind": [
@@ -5058,7 +5101,8 @@
       "bot_username": "fixture_bot",
       "type": "telegram",
       "message_events": false,
-      "channel_posts": false
+      "channel_posts": false,
+      "topic_lifecycle": true
     },
     {
       "type": "discord",
@@ -5095,7 +5139,8 @@
       },
       "admission": {
         "type": "all"
-      }
+      },
+      "conversation_history": false
     },
     {
       "type": "discord",
@@ -5107,6 +5152,20 @@
       "conversation_history": true,
       "thread_history": false,
       "thread_lifecycle": false
+    },
+    {
+      "type": "native_lark",
+      "separate_app": true,
+      "identity": {
+        "region": "feishu",
+        "app_id": "cli_separate_app",
+        "tenant_key": "native_tenant",
+        "bot_open_id": "ou_separate_bot"
+      },
+      "admission": {
+        "type": "all"
+      },
+      "conversation_history": true
     }
   ],
   "TestChannelResponse": [
@@ -5246,7 +5305,9 @@
         "native_lark_forms_enabled": false,
         "native_whatsapp_forms_enabled": false,
         "native_whatsapp_flow_writes_enabled": false,
-        "native_discord_conversation_history_enabled": false
+        "native_discord_conversation_history_enabled": false,
+        "native_lark_conversation_history_enabled": false,
+        "native_telegram_topic_lifecycle_enabled": true
       },
       "agent_tools": [
         {
@@ -5306,7 +5367,9 @@
         "native_lark_forms_enabled": false,
         "native_whatsapp_forms_enabled": false,
         "native_whatsapp_flow_writes_enabled": false,
-        "native_discord_conversation_history_enabled": false
+        "native_discord_conversation_history_enabled": false,
+        "native_lark_conversation_history_enabled": false,
+        "native_telegram_topic_lifecycle_enabled": true
       },
       "agent_tools": [
         {
@@ -5375,7 +5438,9 @@
         "native_lark_forms_enabled": false,
         "native_whatsapp_forms_enabled": false,
         "native_whatsapp_flow_writes_enabled": false,
-        "native_discord_conversation_history_enabled": false
+        "native_discord_conversation_history_enabled": false,
+        "native_lark_conversation_history_enabled": false,
+        "native_telegram_topic_lifecycle_enabled": true
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -6767,7 +6832,9 @@
       "native_lark_forms_enabled": false,
       "native_whatsapp_forms_enabled": false,
       "native_whatsapp_flow_writes_enabled": false,
-      "native_discord_conversation_history_enabled": false
+      "native_discord_conversation_history_enabled": false,
+      "native_lark_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6811,7 +6878,9 @@
       "native_lark_forms_enabled": false,
       "native_whatsapp_forms_enabled": false,
       "native_whatsapp_flow_writes_enabled": false,
-      "native_discord_conversation_history_enabled": false
+      "native_discord_conversation_history_enabled": false,
+      "native_lark_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6855,7 +6924,9 @@
       "native_lark_forms_enabled": false,
       "native_whatsapp_forms_enabled": false,
       "native_whatsapp_flow_writes_enabled": false,
-      "native_discord_conversation_history_enabled": false
+      "native_discord_conversation_history_enabled": false,
+      "native_lark_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6899,7 +6970,9 @@
       "native_lark_forms_enabled": false,
       "native_whatsapp_forms_enabled": false,
       "native_whatsapp_flow_writes_enabled": false,
-      "native_discord_conversation_history_enabled": false
+      "native_discord_conversation_history_enabled": false,
+      "native_lark_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true
     }
   ],
   "PrepareOutboundMessage": [
@@ -7237,7 +7310,21 @@
       },
       "admission": {
         "type": "all"
-      }
+      },
+      "conversation_history": false
+    },
+    {
+      "separate_app": true,
+      "identity": {
+        "region": "feishu",
+        "app_id": "cli_separate_app",
+        "tenant_key": "native_tenant",
+        "bot_open_id": "ou_separate_bot"
+      },
+      "admission": {
+        "type": "all"
+      },
+      "conversation_history": true
     }
   ],
   "NativeVideoCapabilities": [
@@ -7296,7 +7383,9 @@
     "archive",
     "reopen",
     "join",
-    "leave"
+    "leave",
+    "close",
+    "rename"
   ],
   "ThreadTarget": [
     {
@@ -7314,7 +7403,8 @@
         "type": "thread",
         "thread_ref": "cmaeg1.tr.fixture"
       },
-      "action": "archive"
+      "action": "rename",
+      "name": "Incident triage"
     }
   ],
   "ThreadSummary": [
@@ -7395,7 +7485,8 @@
         "archive",
         "reopen",
         "join",
-        "leave"
+        "leave",
+        "rename"
       ],
       "expires_at": 1800000600
     }
@@ -7692,6 +7783,27 @@
       "continuation": {
         "status": "end_of_visible_history"
       }
+    },
+    {
+      "conversation": {
+        "id": "oc_history",
+        "kind": "group",
+        "thread_id": "omt_history"
+      },
+      "anchor_message_id": "om_original",
+      "before_message_id": "om_original",
+      "fetched_at": "2026-10-28T00:02:00Z",
+      "expires_at": 1793179800,
+      "messages": [],
+      "scanned_messages": 25,
+      "omitted_message_count": 25,
+      "text_truncated": false,
+      "metadata_truncated": false,
+      "content_coverage": "platform_returned_only",
+      "continuation": {
+        "status": "more_visible_rows",
+        "cursor": "cmaeg1.hc.native_scan_fixture"
+      }
     }
   ],
   "HistoryDirection": [
@@ -7706,6 +7818,20 @@
       "max_metadata_bytes": 16384,
       "max_output_bytes": 262144,
       "expires_at": 1793179800
+    }
+  ],
+  "TopicAction": [
+    "close",
+    "reopen"
+  ],
+  "TopicLifecycleCapabilities": [
+    {
+      "manage_original_topic": true,
+      "actions": [
+        "close",
+        "reopen"
+      ],
+      "expires_at": 1800000600
     }
   ]
 }

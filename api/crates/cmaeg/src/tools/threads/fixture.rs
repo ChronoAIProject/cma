@@ -42,6 +42,7 @@ pub struct Memory {
     pub delay: Option<(String, String, Duration)>,
     pub status: StatusCode,
     pub create_accepted: bool,
+    pub patch_response: Option<Value>,
     pub hook: Option<Box<dyn FnOnce() + Send>>,
     pub hook_path: String,
     pub hook_method: String,
@@ -162,8 +163,14 @@ fn platform_response(
         }
         let id = path.strip_prefix("/api/v10/channels/").unwrap();
         let value = memory.channels.get_mut(id).unwrap();
-        value["thread_metadata"]["archived"] = body["archived"].clone();
-        return Json(value.clone()).into_response();
+        if let Some(archived) = body.get("archived") {
+            value["thread_metadata"]["archived"] = archived.clone();
+        }
+        if let Some(name) = body.get("name") {
+            value["name"] = name.clone();
+        }
+        let response = value.clone();
+        return Json(memory.patch_response.clone().unwrap_or(response)).into_response();
     }
     if matches!(method, "PUT" | "DELETE") && path.ends_with("/thread-members/@me") {
         return if memory.status == StatusCode::OK {
@@ -263,6 +270,7 @@ impl App {
             delay: None,
             status: StatusCode::OK,
             create_accepted: true,
+            patch_response: None,
             hook: None,
             hook_path: String::new(),
             hook_method: String::new(),
@@ -274,7 +282,9 @@ impl App {
         let state = ToolsState {
             native_whatsapp_forms: None,
             native_media_edits: None,
+            native_lark_conversation_history: None,
             discord_conversation_history: None,
+            telegram_topics: None,
             discord_threads: Some(Arc::new(DiscordThreads::new(DiscordRest::fixture(
                 &format!("{platform_base}/api/v10/"),
             )))),

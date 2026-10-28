@@ -5,7 +5,7 @@ import {
   nativeWhatsappUnavailable,
   type RelayDiscovery,
 } from '../RelayCapabilities';
-import { credentialsPatch, object, records, strings, text, type Fields } from './model';
+import { credentialsPatch, object, records, strings, text, without, type Fields } from './model';
 
 function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
@@ -27,10 +27,26 @@ export function validateRelayAuthoring(
   for (const source of records(next.sources)) {
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
     if (source.type === 'native_lark') {
+      if (
+        source.conversation_history === true &&
+        !unchanged &&
+        discovery.authoring?.native_lark_conversation_history_enabled !== true
+      )
+        throw new Error(
+          'New Lark / Feishu history consent is disabled on this gateway. Your draft has been retained.',
+        );
       const saved = oldSources.some((old) => old.type === 'native_lark');
+      const onlyRemovedHistory = oldSources.some(
+        (old) =>
+          old.type === 'native_lark' &&
+          old.conversation_history === true &&
+          source.conversation_history !== true &&
+          canonical({ ...old, conversation_history: undefined }) ===
+            canonical({ ...source, conversation_history: undefined }),
+      );
       const replacement = credentialsPatch(credentials, false)?.native_lark;
       const reason = nativeLarkUnavailable(discovery, !saved);
-      if (reason && (!unchanged || replacement))
+      if (reason && ((!unchanged && !onlyRemovedHistory) || replacement))
         throw new Error(`${reason} Your draft has been retained.`);
       if (!saved && !replacement) throw new Error('Enter all three Lark / Feishu credentials.');
       const identity = object(source.identity);
@@ -130,15 +146,27 @@ export function validateRelayAuthoring(
     if (
       source.type === 'telegram' &&
       source.message_events === true &&
-      !unchanged &&
-      !(
-        source.channel_posts !== true &&
-        oldSources.some((old) => canonical(old) === canonical({ ...source, channel_posts: true }))
+      !oldSources.some(
+        (old) =>
+          canonical(without(old, ['topic_lifecycle'])) ===
+            canonical(without(source, ['topic_lifecycle'])) ||
+          (source.channel_posts !== true &&
+            canonical(without(old, ['topic_lifecycle'])) ===
+              canonical(without({ ...source, channel_posts: true }, ['topic_lifecycle']))),
       ) &&
       discovery.authoring?.native_telegram_message_events_enabled !== true
     )
       throw new Error(
         'New or changed Telegram message event settings are disabled on this gateway. Your draft has been retained.',
+      );
+    if (
+      source.type === 'telegram' &&
+      source.topic_lifecycle === true &&
+      !unchanged &&
+      discovery.authoring?.native_telegram_topic_lifecycle_enabled !== true
+    )
+      throw new Error(
+        'New or changed Telegram topic management is disabled on this gateway. Your draft has been retained.',
       );
     if (source.type === 'discord') {
       if (
