@@ -6,6 +6,9 @@
 //! event-context requests — with the fixture recorded before the change.
 //!
 //! Updating these fixtures is a reviewed contract change; see `fixture.rs`.
+//! Custom cma_codex recovery deliberately adds an authenticated retained-context
+//! GET before submission. Its golden includes those reads while retaining the
+//! exact existing binding and Responses request bodies and headers.
 use super::{
     app::{agent_key, GoldenApp, ISSUER},
     fake_provider::ReceivedRequest,

@@ -61,6 +61,7 @@ pub(crate) fn launch_request(
                 .map(MessageRef::new)
                 .transpose()
                 .map_err(|_| "activity_invalid")?,
+            quoted_message: None,
             album_id: facts.album_id,
         },
     };

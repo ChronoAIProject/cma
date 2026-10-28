@@ -519,3 +519,19 @@ async fn thread_lifecycle_uses_exact_scoped_routes_and_never_retries_unknown_wri
 
 #[path = "cmaeg/history.rs"]
 mod history;
+
+#[test]
+fn quoted_message_content_and_reference_only_forms_roundtrip_without_changing_legacy_bytes() {
+    let legacy = json!({"type":"message","text":"current","mentions_bot":false});
+    let activity: ActivityKind = serde_json::from_value(legacy.clone()).unwrap();
+    same(activity, legacy.clone());
+    for quote in [
+        json!({"relation":"reply","message_id":"8","content":{"text":{"text":"untrusted quote","truncated":true,"origin":"parent_text"},"kinds":["image"]}}),
+        json!({"relation":"context","message_id":"wamid.parent"}),
+    ] {
+        let mut value = legacy.clone();
+        value["quoted_message"] = quote;
+        let activity: ActivityKind = serde_json::from_value(value.clone()).unwrap();
+        same(activity, value);
+    }
+}

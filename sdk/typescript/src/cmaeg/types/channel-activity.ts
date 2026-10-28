@@ -9,7 +9,13 @@ import {
   text,
   type Output,
 } from '../../schema.js';
-import { ActorSchema, ActivityConversationSchema, SourceKindSchema } from './activities.js';
+import {
+  QuoteRelationSchema,
+  QuotedContentKindSchema,
+  ActorSchema,
+  ActivityConversationSchema,
+  SourceKindSchema,
+} from './activities.js';
 
 export const ConsumerStateSchema = enumeration(
   'received',
@@ -58,7 +64,17 @@ export const ActivityConsumerSchema = object({
 });
 export type ActivityConsumer = Output<typeof ActivityConsumerSchema>;
 
+/** Availability metadata only; never quoted text or parent IDs. */
+export const QuotedContextSummarySchema = object({
+  relation: QuoteRelationSchema,
+  text_available: boolean,
+  text_truncated: boolean,
+  content_kinds: array(QuotedContentKindSchema),
+});
+export type QuotedContextSummary = Output<typeof QuotedContextSummarySchema>;
+
 export const ChannelActivitySchema = object({
+  quoted_context: optional(nullable(QuotedContextSummarySchema)),
   event_id: text,
   /** Payload category only; absent on historical receipts. */
   kind: optional(nullable(text)),

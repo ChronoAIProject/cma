@@ -101,6 +101,7 @@ pub(crate) fn compose(
         )
         .with_native_discovery(state.native_discord.clone())
         .with_admissions_enabled(config.routing.admission_enabled)
+        .with_quoted_context(config.routing.quoted_context_enabled)
         .with_sync_delivery(true),
     );
     Ok(Some(Composition {
