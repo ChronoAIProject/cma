@@ -15,10 +15,13 @@ mod delivery_state;
 mod destinations;
 mod dispatcher;
 mod executor;
+mod generation_provenance;
 mod journal;
 mod model;
 mod preparation;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
+#[cfg(test)]
+mod preparation_dispatch_tests;
 #[cfg(test)]
 mod preparation_tests;
 mod projection_store;

@@ -55,6 +55,8 @@ pub struct RoutedIngress {
     non_human_providers: BTreeSet<String>,
     replay_providers: BTreeSet<String>,
     admission_enabled: bool,
+    binding_preparation_enabled: bool,
+    binding_replacement_bindings: BTreeSet<String>,
     pub(crate) quoted_context_enabled: bool,
     sync_delivery_enabled: bool,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -78,6 +80,8 @@ impl RoutedIngress {
             non_human_providers,
             replay_providers,
             admission_enabled: true,
+            binding_preparation_enabled: false,
+            binding_replacement_bindings: BTreeSet::new(),
             quoted_context_enabled: false,
             sync_delivery_enabled: false,
             clock: Arc::new(|| time::OffsetDateTime::now_utc().unix_timestamp()),
@@ -113,6 +117,18 @@ impl RoutedIngress {
     #[cfg(test)]
     pub(crate) fn with_clock(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
         self.clock = clock;
+        self
+    }
+
+    /// Generation pins remain enabled after replacement enrollment is disabled.
+    /// This gate is deployment authority and is never read from event JSON.
+    pub fn with_binding_preparation(
+        mut self,
+        enabled: bool,
+        replacements: BTreeSet<String>,
+    ) -> Self {
+        self.binding_preparation_enabled = enabled;
+        self.binding_replacement_bindings = replacements;
         self
     }
 
@@ -215,20 +231,32 @@ impl RoutedIngress {
                     )
                 })?;
                 let candidate = if message_plan.is_some() {
-                    Candidate::prepare_message_event(
+                    Candidate::prepare_message_event_with_generation(
                         request,
                         &plan,
                         &source.body,
                         &self.keys,
                         (self.clock)(),
+                        self.binding_preparation_enabled,
                     )
                 } else if native_interaction {
-                    Candidate::prepare_native_interaction(
+                    Candidate::prepare_native_interaction_with_generation(
                         request,
                         &plan,
                         &source.body,
                         &self.keys,
                         (self.clock)(),
+                        self.binding_preparation_enabled,
+                    )
+                } else if self.binding_preparation_enabled {
+                    Candidate::prepare_with_binding_preparation(
+                        request,
+                        &plan,
+                        &source.body,
+                        &self.keys,
+                        (self.clock)(),
+                        quote_projection,
+                        &self.binding_replacement_bindings,
                     )
                 } else {
                     Candidate::prepare_projected(

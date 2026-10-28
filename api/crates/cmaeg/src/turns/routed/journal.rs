@@ -316,7 +316,7 @@ pub(super) fn validate(
     if let Some(preparation) = &state.binding_preparation {
         preparation.validate(plan, target)?;
         if !matches!(state.phase, Phase::Pending | Phase::Refused { .. })
-            && preparation.generation().is_none()
+            && preparation.resolved_generation().is_err()
         {
             return Err(ExecutionError::Corrupt);
         }

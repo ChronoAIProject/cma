@@ -41,6 +41,9 @@ impl PreparationIntent {
     }
     fn validate(&self, plan: &AdmittedPlan, target: &StoredTarget) -> Result<(), ExecutionError> {
         require_eligible(plan, target)?;
+        if !plan.permits_binding_preparation() || target.binding_replacement_version != Some(1) {
+            return Err(ExecutionError::Invalid);
+        }
         if self.version != 1
             || self.admission_id != plan.admission_id
             || self.target_id != target.id
@@ -104,6 +107,15 @@ pub enum BindingPreparation {
         binding_id: String,
         generation: u64,
     },
+    /// A native callback/message change inherits its originating target's
+    /// acknowledged generation. None means proven legacy origin, never current.
+    Inherited {
+        version: u8,
+        binding_id: String,
+        original_admission_id: String,
+        original_target_id: String,
+        generation: Option<u64>,
+    },
     /// Must be durably acknowledged before the first provider mutation.
     Pending { intent: PreparationIntent },
     /// Same immutable operation is replayed after restart or response loss.
@@ -133,8 +145,36 @@ impl BindingPreparation {
                 }
                 Ok(())
             }
-            Self::Pending { intent } => intent.validate(plan, target),
+            Self::Inherited {
+                version,
+                binding_id,
+                original_admission_id,
+                original_target_id,
+                generation,
+            } => {
+                if *version != 1
+                    || binding_id != target.launch.provider.binding_id.as_str()
+                    || !(plan.is_native_interaction() || plan.is_message_event())
+                    || !bounded_id(original_admission_id)
+                    || !bounded_id(original_target_id)
+                    || original_admission_id == &plan.admission_id
+                    || original_target_id == &target.id
+                    || *generation == Some(0)
+                {
+                    return Err(ExecutionError::Corrupt);
+                }
+                Ok(())
+            }
+            Self::Pending { intent } => {
+                if target.binding_replacement_version != Some(1) {
+                    return Err(ExecutionError::Unsupported);
+                }
+                intent.validate(plan, target)
+            }
             Self::Reserved { intent, receipt } => {
+                if target.binding_replacement_version != Some(1) {
+                    return Err(ExecutionError::Corrupt);
+                }
                 intent.validate(plan, target)?;
                 receipt.matches(intent)
             }
@@ -145,10 +185,18 @@ impl BindingPreparation {
             Self::Pinned { generation, .. } => Some(*generation),
             Self::Reserved { receipt, .. } => Some(receipt.generation),
             Self::Pending { .. } => None,
+            Self::Inherited { generation, .. } => *generation,
+        }
+    }
+    pub(super) fn resolved_generation(&self) -> Result<Option<u64>, ExecutionError> {
+        if matches!(self, Self::Pending { .. }) {
+            Err(ExecutionError::Corrupt)
+        } else {
+            Ok(self.generation())
         }
     }
     pub(super) fn require_body_generation(&self, value: Option<u64>) -> Result<(), ExecutionError> {
-        if self.generation().is_none() || self.generation() != value {
+        if self.resolved_generation()? != value {
             return Err(ExecutionError::Corrupt);
         }
         Ok(())
@@ -217,10 +265,9 @@ impl Journal {
 }
 
 fn require_eligible(plan: &AdmittedPlan, target: &StoredTarget) -> Result<(), ExecutionError> {
-    if plan.binding_preparation_version != Some(1)
+    if !plan.prepares_binding(target)
         || !plan.targets.contains(target)
         || !target.launch.provider.target.is_profile()
-        || !plan.permits_binding_preparation()
     {
         return Err(ExecutionError::Invalid);
     }
