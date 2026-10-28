@@ -1,0 +1,627 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "desktop-discovery",
+      "operation": "GET /api/v1/agents/{id}/desktop",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "no-store, private"
+        },
+        "body": {
+          "websocket_url": "/api/v1/agents/agt_contract/desktop/ws"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-discovery-anonymous",
+      "operation": "GET /api/v1/agents/{id}/desktop",
+      "scenario": "desktop_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-discovery-other_owner",
+      "operation": "GET /api/v1/agents/{id}/desktop",
+      "scenario": "desktop_other_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-discovery-forbidden",
+      "operation": "GET /api/v1/agents/{id}/desktop",
+      "scenario": "desktop_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-discovery-headless",
+      "operation": "GET /api/v1/agents/{id}/desktop",
+      "scenario": "desktop_headless",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-discovery-paused",
+      "operation": "GET /api/v1/agents/{id}/desktop",
+      "scenario": "desktop_paused",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-discovery-isolated",
+      "operation": "GET /api/v1/agents/{id}/desktop",
+      "scenario": "desktop_isolated",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-discovery-missing",
+      "operation": "GET /api/v1/agents/{id}/desktop",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/desktop",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-accept": "3SC6TZx4582OZaOogPVxMx5CGS0="
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-no-upgrade",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "text/plain; charset=utf-8"
+        },
+        "body": "Connection header did not include 'upgrade'",
+        "bodyKind": "text"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-anonymous",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-other_owner",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_other_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-forbidden",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-headless",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_headless",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-paused",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_paused",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-isolated",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_isolated",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-busy",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_busy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_busy",
+          "title": "desktop_busy",
+          "status": 409,
+          "detail": "this Sandbox desktop is already connected",
+          "code": "desktop_busy"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-runtime_unavailable",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_runtime_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_runtime_unavailable",
+          "title": "desktop_runtime_unavailable",
+          "status": 503,
+          "detail": "desktop runtime could not be reached",
+          "code": "desktop_runtime_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-missing",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-foreign-origin",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://foreign.example"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-cookie-no-origin",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-cookie",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.example",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-accept": "3SC6TZx4582OZaOogPVxMx5CGS0="
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-no-origin-bearer",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ=="
+        }
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-accept": "3SC6TZx4582OZaOogPVxMx5CGS0="
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    }
+  ]
+}
