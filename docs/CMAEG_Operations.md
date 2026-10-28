@@ -152,6 +152,7 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_LARK_INTAKE_ENABLED` | `true` or `false` | `false` | Admit encrypted signed callbacks on `/v1/native-lark/{channel_id}`. Retained work and replies continue through the durable recovery path when intake is paused. |
 | `CMAEG_NATIVE_LARK_MEDIA_ENABLED` | `true` or `false` | `false` | Admits new native image, file, audio, video and rich-post resources after compatible locator readers deploy. Requires `CMAEG_MEDIA_ENABLED`; pauses preserve exact duplicate admission and retained reads. Direct regional message-resource retrieval rechecks original consumer/provider and current source/credential authority, including cache hits. See [native Lark media](CMAEG_Native_Lark_Media.md). |
 | `CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED` | `true` or `false` | `false` | Independent bounded native JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and Baseline H.264 MP4 upload/send gate. Requires retained native source custody and exact routed default/named consumer/provider authority; rejects native captions and controls. Advertises exact MIME/size/video limits through `native_media`. See [native outbound media](CMAEG_Native_Lark_Outbound_Media.md). |
+| `CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` | `true` or `false` | `false` | Independently enables consented original native Lark/Feishu chat and exact-thread history through REST/MCP. Each call scans at most 25 raw rows; threads may return empty progress pages. Off disables native history execution and capability discovery. Requires compatible source/admission-proof readers before authoring. See [native history](CMAEG_Native_Lark_History.md). |
 | `CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED` | `true` or `false` | `false` | Issue revisioned single-upload caption/replacement references after durable media receipt storage. Retained references remain usable when issuance is disabled. See [native media edits](CMAEG_Native_Media_Edits.md). |
 | `CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED` | `true` or `false` | `false` | Issue revisioned single-upload content/attachment-description/replacement references after durable receipt storage. Historical effects-only references never gain edit authority. |
 | `CMAEG_NATIVE_LARK_CONTROLS_ENABLED` | `true` or `false` | `false` | Issue direct-app JSON 2.0 cards, buttons and choices for the exact original human, conversation and retained existing group thread. Requires native intake and durable routed recovery. Existing callbacks and references retain their authority when issuance is disabled. See [native controls](CMAEG_Native_Lark_Controls.md). |
@@ -2942,8 +2943,9 @@ after admission does not upgrade an old event. Saved consent can be retained or
 removed while the writer gate is disabled; normal native source gates still apply.
 
 Deploy readers that understand the additive source field before authoring it.
-When disabled, no history platform reads execute and the tool is omitted from
-discovery. This increment does not enable production history or establish connected
+When disabled, no Discord history platform reads execute. The shared tool is
+omitted from discovery when both native history gates are disabled. This increment
+does not enable production history or establish connected
 Discord acceptance. Permission and Message Content behavior still require acceptance
 with the intended bot. The legacy 20-message thread context option retains its
 separate flag and consent.
@@ -2961,3 +2963,27 @@ performs no enrichment I/O for other platforms or sources without consent, and
 allows at most 100 ms for retained history authority. Slow or busy discovery omits
 the capability hint. Explicit history reads still perform fresh authority checks
 under their independent eight-second total budget.
+
+## Native Lark / Feishu conversation history gate
+
+`CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` accepts `true`/`false`, defaults
+to `false`, and is explicitly false in the checked-in ConfigMap. It enables native
+history source authoring, execution and optional context discovery independently
+of Discord history, native message/media/control issuance and thread-following.
+Deploy compatible readers and rollback targets before enabling authoring: the
+source consent and encrypted routing-plan admission proof are additive fields.
+
+Owners must consent before the original human event is admitted, and current
+consent remains mandatory for every page. History consent changes preserve
+existing messaging/media/card authority while separately revoking history when
+removed. Reads retain original expiry and exact chat/thread custody, check the
+original message before and after one descending 25-row list, and share an
+eight-second total budget with eight immediate-acquisition slots. Thread scans
+cannot seek to the original event and can return several empty progress pages.
+No caller or server automatically drains pages or substitutes the parent chat.
+
+Provision the separate native app with `im:message:readonly` and group
+`im:message.group_msg` permissions. Platform visibility and native acceptance
+remain owner testing; this checked-in false declaration performs no rollout or
+native request. See the [native history contract](CMAEG_Native_Lark_History.md)
+for cutoff, content omission, cursor, permission and regional limits.
