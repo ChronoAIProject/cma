@@ -260,9 +260,7 @@ pub(crate) async fn serve(
         discord_conversation_history: source_settings::discord_history(
             config.native_discord_conversation_history_enabled,
         )?,
-        telegram_topics: state
-            .native_telegram_topic_lifecycle_enabled
-            .then(|| std::sync::Arc::new(tools::TelegramTopics::new(telegram.clone()))),
+        telegram_topics: source_settings::telegram_topics(&state, telegram.clone()),
         discord_threads: state
             .native_discord_thread_lifecycle_enabled
             .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreads::new))
