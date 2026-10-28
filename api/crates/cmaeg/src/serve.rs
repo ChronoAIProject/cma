@@ -250,6 +250,9 @@ pub(crate) async fn serve(
                     .map(std::sync::Arc::new)
             })
             .transpose()?,
+        telegram_topics: state
+            .native_telegram_topic_lifecycle_enabled
+            .then(|| std::sync::Arc::new(tools::TelegramTopics::new(telegram.clone()))),
         discord_threads: state
             .native_discord_thread_lifecycle_enabled
             .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreads::new))

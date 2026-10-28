@@ -275,6 +275,7 @@ impl App {
             native_whatsapp_forms: None,
             native_media_edits: None,
             discord_conversation_history: None,
+            telegram_topics: None,
             discord_threads: Some(Arc::new(DiscordThreads::new(DiscordRest::fixture(
                 &format!("{platform_base}/api/v10/"),
             )))),

@@ -26,6 +26,7 @@ pub struct ToolsState {
     pub native_lark_effects: Option<Arc<super::NativeLarkEffectsClient>>,
     pub whatsapp_reactions: Option<Arc<super::WhatsappReactionsClient>>,
     pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
+    pub telegram_topics: Option<Arc<super::TelegramTopics>>,
     pub discord_threads: Option<Arc<super::DiscordThreads>>,
     pub discord_conversation_history: Option<Arc<super::DiscordConversationHistory>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
@@ -291,6 +292,8 @@ impl ToolsState {
                 self,
             );
             response.received_message = received_message;
+            response.capabilities.topic_lifecycle =
+                self.topic_capabilities(caller, &event, &channel).await;
             response.capabilities.thread_lifecycle =
                 self.thread_capabilities(caller, &event, &channel).await;
             response.capabilities.conversation_history =
@@ -333,6 +336,8 @@ impl ToolsState {
             self,
         );
         response.received_message = received_message;
+        response.capabilities.topic_lifecycle =
+            self.topic_capabilities(caller, &event, &channel).await;
         response.capabilities.thread_lifecycle =
             self.thread_capabilities(caller, &event, &channel).await;
         response.capabilities.conversation_history =

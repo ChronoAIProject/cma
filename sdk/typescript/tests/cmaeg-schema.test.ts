@@ -25,6 +25,7 @@ import {
   ThreadListSchema,
   ThreadReceiptSchema,
   ThreadCapabilitiesSchema,
+  TopicLifecycleCapabilitiesSchema,
   ConversationHistoryPageSchema,
   ConversationHistoryCapabilitiesSchema,
   CreateThreadRequestSchema,
@@ -497,4 +498,23 @@ it('round-trips paginated history facts and keeps consent independent', () => {
   };
   expect(SourceSchema(source)).toEqual(source);
   expect(SourceRequestSchema(source)).toEqual(source);
+});
+
+it('keeps Telegram topic consent independent and discovers only close/reopen', () => {
+  const source = { type: 'telegram', bot_id: '77', admission: { type: 'all' } };
+  expect(SourceSchema(source)).toEqual(source);
+  expect(SourceRequestSchema(source)).toEqual(source);
+  const opted = { ...source, topic_lifecycle: true };
+  expect(SourceSchema(opted)).toEqual(opted);
+  expect(SourceRequestSchema(opted)).toEqual(opted);
+  const caps = {
+    manage_original_topic: true,
+    actions: ['close', 'reopen'],
+    expires_at: 1800000600,
+  };
+  expect(TopicLifecycleCapabilitiesSchema(caps)).toEqual(caps);
+  expect(() => TopicLifecycleCapabilitiesSchema({ ...caps, actions: ['archive'] })).toThrow();
+  expect(TopicLifecycleCapabilitiesSchema({ ...caps, list: 'original_thread' })).toEqual(caps);
+  const request = { target: { type: 'event', event_ref: 'cmaeg1.ev.fixture' }, action: 'close' };
+  expect(ManageThreadRequestSchema(request)).toEqual(request);
 });

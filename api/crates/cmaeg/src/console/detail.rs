@@ -205,6 +205,7 @@ fn source_view(source: &Source) -> SourceView {
             settings: vec!["Gateway intake not activated".into()],
         },
         Source::Telegram {
+            topic_lifecycle: _,
             message_events: _,
             channel_posts: _,
             bot_id,

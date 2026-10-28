@@ -895,6 +895,14 @@
         "max_metadata_bytes": 16384,
         "max_output_bytes": 262144,
         "expires_at": 1793179800
+      },
+      "topic_lifecycle": {
+        "manage_original_topic": true,
+        "actions": [
+          "close",
+          "reopen"
+        ],
+        "expires_at": 1800000600
       }
     }
   ],
@@ -3364,6 +3372,14 @@
           "max_metadata_bytes": 16384,
           "max_output_bytes": 262144,
           "expires_at": 1793179800
+        },
+        "topic_lifecycle": {
+          "manage_original_topic": true,
+          "actions": [
+            "close",
+            "reopen"
+          ],
+          "expires_at": 1800000600
         }
       },
       "channel_id": "fixture",
@@ -3606,6 +3622,14 @@
           "max_metadata_bytes": 16384,
           "max_output_bytes": 262144,
           "expires_at": 1793179800
+        },
+        "topic_lifecycle": {
+          "manage_original_topic": true,
+          "actions": [
+            "close",
+            "reopen"
+          ],
+          "expires_at": 1800000600
         }
       },
       "channel_id": "fixture",
@@ -4856,7 +4880,8 @@
       "bot_username": "fixture_bot",
       "type": "telegram",
       "message_events": false,
-      "channel_posts": false
+      "channel_posts": false,
+      "topic_lifecycle": true
     },
     {
       "type": "discord",
@@ -5058,7 +5083,8 @@
       "bot_username": "fixture_bot",
       "type": "telegram",
       "message_events": false,
-      "channel_posts": false
+      "channel_posts": false,
+      "topic_lifecycle": true
     },
     {
       "type": "discord",
@@ -5246,7 +5272,8 @@
         "native_lark_forms_enabled": false,
         "native_whatsapp_forms_enabled": false,
         "native_whatsapp_flow_writes_enabled": false,
-        "native_discord_conversation_history_enabled": false
+        "native_discord_conversation_history_enabled": false,
+        "native_telegram_topic_lifecycle_enabled": true
       },
       "agent_tools": [
         {
@@ -5306,7 +5333,8 @@
         "native_lark_forms_enabled": false,
         "native_whatsapp_forms_enabled": false,
         "native_whatsapp_flow_writes_enabled": false,
-        "native_discord_conversation_history_enabled": false
+        "native_discord_conversation_history_enabled": false,
+        "native_telegram_topic_lifecycle_enabled": true
       },
       "agent_tools": [
         {
@@ -5375,7 +5403,8 @@
         "native_lark_forms_enabled": false,
         "native_whatsapp_forms_enabled": false,
         "native_whatsapp_flow_writes_enabled": false,
-        "native_discord_conversation_history_enabled": false
+        "native_discord_conversation_history_enabled": false,
+        "native_telegram_topic_lifecycle_enabled": true
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -6767,7 +6796,8 @@
       "native_lark_forms_enabled": false,
       "native_whatsapp_forms_enabled": false,
       "native_whatsapp_flow_writes_enabled": false,
-      "native_discord_conversation_history_enabled": false
+      "native_discord_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6811,7 +6841,8 @@
       "native_lark_forms_enabled": false,
       "native_whatsapp_forms_enabled": false,
       "native_whatsapp_flow_writes_enabled": false,
-      "native_discord_conversation_history_enabled": false
+      "native_discord_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6855,7 +6886,8 @@
       "native_lark_forms_enabled": false,
       "native_whatsapp_forms_enabled": false,
       "native_whatsapp_flow_writes_enabled": false,
-      "native_discord_conversation_history_enabled": false
+      "native_discord_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6899,7 +6931,8 @@
       "native_lark_forms_enabled": false,
       "native_whatsapp_forms_enabled": false,
       "native_whatsapp_flow_writes_enabled": false,
-      "native_discord_conversation_history_enabled": false
+      "native_discord_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true
     }
   ],
   "PrepareOutboundMessage": [
@@ -7296,7 +7329,8 @@
     "archive",
     "reopen",
     "join",
-    "leave"
+    "leave",
+    "close"
   ],
   "ThreadTarget": [
     {
@@ -7315,6 +7349,13 @@
         "thread_ref": "cmaeg1.tr.fixture"
       },
       "action": "archive"
+    },
+    {
+      "target": {
+        "type": "event",
+        "event_ref": "cmaeg1.ev.fixture"
+      },
+      "action": "close"
     }
   ],
   "ThreadSummary": [
@@ -7706,6 +7747,20 @@
       "max_metadata_bytes": 16384,
       "max_output_bytes": 262144,
       "expires_at": 1793179800
+    }
+  ],
+  "TopicAction": [
+    "close",
+    "reopen"
+  ],
+  "TopicLifecycleCapabilities": [
+    {
+      "manage_original_topic": true,
+      "actions": [
+        "close",
+        "reopen"
+      ],
+      "expires_at": 1800000600
     }
   ]
 }

@@ -16,7 +16,7 @@ mod thread_history;
 pub use history::DiscordConversationHistory;
 mod threads;
 pub use thread_history::{DiscordThreadHistory, ThreadHistory, ThreadHistoryMessage};
-pub use threads::DiscordThreads;
+pub use threads::{DiscordThreads, TelegramTopics};
 mod download_access;
 mod media_links;
 pub(crate) mod message_effects;
