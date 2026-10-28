@@ -56,6 +56,14 @@ impl RelayClient {
     pub(in crate::delivery) fn discord_media_controls_enabled(&self) -> bool {
         self.discord_media_controls
     }
+    /// Issue confirmed media-preserving edit authority after compatible readers deploy.
+    pub fn with_discord_media_card_edits(mut self, enabled: bool) -> Self {
+        self.discord_media_card_edits = enabled;
+        self
+    }
+    pub(in crate::delivery) fn discord_media_card_edits_enabled(&self) -> bool {
+        self.discord_media_card_edits
+    }
     pub fn with_discord_interactions(mut self, enabled: bool) -> Self {
         self.discord_interactions = enabled;
         self

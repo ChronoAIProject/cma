@@ -139,6 +139,7 @@ impl App {
             complete_replies_enabled: false,
             discord_interactions_enabled: false,
             native_discord_media_controls_enabled: false,
+            native_discord_media_card_edits_enabled: false,
             telegram_effects_issuance_enabled: false,
             native_media_edits: None,
             native_whatsapp_forms: None,

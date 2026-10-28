@@ -41,6 +41,16 @@ async fn discord_media_controls_discovery_requires_verified_source_and_each_issu
                 }
             }
         }
+        state.native_discord_media_card_edits_enabled = true;
+        let editable = NativeMediaCapabilities::for_event(
+            &state,
+            &f.channel,
+            &f.original,
+            &f.context.activity,
+            true,
+        )
+        .unwrap();
+        assert!(editable.controls.unwrap().update);
         let mut event = f.original.clone();
         if let cmaeg_core::seal::ReplyAddress::Discord { channel_id, .. } = &mut event.reply {
             *channel_id = "100".into();

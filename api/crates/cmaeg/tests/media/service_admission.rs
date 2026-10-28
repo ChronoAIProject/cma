@@ -239,6 +239,7 @@ fn config(media: MediaConfig) -> Config {
         native_telegram_media_edits_enabled: false,
         native_discord_media_edits_enabled: false,
         native_discord_media_controls_enabled: false,
+        native_discord_media_card_edits_enabled: false,
         native_lark_message_effects_enabled: false,
         native_lark_received_reactions_enabled: false,
         native_whatsapp_writes_enabled: false,

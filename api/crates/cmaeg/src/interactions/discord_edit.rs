@@ -53,13 +53,22 @@ impl InteractionStore {
     ) -> Result<Admission, Error> {
         let candidate = self.discord_card_candidate(channel, reference).await?;
         let card = &candidate.card;
-        // Media+controls initially supports issuance and callbacks. Text-only
-        // PATCH cannot prove or replace its retained upload; refuse before CAS.
+        // Historical media cards have callback authority only. New retained
+        // proofs authorize preserving the exact native upload through this chain.
         if card
             .discord
             .as_ref()
-            .is_some_and(|identity| identity.media.is_some())
+            .and_then(|identity| identity.media.as_ref())
+            .is_some_and(|media| !media.has_edit_authority())
             || !message.native_attachments.is_empty()
+            || (card
+                .discord
+                .as_ref()
+                .is_some_and(|identity| identity.media.is_some())
+                && message
+                    .blocks
+                    .iter()
+                    .any(|block| matches!(block, cmaeg_core::message::Block::Form { .. })))
         {
             return Err(Error::Denied);
         }
@@ -105,8 +114,17 @@ impl InteractionStore {
         if card
             .discord
             .as_ref()
-            .is_some_and(|identity| identity.media.is_some())
+            .and_then(|identity| identity.media.as_ref())
+            .is_some_and(|media| !media.has_edit_authority())
             || !message.native_attachments.is_empty()
+            || (card
+                .discord
+                .as_ref()
+                .is_some_and(|identity| identity.media.is_some())
+                && message
+                    .blocks
+                    .iter()
+                    .any(|block| matches!(block, cmaeg_core::message::Block::Form { .. })))
         {
             return Err(Error::Denied);
         }
