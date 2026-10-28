@@ -48,12 +48,28 @@ it('preserves native mixed post text and media omission without fetching media o
   const expected = examples.ConversationHistoryPage?.[3];
   const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(expected));
   const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
-  const page = await client.readEventHistory('original');
+  const page = await client.readEventHistory('original', undefined, { includeMedia: true });
   expect(page).toEqual(expected);
   expect(page.messages[0]?.text).toBe('Earlier postText before and after omitted media');
   expect(page.messages[0]?.omitted_content).toEqual(['media']);
   expect(page.messages[0]?.attachments).toEqual([]);
   expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0]?.[0]).toBe(
+    'https://gateway.example/v1/events/original/history?include_media=true',
+  );
+});
+
+it('pins explicit mixed-history opt-in to each opaque cursor request without changing legacy calls', async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockImplementation(async () => json(sample('ConversationHistoryPage')));
+  const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+  await client.readEventHistory('original', 'opaque/+?cursor', { includeMedia: true });
+  await client.readEventHistory('original', 'opaque/+?cursor', { includeMedia: false });
+  expect(fetch.mock.calls.map((call) => call[0])).toEqual([
+    'https://gateway.example/v1/events/original/history?cursor=opaque%2F%2B%3Fcursor&include_media=true',
+    'https://gateway.example/v1/events/original/history?cursor=opaque%2F%2B%3Fcursor',
+  ]);
 });
 
 describe('independent CMAEG client', () => {

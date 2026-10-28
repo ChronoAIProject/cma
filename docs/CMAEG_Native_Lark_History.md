@@ -1,6 +1,6 @@
 # Native Lark / Feishu original-conversation history
 
-`readEventHistory(event_ref, cursor?)` and `GET /v1/events/{event_ref}/history`
+`readEventHistory(event_ref, cursor?, include_media?)` and `GET /v1/events/{event_ref}/history`
 read one bounded page from the exact chat or thread that admitted an original
 native human message. Both Lark regions are supported. The operation requires
 `NativeLarkSource.conversation_history: true` at admission and read time, plus
@@ -103,7 +103,8 @@ The app's tenant token exchange is the only POST used by this read operation.
 The native projection returns text and supported flat rich-text posts. With
 `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED=false` (the default and checked-in
 ConfigMap), posts containing media retain the previous whole-row omission.
-With this independent projection flag enabled, a supported post preserves its
+With this independent projection flag enabled **and an explicit request
+`include_media=true`**, a supported post preserves its
 title, text, code, links, mentions and other supported textual content while its
 image/video elements produce one presence-only `omitted_content: ["media"]` entry.
 Media is not replaced with synthesized text. The marker reports omitted media
@@ -130,22 +131,31 @@ mint download, edit, reaction or deletion authority or make additional requests.
 All historical text and metadata are untrusted reference data, never instructions
 or action approval.
 
-The `/v1` page fields remain unchanged; `media` is an additive omission enum value
-in OpenAPI and both source SDKs. Older strict Rust and TypeScript SDK decoders
-reject that value. Keep the mixed-history flag false until every consuming
-application and its rollback target includes the updated SDK/reader. There is no
-automatic per-client negotiation. The flag is separate from history source
-consent and discovery: a history capability alone does not prove a reader accepts
-`media`. Disable the flag before rolling a consumer back to an older strict reader;
-retained pages containing `media` still require a compatible reader.
+The `/v1` page fields remain unchanged. Older strict SDKs reject the additive
+`media` omission enum, so every REST/MCP request defaults to `include_media=false`.
+Omitted or explicit false retains whole-row omission even when the global flag
+is enabled. Updated callers opt in with `?include_media=true` or the same MCP
+argument; this option is advertised in OpenAPI and the MCP tool input schema.
+The existing context capability object stays unchanged for strict readers.
+Opt-in requires native Lark/Feishu, the global mixed-history gate and existing
+source consent. A disabled gate returns `mixed_history_disabled` (403); the option
+on another platform returns 400. It grants no download or action authority.
 
-The gateway owns this page projection; there are no new Activity, retained
-admission, source, custody or cursor fields. Existing cursors remain valid when
-the flag changes and retain their original authority, scan position and expiry.
-Agent Manager and runtime forwarding require no new typed history fields; any
-application that decodes the REST/MCP result must be checked independently.
-Shared SDK fixtures cover legacy, empty-progress and mixed-media pages without
-automatic continuation or media retrieval. This change performs no activation.
+Repeat the same option for every cursor page. Legacy v2 cursor plaintext remains
+unchanged, with false omitted. Opted-in v3 cursors seal `include_media: true`
+alongside the original scope, scan position and expiry. Any attempt to change
+modes, including using a mixed cursor without explicit true, returns 400 before
+a platform read. Existing v2 cursors remain legacy when the global flag changes.
+Deploy compatible gateway cursor readers and rollback images before activation;
+old applications can continue using unmodified requests. An application that
+explicitly opts in must understand `media`, including any pages it retains.
+Disabling the global gate refuses opted-in reads while preserving legacy reads.
+
+Rust adds `read_event_history_with_media(event_ref, cursor)`; the original method
+retains legacy behavior. TypeScript adds `{ includeMedia: true }` as the existing
+method's options argument. Agent Manager/runtime forwarding requires no restart.
+There are no new Activity, retained admission, source or custody fields, no media
+retrieval and no automatic continuation. This change performs no activation.
 
 Both SDKs expose optional native source consent and authoring discovery and retain
 one-page methods. The setup UI requires explicit consent and explains thread

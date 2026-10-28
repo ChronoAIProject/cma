@@ -981,14 +981,18 @@ consumer/conversation. Caption changes preserve original attachments; outgoing
 edit/delete and history import are outside this feature. See
 [the incoming-change contract](../../../docs/CMAEG_Native_WhatsApp_Message_Events.md).
 
-`readEventHistory(eventRef, cursor?)` returns one bounded history page and never
-fetches a continuation automatically. Native Lark/Feishu mixed posts may preserve
+`readEventHistory(eventRef, cursor?, options?)` returns one bounded history page and never
+fetches a continuation automatically. Set `{ includeMedia: true }` in options to
+opt in to native Lark/Feishu mixed posts, which may preserve
 their textual content with `omitted_content: ['media']` and empty `attachments`;
 this marker conveys no media count, type, keys or download authority. Whole-row
 omission counts exclude retained mixed posts, while `text_truncated` independently
-reports clipped or sanitized text. Older SDK decoders reject `media`, so the gateway's separate
-`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag stays off until all consumers and
-rollback readers support this value. See [native history](../../../docs/CMAEG_Native_Lark_History.md).
+reports clipped or sanitized text. Absent/false options retain whole-row omission
+even when the gateway's `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag is enabled,
+preserving old strict decoders. Opt-in requires that flag and original history
+consent. Repeat the same mode for each cursor page; mismatches return 400 before
+platform I/O. This does not provide media downloads. See
+[native history](../../../docs/CMAEG_Native_Lark_History.md).
 
 ### Native media with controls
 
