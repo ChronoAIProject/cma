@@ -100,12 +100,14 @@ async fn binary_journey(renewable: bool) {
     );
     let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let tools = listed["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 4);
+    // Retained form preparation receipts remain readable with issuance off.
+    assert_eq!(tools.len(), 5);
     for name in [
         "replyToEvent",
         "updateMessage",
         "sendTyping",
         "readEventContext",
+        "readFormPreparation",
     ] {
         assert!(tools.iter().any(|tool| tool["name"] == name));
         assert!(document["paths"].as_object().unwrap().values().any(|path| {
