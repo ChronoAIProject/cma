@@ -198,6 +198,8 @@ pub struct SandboxLifecycleState {
     pub rotation: SandboxRotationAccounting,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_update: Option<super::SandboxRuntimeUpdateState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unpublished_recovery: Option<Box<super::SandboxUnpublishedRecoveryState>>,
 }
 
 fn checkpoint_epoch_is_unreserved(epoch: &u64) -> bool {
@@ -223,6 +225,7 @@ impl Default for SandboxLifecycleState {
             paused_notice: None,
             rotation: SandboxRotationAccounting::default(),
             runtime_update: None,
+            unpublished_recovery: None,
         }
     }
 }
@@ -230,6 +233,9 @@ impl Default for SandboxLifecycleState {
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
         sandbox.validate_suspended_runtime()?;
+        if let Some(recovery) = &self.unpublished_recovery {
+            recovery.validate_for(sandbox)?;
+        }
         if let Some(update) = &self.runtime_update {
             update.validate()?;
         }
@@ -391,6 +397,7 @@ impl SandboxLifecycleState {
     }
 
     pub(crate) fn cancel_operation(&mut self) {
+        self.unpublished_recovery = None;
         self.home_recovery = None;
         self.operation = None;
         self.runtime_provision = None;
