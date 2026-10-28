@@ -57,6 +57,25 @@ async fn serve(supervisor: Arc<Supervisor>) -> (SocketAddr, tokio::task::JoinHan
     (address, server)
 }
 
+#[tokio::test]
+async fn desktop_route_is_typed_404_for_a_non_machine_runtime() {
+    let home = root("desktop-unavailable");
+    let supervisor = supervisor(home.clone());
+    let (address, server) = serve(supervisor).await;
+    let error = tokio_tungstenite::connect_async(format!("ws://{address}/runtime/desktop"))
+        .await
+        .expect_err("non-machine runtimes must reject desktop upgrades");
+    match error {
+        tokio_tungstenite::tungstenite::Error::Http(response) => {
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+        other => panic!("unexpected desktop upgrade error: {other:?}"),
+    }
+    server.abort();
+    let _ = server.await;
+    std::fs::remove_dir_all(home).unwrap();
+}
+
 async fn exchange(
     client: &reqwest::Client,
     address: SocketAddr,

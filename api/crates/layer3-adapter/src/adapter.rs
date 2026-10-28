@@ -20,17 +20,21 @@ pub trait SandboxAdapter: Send + Sync {
     fn runtime_recovery(&self) -> Option<&dyn crate::RuntimeRecovery> {
         None
     }
-
     /// Abilities proved for the admitted runtime contract.
     fn capabilities(&self) -> AdapterCapabilities;
+
+    async fn open_desktop(&self, _: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime desktop is unavailable".into(),
+        ))
+    }
 
     /// Optional durable storage authority; absence must never fall back to an empty home.
     fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
         None
     }
 
-    /// Persist the returned storage authority before allocating a home. Runtime
-    /// selection and storage policy must remain stable across retries.
+    /// Persist home authority before allocation; retain runtime and storage policy on retry.
     async fn reserve_home_request(
         &self,
         _runtime: &RuntimeProvisionRequest,
@@ -38,7 +42,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<crate::HomeVolumeRequest> {
         Ok(home.clone())
     }
-
     /// Verify retained home authority before provider operations that only take a handle.
     fn verify_retained_home_route(
         &self,
@@ -47,7 +50,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
-
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
         None
     }
@@ -58,9 +60,7 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
         Ok(self.native_pools())
     }
-
-    /// Select a provider and an eligible pool before any home allocation. The
-    /// caller persists the returned binding (or ordinary home decision).
+    /// Select an eligible provider/pool before allocation; persist the returned binding.
     async fn select_native_pool(
         &self,
         _request: &RuntimeProvisionRequest,

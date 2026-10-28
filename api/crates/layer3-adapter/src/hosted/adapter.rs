@@ -14,12 +14,12 @@ use crate::{
     AdapterCapabilities, AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
     AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
     CheckpointRequest, CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest,
-    ConversationChannel, ConversationSnapshot, ConversationUpdate, CredentialFrame, InstallReceipt,
-    InstallRequest, ResourceReading, RestoreBootstrapReceipt, RestoreBootstrapRequest,
-    RestoreRequest, RuntimeAdoptionRequest, RuntimeHandle, RuntimeObservation,
-    RuntimeProvisionRequest, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
-    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
-    WorktreeRequest, WriterState,
+    ConversationChannel, ConversationSnapshot, ConversationUpdate, CredentialFrame,
+    DesktopConnectionHandle, InstallReceipt, InstallRequest, ResourceReading,
+    RestoreBootstrapReceipt, RestoreBootstrapRequest, RestoreRequest, RuntimeAdoptionRequest,
+    RuntimeHandle, RuntimeObservation, RuntimeProvisionRequest, SandboxAdapter, SandboxSpec,
+    SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest,
+    WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest, WriterState,
 };
 
 #[path = "adapter_agent.rs"]
@@ -119,6 +119,13 @@ impl HostedAdapter {
             .get(handle)
             .cloned()
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))
+    }
+
+    pub(crate) async fn open_desktop(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::DesktopConnectionHandle> {
+        self.backend.open_desktop(handle).await
     }
 }
 

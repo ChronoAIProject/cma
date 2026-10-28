@@ -40,6 +40,7 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
     let events = crate::agent_v2::fixtures::fixture(false, false).await;
     let access = rest::agent_access_requests_tests::app().0;
     let (files, _) = layer3_adapter::codex::CodexAdapter::in_memory(Default::default());
+    let files = Arc::new(files);
     let router = agents
         .router
         .merge(rest::documents_router(
@@ -57,13 +58,20 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
             Arc::new(NoProviderCalls),
             Arc::new(NoProviderCalls),
         ))
+        .merge(rest::desktop_router(
+            Arc::new(layer2_core::sandbox::DesktopService::new(
+                agents.state.reads.clone(),
+                files.clone(),
+            )),
+            "https://cma.example".into(),
+        ))
         .merge(rest::agent_attachments_router(
             AgentAttachmentService::with_writer(events.access.clone(), Arc::new(NoProviderCalls)),
         ))
         .merge(rest::agent_filesystem_router(
             layer2_core::sandbox::agent_filesystem::AgentFileService::new(
                 events.access.clone(),
-                Arc::new(files),
+                files,
             ),
         ))
         .merge(rest::agent_artifacts_router(AgentArtifactService::new(

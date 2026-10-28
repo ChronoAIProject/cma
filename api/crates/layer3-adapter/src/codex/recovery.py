@@ -16,8 +16,17 @@ NATIVES = {
     "e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2",
 }
 LAUNCHER = "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477"
+LAUNCHER_NATIVES = {
+    LAUNCHER: NATIVES,
+    "61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70": {
+        "c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5",
+        "b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f",
+    },
+}
 BRIDGE_PATH = "/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js"
 RELAY_SOURCE = "e595835b6314ff0770fdf97817d6920295ea384a5ac3bfdd0476b90c81b79a4f"
+DESKTOP_SOURCE = "3127c5d454316efaf7e147665f871825aae2eda00cea250d2f89fd18f351263d"
+DESKTOP_PATH = "/usr/local/bin/cma-desktop-session"
 
 
 def relay_command(command):
@@ -26,7 +35,7 @@ def relay_command(command):
 
 
 def services(processes):
-    """Only the source-pinned, bounded supervisor transport relay may remain."""
+    """Source-pinned transport relays and the supervisor-owned desktop tree."""
     result = []
     for pid, item in processes.items():
         if pid == os.getpid() or item["ppid"] != 0:
@@ -41,7 +50,43 @@ def services(processes):
         except FileNotFoundError:
             pass
     require(len(result) <= 16, "relay_limit")
-    return result
+    return result + desktop_services(processes)
+
+
+def desktop_services(processes):
+    roots = []
+    for pid, item in processes.items():
+        if item["ppid"] != 1 or item["sid"] != pid:
+            continue
+        try:
+            command = read(f"{PROC}/{pid}/cmdline", 32768, True).rstrip(b"\0").split(b"\0")
+            if command != [b"/bin/bash", DESKTOP_PATH.encode()]:
+                continue
+            require(os.readlink(f"{PROC}/{pid}/exe") == os.path.realpath("/bin/bash")
+                    and digest_file(DESKTOP_PATH) == DESKTOP_SOURCE, "desktop_identity")
+            env = environment(pid)
+            require(env.get(b"DISPLAY") == b":99" and env.get(b"HOME") == HOME.encode()
+                    and b"CODEX_HOME" not in env, "desktop_environment")
+            roots.append({**proc_identity(pid), "desktopRoot": True})
+        except FileNotFoundError:
+            pass
+    require(len(roots) <= 1, "desktop_limit")
+    if not roots:
+        return []
+    root = roots[0]
+    # The runtime makes this exact launcher a child subreaper. Even browser
+    # helpers that double-fork remain in its tree; unrelated siblings never do.
+    tree = descendants([root["pid"]], processes)
+    require(len(tree) <= 256, "desktop_limit")
+    return roots + [{k: processes[pid][k] for k in ("pid", "start", "ppid", "sid")}
+                    for pid in sorted(tree - {root["pid"]})]
+
+
+def validate_services(plan, processes):
+    current = services(processes)
+    roots = lambda items: [p for p in items if p.get("desktopRoot")]
+    require(roots(current) == roots(plan.get("services", [])), "desktop_changed")
+    return {p["pid"] for p in current}
 
 
 def validate(request):
@@ -159,13 +204,14 @@ def topology(agent, processes, supervisor):
     command = read(f"{PROC}/{launcher}/cmdline", 32768, True).rstrip(b"\0").split(b"\0")
     require(len(command) == 3 and os.path.basename(command[0]) == b"node" and command[2] == b"app-server", "launcher_topology")
     launcher_path = os.path.realpath(os.fsdecode(command[1]))
+    launcher_hash = digest_file(launcher_path)
     require(launcher_path.startswith("/usr/local/lib/node_modules/") and launcher_path.endswith("/codex/bin/codex.js")
-            and digest_file(launcher_path) == LAUNCHER, "launcher_unsupported")
+            and launcher_hash in LAUNCHER_NATIVES, "launcher_unsupported")
     native = [pid for pid, p in processes.items() if p["ppid"] == launcher]
     require(len(native) == 1, "native_topology")
     native = native[0]
     identity = proc_identity(native)
-    require(identity["exeSha256"] in NATIVES and native in candidates, "native_unsupported")
+    require(identity["exeSha256"] in LAUNCHER_NATIVES[launcher_hash] and native in candidates, "native_unsupported")
     native_command = read(f"{PROC}/{native}/cmdline", 32768, True).rstrip(b"\0").split(b"\0")
     require(len(native_command) == 2 and native_command[1] == b"app-server", "native_topology")
     tree = descendants([bridge], processes)
@@ -176,15 +222,18 @@ def topology(agent, processes, supervisor):
     require(os.readlink(f"{PROC}/{bridge}/cwd") == cwd, "cwd_mismatch")
     return {"agentId": agent["agentId"], "home": home, "cwdSha256": sha(cwd.encode()), "processes": owned,
             "bridgePid": bridge, "nativePid": native, "launcherPid": launcher,
-            "bridgeSha256": bridge_hash, "launcherPath": launcher_path,
+            "bridgeSha256": bridge_hash, "launcherPath": launcher_path, "launcherSha256": launcher_hash,
             "stdin": stdin_owner(native, bridge, processes, launcher), **native_history_clock(native, home, identity)}
 
 
 def inspect(request):
     with boot_guard(request["runtime"]):
         processes = inventory()
+        retained_services = services(processes)
+        service_pids = {p["pid"] for p in retained_services}
+        agent_processes = {pid: p for pid, p in processes.items() if pid not in service_pids}
         supervisors = []
-        for pid in processes:
+        for pid in agent_processes:
             try:
                 if os.readlink(f"{PROC}/{pid}/exe") == "/usr/local/bin/layer4-runtime":
                     supervisors.append(pid)
@@ -193,9 +242,8 @@ def inspect(request):
         require(len(supervisors) == 1, "supervisor_identity")
         supervisor = proc_identity(supervisors[0])
         require(supervisor["pid"] == 1 and supervisor["ppid"] == 0, "supervisor_topology")
-        agents = [topology(a, processes, supervisor) for a in request["agents"]]
-        relays = services(processes)
-        permitted = {1, os.getpid()} | {p["pid"] for a in agents for p in a["processes"]} | {p["pid"] for p in relays}
+        agents = [topology(a, agent_processes, supervisor) for a in request["agents"]]
+        permitted = {1, os.getpid()} | {p["pid"] for a in agents for p in a["processes"]} | service_pids
         require(set(processes) <= permitted, "unowned_process")
         history = [history_summary(a) for a in request["agents"]]
         for item, tree in zip(history, agents):
@@ -203,7 +251,7 @@ def inspect(request):
             for file in item["files"]:
                 file["historicalOpenTurns"] = historical_turns(file, tree)
         plan = {"version": 1, "processesAbsent": False, "runtime": request["runtime"], "agents": request["agents"],
-                "supervisor": supervisor, "topology": agents, "services": relays,
+                "supervisor": supervisor, "topology": agents, "services": retained_services,
                 "baseline": [{"pid": p["pid"], "start": p["start"]} for p in processes.values() if p["pid"] != os.getpid()],
                 "histories": history}
         require(len(encode(plan)) <= 56 * 1024, "plan_limit")
@@ -232,6 +280,8 @@ def write_journal(parent, name, value):
 
 def validate_live(plan, allow_missing):
     processes = inventory()
+    service_pids = validate_services(plan, processes)
+    agent_processes = {pid: p for pid, p in processes.items() if pid not in service_pids}
     require(proc_identity(plan["supervisor"]["pid"]) == plan["supervisor"], "supervisor_changed")
     for item in plan["topology"]:
         for process in item["processes"]:
@@ -250,10 +300,11 @@ def validate_live(plan, allow_missing):
                     current = processes.get(original["pid"])
                     require(current is not None and all(current[k] == original[k] for k in ("ppid", "sid")), "native_topology_changed")
             require(proc_identity(item["bridgePid"]) == next(p for p in item["processes"] if p["pid"] == item["bridgePid"]), "bridge_changed")
-            require(digest_file(BRIDGE_PATH) == item["bridgeSha256"] and digest_file(item["launcherPath"]) == LAUNCHER, "binary_changed")
-            require(stdin_owner(item["nativePid"], item["bridgePid"], processes, item["launcherPid"]) == item["stdin"], "stdin_owner_mismatch")
+            require(digest_file(BRIDGE_PATH) == item["bridgeSha256"]
+                    and digest_file(item["launcherPath"]) == item.get("launcherSha256", LAUNCHER), "binary_changed")
+            require(stdin_owner(item["nativePid"], item["bridgePid"], agent_processes, item["launcherPid"]) == item["stdin"], "stdin_owner_mismatch")
     owned = {p["pid"] for a in plan["topology"] for p in a["processes"]}
-    permitted = descendants(owned, processes) | {plan["supervisor"]["pid"], os.getpid()} | {p["pid"] for p in services(processes)}
+    permitted = descendants(owned, agent_processes) | {plan["supervisor"]["pid"], os.getpid()} | service_pids
     require(set(processes) <= permitted, "unowned_process")
     return processes
 
@@ -305,7 +356,7 @@ def absent(plan, current):
     if owned.keys() & current.keys():
         return False
     supervisor = plan["supervisor"]
-    relays = {p["pid"] for p in services(current)}
+    relays = validate_services(plan, current)
     require(all(pid == os.getpid() or pid in relays or (pid == supervisor["pid"] and p["start"] == supervisor["start"]) for pid, p in current.items()), "untracked_process")
     return True
 

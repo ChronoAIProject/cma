@@ -694,3 +694,6 @@ mod attachments;
 
 #[path = "agent_filesystem_tests.rs"]
 mod filesystem;
+
+#[path = "desktop_tests.rs"]
+mod desktop;
