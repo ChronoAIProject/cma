@@ -37,6 +37,14 @@ pub enum Content {
         caption: String,
         attachment: Box<cmaeg_core::activity::Attachment>,
     },
+    Edit {
+        target: String,
+        text: String,
+        media: Option<Box<cmaeg_core::activity::Attachment>>,
+    },
+    Revoke {
+        target: String,
+    },
     Reaction {
         target: String,
         emoji: String,
@@ -86,6 +94,44 @@ pub fn verify(secret: &str, signature: &str, body: &[u8]) -> Result<(), Error> {
 /// Signature authenticates the configured app's secret. Account and phone are
 /// checked independently; the payload never supplies authoritative app identity.
 pub fn extract(source: &Source, body: &[u8]) -> Result<Vec<Message>, Error> {
+    Ok(extract_typed(source, body)?
+        .into_iter()
+        .map(|(_, message)| message)
+        .collect())
+}
+
+/// Display projections must not inherit edit/revoke authority from Content::Text.
+/// Provider types stay transient; retained Message bytes and hashes are unchanged.
+pub(crate) fn change_originals(source: &Source, body: &[u8]) -> Result<Vec<Message>, Error> {
+    Ok(extract_typed(source, body)?
+        .into_iter()
+        .filter(|(kind, _)| {
+            matches!(
+                kind.as_str(),
+                "text" | "image" | "document" | "audio" | "video" | "sticker"
+            )
+        })
+        .map(|(_, message)| message)
+        .collect())
+}
+
+/// A rebatched duplicate must retain its provider type as well as visible facts.
+pub(crate) fn same_message(
+    source: &Source,
+    first: &[u8],
+    incoming: &[u8],
+    message: &Message,
+) -> bool {
+    let Ok(first) = extract_typed(source, first) else {
+        return false;
+    };
+    let Some(expected) = first.into_iter().find(|(_, parsed)| parsed == message) else {
+        return false;
+    };
+    extract_typed(source, incoming).is_ok_and(|messages| messages.contains(&expected))
+}
+
+fn extract_typed(source: &Source, body: &[u8]) -> Result<Vec<(String, Message)>, Error> {
     let Source::Whatsapp {
         waba_id,
         phone_number_id,
@@ -124,14 +170,19 @@ pub fn extract(source: &Source, body: &[u8]) -> Result<Vec<Message>, Error> {
             };
             for raw in raw_messages.as_array().ok_or(Error::Envelope)? {
                 if let Some(message) = parse(raw, group_ids)? {
-                    if let Some(prior) = seen.get(&message.id) {
-                        if prior != &message {
+                    let id = message.id.clone();
+                    let typed = (
+                        raw["type"].as_str().ok_or(Error::Message)?.to_owned(),
+                        message,
+                    );
+                    if let Some(prior) = seen.get(&id) {
+                        if prior != &typed {
                             return Err(Error::Message);
                         }
                         continue;
                     }
-                    seen.insert(message.id.clone(), message.clone());
-                    messages.push(message);
+                    seen.insert(id, typed.clone());
+                    messages.push(typed);
                 }
                 if messages.len() > MAX_MESSAGES {
                     return Err(Error::TooMany);
@@ -146,9 +197,23 @@ fn parse(raw: &Value, groups: &[String]) -> Result<Option<Message>, Error> {
     let kind = raw["type"].as_str().ok_or(Error::Message)?;
     if !matches!(
         kind,
-        "text" | "reaction" | "interactive" | "image" | "document" | "audio" | "video" | "sticker"
+        "text"
+            | "edit"
+            | "revoke"
+            | "reaction"
+            | "interactive"
+            | "image"
+            | "document"
+            | "audio"
+            | "video"
+            | "sticker"
+            | "contacts"
+            | "location"
     ) {
         return Ok(None);
+    }
+    if matches!(kind, "edit" | "revoke") && !private_shape(raw) {
+        return Err(Error::Message);
     }
     let group_id = match raw.get("group_id") {
         Some(value) => {
@@ -164,7 +229,10 @@ fn parse(raw: &Value, groups: &[String]) -> Result<Option<Message>, Error> {
             {
                 return Err(Error::Message);
             }
-            if matches!(kind, "reaction" | "sticker" | "interactive") {
+            if matches!(
+                kind,
+                "reaction" | "sticker" | "interactive" | "contacts" | "location"
+            ) {
                 return Ok(None);
             }
             Some(group.to_owned())
@@ -197,8 +265,12 @@ fn parse(raw: &Value, groups: &[String]) -> Result<Option<Message>, Error> {
         Content::Text {
             text: text.to_owned(),
         }
+    } else if matches!(kind, "edit" | "revoke") {
+        super::message_changes::extract(raw, kind, id)?
     } else if kind == "interactive" {
         super::interactive::extract(raw)?
+    } else if matches!(kind, "contacts" | "location") {
+        super::shared_facts::extract(raw, kind)?
     } else if kind == "reaction" {
         let target = raw["reaction"]["message_id"]
             .as_str()
@@ -230,7 +302,7 @@ fn parse(raw: &Value, groups: &[String]) -> Result<Option<Message>, Error> {
     }))
 }
 
-fn private_shape(value: &Value) -> bool {
+pub(super) fn private_shape(value: &Value) -> bool {
     ["group_id", "group", "participant"]
         .iter()
         .all(|field| value.get(field).is_none())

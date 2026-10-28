@@ -28,7 +28,7 @@ fn revision(channel: &ResolvedChannel, message: &MessageRefPayload) -> Option<St
     let credentials = channel.definition.secrets.whatsapp.as_ref()?;
     credentials.validate().ok()?;
     Some(super::receipts::hash(&serde_json::json!({
-        "source":source,"channel":channel.id,"record":channel.pointer.record_id,
+        "source":crate::whatsapp::without_message_events(source),"channel":channel.id,"record":channel.pointer.record_id,
         "owner":channel.definition.owner,"consumer":message.consumer,"provider":consumer.provider,
         "agent_key":channel.consumer_key_hash(message.consumer.as_ref())?,"routing":channel.definition.routing,
         "consumer_credential":format!("{:x}",Sha256::digest(consumer.credential?.as_str().as_bytes())),
