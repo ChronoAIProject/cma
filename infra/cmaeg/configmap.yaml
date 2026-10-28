@@ -40,6 +40,8 @@ data:
   CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED: "true"
   # Enable only after every retained card reader accepts native media controls.
   CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED: "false"
+  # Retained exact file proofs allow content/control edits without replacing media.
+  CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED: "false"
   # Requires separately migrated persistent fence storage and runtime grants.
   CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED: "false"
   CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED: "false"
