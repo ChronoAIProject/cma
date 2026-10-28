@@ -3,6 +3,7 @@
 mod config;
 mod connections;
 mod construction;
+pub use construction::{CodexAdapter, CodexSandboxSpec};
 mod filesystem;
 mod home;
 mod hosted_runtime;
@@ -36,18 +37,6 @@ use crate::{
     WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
     WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
-
-/// Configuration for Codex inside a hosted sandbox.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CodexSandboxSpec {
-    pub deployment: HostedDeployment,
-    pub config: CodexConfig,
-}
-
-/// Complete Codex sandbox adapter.
-pub struct CodexAdapter {
-    hosted: HostedAdapter,
-}
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {

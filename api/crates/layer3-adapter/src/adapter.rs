@@ -302,13 +302,11 @@ pub trait SandboxAdapter: Send + Sync {
         handle: &RuntimeHandle,
         request: &WorkspaceRequest,
     ) -> Result<WorkspaceReceipt>;
-
     async fn run_workspace_setup(
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceSetupRequest,
     ) -> Result<SetupReceipt>;
-
     async fn recover_workspace_prepare(
         &self,
         _handle: &RuntimeHandle,
@@ -318,13 +316,11 @@ pub trait SandboxAdapter: Send + Sync {
             "preserving Workspace preparation recovery is unavailable".into(),
         ))
     }
-
     async fn remove_workspace(
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceRemoveRequest,
     ) -> Result<()>;
-
     /// Probe the actual bound supervisor. Contract/image labels are insufficient.
     async fn workspace_removal_support(
         &self,
@@ -334,7 +330,6 @@ pub trait SandboxAdapter: Send + Sync {
             "guarded Workspace removal is unavailable".into(),
         ))
     }
-
     async fn reconcile_workspace_removal(
         &self,
         _handle: &RuntimeHandle,
@@ -345,14 +340,12 @@ pub trait SandboxAdapter: Send + Sync {
             "current Workspace removal observation is unavailable".into(),
         ))
     }
-
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &WorktreeRequest,
     ) -> Result<WorktreeReceipt>;
-
     async fn remove_worktree(
         &self,
         handle: &RuntimeHandle,
@@ -436,7 +429,6 @@ pub trait SandboxAdapter: Send + Sync {
         authority_fence: u64,
         request: &AgentCloseRequest,
     ) -> Result<()>;
-
     async fn capture_agent(
         &self,
         handle: &RuntimeHandle,
