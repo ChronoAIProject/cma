@@ -128,6 +128,14 @@ impl AgentSandboxClient {
             } else {
                 return Ok(None);
             };
+            // Existing durable version-1 plans hash exactly this two-element
+            // tuple. Only version 2 adds the idle process witness to the hash.
+            let state = if idle_bootstrap.is_some() {
+                serde_json::to_vec(&(&pod.spec, &pod.status, &idle_bootstrap))
+            } else {
+                serde_json::to_vec(&(&pod.spec, &pod.status))
+            }
+            .map_err(|_| rejected("nonexecuting Pod cannot be encoded"))?;
             let proof = NonexecutingRuntimeProof {
                 version: if idle_bootstrap.is_some() { 2 } else { 1 },
                 idle_bootstrap: idle_bootstrap.clone(),
@@ -147,13 +155,7 @@ impl AgentSandboxClient {
                 runtime_restart_count: restart_count,
                 // Hash the observed spec/status; never return environment values,
                 // termination messages or other provider text in the proof.
-                state_sha256: format!(
-                    "{:x}",
-                    Sha256::digest(
-                        serde_json::to_vec(&(&pod.spec, &pod.status, &idle_bootstrap))
-                            .map_err(|_| rejected("nonexecuting Pod cannot be encoded"))?
-                    )
-                ),
+                state_sha256: format!("{:x}", Sha256::digest(state)),
             };
             if serde_json::to_vec(&proof)
                 .map_err(|_| rejected("nonexecuting proof cannot be encoded"))?
