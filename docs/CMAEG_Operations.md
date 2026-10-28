@@ -153,7 +153,7 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_LARK_MEDIA_ENABLED` | `true` or `false` | `false` | Admits new native image, file, audio, video and rich-post resources after compatible locator readers deploy. Requires `CMAEG_MEDIA_ENABLED`; pauses preserve exact duplicate admission and retained reads. Direct regional message-resource retrieval rechecks original consumer/provider and current source/credential authority, including cache hits. See [native Lark media](CMAEG_Native_Lark_Media.md). |
 | `CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED` | `true` or `false` | `false` | Independent bounded native JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and Baseline H.264 MP4 upload/send gate. Requires retained native source custody and exact routed default/named consumer/provider authority; rejects native captions and controls. Advertises exact MIME/size/video limits through `native_media`. See [native outbound media](CMAEG_Native_Lark_Outbound_Media.md). |
 | `CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` | `true` or `false` | `false` | Independently enables consented original native Lark/Feishu chat and exact-thread history through REST/MCP. Each call scans at most 25 raw rows; threads may return empty progress pages. Off disables native history execution and capability discovery. Requires compatible source/admission-proof readers before authoring. See [native history](CMAEG_Native_Lark_History.md). |
-| `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` | `true` or `false` | `false` | Preserves text in supported native Lark/Feishu posts containing images/video, with `omitted_content: ["media"]` and no resource authority. Requires the history gate and existing consent. Keep false until every consuming reader and rollback target accepts the new omission enum; old strict SDKs reject it. Off retains whole-row omission. |
+| `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` | `true` or `false` | `false` | Permits explicit `include_media=true` reads to preserve text in supported native Lark/Feishu posts containing images/video, with `omitted_content: ["media"]` and no resource authority. Requires the history gate and existing consent. Omitted/false requests always retain legacy whole-row omission. Deploy gateway v3 cursor readers and compatible opt-in clients before activation. |
 | `CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED` | `true` or `false` | `false` | Issue per-part references for confirmed ordinary native Telegram/Discord split text. Deploy compatible receipt readers before enabling; retained pages remain readable with issuance disabled. See [split-text receipts](CMAEG_Native_Split_Text_Receipts.md). |
 | `CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED` | `true` or `false` | `false` | Issue one native upload with an inline keyboard only after every reader supports durable Telegram media cards. Routed human events only; named consumers also require consumer interaction issuance. Retained callbacks remain readable with issuance disabled. Multipart references are not included. |
 | `CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED` | `true` or `false` | `false` | Issue retained caption/keyboard edit permission on confirmed native Telegram media cards. Enable only after every reader supports the optional media snapshot and card edit marker. Requires media-control issuance; earlier cards remain uneditable. Existing issued edits and callbacks remain readable with issuance disabled. No re-upload or file replacement. |
@@ -3019,14 +3019,20 @@ for cutoff, content omission, cursor, permission and regional limits.
 
 `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` independently accepts `true`/`false`,
 defaults to `false` and remains explicitly false in the checked-in ConfigMap.
-After the history gate and consent checks, it changes only the supported post
-projection: preserve text, omit media, emit the additive `media` omission enum.
-It grants no file access, adds no request and changes no retained custody/cursor
-schema. Deploy updated SDK/readers to all REST/MCP consumers and their rollback
-targets before enabling it; older strict readers reject `media`. There is no
-per-client negotiation. Turn this flag off before rolling a consumer back;
-already retained mixed pages still need a compatible reader. This increment does
-not activate the flag or change current history source consent.
+After the history gate and consent checks, a REST query or MCP argument must
+explicitly set `include_media=true` to preserve supported post text, omit media
+and emit the additive `media` omission enum. Absent/false requests always keep
+whole-row omission, including after activation, so unchanged strict clients
+remain compatible. Opt-in on a disabled gate returns 403; opt-in on another
+platform returns 400. No file access or extra platform request is granted.
+
+Legacy v2 cursors retain their existing serialized shape. Opted-in v3 cursors
+bind `include_media: true`; every continuation must repeat the same mode, and a
+mode mismatch returns 400 before platform I/O. Upgrade all gateway cursor readers
+and rollback images before activation. Only opt-in consumers need the new enum;
+their retained mixed pages still require compatible readers. Turning the gate
+off rejects opted-in requests while legacy requests continue. This increment
+does not activate the flag or change history source consent.
 
 
 ## Native Telegram topic lifecycle rollout
