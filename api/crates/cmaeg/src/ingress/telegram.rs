@@ -22,6 +22,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 pub(crate) mod channel_posts;
 pub(crate) mod events;
 mod message_context;
+pub(crate) mod shared_facts;
 
 pub struct Observed {
     pub payload: CallbackPayload,
@@ -110,17 +111,32 @@ pub fn observe(
     // message, so one observer checks both transports: a media message has
     // NyxID's media type and its caption as text.
     let media_type = media_content_type(message);
+    let shared = match shared_facts::extract(message) {
+        Ok(shared) if callback.is_none() => shared,
+        Ok(_) => None,
+        Err(()) if callback.is_some() => None,
+        Err(()) => {
+            return Ok(Outcome::Refused(
+                super::admission::Refusal::ContentUnsupported,
+            ));
+        }
+    };
     let content_type = if callback.is_some() {
         "interaction"
-    } else if message.get("text").is_some() {
+    } else if shared.is_some() || message.get("text").is_some() {
         "text"
     } else {
         media_type.unwrap_or("unknown")
     };
     let text = match callback {
         Some(_) => None,
-        None => message.get("text").or_else(|| {
-            media_type.and(message.get("caption").filter(|caption| caption.is_string()))
+        None => shared.map(Value::String).or_else(|| {
+            message
+                .get("text")
+                .or_else(|| {
+                    media_type.and(message.get("caption").filter(|caption| caption.is_string()))
+                })
+                .cloned()
         }),
     };
     let route = crate::telegram::route(bot_id, &chat_id);
@@ -136,12 +152,13 @@ pub fn observe(
     // Telegram would redeliver it; validate() keeps its bound as an invariant.
     payload.sender.repair_display_name();
     payload.validate()?;
-    match super::relay::telegram::observe(
+    match super::relay::telegram::observe_content(
         &payload,
         bot_username,
         Some(bot_id),
         allow_bots,
         MediaIngress::native(media_enabled),
+        true,
     )? {
         Observation::Refused(reason) => Ok(Outcome::Refused(reason)),
         Observation::Message(mut facts) => {
@@ -203,6 +220,7 @@ pub(crate) fn launch(
                 attachments: facts.attachments,
                 mentions_bot: facts.mentioned == Some(true),
                 reply_to: None,
+                quoted_message: None,
                 album_id: facts.album_id,
             },
         },

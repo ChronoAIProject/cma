@@ -44,6 +44,10 @@ pub struct SandboxUnpublishedRecoveryProof {
     /// proved. The retained source generation and binding remain unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserved_provision: Option<super::SandboxRuntimeProvisionReservation>,
+    /// Current allocation independently verified against the exact retained home
+    /// and rendered request when older code lost its original operation record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_provision_generation: Option<u64>,
     pub home_identity: String,
     pub boot_id: Option<String>,
     /// Fresh provider evidence proves the old runtime cannot execute. This is
@@ -90,7 +94,7 @@ impl Sandbox {
     /// when the provider has not completed the previous generation reservation.
     pub fn unpublished_recovery_binding(&self) -> Option<&RuntimeBinding> {
         self.runtime.as_ref().or_else(|| {
-            if self.stalled_unpublished_revival() {
+            if self.unpublished_allocation_source() {
                 self.lifecycle.suspended_runtime.as_deref()
             } else {
                 None
@@ -198,7 +202,7 @@ impl Sandbox {
         // A persisted retry at reopen can stall indefinitely without a parked
         // update failure. The lease guard above admits only between workers;
         // complete child/log and native proofs still decide whether it is safe.
-        if self.stalled_unpublished_revival() || self.stalled_unpublished_reopen() {
+        if self.unpublished_allocation_source() || self.stalled_unpublished_reopen() {
             return true;
         }
         match &self.lifecycle.operation {
@@ -252,8 +256,8 @@ impl SandboxUnpublishedRecoverySnapshot {
         self.sandbox.validate().map_err(|_| refused())?;
         if !self.sandbox.unpublished_recovery_candidate()
             || (self.runtime_generation()? != self.sandbox.lifecycle.runtime_generation_high_water
-                && !self.sandbox.stalled_unpublished_revival())
-            || (self.sandbox.stalled_unpublished_revival() && !self.agents.is_empty())
+                && !self.sandbox.unpublished_allocation_source())
+            || (self.sandbox.unpublished_allocation_source() && !self.agents.is_empty())
         {
             return Err(refused());
         }
@@ -377,7 +381,7 @@ impl SandboxUnpublishedRecoveryProof {
             || self.boot_id.as_ref().is_some_and(|boot| !hex(boot, 32))
             || (!snapshot.agents.is_empty() && self.boot_id.is_none())
             || (self.boot_id.is_none() && !self.runtime_process_absent)
-            || (snapshot.sandbox.stalled_unpublished_revival() && self.boot_id.is_some())
+            || (snapshot.sandbox.unpublished_allocation_source() && self.boot_id.is_some())
             || self
                 .boot_id
                 .as_ref()
@@ -434,7 +438,8 @@ pub fn apply_unpublished_runtime_recovery(
     }
     request.proof.validate_for(current)?;
     if request.automatic
-        && (current.sandbox.lifecycle.unpublished_recovery_attempted
+        && (current.sandbox.legacy_unpublished_allocation()
+            || current.sandbox.lifecycle.unpublished_recovery_attempted
             || current.sandbox.lifecycle.unpublished_recovery.is_some()
             || current.sandbox.automatic_unpublished_recovery_target()
                 != Some(request.target_runtime_version.as_str()))

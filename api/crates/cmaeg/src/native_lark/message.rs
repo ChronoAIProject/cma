@@ -24,6 +24,8 @@ use std::{sync::Arc, time::Instant};
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Message {
     Text {
+        #[serde(skip)]
+        quoted_message: Option<cmaeg_core::activity::QuotedMessage>,
         message_id: String,
         chat_id: String,
         sender: String,
@@ -135,6 +137,7 @@ pub(crate) fn extract(
                         .is_some_and(|k| !k.is_empty() && text.contains(k))
             });
             Message::Text {
+                quoted_message: crate::ingress::quoted_context::lark(raw),
                 message_id,
                 chat_id,
                 sender,
@@ -294,6 +297,7 @@ pub(crate) fn launch(
                     attachments: super::content::attachments(resources, message_id, &revision),
                     mentions_bot: *mentioned,
                     reply_to: None,
+                    quoted_message: None,
                     album_id: None,
                 },
                 Actor {

@@ -39,6 +39,7 @@ async fn native_whatsapp_shared_facts_keep_sender_scope_first_envelope_and_origi
             mentions_bot,
             reply_to,
             album_id,
+            quoted_message: _,
         } = &original.activity.kind
         else {
             panic!()

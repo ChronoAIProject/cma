@@ -5,6 +5,51 @@ use layer2_core::sandbox::{SandboxUnpublishedRecoveryRequest, SandboxUnpublished
 const TARGET: &str = "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 #[tokio::test]
+async fn legacy_missing_reservation_requires_independent_provider_request_and_quiet_worker() {
+    for provider in [2, 3] {
+        let (f, mut snapshot, _, now) = nonexecuting_recovery_tests::stalled(Some(provider)).await;
+        let stamp = rfc3339_at(now);
+        let fence = snapshot
+            .sandbox
+            .work
+            .claim(
+                "old-worker".into(),
+                &stamp,
+                rfc3339_at(now + Duration::from_secs(60)),
+            )
+            .unwrap();
+        snapshot
+            .sandbox
+            .fail_lifecycle("legacy startup failed".into(), "old-worker", fence, stamp)
+            .unwrap();
+        snapshot.sandbox.lifecycle.failed_provision = None;
+        let verifier = crate::sandbox::unpublished_recovery::UnpublishedRuntimeRecovery::new(
+            f.adapter(TARGET),
+            "test".into(),
+        );
+        // Never wait out a potentially live previous assignment or accept a stale
+        // observation. A later caller must obtain a fresh complete snapshot.
+        snapshot.sandbox.updated_at = layer2_core::now_rfc3339();
+        assert!(verifier.verify(&snapshot).await.is_err());
+        assert!(f.backend.inspected_generations.lock().unwrap().is_empty());
+        snapshot.sandbox.updated_at = rfc3339_at(SystemTime::now() - Duration::from_secs(61));
+        let result = verifier.verify(&snapshot).await;
+        if provider == 2 {
+            let proof = result.unwrap();
+            assert_eq!(proof.observed_provision_generation, Some(2));
+            assert!(proof.reserved_provision.is_none());
+            proof.validate_for(&snapshot).unwrap();
+        } else {
+            assert!(result.is_err());
+        }
+        assert_eq!(*f.backend.inspected_generations.lock().unwrap(), vec![1, 2]);
+        for action in ["suspend", "resume", "upgrade", "delete-retained"] {
+            assert!(!f.backend.calls.snapshot().iter().any(|call| call == action));
+        }
+    }
+}
+
+#[tokio::test]
 async fn reserved_provider_generation_recovers_same_home_after_lost_suspend_and_upgrade_replies() {
     let (f, snapshot, workspace, mut now) = nonexecuting_recovery_tests::stalled(Some(2)).await;
     let original = snapshot.sandbox.clone();

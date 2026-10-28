@@ -82,6 +82,9 @@ pub struct AdmittedPlan {
     pub request_hash: String,
     pub admitted_at: i64,
     pub retained_until: i64,
+    /// Absent on all legacy admissions; never infer a version from raw bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote_projection: Option<u8>,
     pub activity: Activity,
     pub source: Source,
     pub targets: Vec<StoredTarget>,
