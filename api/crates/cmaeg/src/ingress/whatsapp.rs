@@ -88,6 +88,7 @@ pub(crate) fn launch(
             attachments: vec![attachment.as_ref().clone()],
             mentions_bot: false,
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         },
         Content::Text { text } => ActivityKind::Message {
@@ -95,6 +96,7 @@ pub(crate) fn launch(
             attachments: Vec::new(),
             mentions_bot: false,
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         },
         Content::Control { .. } => ActivityKind::Message {
@@ -102,6 +104,7 @@ pub(crate) fn launch(
             attachments: Vec::new(),
             mentions_bot: false,
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         },
         Content::Edit { target, .. } | Content::Revoke { target } => {

@@ -29,6 +29,8 @@ const MAX_NON_HUMAN_PROVIDERS: usize = 8;
 pub struct RoutingConfig {
     /// Keep enabled while any durably admitted target still needs recovery.
     pub recovery_enabled: bool,
+    /// Reader-first gate for new native reply-context snapshots.
+    pub quoted_context_enabled: bool,
     /// Pauses new routed admissions without abandoning accepted work or retries.
     pub admission_enabled: bool,
     /// Explicit rollout selection; an empty set preserves all legacy ingress.
@@ -52,6 +54,7 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
         }
     };
     let config = RoutingConfig {
+        quoted_context_enabled: write_flag("CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED")?,
         recovery_enabled: write_flag(CMAEG_ROUTED_RECOVERY_ENABLED)?,
         admission_enabled: write_flag(CMAEG_ROUTED_ADMISSION_ENABLED)?,
         execution_records: execution_records(
@@ -73,7 +76,10 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
 
 impl RoutingConfig {
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if !self.recovery_enabled && (self.admission_enabled || !self.execution_records.is_empty())
+        if !self.recovery_enabled
+            && (self.admission_enabled
+                || self.quoted_context_enabled
+                || !self.execution_records.is_empty())
         {
             return Err(ConfigError::Routing(format!(
                 "{CMAEG_ROUTED_RECOVERY_ENABLED} must be enabled before selecting records or admitting routed events"
@@ -189,6 +195,10 @@ mod tests {
     #[test]
     fn admission_requires_recovery_but_recovery_can_continue_after_admission_stops() {
         let mut config = RoutingConfig::default();
+        assert!(!config.quoted_context_enabled);
+        config.quoted_context_enabled = true;
+        assert!(config.validate().is_err());
+        config.quoted_context_enabled = false;
         assert!(config.validate().is_ok());
         config.admission_enabled = true;
         assert!(config.validate().is_err());
