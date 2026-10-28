@@ -173,7 +173,9 @@ test(
       assert(
         resumed.every(
           (entry) =>
-            entry.type !== "response_item" && entry.type !== "event_msg",
+            entry.type !== "response_item" && (entry.type !== "event_msg" ||
+              // CLI 0.165 persists settings on resume without creating a turn.
+              (entry.payload.type === "thread_settings_applied" && entry.payload.thread_id === session.sessionId)),
         ),
       );
     } finally {

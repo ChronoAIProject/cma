@@ -2,8 +2,9 @@ const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
-const { join } = require("node:path");
+const { dirname, join } = require("node:path");
 const { createInterface } = require("node:readline");
+const { createServer } = require("node:http");
 const { test } = require("node:test");
 const { bridgePath, persistConversations } = require("./persist_conversations.cjs");
 const { subscriptionAuth } = require("./subscription_auth.cjs");
@@ -13,6 +14,19 @@ test("native subscription handoff preserves a credential-free warm session and b
   const directory = mkdtempSync(join(tmpdir(), "cma-subscription-contract-"));
   const home = join(directory, "home");
   require("node:fs").mkdirSync(home, {mode: 0o700});
+  const discovery = createServer((request, response) => {
+    if (!request.url.startsWith("/wham/accounts/check") && !request.url.startsWith("/api/codex/accounts/check")) {
+      response.writeHead(404).end(); return;
+    }
+    response.writeHead(200, {"content-type": "application/json"});
+    // CLI 0.165's accounts/check list carries routing; the legacy map drops it.
+    response.end(JSON.stringify({accounts: [{
+      id: "fixture-account", name: "Offline subscription fixture", plan_type: "plus",
+      structure: "personal", workspace_backend_origin: "https://subscription.example.invalid",
+      account_routing_override: "NO_CONSTRAINT",
+    }], default_account_id: "fixture-account"}));
+  });
+  await new Promise(resolve => discovery.listen(0, "127.0.0.1", resolve));
   const executable = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
   let program = bridgePath;
   if (process.env.CMA_ACP_UPSTREAM_SOURCE) {
@@ -20,10 +34,10 @@ test("native subscription handoff preserves a credential-free warm session and b
     writeFileSync(program, managedModelCatalog(subscriptionAuth(persistConversations(readFileSync(process.env.CMA_ACP_UPSTREAM_SOURCE, "utf8")))));
   }
   assert.throws(() => subscriptionAuth(readFileSync(program, "utf8")), /Unexpected Codex ACP source/);
-  writeFileSync(join(home, "config.toml"), 'model = "gpt-5.6-sol"\nweb_search = "disabled"\ncli_auth_credentials_store = "file"\n', {mode: 0o600});
+  writeFileSync(join(home, "config.toml"), 'model = "gpt-5.6-sol"\nweb_search = "disabled"\ncli_auth_credentials_store = "file"\nchatgpt_base_url = "http://127.0.0.1:' + discovery.address().port + '"\n', {mode: 0o600});
   const child = spawn(process.execPath, [program], {
     cwd: directory,
-    env: {PATH: "/usr/local/bin:/usr/bin:/bin", CODEX_HOME: home, CODEX_PATH: executable},
+    env: {PATH: dirname(process.execPath) + ":/usr/local/bin:/usr/bin:/bin", CODEX_HOME: home, CODEX_PATH: executable},
     stdio: ["pipe", "pipe", "pipe"], detached: true,
   });
   const pending = new Map();
@@ -80,6 +94,8 @@ test("native subscription handoff preserves a credential-free warm session and b
     assert(!content.includes(accessToken));
     assert(!Buffer.concat(diagnostics).toString().includes(accessToken), "credentials must not enter bridge diagnostics");
   } finally {
+    discovery.closeAllConnections();
+    await new Promise(resolve => discovery.close(resolve));
     input.close();
     if (child.exitCode === null) {
       const stopped = new Promise(resolve => child.once("exit", resolve));
@@ -88,6 +104,6 @@ test("native subscription handoff preserves a credential-free warm session and b
       await stopped;
       clearTimeout(force);
     }
-    rmSync(directory, {recursive: true});
+    rmSync(directory, {recursive: true, maxRetries: 10, retryDelay: 100});
   }
 });

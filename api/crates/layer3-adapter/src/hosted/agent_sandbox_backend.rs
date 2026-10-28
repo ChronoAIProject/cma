@@ -46,6 +46,10 @@ impl AgentSandboxBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
+        self.transport.open_desktop(handle).await
+    }
+
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
         Some(self.client.warm_pools())
     }
