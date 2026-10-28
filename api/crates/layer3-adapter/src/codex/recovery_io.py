@@ -4,6 +4,7 @@ Only the admitted recovery entry point writes, and only its own journal. History
 and /proc reads never write to provider stdin, SQLite, configuration or logs.
 """
 import contextlib
+import datetime
 import fcntl
 import hashlib
 import json
@@ -167,6 +168,8 @@ def unix_peer(inode):
                 if kind == 3:
                     require(peer is not None, "socket_peer_missing")
                     return peer
+                if kind == 2 and length >= 20 and struct.unpack_from("=i", data, offset + 16)[0] == -2:
+                    raise Refused("socket_diagnostic_unsupported")
                 require(kind == 20 and length >= 32, "socket_evidence")
                 found = struct.unpack_from("=I", data, offset + 20)[0]
                 pos = offset + 32
@@ -179,11 +182,59 @@ def unix_peer(inode):
                 offset += (length + 3) & ~3
 
 
-def stdin_owner(native, bridge, processes):
+def socket_fds(processes):
+    result = {}
+    for pid in processes:
+        try:
+            entries = os.listdir(f"{PROC}/{pid}/fd")
+            require(len(entries) <= 4096, "fd_limit")
+            for entry in entries:
+                try:
+                    target = os.readlink(f"{PROC}/{pid}/fd/{entry}")
+                    if target.startswith("socket:["):
+                        result[(pid, int(entry))] = target
+                except FileNotFoundError:
+                    pass
+        except FileNotFoundError:
+            pass
+    return result
+
+
+def source_stdio(native, launcher, bridge, processes):
+    """Pinned ACP spawns exactly one child with three Node 'pipe' socketpairs.
+
+    Pinned npm inherits all three unchanged. ACP sends no descriptors or other
+    sockets to its child. All three exclusive parent endpoints close together on
+    ACP exit: identifying which of them is stdin's peer is unnecessary. This mode
+    needs every endpoint exclusive, unbound and connected; never inode adjacency.
+    """
+    require(launcher is not None, "socket_diagnostic_unsupported")
+    fds = socket_fds(processes)
+    parent = sorted({v for (pid, _), v in fds.items() if pid == bridge})
+    child = [fds.get((native, fd)) for fd in range(3)]
+    require(len(parent) == 3 and None not in child and len(set(parent + child)) == 6, "stdio_shape")
+    require(child == [fds.get((launcher, fd)) for fd in range(3)], "stdio_inheritance")
+    for endpoint in parent + child:
+        owners = {pid for (pid, _), v in fds.items() if v == endpoint}
+        require(owners == ({bridge} if endpoint in parent else {launcher, native}), "stdio_shared")
+    rows = [row.split() for row in read(PROC + "/net/unix", 1048576, True).decode().splitlines()[1:]]
+    for endpoint in parent + child:
+        matching = [row for row in rows if len(row) >= 7 and row[6] == endpoint[8:-1]]
+        require(len(matching) == 1 and len(matching[0]) == 7 and matching[0][3:6] == ["00000000", "0001", "03"], "stdio_socket_kind")
+    require(socket_fds(processes) == fds, "stdio_changed")
+    return {"mode": "pinned_source_stdio", "reader": child[0], "parentEndpoints": parent, "childEndpoints": child}
+
+
+def stdin_owner(native, bridge, processes, launcher=None):
     pipe = os.readlink(f"{PROC}/{native}/fd/0")
     match = re.fullmatch(r"(pipe|socket):\[([0-9]+)\]", pipe)
     require(match is not None, "stdin_not_pipe")
-    endpoint = pipe if match[1] == "pipe" else "socket:[" + str(unix_peer(int(match[2]))) + "]"
+    try:
+        endpoint = pipe if match[1] == "pipe" else "socket:[" + str(unix_peer(int(match[2]))) + "]"
+    except Refused as error:
+        if str(error) != "socket_diagnostic_unsupported":
+            raise
+        return source_stdio(native, launcher, bridge, processes)
     owners = set()
     for pid in processes:
         try:
@@ -202,7 +253,7 @@ def stdin_owner(native, bridge, processes):
         except FileNotFoundError:
             pass
     require(owners == {bridge}, "stdin_owner_mismatch")
-    return {"reader": pipe, "writer": endpoint}
+    return {"mode": "kernel_peer", "reader": pipe, "writer": endpoint}
 
 
 def history_file(path, relative, old=None):
@@ -211,7 +262,8 @@ def history_file(path, relative, old=None):
         require(0 < meta.st_size <= 512 * 1048576, "history_limit")
         if old:
             require([meta.st_dev, meta.st_ino] == old["fileIdentity"] and meta.st_size >= old["bytes"], "history_replaced")
-        full, prefix, count, seen, active, last = hashlib.sha256(), hashlib.sha256(), 0, None, set(), None
+        full, prefix, count, seen, active, last = hashlib.sha256(), hashlib.sha256(), 0, None, {}, None
+        ordinal, terminal = 0, None
         with os.fdopen(os.dup(fd), "rb") as file:
             while count < meta.st_size:
                 line = file.readline(min(8 * 1048576 + 1, meta.st_size - count))
@@ -220,6 +272,7 @@ def history_file(path, relative, old=None):
                 if old and count < old["bytes"]:
                     prefix.update(line[:old["bytes"] - count])
                 count += len(line)
+                ordinal += 1
                 value = json.loads(line)
                 require(isinstance(value, dict), "history_invalid")
                 payload = value.get("payload", {})
@@ -230,16 +283,24 @@ def history_file(path, relative, old=None):
                     kind, turn = payload.get("type"), payload.get("turn_id")
                     if kind in ("task_started", "turn_started", "task_complete", "turn_complete", "turn_aborted"):
                         require(isinstance(turn, str) and UUID.fullmatch(turn), "turn_identity")
+                        try:
+                            timestamp = value["timestamp"]
+                            require(isinstance(timestamp, str) and timestamp.endswith("Z"), "turn_timestamp")
+                            at = int(datetime.datetime.fromisoformat(timestamp[:-1] + "+00:00").timestamp() * 1000)
+                        except (KeyError, ValueError, TypeError, Refused):
+                            at = None
                         if kind in ("task_started", "turn_started"):
-                            active.add(turn)
+                            active[turn] = {"at": at, "ordinal": ordinal}
                         else:
-                            active.discard(turn)
+                            active.pop(turn, None)
+                            terminal = {"at": at, "ordinal": ordinal}
                         last = {"turnId": turn, "type": kind}
                 require(len(active) <= 128, "turn_limit")
         require(seen is not None, "history_identity")
         require(not old or (prefix.hexdigest() == old["sha256"] and seen == old["conversationId"]), "history_prefix_changed")
         return {"path": relative, "fileIdentity": [meta.st_dev, meta.st_ino], "conversationId": seen,
-                "bytes": count, "sha256": full.hexdigest(), "openTurns": sorted(active), "lastTurn": last}
+                "bytes": count, "sha256": full.hexdigest(), "openTurns": sorted(active), "lastTurn": last,
+                "openTurnStarts": active, "lastTerminal": terminal}
 
 
 def histories(agent, previous=None):
