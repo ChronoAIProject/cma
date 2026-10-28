@@ -24,6 +24,9 @@ use std::{
 mod fixtures;
 use fixtures::*;
 
+#[path = "agent_command_admission_tests/lookup_failures.rs"]
+mod lookup_failures;
+
 #[tokio::test]
 async fn shared_admin_routes_admit_once_with_actual_actor_and_bound_control_turn() {
     let test = fixture().await;

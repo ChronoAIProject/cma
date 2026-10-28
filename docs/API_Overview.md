@@ -197,6 +197,17 @@ are documented in [Services](Services.md).
 - Render unknown optional fields safely; reject identity or cursor contradictions.
 - Keep credentials out of logs, errors, profile content, markup and browser state.
 
+For v1 Agent input and control commands, a failure while looking up a prior
+admission, before this request attempts admission, is saved as the acquired
+operation's replay receipt. The same key and exact body replay that failure,
+including a `503`, after the dependency recovers. A failed lookup does not prove
+that no historical command exists: use a new key only after durable state
+confirms the original intent was not admitted. An unchanged transcript alone is
+insufficient because accepted work may still be queued. Older incomplete claims
+remain fenced; their two-minute execution lease becoming
+`idempotency_recovery_required` does not authorize a new execution or delete the
+claim. Errors after admission begins retain the existing receipt-recovery path.
+
 The repository-only [TypeScript SDK](../sdk/typescript/docs/README.md) and
 [Rust SDK](../sdk/rust/docs/README.md) share the public boundary. SDK documentation
 declares each package's implemented subset; neither package is registry-published.
