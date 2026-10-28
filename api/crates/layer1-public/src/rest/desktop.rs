@@ -26,6 +26,12 @@ struct DesktopState {
     origin: String,
 }
 
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub(super) struct DesktopDescriptor {
+    /// Same-origin authenticated WebSocket carrying RFB binary frames.
+    websocket_url: String,
+}
+
 pub fn desktop_router(service: Arc<DesktopService>, origin: String) -> Router {
     Router::new()
         .route("/api/v1/agents/{id}/desktop", get(describe))
@@ -33,6 +39,10 @@ pub fn desktop_router(service: Arc<DesktopService>, origin: String) -> Router {
         .with_state(DesktopState { service, origin })
 }
 
+#[utoipa::path(get, path = "/api/v1/agents/{id}/desktop", tag = "agents",
+    params(("id" = String, Path)),
+    responses((status = 200, body = DesktopDescriptor),
+        (status = 404, body = super::ProblemDocument)))]
 async fn describe(
     State(state): State<DesktopState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -41,9 +51,9 @@ async fn describe(
     match state.service.available(&caller, &AgentId(id.clone())).await {
         Ok(()) => (
             [(header::CACHE_CONTROL, "no-store, private")],
-            Json(serde_json::json!({
-                "websocket_url": format!("/api/v1/agents/{id}/desktop/ws"),
-            })),
+            Json(DesktopDescriptor {
+                websocket_url: format!("/api/v1/agents/{id}/desktop/ws"),
+            }),
         )
             .into_response(),
         Err(error) => problem(error),
@@ -60,10 +70,19 @@ fn permitted_origin(headers: &HeaderMap, origin: &str) -> bool {
     }
 }
 
+#[utoipa::path(get, path = "/api/v1/agents/{id}/desktop/ws", tag = "agents",
+    params(("id" = String, Path), ("Origin" = Option<String>, Header,
+        description = "Exact CMA browser origin; required with cookie authentication")),
+    responses((status = 101, description = "Authenticated RFB stream over binary WebSocket frames"),
+        (status = 400, description = "WebSocket upgrade required"),
+        (status = 403, description = "Browser origin refused"),
+        (status = 404, body = super::ProblemDocument),
+        (status = 409, description = "Another browser owns the Sandbox desktop connection", body = super::ProblemDocument),
+        (status = 503, body = super::ProblemDocument)))]
 async fn websocket(
-    ws: WebSocketUpgrade,
     State(state): State<DesktopState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    ws: WebSocketUpgrade,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
