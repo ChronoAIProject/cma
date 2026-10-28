@@ -10,6 +10,8 @@ use serde_json::{json, Value};
 #[path = "fixture.rs"]
 pub(crate) mod fixture;
 use fixture::*;
+#[path = "document_tests.rs"]
+mod documents;
 
 pub(crate) async fn prepared(item: &NativeAttachment) -> Result<MediaUpload, Error> {
     let file = crate::media::outbound::prepare(std::slice::from_ref(item))
@@ -63,7 +65,10 @@ async fn native_lark_upload_contracts_cover_each_profile_region_and_thread() {
                 let multipart = String::from_utf8_lossy(&calls[0].2);
                 let file_type = match mime {
                     "application/pdf" => "pdf",
-                    "text/plain" => "stream",
+                    "application/msword" => "doc",
+                    "application/vnd.ms-excel" => "xls",
+                    "application/vnd.ms-powerpoint" => "ppt",
+                    mime if mime.starts_with("application/") || mime == "text/plain" => "stream",
                     "audio/ogg" => "opus",
                     "video/mp4" => "mp4",
                     _ => "message",
@@ -116,9 +121,12 @@ async fn native_lark_upload_contracts_cover_each_profile_region_and_thread() {
 async fn native_lark_rejects_unsupported_or_mislabeled_batches_before_upload() {
     for mime in MIME_TYPES {
         for defect in ["mime", "extension", "caption", "kind", "payload"] {
+            if mime == "application/octet-stream" && matches!(defect, "extension" | "payload") {
+                continue; // Generic files promise only exact opaque bytes, not typed contents.
+            }
             let mut item = attachment(mime);
             match defect {
-                "mime" => item.mime_type = Some("application/octet-stream".into()),
+                "mime" => item.mime_type = Some("application/x-unsupported".into()),
                 "extension" => item.filename = Some("misleading.bin".into()),
                 "caption" => item.caption = Some("unsupported native caption".into()),
                 "kind" => item.kind = NativeMediaKind::Sticker,

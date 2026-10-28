@@ -1,4 +1,6 @@
 //! Native uploads from fully materialized bytes; keys cannot be supplied by callers.
+#[path = "outbound/file.rs"]
+mod file;
 use super::{Client, Error};
 use crate::media::{
     outbound::{PreparedFile, MAX_OUTBOUND_BYTES},
@@ -17,11 +19,19 @@ use reqwest::{
 };
 use serde_json::json;
 
-pub(crate) const MIME_TYPES: [&str; 6] = [
+pub(crate) const MIME_TYPES: [&str; 14] = [
     "image/jpeg",
     "image/png",
     "application/pdf",
     "text/plain",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/zip",
+    "application/octet-stream",
     "audio/ogg",
     "video/mp4",
 ];
@@ -75,16 +85,8 @@ impl Client {
                 )
             }
             NativeMediaKind::File => {
-                if sniff(&file.bytes[..file.bytes.len().min(64)]).mime == "application/pdf" {
-                    ("file", "application/pdf", "pdf", &["pdf"])
-                } else if std::str::from_utf8(&file.bytes).is_ok_and(|text| {
-                    text.chars()
-                        .all(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
-                }) {
-                    ("file", "text/plain", "stream", &["txt"])
-                } else {
-                    return Err(Error::Invalid);
-                }
+                let profile = file::profile(item, &file.bytes)?;
+                ("file", profile.mime, profile.file_type, profile.extensions)
             }
             NativeMediaKind::Audio if ogg::mono_opus(&file.bytes) => {
                 ("audio", "audio/ogg", "opus", &["opus", "ogg"])
@@ -102,14 +104,31 @@ impl Client {
             return Err(Error::Invalid);
         }
         if item.filename.is_none() {
-            file.filename = format!("{}.{}", file.filename, extensions[0]);
-        } else if !file
-            .filename
-            .rsplit_once('.')
-            .is_some_and(|(_, extension)| {
-                extensions.contains(&extension.to_ascii_lowercase().as_str())
-            })
+            file.filename = format!(
+                "{}.{}",
+                file.filename,
+                extensions.first().copied().unwrap_or("bin")
+            );
+        } else if !extensions.is_empty()
+            && !file
+                .filename
+                .rsplit_once('.')
+                .is_some_and(|(_, extension)| {
+                    extensions.contains(&extension.to_ascii_lowercase().as_str())
+                })
         {
+            return Err(Error::Invalid);
+        }
+        if extensions.is_empty()
+            && !file
+                .filename
+                .rsplit_once('.')
+                .is_some_and(|(_, ext)| !ext.is_empty())
+        {
+            // Both regional upload contracts require a filename with a suffix.
+            file.filename.push_str(".bin");
+        }
+        if file.filename.len() > 255 {
             return Err(Error::Invalid);
         }
         let part = Part::bytes(file.bytes)

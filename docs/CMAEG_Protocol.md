@@ -3090,9 +3090,10 @@ unsupported. Historical cards do not acquire new authority. See
 serialization omits this optional capability; no existing wire field is removed.
 
 Native Lark/Feishu advertises `kinds: ["image", "file", "audio", "video"]`,
-`mime_types: ["image/jpeg", "image/png", "application/pdf", "text/plain", "audio/ogg", "video/mp4"]`,
+the fourteen MIME types documented in its [native media profile](CMAEG_Native_Lark_Outbound_Media.md),
 `max_total_bytes: 8388608`, `max_image_bytes: 8388608` and `max_caption_chars: 0`.
-It supports RGB/RGBA PNG/JPEG, PDF, UTF-8 text, mono Opus Ogg and the shared
+It supports RGB/RGBA PNG/JPEG, TXT/PDF/DOC/DOCX/XLS/XLSX/PPT/PPTX/ZIP and opaque
+files, mono Opus Ogg and the shared
 Baseline H.264/AAC-LC MP4 structural profile. Explanation text remains separate;
 unsupported captions/control mixtures fail before upload. Every upload and send
 rechecks regional bot custody and exact current default/named consumer/provider
