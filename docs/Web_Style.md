@@ -3808,3 +3808,10 @@ setup or requested tools directly; internal installation and receipt caveats sta
 in implementation documentation. These labels supersede the catalog wording above.
 
 | 2026-10-28 | Use plain Event tools, Tools and Tools requiring setup labels; keep configuration states concise while preserving conditional availability and the complete server catalog. |
+
+The tool inspector keeps its catalog section's accessible name without a visible
+parent heading above the Event tools fieldset. The fieldset retains its sidebar
+anchor and the single availability explanation; Overview describes the tools'
+purpose without repeating that explanation.
+
+| 2026-10-28 | Remove the redundant tool catalog heading and overview availability copy while retaining the Event tools section anchor and accessible catalog region. |
