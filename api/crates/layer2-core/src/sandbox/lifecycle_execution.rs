@@ -437,6 +437,7 @@ impl Sandbox {
             }
             next.lifecycle.operation = None;
             next.lifecycle.home_recovery = None;
+            next.lifecycle.unpublished_recovery = None;
             next.lifecycle.paused_notice = None;
             if let Some(pause) = resume_pause {
                 next.lifecycle
@@ -457,6 +458,7 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<TypedFailure, SandboxModelError> {
+        self.require_unpublished_runtime_quiescence()?;
         if detail.trim().is_empty()
             || detail.len() > MAX_FAILURE_DETAIL_BYTES
             || detail.chars().any(char::is_control)
