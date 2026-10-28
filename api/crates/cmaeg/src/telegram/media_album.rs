@@ -148,18 +148,27 @@ impl TelegramClient {
             } else {
                 file.is_object()
             };
+            // Bot API Message.from may be absent for channel posts. sender_chat
+            // is optional too; when supplied it must identify that same channel.
+            let sender_matches = match value.get("from") {
+                Some(sender) => {
+                    sender["id"].as_i64().map(|id| id.to_string()).as_deref() == Some(bot)
+                        && sender["is_bot"] == true
+                }
+                None => {
+                    value["chat"]["type"] == "channel"
+                        && value.get("sender_chat").is_none_or(|sender| {
+                            sender["type"] == "channel" && sender["id"] == value["chat"]["id"]
+                        })
+                }
+            };
             if value["chat"]["id"]
                 .as_i64()
                 .map(|id| id.to_string())
                 .as_deref()
                 != Some(chat.as_str())
                 || actual_thread != thread
-                || value["from"]["id"]
-                    .as_i64()
-                    .map(|id| id.to_string())
-                    .as_deref()
-                    != Some(bot)
-                || value["from"]["is_bot"] != true
+                || !sender_matches
                 || group.is_some_and(|expected| expected != actual_group)
                 || !ids.insert(id.clone())
                 || !has_media
