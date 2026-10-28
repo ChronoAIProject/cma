@@ -1,6 +1,6 @@
 # Fresh-event binding preparation
 
-This implementation is a disabled foundation for a separate replacement operation after a channel-owned Sandbox was explicitly retired and its home released. It does not enable automatic replacement in production. Ordinary binding PUT, conversation PUT and background recovery continue to preserve the original hierarchy. An entirely retired binding remains terminal.
+This implementation is disabled by default for a separate replacement operation after a channel-owned Sandbox was explicitly retired and its home released. It does not enable automatic replacement in production. Ordinary binding PUT, conversation PUT and background recovery continue to preserve the original hierarchy. An entirely retired binding remains terminal.
 
 ## Retained authority and transaction
 
@@ -22,12 +22,20 @@ Gateway readers understand an optional `binding_preparation_version` on ordinary
 
 This reader release refuses a new Pending admission that requests preparation before invoking legacy conversation creation. It can retain and replay a previously prepared generation-aware request. No production admission writer sets the version and no dispatcher performs a replacement yet.
 
+## Authenticated management endpoints
+
+`POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections` is read-only. It authenticates the current management principal, both binding-management capabilities, the exact owner and the supplied binding key. A healthy/provisioning or recoverable original returns its current generation. Only an eligible fully retired hierarchy returns the exact digest-pinned replacement intent. Inspection never allocates IDs or mutates credentials, parents or binding state.
+
+`POST /api/v1/cmaeg/bindings/{binding_id}/preparations` accepts that exact intent and the supplied key. It requires one `Idempotency-Key` equal to the derived operation ID. It reauthenticates the current manager/owner/key even for an immutable receipt replay and returns only the small receipt projection, never the archived profile or credential hash. Writes require `CHRONO_CMAEG_BINDING_PREPARATION_ENABLED=true`; this flag defaults to false and invalid values refuse startup. All endpoint responses are `Cache-Control: no-store`.
+
+Conversation PUT accepts one positive canonical `x-cma-binding-generation` header. Both source-user fast acknowledgement and real Agent allocation enforce it. Responses v2 receives the corresponding `binding_generation` JSON field. Missing pins retain legacy behavior only for bindings without a generation guard.
+
 ## Compatibility and remaining activation work
 
-No HTTP management preparation route, Gateway preparation writer or production flag is enabled by this foundation. Activation requires the following remaining integration work:
+The management routes are available, but production preparation writers remain disabled. Activation requires the following remaining integration work:
 
 1. Deploy the compatible strict readers for the Gateway admission version, persisted preparation marker/receipt and frozen-turn generation before writing any of those fields. Every rollback image must support the same retained shapes.
-2. Add authenticated current-owner/current-manager inspection and preparation endpoints. Request owner/manager fields are comparisons, never credentials. Returning an old operation receipt still requires current management authority.
+2. Enable the authenticated management writer only after compatible readers and exact-schema collection permissions are verified. Request owner/manager fields are comparisons, never credentials; returning an old operation receipt still requires current management authority.
 3. Mark only new verified ordinary user events as eligible. Interactions, callbacks, edits/deletes/reactions, generated messages, tests, legacy admissions and ExistingAgent targets cannot trigger replacement.
 4. Under the existing Pending journal lease, validate the current enabled source/consumer/provider, persist the exact intent before network effects, and persist the exact receipt before conversation preparation. Unknown marker writes and provider responses require exact readback/replay. Prepared, Starting, Unknown and accepted requests never choose a replacement hierarchy.
 5. Freeze and transmit the generation for every newly prepared turn. A migrated binding must reject legacy markerless work instead of rerouting it into its new hierarchy. Disabling further replacement must retain compatible readers and generation-aware traffic.

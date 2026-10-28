@@ -83,6 +83,7 @@ async fn generic_channel_creation_and_updates_never_send_native_platform_or_rout
     let client = client::GatewayClient::new(
         reqwest::Client::new(),
         &GatewayConfig {
+            binding_preparation_enabled: false,
             base_url: base.clone(),
             public_url: base.clone(),
             public_api_url: "https://bot.example/event-gateway".into(),

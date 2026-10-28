@@ -209,6 +209,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::warm_pools::list,
         super::admin::warm_pools::configure,
         super::admin::warm_pools::resize,
+        super::bindings::preparation::inspect, super::bindings::preparation::prepare,
         super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation,
     ),
     components(schemas(
@@ -461,6 +462,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::warm_pools::ResizeWarmPoolBody,
         ActivityView,
         ActivityPageView,
+        super::bindings::preparation::InspectPreparationRequest, super::bindings::preparation::PrepareBindingRequest, super::bindings::preparation::PreparationIntentSchema, super::bindings::preparation::PreparationInspectionView, super::bindings::preparation::PreparationReceiptView,
         super::bindings::PutBindingRequest, super::bindings::BindingTarget, super::bindings::BindingTools, super::bindings::BindingView, super::bindings::BindingRefusal, super::bindings::BindingConversationView, PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
     )),
     tags(

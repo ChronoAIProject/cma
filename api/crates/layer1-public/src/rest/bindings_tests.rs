@@ -12,6 +12,7 @@ use layer2_core::{Authorization, Capability, CoreError, SandboxId, ServiceId, Su
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
+mod preparation;
 mod readiness;
 mod retry;
 pub(super) use readiness::create_backing_resources;
@@ -100,6 +101,13 @@ fn app_with_tools_alias(
     endpoint: Option<&str>,
     alias: Option<&str>,
 ) -> Result<(Router, Arc<InMemorySandboxStore>), String> {
+    app_config(endpoint, alias, false)
+}
+fn app_config(
+    endpoint: Option<&str>,
+    alias: Option<&str>,
+    preparation_enabled: bool,
+) -> Result<(Router, Arc<InMemorySandboxStore>), String> {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
     let resources = BindingResources {
@@ -140,6 +148,7 @@ fn app_with_tools_alias(
             ),
             endpoint,
             alias,
+            preparation_enabled,
         )?,
         store,
     ))
@@ -148,7 +157,17 @@ fn route_service(
     service: Arc<BindingService>,
     endpoint: Option<&str>,
     alias: Option<&str>,
+    preparation_enabled: bool,
 ) -> Result<Router, String> {
+    if preparation_enabled {
+        let endpoint = endpoint.unwrap_or("https://gateway.example/mcp");
+        return super::binding_router_with_native_tools_alias_and_preparation(
+            service,
+            endpoint,
+            alias.unwrap_or(endpoint),
+            true,
+        );
+    }
     match (endpoint, alias) {
         (Some(endpoint), Some(alias)) => {
             super::binding_router_with_native_tools_alias(service, endpoint, alias)
