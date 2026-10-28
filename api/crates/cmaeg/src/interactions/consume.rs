@@ -24,8 +24,10 @@ impl InteractionStore {
         admit: &Admit,
     ) -> Result<(InteractionResult, String, Card), Error> {
         let (id, index, revision) = decode(data)?;
+        let mut retry_contention = false;
         for _ in 0..2 {
             let (mut card, version) = self.load(&id).await?;
+            retry_contention = card.native_telegram_media.is_some();
             let platform_matches = if let Some(kind) = card.whatsapp {
                 data.starts_with(kind.prefix())
                     && revision == Some(card.revision)
@@ -61,6 +63,10 @@ impl InteractionStore {
                 || card.discord.is_some()
                 || card.native_lark.is_some()
                 || !owner::admitted(&card, channel, activity)
+                || card
+                    .native_telegram_media
+                    .as_ref()
+                    .is_some_and(|a| !a.admitted(&card, channel, activity))
                 || !platform_matches
                 || card.route_id != route
                 || card.actor != activity.actor.id
@@ -79,11 +85,13 @@ impl InteractionStore {
             // A native callback can race the confirmed-send binding. Preserve its
             // retry opportunity, but never consume an unbound/uncertain card.
             if card.reference.is_none() || card.destination.is_none() {
-                return Err(if card.native_whatsapp.is_some() {
-                    Error::Unavailable
-                } else {
-                    Error::Denied
-                });
+                return Err(
+                    if card.native_whatsapp.is_some() || card.native_telegram_media.is_some() {
+                        Error::Unavailable
+                    } else {
+                        Error::Denied
+                    },
+                );
             }
             if card
                 .destination
@@ -177,9 +185,10 @@ impl InteractionStore {
             ));
         }
         // Repeated CAS contention has not established refusal. Let the relay
-        // retry a Lark or WhatsApp click instead of acknowledging and dropping it.
+        // retry a native media, Lark or WhatsApp click instead of dropping it.
         Err(
-            if data.starts_with("cl1:")
+            if retry_contention
+                || data.starts_with("cl1:")
                 || data.starts_with("clf1:")
                 || data.starts_with("cw1b:")
                 || data.starts_with("cw1l:")
@@ -247,9 +256,14 @@ impl InteractionStore {
         .await
         .map(|(result, time, card)| {
             let owner = card
-                .native_whatsapp
+                .native_telegram_media
                 .as_ref()
-                .map(|authority| authority.owner.clone())
+                .map(|a| a.owner.clone())
+                .or_else(|| {
+                    card.native_whatsapp
+                        .as_ref()
+                        .map(|authority| authority.owner.clone())
+                })
                 .or_else(|| {
                     card.lark
                         .as_ref()
