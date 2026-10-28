@@ -30,6 +30,9 @@ pub struct ContextArguments {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyArguments {
+    /// Exact Ready preparation selector for native WhatsApp Forms only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form_preparation_ref: Option<String>,
     pub event_ref: String,
     pub message: OutboundMessage,
     /// Stable operation ID for durable routed replies; reuse on retries, change for a new send.
@@ -39,6 +42,10 @@ pub struct ReplyArguments {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateArguments {
+    /// Required only for native_media_update. Omitted for compatible legacy updates.
+    #[serde(default)]
+    #[schema(min_length = 1, max_length = 128, pattern = "^[!-~]+$")]
+    pub idempotency_key: Option<String>,
     pub event_ref: String,
     pub message_ref: MessageRef,
     pub message: OutboundMessage,
@@ -78,7 +85,7 @@ pub(super) struct ToolSpec {
 const TOOLS: [ToolSpec; 4] = [
     ToolSpec {
         name: "replyToEvent",
-        description: "Send a message in reply to an event. For durable routed events, supply an idempotency_key of 1–128 visible ASCII bytes: keep the same key and message when retrying, and use a new key for a new send, even when its content is identical. Reusing a key with different content is refused. Never change the key to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior.",
+        description: "Send a message in reply to an event. For durable routed events, supply an idempotency_key of 1–128 visible ASCII bytes: keep the same key and message when retrying, and use a new key for a new send, even when its content is identical. Reusing a key with different content is refused. Never change the key to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior. Native WhatsApp Forms require prepareFormReply, a ready form_preparation_ref and a stable commit key; send the exact prepared message. Ready preparation has not sent a customer message.",
         schema: "ReplyArguments",
         read_only: false,
         destructive: false,
@@ -87,7 +94,7 @@ const TOOLS: [ToolSpec; 4] = [
     },
     ToolSpec {
         name: "updateMessage",
-        description: "Update a confirmed message when its transport supports edits.",
+        description: "Update a confirmed message when its transport supports edits. For native_media_update, require explicit media-edit reference authority and an idempotency_key; keep the same key and patch on retry, and never change keys after an unknown outcome. Caption means visible Telegram caption or Discord attachment alt text; text means visible Discord content.",
         schema: "UpdateArguments",
         read_only: false,
         destructive: true,
@@ -198,15 +205,24 @@ pub async fn call(
     if name == ATTACHMENT_TOOL.name {
         return read_attachment(state, caller, arguments).await;
     }
+    if super::history::handles(name) {
+        return super::history::call(state, caller, arguments).await;
+    }
+    if super::threads::handles(name) {
+        return super::threads::call(state, caller, name, arguments).await;
+    }
     if super::message_effects::handles(name) {
         return super::message_effects::call(state, caller, name, arguments).await;
+    }
+    if super::form_preparation::handles(name) {
+        return super::form_preparation::call(state, caller, name, arguments).await;
     }
     let value = match name {
         "replyToEvent" => {
             let args: ReplyArguments = serde_json::from_value(arguments).map_err(|_| invalid())?;
             serde_json::to_value(
                 state
-                    .reply_with_idempotency(caller, &event_ref(&args.event_ref)?, args.message, args.idempotency_key.as_deref())
+                    .reply_with_preparation(caller, &event_ref(&args.event_ref)?, args.message, args.idempotency_key.as_deref(), args.form_preparation_ref.as_deref())
                     .await?,
             )
         }
@@ -226,7 +242,7 @@ pub async fn call(
             }
             serde_json::to_value(
                 state
-                    .update(caller, &args.message_ref, args.message)
+                    .update_with_idempotency(caller, &args.message_ref, args.message, args.idempotency_key.as_deref())
                     .await?,
             )
         }

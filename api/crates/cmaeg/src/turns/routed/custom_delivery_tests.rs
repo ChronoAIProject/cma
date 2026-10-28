@@ -685,7 +685,7 @@ async fn sync_tools_never_return_unsupported_after_a_local_side_effect() {
             caller,
             &current,
             &origin,
-            message,
+            *message,
             false,
             Some("sync-tool-fixture"),
         );

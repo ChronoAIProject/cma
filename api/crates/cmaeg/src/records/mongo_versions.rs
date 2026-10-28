@@ -55,7 +55,13 @@ impl MongoRecords {
             seen[index] = true;
             let live = match (self.kind, row.expires_at) {
                 (RecordKind::Interaction, Some(expiry)) => expiry > now,
-                (RecordKind::Channel | RecordKind::Connection, None) => true,
+                (
+                    RecordKind::Channel
+                    | RecordKind::Connection
+                    | RecordKind::ThreadFence
+                    | RecordKind::WhatsappFlow,
+                    None,
+                ) => true,
                 _ => return Err(invalid()),
             };
             if live {

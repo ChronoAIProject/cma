@@ -10,6 +10,9 @@ pub(crate) mod connections_ui;
 pub mod creation;
 pub(crate) mod docs;
 pub mod events;
+pub mod form_preparation;
+
+pub mod history;
 pub(crate) mod html;
 pub mod management;
 mod management_responses;
@@ -26,6 +29,7 @@ pub mod relay_resource_connections;
 pub mod reply_targets;
 pub mod schema;
 pub mod telegram;
+pub mod threads;
 pub mod tools;
 pub mod whatsapp;
 

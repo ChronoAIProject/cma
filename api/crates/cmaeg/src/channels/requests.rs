@@ -69,6 +69,9 @@ pub enum SourceRequest {
     NativeLark(cmaeg_core::channel::NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
+        /// Owner consent to create and publish managed static native Flow assets.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        forms_enabled: bool,
         /// Explicit existing group IDs; empty keeps private-only behavior.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[schema(max_items = 16)]
@@ -97,6 +100,12 @@ pub enum SourceRequest {
         /// Allow an admitted consumer to read up to 20 earlier messages in its exact thread.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         thread_history: bool,
+        /// Explicit opt-in to bounded native Discord thread lifecycle operations.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_lifecycle: bool,
+        /// Explicit read-only pagination within the original admitted conversation.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        conversation_history: bool,
         admission: AdmissionPolicy,
     },
     NyxidRelay {

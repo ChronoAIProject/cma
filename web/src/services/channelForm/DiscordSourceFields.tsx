@@ -81,6 +81,51 @@ export function DiscordSourceFields({
             </p>
           </>
         ) : null}
+        {discovery.authoring?.native_discord_thread_lifecycle_enabled === true ||
+        value.thread_lifecycle === true ? (
+          <>
+            <Toggle
+              label="Manage threads from incoming messages"
+              value={value.thread_lifecycle === true}
+              disabled={
+                discovery.authoring?.native_discord_thread_lifecycle_enabled !== true &&
+                value.thread_lifecycle !== true
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'thread_lifecycle', enabled ? true : undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Allow agents to create public threads from incoming server messages, list public
+              threads in the same parent channel, and archive, reopen, join or leave those exact
+              threads as the bot. Messages already in a thread stay within that thread. Discord
+              permissions still apply. Private thread creation and forum posts are not supported.
+            </p>
+          </>
+        ) : null}
+        {discovery.authoring?.native_discord_conversation_history_enabled === true ||
+        value.conversation_history === true ? (
+          <>
+            <Toggle
+              label="Read earlier conversation messages"
+              value={value.conversation_history === true}
+              disabled={
+                discovery.authoring?.native_discord_conversation_history_enabled !== true &&
+                value.conversation_history !== true
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'conversation_history', enabled ? true : undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Allow agents to page backward through earlier messages from other participants and
+              bots in the exact conversation that received a new human message. Includes text and
+              attachment details, without file downloads. Threads stay within that thread. Discord
+              permissions and content access can limit results; this does not provide a complete
+              archive. Applies only to new messages received after enabling this option.
+            </p>
+          </>
+        ) : null}
         {discovery.authoring?.native_discord_thread_history_enabled === true ||
         value.thread_history === true ? (
           <>

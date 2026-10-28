@@ -67,4 +67,15 @@ pub(crate) fn project(
         capabilities.edit = true;
         capabilities.message_effects = Some(super::MessageEffectsCapabilities::new(true, None));
     }
+    if let Some(native) = &state.native_lark_effects {
+        crate::interactions::native_lark::project(
+            capabilities,
+            channel,
+            event,
+            activity,
+            verified,
+            native.controls_issuance_enabled,
+            native.forms_issuance_enabled,
+        );
+    }
 }

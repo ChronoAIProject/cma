@@ -15,6 +15,7 @@ mod components_restore_tests;
 #[cfg(test)]
 mod components_tests;
 pub(crate) mod facts;
+pub(crate) mod history_authority;
 pub mod inbox_dispatch;
 mod inbox_reader;
 mod inbox_scan;
@@ -36,6 +37,7 @@ mod runtime_source;
 pub mod selection;
 mod source_discovery;
 mod source_worker;
+pub(crate) mod thread_authority;
 mod thread_context;
 pub use inbox_reader::{InboxLaunch, InboxReader, VerifiedInboxLaunch};
 pub(crate) mod outbound_media;

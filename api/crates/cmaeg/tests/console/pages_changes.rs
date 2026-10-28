@@ -121,12 +121,14 @@ impl SourceChanges for RecordingSources {
                     waba_id,
                     phone_number_id,
                     group_ids,
+                    forms_enabled,
                     admission,
                 } => Source::Whatsapp {
                     app_id,
                     waba_id,
                     phone_number_id,
                     group_ids,
+                    forms_enabled,
                     admission,
                 },
                 SourceRequest::Telegram { bot_id, .. } if bot_id == "refuse" => {
@@ -152,11 +154,15 @@ impl SourceChanges for RecordingSources {
                     bot_id,
                     intents,
                     thread_history,
+                    thread_lifecycle,
+                    conversation_history,
                     admission,
                 } => Source::Discord {
                     bot_id,
                     intents,
                     thread_history,
+                    thread_lifecycle,
+                    conversation_history,
                     admission,
                 },
                 SourceRequest::NyxidRelay {
