@@ -16,7 +16,17 @@ impl Sandbox {
     ) -> Result<Self, SandboxModelError> {
         let invalid = || SandboxModelError::invalid_value("sandbox.unpublished_runtime_recovery");
         let mut next = self.clone();
-        let previous = next.runtime.take().ok_or_else(invalid)?;
+        let previous = next
+            .runtime
+            .take()
+            .or_else(|| {
+                self.unpublished_recovery_binding()
+                    .filter(|_| {
+                        agents.is_empty() && proof.boot_id.is_none() && proof.runtime_process_absent
+                    })
+                    .cloned()
+            })
+            .ok_or_else(invalid)?;
         let resume_pause = next
             .retained_home_recovery()
             .and_then(|source| source.resume_pause.clone());
@@ -37,11 +47,11 @@ impl Sandbox {
             quiescence: None,
         }));
         next.lifecycle.unpublished_recovery_attempted = true;
-        next.lifecycle
-            .home_recovery
-            .as_mut()
-            .ok_or_else(invalid)?
-            .resume_pause = resume_pause;
+        let source = next.lifecycle.home_recovery.as_mut().ok_or_else(invalid)?;
+        // A prior uncompleted reservation can be above the exact provider source.
+        // Keep that high-water fence while retaining the proved original binding.
+        source.source_generation = proof.runtime_generation;
+        source.resume_pause = resume_pause;
         // This narrowly admitted transition is independent of ordinary Failed
         // eligibility. It never broadens begin_revive or the general status graph.
         next.status = SandboxStatus::Rotating;

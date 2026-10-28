@@ -230,6 +230,22 @@ async fn nonexecuting_final_verification_rejects_restart_and_replacement() {
                 .is_err(),
             "{pointer}"
         );
+        assert!(
+            bound
+                .backend
+                .suspend_nonexecuting_runtime(&bound.runtime, &bound.request, &home, &proof,)
+                .await
+                .is_err(),
+            "{pointer}"
+        );
+        assert!(bound
+            .fixture
+            .state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .all(|(method, _)| method.starts_with("GET ")));
     }
 }
 
@@ -394,4 +410,57 @@ async fn nonexecuting_proof_accepts_api_omitted_empty_fields_and_false_mount_def
         .await
         .unwrap()
         .is_some());
+}
+
+#[tokio::test]
+async fn nonexecuting_suspension_uses_observed_cas_and_keeps_original_home() {
+    let (bound, home) = crashed().await;
+    let proof = bound
+        .backend
+        .inspect_nonexecuting_runtime(&bound.runtime, &bound.request, &home)
+        .await
+        .unwrap()
+        .unwrap();
+    let before = bound.fixture.state.lock().unwrap().rows[VOLUME].clone();
+    let controller = async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                {
+                    let mut state = bound.fixture.state.lock().unwrap();
+                    if state.rows[MEMBER]["spec"]["operatingMode"] == "Suspended" {
+                        state.rows.remove(POD);
+                        break;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+    };
+    let (result, ()) = tokio::join!(
+        bound
+            .backend
+            .suspend_nonexecuting_runtime(&bound.runtime, &bound.request, &home, &proof),
+        controller,
+    );
+    result.unwrap();
+    let state = bound.fixture.state.lock().unwrap();
+    let changes: Vec<_> = state
+        .calls
+        .iter()
+        .filter(|(method, _)| !method.starts_with("GET "))
+        .collect();
+    assert_eq!(changes.len(), 1);
+    assert!(changes[0].0.starts_with("PATCH "));
+    assert_eq!(
+        changes[0].1["metadata"]["resourceVersion"],
+        proof.sandbox_resource_version
+    );
+    assert_eq!(changes[0].1["spec"], json!({"operatingMode":"Suspended"}));
+    assert_eq!(state.rows[VOLUME], before);
+    assert!(!state
+        .calls
+        .iter()
+        .any(|(method, _)| method.contains("/exec")));
 }

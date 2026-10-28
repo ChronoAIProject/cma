@@ -72,14 +72,18 @@ fn request(snapshot: SandboxUnpublishedRecoverySnapshot) -> SandboxUnpublishedRe
             sandbox_id: snapshot.sandbox.id.clone(),
             runtime_id: snapshot
                 .sandbox
-                .runtime
-                .as_ref()
+                .unpublished_recovery_binding()
                 .unwrap()
                 .runtime_id
                 .clone(),
             runtime_generation: snapshot.runtime_generation().unwrap(),
             home_identity: snapshot.home_identity().unwrap(),
-            boot_id: snapshot.sandbox.runtime.as_ref().unwrap().boot_id.clone(),
+            boot_id: snapshot
+                .sandbox
+                .unpublished_recovery_binding()
+                .unwrap()
+                .boot_id
+                .clone(),
             runtime_process_absent: false,
             requires_native_quiescence: true,
             provider_plan: serde_json::json!({"inspection": "test-process-snapshot"}),
@@ -247,7 +251,9 @@ fn quiescence(sandbox: &Sandbox) -> SandboxUnpublishedRecoveryQuiescence {
     let proof = &recovery.proof;
     let mut conversations = proof.conversations.clone();
     // Graceful completion may append a final output/turn-aborted record.
-    conversations[0].history_sha256 = "a".repeat(64);
+    if let Some(conversation) = conversations.first_mut() {
+        conversation.history_sha256 = "a".repeat(64);
+    }
     SandboxUnpublishedRecoveryQuiescence {
         operation_id: recovery.operation_id.clone(),
         runtime_id: proof.runtime_id.clone(),
@@ -477,4 +483,140 @@ fn existing_owner_revive_and_active_runtime_update_eligibility_are_unchanged() {
         .request_runtime_update("image-v3".into(), false, NOW.into())
         .unwrap());
     assert_eq!(active.status, SandboxStatus::Active);
+}
+
+fn stalled_revival() -> SandboxUnpublishedRecoverySnapshot {
+    let mut sandbox = native();
+    sandbox.recover_runtime_loss(&[], true, NOW.into()).unwrap();
+    let source = sandbox.retained_home_recovery().unwrap().clone();
+    let fence = sandbox.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    sandbox
+        .complete_lifecycle_home_verification(&source, HOLDER, fence, NOW.into())
+        .unwrap();
+    let fence = sandbox.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    sandbox
+        .reserve_lifecycle_runtime_generation(2, HOLDER, fence, NOW.into())
+        .unwrap();
+    let fence = sandbox.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    sandbox
+        .retry_lifecycle(NOW.into(), HOLDER, fence, NOW.into())
+        .unwrap();
+    SandboxUnpublishedRecoverySnapshot {
+        sandbox,
+        agents: vec![],
+        workspaces: vec![],
+    }
+}
+
+#[test]
+fn no_agent_stalled_revival_preserves_source_and_reservation_high_water() {
+    let held = stalled_revival();
+    held.validate().unwrap();
+    assert_eq!(held.runtime_generation().unwrap(), 1);
+    assert_eq!(held.sandbox.lifecycle.runtime_generation_high_water, 2);
+    let mut request = request(held.clone());
+    assert!(apply_unpublished_runtime_recovery(&held, &request).is_err());
+    request.proof.boot_id = None;
+    request.proof.runtime_process_absent = true;
+    let mut after = apply_unpublished_runtime_recovery(&held, &request)
+        .unwrap()
+        .sandbox;
+    assert_eq!(
+        after.lifecycle.suspended_runtime,
+        held.sandbox.lifecycle.suspended_runtime
+    );
+    assert_eq!(after.lifecycle.home, held.sandbox.lifecycle.home);
+    assert_eq!(after.retained_home_recovery().unwrap().source_generation, 1);
+    assert_eq!(after.lifecycle.runtime_generation_high_water, 2);
+    assert!(after.lifecycle.runtime_provision.is_none());
+    let receipt = quiescence(&after);
+    let fence = after.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    after
+        .complete_unpublished_runtime_quiescence(receipt, HOLDER, fence, NOW.into())
+        .unwrap();
+    let source = after.retained_home_recovery().unwrap().clone();
+    let fence = after.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    after
+        .complete_lifecycle_home_verification(&source, HOLDER, fence, NOW.into())
+        .unwrap();
+    let fence = after.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    assert_eq!(
+        after
+            .reserve_lifecycle_runtime_generation(2, HOLDER, fence, NOW.into())
+            .unwrap(),
+        3
+    );
+}
+
+#[test]
+fn stalled_revival_refuses_any_agent_lease_missing_source_or_unproved_absence() {
+    let held = stalled_revival();
+    for deleted in [false, true] {
+        let mut changed = held.clone();
+        let mut child = agent("agt_never_ignore", "original", 0);
+        if deleted {
+            child.status = AgentStatus::Deleted;
+        }
+        changed.agents.push(child);
+        assert!(changed.validate().is_err());
+    }
+    let mut leased = held.clone();
+    leased
+        .sandbox
+        .work
+        .claim(HOLDER.into(), NOW, END.into())
+        .unwrap();
+    assert!(leased.validate().is_err());
+    let mut missing = held.clone();
+    missing.sandbox.lifecycle.suspended_runtime = None;
+    assert!(missing.validate().is_err());
+    let mut request = request(held.clone());
+    request.proof.boot_id = None;
+    assert!(apply_unpublished_runtime_recovery(&held, &request).is_err());
+    request.proof.runtime_process_absent = true;
+    request.proof.runtime_generation = 2;
+    assert!(apply_unpublished_runtime_recovery(&held, &request).is_err());
+}
+
+#[test]
+fn no_agent_receipt_transaction_rechecks_complete_agent_set() {
+    use crate::sandbox::store::{
+        validate_lifecycle_mutation, SandboxLifecycleAgentScope, SandboxLifecycleMutation,
+        SandboxMutationGuard,
+    };
+    let held = stalled_revival();
+    let mut request = request(held.clone());
+    request.proof.boot_id = None;
+    request.proof.runtime_process_absent = true;
+    let mut current = apply_unpublished_runtime_recovery(&held, &request)
+        .unwrap()
+        .sandbox;
+    let fence = current.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    let receipt = quiescence(&current);
+    let mut next = current.clone();
+    next.complete_unpublished_runtime_quiescence(receipt.clone(), HOLDER, fence, NOW.into())
+        .unwrap();
+    let mutation = SandboxLifecycleMutation {
+        guard: SandboxMutationGuard::capture(&current),
+        sandbox: next,
+        agents: vec![],
+        agent_scope: SandboxLifecycleAgentScope::Touched,
+        appended_at: NOW.into(),
+        events: vec![
+            SandboxEventKind::RuntimeRecoveryQuiesced {
+                receipt: Box::new(receipt),
+            },
+            SandboxEventKind::WorkStepCompleted {
+                step: SandboxWorkStep::RunLifecycleOperation,
+            },
+        ],
+    };
+    validate_lifecycle_mutation(&current, &[], &mutation).unwrap();
+    for deleted in [false, true] {
+        let mut added = agent("agt_arrived_after_admission", "old-conversation", 0);
+        if deleted {
+            added.status = AgentStatus::Deleted;
+        }
+        assert!(validate_lifecycle_mutation(&current, &[(added, 0)], &mutation).is_err());
+    }
 }
