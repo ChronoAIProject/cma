@@ -1047,6 +1047,9 @@ message text instead of an attachment caption. Content/control edits retain the
 confirmed image; binary replacement, image removal and forms are not supported.
 The optional `kinds` field remains absent for older responses. See
 [native Lark image controls](../../../docs/CMAEG_Native_Lark_Image_Controls.md).
+The additional multi-image gate can raise `controls.max_attachments` to `4`;
+check discovery before combining two to four PNG/JPEG images with controls.
+Content/control edits preserve every confirmed image in its original order.
 
 ### Native Lark / Feishu thread starts
 

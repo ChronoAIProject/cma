@@ -7,6 +7,10 @@ impl RelayClient {
         self.native_lark_thread_start = enabled;
         self
     }
+    pub fn with_native_lark_multi_image_controls(mut self, enabled: bool) -> Self {
+        self.native_lark_multi_image_controls = enabled;
+        self
+    }
     pub fn with_native_lark_media_controls(mut self, enabled: bool) -> Self {
         self.native_lark_media_controls = enabled;
         self
