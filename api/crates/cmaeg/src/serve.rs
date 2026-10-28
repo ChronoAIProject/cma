@@ -247,7 +247,10 @@ pub(crate) async fn serve(
             .native_lark_conversation_history_enabled
             .then(|| {
                 crate::native_lark::Client::history_reader().map(|api| {
-                    std::sync::Arc::new(crate::tools::NativeLarkConversationHistory::new(api))
+                    std::sync::Arc::new(crate::tools::NativeLarkConversationHistory::new(
+                        api,
+                        config.native_lark_mixed_history_enabled,
+                    ))
                 })
             })
             .transpose()?,

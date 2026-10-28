@@ -278,6 +278,7 @@ impl Fixture {
                 native_lark::Client::history_reader()
                     .unwrap()
                     .with_transport(api.clone()),
+                false,
             )));
         Self {
             app,

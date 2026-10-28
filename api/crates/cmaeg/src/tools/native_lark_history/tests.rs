@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 #[path = "fixture.rs"]
 mod fixture;
+#[path = "mixed.rs"]
+mod mixed;
 use fixture::{row, Fixture};
 fn cursor(page: ConversationHistoryPage) -> HistoryCursor {
     let HistoryContinuation::MoreVisibleRows { cursor } = page.continuation else {
