@@ -255,7 +255,13 @@ impl ToolsState {
                 .payload;
             if matches!(event.reply, ReplyAddress::Telegram { .. }) {
                 return self
-                    .manage_telegram_topic(caller, event, request.action, key)
+                    .manage_telegram_topic(
+                        caller,
+                        event,
+                        request.action,
+                        request.name.as_deref(),
+                        key,
+                    )
                     .await;
             }
         }
