@@ -35,6 +35,15 @@ impl IngressState {
         let mut retained = None;
         let mut outbound = None;
         let mut author = None;
+        if let Content::Edit { target, .. } | Content::Revoke { target } = &verified.message.content
+        {
+            let original = match self.whatsapp_change_original(&verified, target, now).await {
+                Ok(original) => original,
+                Err(outcome) => return outcome,
+            };
+            author = Some(original.activity.actor.clone());
+            retained = Some(original);
+        }
         if let Content::Reaction { target, .. } = &verified.message.content {
             let target_event = match webhook::event_id(&verified.source, target) {
                 Ok(id) => id,
@@ -170,8 +179,20 @@ impl IngressState {
                 record_id: verified.channel.definition.record_id.clone(),
                 event_id: request.activity.event_id.clone(),
             };
-            let body = match routing.plans.load(&identity).await {
-                Ok(None) => {
+            let existing_plan = match routing.plans.load(&identity).await {
+                Ok(plan) => plan,
+                Err(_) => return refusal(503, "native_whatsapp_admission_unavailable"),
+            };
+            let existing = existing_plan.is_some();
+            let body = match existing_plan {
+                None => {
+                    if matches!(
+                        verified.message.content,
+                        Content::Edit { .. } | Content::Revoke { .. }
+                    ) && !self.native_whatsapp_message_events_enabled
+                    {
+                        return refusal(422, "native_whatsapp_message_events_disabled");
+                    }
                     if verified.message.group_id.is_some() && !self.native_whatsapp_groups_enabled {
                         return refusal(422, "native_whatsapp_groups_disabled");
                     }
@@ -182,7 +203,7 @@ impl IngressState {
                     }
                     verified.body.clone()
                 }
-                Ok(Some(existing)) => {
+                Some(existing) => {
                     let same = webhook::extract(&verified.source, &existing.source_body).is_ok_and(
                         |messages| messages.iter().any(|message| message == &verified.message),
                     );
@@ -191,8 +212,13 @@ impl IngressState {
                     }
                     existing.source_body
                 }
-                Err(_) => return refusal(503, "native_whatsapp_admission_unavailable"),
             };
+            if let Err(outcome) = self
+                .remember_whatsapp_original(&verified, existing, now)
+                .await
+            {
+                return outcome;
+            }
             let source = VerifiedIngress {
                 oversized: body.len() > MAX_SOURCE_BYTES,
                 body,
@@ -218,6 +244,8 @@ impl IngressState {
         refusal(409, "native_whatsapp_message_identity_conflict")
     }
 }
+#[path = "routed_whatsapp_changes.rs"]
+mod changes;
 #[path = "routed_whatsapp_control.rs"]
 mod control;
 fn refusal(status: u16, reason: &'static str) -> LaunchOutcome {

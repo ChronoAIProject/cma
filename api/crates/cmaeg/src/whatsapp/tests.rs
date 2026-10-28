@@ -15,6 +15,7 @@ use std::{
 
 pub(crate) fn source() -> Source {
     Source::Whatsapp {
+        message_events: false,
         forms_enabled: false,
         group_ids: vec![],
         app_id: "12345".into(),

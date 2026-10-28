@@ -12,6 +12,7 @@ text, separately gated [JPEG/PNG/document/audio/sticker/video replies](CMAEG_Nat
 and [approved-template replies](#approved-template-replies) through Graph API `v25.0`.
 Separate default-off authoring and issuance gates add [existing OBA group messaging](CMAEG_Native_WhatsApp_Groups.md) with explicit source group IDs, distinct original participants and group destinations, and conservative media/template subsets.
 A separate gate enables [own reactions to authenticated received messages](CMAEG_Native_WhatsApp_Reactions.md).
+Separate source consent and the default-off incoming-change gate enable [private text/caption edits and revokes for Business App coexistence accounts](CMAEG_Native_WhatsApp_Message_Events.md), bound to retained incoming messages.
 This does not establish complete WhatsApp support. Further video/audio/document profiles,
 outbound editing and connected Meta client
 acceptance remain required follow-ups. No production rollout, Meta app setting
