@@ -168,6 +168,17 @@
 .gateway-detail > header {
   padding: 24px 24px 0;
 }
+.gateway-detail--create {
+  padding: var(--space-6);
+}
+.gateway-detail--create > header {
+  padding: 0;
+}
+@media (max-width: 600px) {
+  .gateway-detail--create {
+    padding: var(--space-4);
+  }
+}
 
 .gateway-navigation .gateway-sidebar__heading {
   position: absolute;
