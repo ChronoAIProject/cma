@@ -62,7 +62,7 @@ it('shows directed routing motion, static tool associations, and accessible over
   expect(props.edges.find((edge) => edge.source === 'toolsets')).toMatchObject({
     target: 'agent',
     animated: false,
-    label: 'Catalog reference',
+    label: 'Tools',
   });
   expect(props.edges.find((edge) => edge.source === 'toolsets')?.markerEnd).toBeUndefined();
   expect(props.nodes.find((value) => value.id === 'toolsets')!.position.y).toBeGreaterThan(
