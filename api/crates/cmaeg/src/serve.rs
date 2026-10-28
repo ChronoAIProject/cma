@@ -111,9 +111,8 @@ pub(crate) async fn serve(
         state.native_whatsapp_forms_enabled && state.native_whatsapp_admission_enabled,
         state.native_whatsapp_flow_writes_enabled && state.native_whatsapp_admission_enabled,
     ));
-    let native_lark_controls = config.native_lark_controls_enabled
-        && config.native_lark_intake_enabled
-        && state.native_lark_admission_enabled;
+    let (native_lark_controls, native_lark_thread_start) =
+        source_settings::lark_issuance(&config, &state);
     let delivery_engine = delivery::engine::DeliveryEngine::start_observed(
         outcomes,
         state.master_keys.clone(),
@@ -142,6 +141,7 @@ pub(crate) async fn serve(
         )
         .with_native_lark_controls(native_lark_controls, config.native_lark_forms_enabled)
         .with_native_lark_media_controls(config.native_lark_media_controls_enabled)
+        .with_native_lark_thread_start(native_lark_thread_start)
         .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
@@ -308,6 +308,7 @@ pub(crate) async fn serve(
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         native_lark_outbound_media_enabled: config.native_lark_outbound_media_enabled,
+        native_lark_thread_start_enabled: native_lark_thread_start,
         native_lark_media_controls_enabled: config.native_lark_media_controls_enabled
             && native_lark_controls,
         native_whatsapp_outbound_media_enabled: config.native_whatsapp_outbound_media_enabled,
