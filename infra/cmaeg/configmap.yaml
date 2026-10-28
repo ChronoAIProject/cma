@@ -52,6 +52,7 @@ data:
   CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED: "false"
   # Native Lark/Feishu cards, buttons and choices are enabled for opted-in sources.
   CMAEG_NATIVE_LARK_CONTROLS_ENABLED: "true"
+  CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED: "false"
   # Native Lark/Feishu forms require the native controls gate and source consent.
   CMAEG_NATIVE_LARK_FORMS_ENABLED: "true"
   CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED: "true"

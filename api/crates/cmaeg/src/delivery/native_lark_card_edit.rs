@@ -51,11 +51,12 @@ impl Sender {
         {
             return unsupported();
         }
-        let Ok((_, rendering)) = interactions::native_lark::render(
+        let Ok((_, rendering)) = interactions::native_lark::render_with_image(
             message,
             &old.id,
             old.revision.saturating_add(1),
             a.form,
+            a.image.as_ref(),
         ) else {
             return unsupported();
         };
@@ -134,14 +135,7 @@ impl Sender {
             Ok(p) => p,
             Err(_) => return unsupported(),
         };
-        let rendering = interactions::native_lark::render(
-            message,
-            &prepared.card.id,
-            prepared.card.revision,
-            prepared.card.native_lark.as_ref().unwrap().form,
-        )
-        .unwrap()
-        .1;
+        let rendering = interactions::native_lark::markup(&prepared.card).unwrap().1;
         let rejected = || {
             refused(
                 rendering.clone(),

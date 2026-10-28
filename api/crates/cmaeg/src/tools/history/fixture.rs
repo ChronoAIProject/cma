@@ -300,6 +300,7 @@ impl App {
             consumer_interactions_enabled: false,
             native_media_enabled: false,
             native_lark_outbound_media_enabled: false,
+            native_lark_media_controls_enabled: false,
             native_whatsapp_outbound_media_enabled: false,
             native_whatsapp_templates_enabled: false,
             native_whatsapp_groups_enabled: false,

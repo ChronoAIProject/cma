@@ -4484,3 +4484,18 @@ replacement with controls, and references for every part of a multipart batch
 remain separate capabilities. Turning issuance off preserves already-issued
 callback readers; it is not permission to roll back to an image predating the
 media-card marker while such cards remain live.
+
+### Native Lark image/control cards
+
+The independent default-off `CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED` gate
+authorizes one confirmed PNG/JPEG image plus buttons/choices in the existing
+native JSON 2.0 card path. Discovery adds optional
+`native_media.controls.kinds: ["image"]`, `max_attachments: 1`,
+`caption_max_chars: 0` and `update: true`. Other ordinary media kinds are not
+combined-control capabilities. Exact app/chat/thread/source and consumer custody
+is checked before upload and again before the one card send. The compact image
+key is retained inside the existing encrypted card authority; attachment bytes
+and source URLs are not retained there. Existing content/control edits preserve
+the image, original lifetime and callback recovery; image replacement/removal and
+forms remain unsupported. Uncertain operations never issue a usable reference or
+fallback message. See [native image controls](CMAEG_Native_Lark_Image_Controls.md).
