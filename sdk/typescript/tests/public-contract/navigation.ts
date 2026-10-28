@@ -7,6 +7,7 @@ export const browserOperations = new Set([
   'GET /auth/logout',
   'GET /auth/callback',
   'GET /api/v1/triggers/public/{public_id}/open/{placement_id}',
+  'GET /api/v1/agents/{id}/desktop/ws',
 ]);
 
 /** Navigation URLs are SDK output; browser redirects and callback handling remain composition-only. */

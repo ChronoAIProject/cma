@@ -32,6 +32,13 @@ verifies those connections, repeat `create_lifecycle` with the original request
 and key to resume the same operation. `Failed` is terminal and includes a safe
 error when available.
 
+For a new desktop Sandbox, set `machine_included: true` and omit `image`.
+`agents().read(id).await?.desktop` reports its desktop capability. Call
+`agents().desktop(id).await?` to discover the same-origin `websocket_url`; your host
+WebSocket implementation carries binary RFB frames on that path using owner
+authentication. Browser connections require the exact CMA Origin, and one viewer
+may connect to a Sandbox at a time. Unavailable desktops return named API errors.
+
 Set `workspace_id: Some(existing_id)` to add an Agent to an owned, ready Workspace.
 Omit `image` and `repository` in this mode. The Agent inherits the existing
 Sandbox key scope; extra service scopes are refused and selecting a subset does

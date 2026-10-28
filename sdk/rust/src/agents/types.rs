@@ -436,3 +436,11 @@ pub struct AgentTurnUsage {
     /// Output tokens reported by the provider.
     pub output_tokens: u64,
 }
+
+/// Owner-authorized desktop discovery; the caller's WebSocket implementation
+/// opens this same-origin path and carries binary RFB frames.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AgentDesktopDescriptor {
+    /// Relative CMA WebSocket endpoint; requires owner authentication.
+    pub websocket_url: String,
+}
