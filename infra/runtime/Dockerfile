@@ -180,7 +180,7 @@ RUN apt-get update \
         xz-utils \
         zlib1g \
         zstd \
-    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation novnc openbox scrot x11vnc xdotool xvfb websockify; else test "${RUNTIME_DESKTOP}" = "0"; fi \
+    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation novnc openbox scrot wmctrl x11vnc xdotool xvfb websockify; else test "${RUNTIME_DESKTOP}" = "0"; fi \
     && git --version \
     && rm -rf /var/lib/apt/lists/*
 
@@ -336,6 +336,7 @@ COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 # supervisor.  noVNC is bound to loopback; CMA must relay it through the
 # authenticated control plane before a browser can reach the screen.
 COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /usr/local/bin/cma-desktop-session
+COPY infra/runtime/desktop-menu.xml /etc/xdg/openbox/menu.xml
 
 # Native SandboxTemplates use this same image as a non-root init container:
 # --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
@@ -360,6 +361,7 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
     && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs \
     && python3 /tmp/cma-codex-source/recovery_test.py \
+    && python3 /tmp/cma-codex-source/recovery_desktop_test.py \
     && node --test /tmp/cma-codex-source/recovery_native.test.cjs \
     && test ! -e /tmp/cma-checkpoints
 

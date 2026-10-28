@@ -9,9 +9,11 @@ resolves `CHRONO_MACHINE_SANDBOX_IMAGE`, records the immutable image and the
 `CMA_MACHINE_INCLUDED=1` marker in the Sandbox profile, and keeps the existing
 2,000 millicore / 8,192 MiB reservation. The option remains disabled when that
 image setting is empty. Only the image built with `RUNTIME_DESKTOP=1` installs
-Chromium, Xvfb, Openbox, x11vnc, websockify, scrot and xdotool. Its rootless desktop
+Chromium, Xvfb, Openbox, x11vnc, websockify, scrot, wmctrl and xdotool. Its rootless desktop
 starts on display `:99` before runtime readiness. Ports 5900 and 6080 bind to
 loopback; `/runtime/desktop` uses the supervisor's control authentication.
+Closing Chromium keeps the desktop alive; its right-click menu reopens the same
+browser profile at `~/.cma/chrome`.
 
 The public owner-authenticated `GET /api/v1/agents/{id}/desktop` returns the
 WebSocket URL. `/desktop/ws` opens a bounded runtime connection before upgrading,
@@ -43,18 +45,24 @@ authenticated framebuffer transfer, and subsequent user input in the same
 browser. This is tool execution evidence, not a live model task or production
 provider acceptance. The image must pass that check and a disposable production
 Sandbox demonstration before enabling its immutable digest. Audio and video
-playback are outside this prototype. The strict native recovery inspector
-currently rejects the desktop background services as unowned processes. That
-special recovery path needs explicit service ownership and execution evidence;
-its checks must not be relaxed to accept arbitrary background processes.
-Retained Chromium profile recovery also remains an acceptance item.
+playback are outside this prototype. The desktop launcher owns a separate
+session and is a Linux child subreaper, so detached browser helpers stay in its
+process tree. Recovery admits only the source-pinned launcher directly under
+the runtime and its descendants, rechecks the launcher identity, and continues
+to reject unrelated processes. Unit checks cover replacement/refusal cases;
+the Linux image must also exercise this against real Chromium processes.
+Acceptance closes the browser without losing the display, restarts the runtime
+with its retained home, and checks Chromium localStorage through the browser.
 
-Actions run `40732463842` built and scanned the desktop image successfully, then
-failed before runtime readiness. Its logs did not retain the underlying desktop
-startup error. The follow-up captures startup diagnostics; the click/type,
-screenshot and shared user-input acceptance has not passed yet. The deployment
-image setting remains empty while these checks and lifecycle acceptance are
-incomplete.
+Actions run `40737301164` established the earlier startup failure: Docker's
+default seccomp policy denied Chromium's namespace sandbox. A disposable probe
+in the production `kata-clh` runtime successfully created nested user and network
+namespaces with the production non-root policy; that probe was removed. CI uses
+a hash-pinned Moby default profile with only Chromium's user/PID/network namespace
+creation and chroot added. Chromium's sandbox stays enabled; the acceptance
+requires a renderer with PID namespace and seccomp isolation. The latest Linux
+image qualification and shared-display acceptance are still pending. The
+deployment image setting remains empty until those checks pass.
 
 The Sandbox/Agent implementation requires runtime contract **3**, declared by
 the image label `dev.chrono.cma.runtime-contract`. The control plane provisions
