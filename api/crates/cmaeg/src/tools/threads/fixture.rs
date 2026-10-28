@@ -276,6 +276,7 @@ impl App {
             native_media_edits: None,
             native_lark_conversation_history: None,
             discord_conversation_history: None,
+            telegram_topics: None,
             discord_threads: Some(Arc::new(DiscordThreads::new(DiscordRest::fixture(
                 &format!("{platform_base}/api/v10/"),
             )))),

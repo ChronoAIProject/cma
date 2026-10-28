@@ -45,6 +45,8 @@ impl CreateThreadRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadAction {
+    /// Close an admitted Telegram forum topic; never a Discord archive alias.
+    Close,
     Archive,
     Reopen,
     Join,
@@ -122,5 +124,20 @@ pub struct ThreadCapabilities {
     pub list: ThreadListScope,
     pub manage_original_thread: bool,
     pub actions: Vec<ThreadAction>,
+    pub expires_at: i64,
+}
+
+/// Telegram forum-topic scope only; this grants no listing or creation authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TopicAction {
+    Close,
+    Reopen,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TopicLifecycleCapabilities {
+    pub manage_original_topic: bool,
+    pub actions: Vec<TopicAction>,
     pub expires_at: i64,
 }
