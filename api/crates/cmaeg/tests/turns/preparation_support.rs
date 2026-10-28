@@ -356,6 +356,7 @@ pub fn message(attachments: Vec<Attachment>) -> ActivityKind {
         attachments,
         mentions_bot: true,
         reply_to: None,
+        quoted_message: None,
         album_id: None,
     }
 }

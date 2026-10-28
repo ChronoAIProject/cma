@@ -18,6 +18,9 @@ pub struct ActivityPage {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ChannelActivity {
     pub event_id: String,
+    /// Availability only: this metadata feed never copies quoted text or IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted_context: Option<QuotedContextSummary>,
     /// Payload category only; message text and event data are never copied here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
@@ -35,6 +38,35 @@ pub struct ChannelActivity {
     /// Gateway receive timestamp, persisted before provider launch.
     pub received_at: String,
     pub consumers: Vec<ActivityConsumer>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct QuotedContextSummary {
+    pub relation: cmaeg_core::activity::QuoteRelation,
+    pub text_available: bool,
+    pub text_truncated: bool,
+    pub content_kinds: Vec<cmaeg_core::activity::QuotedContentKind>,
+}
+impl QuotedContextSummary {
+    pub fn from_activity(activity: &cmaeg_core::activity::Activity) -> Option<Self> {
+        let cmaeg_core::activity::ActivityKind::Message {
+            quoted_message: Some(quote),
+            ..
+        } = &activity.kind
+        else {
+            return None;
+        };
+        let text = quote.content.as_ref().and_then(|c| c.text.as_ref());
+        Some(Self {
+            relation: quote.relation,
+            text_available: text.is_some(),
+            text_truncated: text.is_some_and(|t| t.truncated),
+            content_kinds: quote
+                .content
+                .as_ref()
+                .map_or_else(Vec::new, |c| c.kinds.clone()),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]

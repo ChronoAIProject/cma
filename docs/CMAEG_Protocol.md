@@ -1449,13 +1449,38 @@ Keepalive comments are not events. A slow consumer receives terminal
 There is no durable replay or Last-Event-ID contract. Disconnect removes the
 waiter without cancelling the admitted turn.
 
-On the durable routed lane, repeating an already-admitted event with
+On both the durable routed lane and legacy Custom ingress using the verified
+`cma_codex` provider, repeating an already-admitted event with
 `?mode=stream` returns the normal 202 accepted JSON body when the current request
 does not own the original primary waiter. This includes concurrent duplicate
 requests and retrying an event first submitted asynchronously. It does not
 start another provider turn, replace the original waiter, or promise replay.
 Only the request whose waiter was retained by the winning admission receives
-the live 200 SSE response.
+the live 200 SSE response. If the acceptance budget expires before this waiter
+is confirmed, the request returns 202 JSON and releases its waiter; pending
+admission and provider work continue. It does not open an unowned stream that
+could remain empty when a concurrent duplicate is resolved.
+
+Legacy Custom retries using `cma_codex` read the provider's original admitted event under the
+channel's current credential before starting work. Missing CloudEvent `time`
+retains the original generated timestamp; an explicit time, source, subject,
+extensions, data and extracted attachments must still match exactly. Changed
+content under the same event ID returns 409 `conflict`. A concurrent first
+delivery that loses provider admission performs the same retained-context check.
+Retries never send a second result webhook or replace the original response.
+401 and 403 from the authority check remain distinct; a failed lookup cannot
+authorize a new turn.
+This additional lookup is not required of legacy Nyxbot or other providers:
+their original direct submission behavior remains available because the
+event-context reader is an optional extension and has not been verified there.
+
+After losing a live sync response, an authorized channel owner can read
+`GET /v1/channels/{channel_id}/activity`, find the original event's consumer
+`response_id`, and retrieve its retained output from CMA's public
+`GET /api/v2/responses/{response_id}`. Custom producer ingress credentials alone
+do not grant owner reads. Consumers requiring unattended durable results should
+configure the result webhook sink; repeated sync requests acknowledge admission
+and do not replay historical SSE frames.
 
 A `{type:"result_webhook",url,hmac_key_id}` sink receives structured CloudEvents
 of type `cmaeg.response.message`, `cmaeg.response.completed` or
@@ -1516,7 +1541,7 @@ Activity kind is one of:
 
 | Type | Fields |
 | --- | --- |
-| `message` | `text,mentions_bot,reply_to?,album_id?,attachments` (default `[]`) |
+| `message` | `text,mentions_bot,reply_to?,quoted_message?,album_id?,attachments` (default `[]`) |
 | `interaction` | `block_id,action_id,values` (default `{}`) |
 | `command` | `name,args` |
 | `event` | `ce`, the complete CloudEvent, and `attachments` (omitted when empty) |
@@ -1525,6 +1550,26 @@ A message's `text` is NyxID's `content.text`, except for a Lark or Feishu
 rich-text post: NyxID relays a post without text, so its `text` is derived by
 the observer from the authenticated raw event, which the callback JWT binds
 through `body_sha256` (§6).
+
+Native ordinary messages may additionally expose `quoted_message` with
+`relation` (`reply` or `context`), a source-scoped `message_id`, and optional
+payload-supplied `content`. Telegram and Discord preserve bounded text and
+descriptive content kinds from an authenticated same-conversation parent;
+Lark/Feishu preserves the parent ID, and private WhatsApp preserves a plain
+context ID without asserting that every context is a reply. Text is at most
+4096 UTF-8 bytes, with an explicit origin and truncation flag. No original-message
+fetch, download locator or actionable `MessageRef` is created. Quote data cannot
+change current text, actor, routing, partition, expiry or the outgoing reply target.
+It is untrusted reference data in provider input and authenticated event context.
+The recent Activity feed exposes only optional `quoted_context` availability,
+truncation and content-kind metadata, without quote text or parent IDs.
+
+The independent `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED` writer gate defaults to
+false. Compatible Gateway, provider, SDK and rollback readers must precede
+activation. Durable admissions and Discord inboxes pin their original quote
+projection so retries never upgrade legacy events or change accepted context
+when the gate changes. Exact source restrictions, field semantics and reader
+requirements are defined by the [native quoted-message contract](CMAEG_Native_Quoted_Context.md).
 
 Messages of one platform media group, such as a Telegram album, share
 `album_id` (1..=128 bytes, with the `filename` character rule below). Each item

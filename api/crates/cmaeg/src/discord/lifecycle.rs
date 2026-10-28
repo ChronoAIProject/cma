@@ -139,6 +139,7 @@ impl Worker {
             keys: keys.clone(),
             resolver: ingress.resolver.clone(),
             api: DiscordApi::new()?
+                .with_quoted_context(routing.quoted_context_enabled)
                 .with_thread_metadata(thread_metadata)
                 .with_reactions(
                     crate::config::discord_reactions_from_env()

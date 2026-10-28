@@ -12,11 +12,18 @@ impl SandboxUnpublishedRecoverySnapshot {
         &self,
     ) -> Result<Option<&SandboxRuntimeProvisionReservation>, SandboxStoreError> {
         self.validate()?;
-        Ok(self
-            .sandbox
-            .stalled_unpublished_revival()
-            .then_some(self.sandbox.lifecycle.runtime_provision.as_ref())
-            .flatten())
+        Ok(if self.sandbox.failed_unpublished_provision() {
+            self.sandbox
+                .lifecycle
+                .failed_provision
+                .as_ref()
+                .map(|failed| &failed.reservation)
+        } else {
+            self.sandbox
+                .stalled_unpublished_revival()
+                .then_some(self.sandbox.lifecycle.runtime_provision.as_ref())
+                .flatten()
+        })
     }
 }
 
@@ -25,6 +32,7 @@ impl SandboxUnpublishedRecoveryProof {
         &self,
         snapshot: &SandboxUnpublishedRecoverySnapshot,
     ) -> Result<(), SandboxStoreError> {
+        self.validate_observed_provision(snapshot)?;
         if let Some(reservation) = &self.reserved_provision {
             if snapshot.recovery_provision_reservation()? != Some(reservation)
                 || !snapshot.agents.is_empty()
@@ -47,6 +55,7 @@ impl SandboxUnpublishedRecoveryState {
         &self,
         sandbox: &Sandbox,
     ) -> Result<(), SandboxModelError> {
+        self.validate_observed_provision_for(sandbox)?;
         let Some(reservation) = &self.proof.reserved_provision else {
             return Ok(());
         };

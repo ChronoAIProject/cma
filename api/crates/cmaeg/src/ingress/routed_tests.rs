@@ -1,3 +1,5 @@
+#[path = "routed_quote_tests.rs"]
+mod quote_tests;
 use super::*;
 use crate::{
     channels::resolver::ChannelResolver,
