@@ -41,13 +41,15 @@ and uses the verified global CLI instead of ACP's older nested dependency.
 The feature flag is checked separately from actual desktop execution. An Agent can take a screenshot with
 `scrot /tmp/desktop.png`, inspect it with `view_image`, and click/type through
 `xdotool` on `DISPLAY=:99`; no additional computer-use MCP server is involved.
+New Machine Included Agents receive this display and tool guidance in their
+durably captured setup message, and wait for a user task before using the desktop.
 
 CI builds a separate desktop image and executes its shared display contract
 using a loopback model fixture: real Codex shell click/type, `view_image` delivery,
 authenticated framebuffer transfer, and subsequent user input in the same
 browser. This is tool execution evidence, not a live model task or production
 provider acceptance. The image must pass that check and a disposable production
-Sandbox demonstration before enabling its immutable digest. Audio and video
+Sandbox demonstration before the prototype is declared ready. Audio and video
 playback are outside this prototype. The desktop launcher owns a separate
 session and is a Linux child subreaper, so detached browser helpers stay in its
 process tree. Recovery admits only the source-pinned launcher directly under
@@ -63,9 +65,9 @@ in the production `kata-clh` runtime successfully created nested user and networ
 namespaces with the production non-root policy; that probe was removed. CI uses
 a hash-pinned Moby default profile with only Chromium's user/PID/network namespace
 creation and chroot added. Chromium's sandbox stays enabled; the acceptance
-requires a renderer with PID namespace and seccomp isolation. The latest Linux
-image qualification and shared-display acceptance are still pending. The
-deployment image setting remains empty until those checks pass.
+requires a renderer with PID namespace and seccomp isolation. Deploy only the
+tested immutable desktop digest, and retain its complete CI and disposable
+production acceptance evidence with the rollout record.
 
 The Sandbox/Agent implementation requires runtime contract **3**, declared by
 the image label `dev.chrono.cma.runtime-contract`. The control plane provisions
