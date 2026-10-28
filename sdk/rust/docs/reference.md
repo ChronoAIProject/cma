@@ -689,6 +689,8 @@ unknown result with a new key. Discovery describes scope; current Telegram bot
 administrator topic permissions are checked at execution. Source support and
 local tests do not establish connected-account native acceptance.
 
+### Native WhatsApp incoming message changes
+
 Native WhatsApp incoming changes use optional source `message_events` consent and
 optional discovery `native_whatsapp_message_events_enabled`. Both default off.
 Meta supplies private edit/revoke callbacks only for Business App coexistence
