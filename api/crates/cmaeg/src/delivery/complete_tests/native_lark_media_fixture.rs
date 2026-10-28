@@ -8,8 +8,9 @@ use reqwest::Method;
 use serde_json::Value;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+pub(super) type Call = (Method, Url, HeaderMap, Vec<u8>);
 pub(super) struct Api {
-    pub calls: Mutex<Vec<(Method, Url, HeaderMap, Vec<u8>)>>,
+    pub calls: Mutex<Vec<Call>>,
     pub fault: AtomicU8,
     pub after_upload: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub memory: Arc<Memory>,
@@ -35,7 +36,13 @@ impl native_lark::Transport for Api {
         let data = if url.path().contains("tenant_access_token") {
             json!({"code":0,"tenant_access_token":"fixture-image-card-access-token","expire":3600})
         } else if url.path().ends_with("/bot/v3/info") {
-            json!({"code":0,"bot":{"open_id":"ou_native_bot"}})
+            let uploaded = self
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, url, _, _)| url.path().ends_with("/images"));
+            json!({"code":0,"bot":{"open_id":if fault == 6 && uploaded { "ou_replaced_bot" } else { "ou_native_bot" }}})
         } else if url.path().ends_with("/images") {
             if let Some(callback) = self.after_upload.lock().unwrap().take() {
                 callback();
@@ -94,14 +101,14 @@ pub(super) fn sender(f: &Fixture) -> (Sender, Arc<Api>) {
 pub(super) fn message(choice: bool, mime: &str) -> OutboundMessage {
     let mut message = crate::interactions::native_lark::fixture::outbound(false);
     if choice {
-        message.blocks = serde_json::from_value(json!([{"type":"choice","id":"approval","prompt":"Choose image","options":[{"id":"yes","label":"Yes"},{"id":"no","label":"No"}]}])).unwrap();
+        message.blocks = serde_json::from_value(json!([{"type":"choice","id":"approval","multi":false,"prompt":"Choose image","options":[{"id":"yes","label":"Yes"},{"id":"no","label":"No"}]}])).unwrap();
     }
     message.native_attachments = vec![crate::native_lark::outbound::tests::fixture::attachment(
         mime,
     )];
     message
 }
-pub(super) fn sent_card(calls: &[(Method, Url, HeaderMap, Vec<u8>)]) -> Value {
+pub(super) fn sent_card(calls: &[Call]) -> Value {
     let body: Value = serde_json::from_slice(
         &calls
             .iter()
