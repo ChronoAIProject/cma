@@ -231,6 +231,7 @@ impl App {
             discord_conversation_history: None,
             complete_replies_enabled: true,
             telegram_effects_issuance_enabled: false,
+            native_telegram_media_controls_enabled: false,
             telegram_effects: None,
             native_media_edits: None,
             native_whatsapp_forms: None,

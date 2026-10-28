@@ -250,6 +250,7 @@ impl InteractionStore {
             None
         };
         let mut card = Card {
+            native_telegram_media: None,
             native_whatsapp_flow: None,
             native_whatsapp,
             native_lark: None,
