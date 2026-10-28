@@ -22,6 +22,19 @@ pub trait FrozenTurnBuilder: Send + Sync {
         target: &'a StoredTarget,
         current: &'a ResolvedChannel,
     ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>>;
+    fn prepare_at_generation<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+        generation: Option<u64>,
+    ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
+        if generation.is_some() {
+            Box::pin(async { Err(ExecutionError::Unsupported) })
+        } else {
+            self.prepare(plan, target, current)
+        }
+    }
 }
 
 pub struct HttpExecutionPort {
@@ -173,6 +186,47 @@ impl ExecutionPort for HttpExecutionPort {
         current: &'a ResolvedChannel,
     ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
         self.builder.prepare(plan, target, current)
+    }
+    fn inspect_binding<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+    ) -> BoxFuture<'a, Result<BindingPreparation, ExecutionError>> {
+        Box::pin(async move {
+            self.providers
+                .inspect_binding_preparation(plan, target, credential(current, target)?)
+                .await
+                .map_err(super::builder::provider_error)
+        })
+    }
+    fn reserve_binding<'a>(
+        &'a self,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+        intent: &'a PreparationIntent,
+    ) -> BoxFuture<'a, Result<PreparationReceipt, ExecutionError>> {
+        Box::pin(async move {
+            self.providers
+                .reserve_binding_preparation(
+                    &target.launch.provider.slug,
+                    &target.launch.provider.binding_id,
+                    intent,
+                    credential(current, target)?,
+                )
+                .await
+                .map_err(super::builder::provider_error)
+        })
+    }
+    fn prepare_at_generation<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+        generation: Option<u64>,
+    ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
+        self.builder
+            .prepare_at_generation(plan, target, current, generation)
     }
     fn start<'a>(
         &'a self,

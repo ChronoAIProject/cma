@@ -56,6 +56,7 @@ async fn preparation_readers_preserve_legacy_wire_bytes_and_refuse_legacy_or_non
     };
     assert!(checkpoint.validate(&setup.plan, setup.target()).is_err());
     setup.plan.binding_preparation_version = Some(1);
+    setup.plan.targets[0].binding_replacement_version = Some(1);
     checkpoint.validate(&setup.plan, setup.target()).unwrap();
     for actor in [
         cmaeg_core::activity::ActorKind::Bot,
@@ -78,6 +79,7 @@ async fn pending_preparation_survives_lost_ack_and_cannot_reinspect_new_generati
     for lose_read in [false, true] {
         let mut setup = Setup::new(supported()).await;
         setup.plan.binding_preparation_version = Some(1);
+        setup.plan.targets[0].binding_replacement_version = Some(1);
         let original = intent(&setup);
         let pending = BindingPreparation::Pending {
             intent: original.clone(),
@@ -198,6 +200,7 @@ async fn pending_preparation_survives_lost_ack_and_cannot_reinspect_new_generati
 async fn preparation_receipt_requires_pending_marker_and_cannot_mutate_prepared_turns() {
     let mut setup = Setup::new(supported()).await;
     setup.plan.binding_preparation_version = Some(1);
+    setup.plan.targets[0].binding_replacement_version = Some(1);
     let original = intent(&setup);
     let mut lease = setup
         .journal()

@@ -70,6 +70,9 @@ pub struct StoredTarget {
     /// Stable across retry/restart, including the default target.
     pub id: String,
     pub launch: ConsumerLaunch,
+    /// Operator opt-in captured only for a newly admitted ordinary event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_replacement_version: Option<u8>,
 }
 
 /// A committed snapshot. Its existence alone never authorizes provider effects.
@@ -105,8 +108,22 @@ impl fmt::Debug for AdmittedPlan {
     }
 }
 impl AdmittedPlan {
+    pub(crate) fn is_native_interaction(&self) -> bool {
+        matches!(
+            self.kind.as_str(),
+            NATIVE_INTERACTION_KIND
+                | NATIVE_WHATSAPP_INTERACTION_KIND
+                | NATIVE_LARK_INTERACTION_KIND
+                | NATIVE_WHATSAPP_FLOW_INTERACTION_KIND
+        )
+    }
+    pub(crate) fn is_message_event(&self) -> bool {
+        self.kind == MESSAGE_EVENT_KIND
+    }
     pub(crate) fn prepares_binding(&self, target: &StoredTarget) -> bool {
-        self.binding_preparation_version == Some(1) && target.launch.provider.target.is_profile()
+        self.binding_preparation_version == Some(1)
+            && target.launch.provider.slug.as_str() == "cma_codex"
+            && target.launch.provider.target.is_profile()
     }
     pub(crate) fn permits_binding_preparation(&self) -> bool {
         self.kind == PAYLOAD_KIND

@@ -39,14 +39,56 @@ impl Candidate {
             now,
             None,
             quote_projection,
+            false,
+            &BTreeSet::new(),
         )
     }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_with_binding_preparation(
+        request: &LaunchRequest,
+        plan: &RoutedPlan,
+        source_body: &[u8],
+        keys: &MasterKeyRing,
+        now: i64,
+        quote_projection: Option<u8>,
+        replacements: &BTreeSet<String>,
+    ) -> Result<Self, AdmissionError> {
+        Self::prepare_inner(
+            request,
+            plan,
+            source_body,
+            keys,
+            now,
+            None,
+            quote_projection,
+            true,
+            replacements,
+        )
+    }
+    #[cfg(test)]
     pub(crate) fn prepare_native_interaction(
         request: &LaunchRequest,
         plan: &RoutedPlan,
         source_body: &[u8],
         keys: &MasterKeyRing,
         now: i64,
+    ) -> Result<Self, AdmissionError> {
+        Self::prepare_native_interaction_with_generation(
+            request,
+            plan,
+            source_body,
+            keys,
+            now,
+            false,
+        )
+    }
+    pub(crate) fn prepare_native_interaction_with_generation(
+        request: &LaunchRequest,
+        plan: &RoutedPlan,
+        source_body: &[u8],
+        keys: &MasterKeyRing,
+        now: i64,
+        generation_aware: bool,
     ) -> Result<Self, AdmissionError> {
         if crate::ingress::native_interaction::plan(request, keys, now).as_ref() != Ok(plan) {
             return Err(AdmissionError::Invalid);
@@ -75,14 +117,27 @@ impl Candidate {
                 },
             ),
             None,
+            generation_aware,
+            &BTreeSet::new(),
         )
     }
+    #[cfg(test)]
     pub(crate) fn prepare_message_event(
         request: &LaunchRequest,
         plan: &RoutedPlan,
         source_body: &[u8],
         keys: &MasterKeyRing,
         now: i64,
+    ) -> Result<Self, AdmissionError> {
+        Self::prepare_message_event_with_generation(request, plan, source_body, keys, now, false)
+    }
+    pub(crate) fn prepare_message_event_with_generation(
+        request: &LaunchRequest,
+        plan: &RoutedPlan,
+        source_body: &[u8],
+        keys: &MasterKeyRing,
+        now: i64,
+        generation_aware: bool,
     ) -> Result<Self, AdmissionError> {
         if !crate::ingress::message_event::shape(&request.activity) {
             return Err(AdmissionError::Invalid);
@@ -95,8 +150,11 @@ impl Candidate {
             now,
             Some(MESSAGE_EVENT_KIND),
             None,
+            generation_aware,
+            &BTreeSet::new(),
         )
     }
+    #[allow(clippy::too_many_arguments)]
     fn prepare_inner(
         request: &LaunchRequest,
         plan: &RoutedPlan,
@@ -105,6 +163,8 @@ impl Candidate {
         now: i64,
         native_kind: Option<&str>,
         quote_projection: Option<u8>,
+        generation_aware: bool,
+        replacements: &BTreeSet<String>,
     ) -> Result<Self, AdmissionError> {
         let native = native_kind.is_some();
         if source_body.len() > MAX_SOURCE_BYTES {
@@ -177,7 +237,7 @@ impl Candidate {
                 .checked_add(RETENTION_SECONDS)
                 .ok_or(AdmissionError::Invalid)?,
             quote_projection,
-            binding_preparation_version: None,
+            binding_preparation_version: generation_aware.then_some(1),
             activity: plan.activity.clone(),
             source: plan.source.clone(),
             targets: plan
@@ -188,6 +248,17 @@ impl Candidate {
                         "ordinary-route-target-v1",
                         &(&admission_id, &launch.consumer),
                     ),
+                    binding_replacement_version: (generation_aware
+                        && !native
+                        && matches!(
+                            plan.activity.kind,
+                            cmaeg_core::activity::ActivityKind::Message { .. }
+                        )
+                        && plan.activity.actor.kind == cmaeg_core::activity::ActorKind::Human
+                        && launch.provider.slug.as_str() == "cma_codex"
+                        && launch.provider.target.is_profile()
+                        && replacements.contains(launch.provider.binding_id.as_str()))
+                    .then_some(1),
                     launch: launch.clone(),
                 })
                 .collect(),
@@ -251,7 +322,6 @@ impl AdmittedPlan {
         let message_event = self.kind == MESSAGE_EVENT_KIND;
         if self.quote_projection.is_some_and(|v| v != 1)
             || self.binding_preparation_version.is_some_and(|v| v != 1)
-            || (self.binding_preparation_version.is_some() && !self.permits_binding_preparation())
             || (self.quote_projection.is_some()
                 && (self.kind != PAYLOAD_KIND
                     || !matches!(self.activity.kind, ActivityKind::Message { .. })))
@@ -296,11 +366,14 @@ impl AdmittedPlan {
             let launch = &target.launch;
             let event = &launch.event;
             let expected_consumer = (!launch.consumer.is_default()).then_some(&launch.consumer);
-            if target.id
-                != codec::identifier(
-                    "ordinary-route-target-v1",
-                    &(&self.admission_id, &launch.consumer),
-                )
+            if target.binding_replacement_version.is_some_and(|v| v != 1)
+                || (target.binding_replacement_version.is_some()
+                    && (!self.prepares_binding(target) || !self.permits_binding_preparation()))
+                || target.id
+                    != codec::identifier(
+                        "ordinary-route-target-v1",
+                        &(&self.admission_id, &launch.consumer),
+                    )
                 || !seen.insert(&target.id)
                 || launch.consumer != selected.id
                 || event.consumer.as_ref() != expected_consumer
