@@ -71,6 +71,23 @@ pub struct PreparationReceiptView {
     pub workspace_id: String,
 }
 
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(inspect, prepare),
+    components(schemas(
+        InspectPreparationRequest,
+        PrepareBindingRequest,
+        PreparationIntentSchema,
+        PreparationInspectionView,
+        PreparationReceiptView,
+    ))
+)]
+struct PreparationApiDoc;
+
+pub(crate) fn document() -> utoipa::openapi::OpenApi {
+    <PreparationApiDoc as utoipa::OpenApi>::openapi()
+}
+
 pub(super) fn routes() -> Router<BindingRouteState> {
     Router::new()
         .route(

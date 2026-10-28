@@ -14,6 +14,7 @@ mod delivery_receipts;
 mod delivery_state;
 mod destinations;
 mod dispatcher;
+mod dispatcher_authority;
 mod executor;
 mod generation_provenance;
 mod journal;
