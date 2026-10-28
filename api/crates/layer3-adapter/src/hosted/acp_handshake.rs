@@ -1,4 +1,4 @@
-use super::acp::{Bridge, PROTOCOL_VERSION, SIGN_IN_DEADLINE};
+use super::acp::{Bridge, CALL_DEADLINE, PROTOCOL_VERSION, SIGN_IN_DEADLINE};
 use super::update_relay::UpdateRelay;
 use super::HostedAgentOpenSettings;
 use crate::AdapterError;
@@ -51,7 +51,7 @@ impl Bridge {
                         "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
                     },
                 },
-            }),settings.channel_tool.is_some() || settings.provider_tool.is_some() || settings.access_tool.is_some())
+            }), settings.already_initialized_error.as_ref())
             .await?;
         timing.completed("protocol_initialize");
 
@@ -285,18 +285,19 @@ impl Bridge {
         }
     }
 
-    async fn greet(&self, params: serde_json::Value, protected: bool) -> crate::Result<Greeting> {
-        match self.call("initialize", params).await {
-            Ok(hello) => Ok(Greeting::Fresh(hello)),
-            Err(refused @ AdapterError::Rejected(_)) => {
-                if protected {
-                    tracing::info!("channel runtime bridge was already initialized");
-                } else {
-                    tracing::info!(%refused, "runtime bridge was already initialized");
-                }
-                Ok(Greeting::Existing)
-            }
-            Err(error) => Err(error),
+    async fn greet(
+        &self,
+        params: serde_json::Value,
+        already_initialized_error: Option<&serde_json::Value>,
+    ) -> crate::Result<Greeting> {
+        let frame = self
+            .call_frame_within("initialize", params, CALL_DEADLINE)
+            .await?;
+        if already_initialized_error.is_some_and(|expected| frame.get("error") == Some(expected)) {
+            tracing::info!("runtime bridge was already initialized");
+            Ok(Greeting::Existing)
+        } else {
+            super::acp::rpc_result("initialize", frame).map(Greeting::Fresh)
         }
     }
 
