@@ -32,6 +32,18 @@ Workspace snapshot, original retained storage authority, original conversations,
 and evidence that this runtime generation never published or accepted CMA work.
 Healthy active generations cannot enter this path.
 
+First-message `dispatch_generation` records the Agent work-authority fence; it
+does not identify a Sandbox runtime generation. A completed first message may
+therefore have a larger fence than the failed runtime generation. Runtime-loss
+recovery also deliberately removes process receipts, including OpenConversation;
+the original conversation identity and complete durable publication history remain
+authoritative. Every Agent's full log still vetoes recovery after any
+ConversationOpened or RuntimeGenerationRetired at or beyond the source generation.
+An unfinished delivery record or interrupted turn can be retained as history only
+on a Deleted Agent with a valid deletion timestamp and no cleanup debt, pending
+work, lease, blocking operation, queued message or outstanding stop intent. Those
+records remain Deleted and are excluded from the conversations reopened by recovery.
+
 The read-only provider inspection records a bounded, opaque plan with process
 identities and history hashes. The Mongo admission transaction rechecks the full
 snapshot, fences every child and original event head, and records the operation
