@@ -129,8 +129,29 @@ leases, after a retry, with the complete empty-Agent snapshot and exact provider
 proof of the retained generation. Admission preserves the original binding, home,
 preparing Workspaces and generation high-water mark. It replaces the old reservation
 with a new lifecycle operation; the next allocation reserves above the old high-water
-mark. It never rebinds the retained runtime to an invented generation. If the provider
-has already advanced to the reserved generation, the old-source proof is refused.
+mark. It never rebinds the retained runtime to an invented generation.
+
+The original provider object may already carry the exact reserved generation even
+though runtime startup failed before a replacement binding was published. That
+case requires a second complete provider proof rendered from the persisted
+reservation, with the same retained image and specification. The reservation must
+belong to the exact failed RuntimeLost operation, equal the durable high-water
+mark and exceed the retained source generation. A provider annotation or high-water
+number without that reservation grants no authority. The proof records the exact
+reservation separately as optional `reserved_provision`; the original binding and
+home-recovery source stay at generation 1. Older proofs without this field retain
+their previous meaning. Recovery persists this evidence before replacing the old
+operation, then uses its proved request for quiescence, suspension, lost-reply
+verification and the later upgrade from provider generation 2 to newly reserved
+generation 3. Every provider step still verifies the original Claim, native Sandbox
+and PVC UIDs, home identity and complete admitted request. Unreserved generations,
+changed operations, changed homes and request mismatches remain refusals.
+
+This recovery uses API code and the retained runtime image. Once admission persists
+`reserved_provision`, rollback must use an API binary that can read that evidence;
+an older strict reader that rejects the optional field cannot safely resume the
+in-flight recovery. Do not erase the evidence or lower the generation fence to
+make an older binary accept the record.
 
 The worker rechecks the full empty-Agent set and source proof, then commits a separate
 quiescence receipt. Immediately before suspension it checks authority and the complete
