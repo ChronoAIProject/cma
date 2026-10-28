@@ -154,6 +154,7 @@ pub(super) fn normalize(
             attachments,
             mentions_bot: mentioned == Some(true),
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         },
         actor: Actor {

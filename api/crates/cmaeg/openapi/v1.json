@@ -235,6 +235,17 @@
               "mentions_bot": {
                 "type": "boolean"
               },
+              "quoted_message": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/QuotedMessage",
+                    "description": "Untrusted native reply context, scoped by this activity; grants no authority."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "reply_to": {
                 "oneOf": [
                   {
@@ -1912,6 +1923,17 @@
           "occurred_at": {
             "description": "Normalized event time: source timestamp when supplied, otherwise gateway normalization time.",
             "type": "string"
+          },
+          "quoted_context": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuotedContextSummary",
+                "description": "Availability only: this metadata feed never copies quoted text or IDs."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "received_at": {
             "description": "Gateway receive timestamp, persisted before provider launch.",
@@ -5366,6 +5388,133 @@
         },
         "required": [
           "enabled"
+        ],
+        "type": "object"
+      },
+      "QuoteRelation": {
+        "enum": [
+          "reply",
+          "context"
+        ],
+        "type": "string"
+      },
+      "QuoteTextOrigin": {
+        "enum": [
+          "selected_quote",
+          "parent_text",
+          "parent_caption"
+        ],
+        "type": "string"
+      },
+      "QuotedContent": {
+        "additionalProperties": false,
+        "properties": {
+          "kinds": {
+            "description": "Descriptive kinds only; never attachment locators or fetch authority.",
+            "items": {
+              "$ref": "#/components/schemas/QuotedContentKind"
+            },
+            "type": "array"
+          },
+          "text": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuotedText"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "QuotedContentKind": {
+        "enum": [
+          "image",
+          "video",
+          "audio",
+          "file",
+          "sticker",
+          "contact",
+          "location",
+          "poll"
+        ],
+        "type": "string"
+      },
+      "QuotedContextSummary": {
+        "properties": {
+          "content_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/QuotedContentKind"
+            },
+            "type": "array"
+          },
+          "relation": {
+            "$ref": "#/components/schemas/QuoteRelation"
+          },
+          "text_available": {
+            "type": "boolean"
+          },
+          "text_truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "relation",
+          "text_available",
+          "text_truncated",
+          "content_kinds"
+        ],
+        "type": "object"
+      },
+      "QuotedMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuotedContent",
+                "description": "Only content supplied with this authenticated incoming message. Absent\nmeans the payload supplies the relationship only; nothing was fetched."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message_id": {
+            "description": "Provider message ID within the enclosing native source and conversation.\nDoes not authorize lookup, media fetch, reply, edit, or other effects.",
+            "type": "string"
+          },
+          "relation": {
+            "$ref": "#/components/schemas/QuoteRelation",
+            "description": "Explicit platform reply, or a context reference whose reply semantics are not asserted."
+          }
+        },
+        "required": [
+          "relation",
+          "message_id"
+        ],
+        "type": "object"
+      },
+      "QuotedText": {
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/QuoteTextOrigin"
+          },
+          "text": {
+            "description": "Untrusted user content, at most 4096 UTF-8 bytes.",
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text",
+          "truncated",
+          "origin"
         ],
         "type": "object"
       },

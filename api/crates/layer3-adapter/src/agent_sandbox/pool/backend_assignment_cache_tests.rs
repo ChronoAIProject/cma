@@ -25,6 +25,14 @@ async fn bound(explicit_policy: bool) -> Bound {
 }
 
 async fn bound_with_mode(explicit_policy: bool, mode: HomeVolumeMode) -> Bound {
+    bound_with_image(explicit_policy, mode, None).await
+}
+
+async fn bound_with_image(
+    explicit_policy: bool,
+    mode: HomeVolumeMode,
+    image: Option<&str>,
+) -> Bound {
     let mut fixture = Fixture::new().await;
     if explicit_policy {
         fixture.client.config.template_network_policy =
@@ -32,6 +40,9 @@ async fn bound_with_mode(explicit_policy: bool, mode: HomeVolumeMode) -> Bound {
     }
     let mut spec = super::super::tests::spec();
     spec.home.mode = mode;
+    if let Some(image) = image {
+        spec.image.uri = image.into();
+    }
     spec.image.labels.insert(
         crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
         "2".into(),
@@ -42,7 +53,7 @@ async fn bound_with_mode(explicit_policy: bool, mode: HomeVolumeMode) -> Bound {
     }
     let claim = super::super::home_tests::assigned_spec(&fixture, &spec).await;
     let home = adopted(&fixture, &claim).await;
-    let request = request(&home, 1);
+    let request = super::super::runtime_tests::request_with_spec(&home, 1, &spec);
     fixture.state.lock().unwrap().rows.insert(POD.into(), json!({
         "apiVersion":"v1","kind":"Pod",
         "metadata":{"name":"warm-member","namespace":"cma-test","uid":"original-pod",
