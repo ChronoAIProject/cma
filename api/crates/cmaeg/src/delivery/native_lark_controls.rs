@@ -131,7 +131,7 @@ impl Sender {
         let Some(_pace) = self.pacing.acquire(&route).await else {
             return (rejected("pacing_capacity"), effects);
         };
-        let token = match self
+        let mut token = match self
             .relay
             .native_lark
             .verified_token(&reply.identity, credentials)
@@ -166,6 +166,17 @@ impl Sender {
             {
                 return (refused(rendering, unknown()), effects);
             }
+            // Upload and card delivery are separate writes. Verify current app/bot
+            // custody again before using the confirmed upload in a recipient message.
+            token = match self
+                .relay
+                .native_lark
+                .verified_token(&reply.identity, credentials)
+                .await
+            {
+                Ok(token) => token,
+                Err(_) => return (rejected("native_lark_custody_unverified"), effects),
+            };
         }
         // A key upload never authorizes a later card send after source/consumer revocation.
         if cards.refresh_native_lark(&prepared.card).await.is_err() {

@@ -1,4 +1,7 @@
-use super::{native_lark_media_fixture::*, *};
+use super::{
+    native_lark_media_fixture::{message, sender, sent_card},
+    *,
+};
 use crate::interactions::{
     native_lark::{self, fixture::Fixture},
     PreparedCard,
@@ -457,6 +460,41 @@ async fn native_lark_failed_image_card_patch_stays_fenced_without_reupload_or_re
         calls
             .iter()
             .filter(|(m, _, _, _)| *m == Method::PATCH)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn native_lark_image_card_reverifies_native_bot_custody_after_the_upload() {
+    let f = Fixture::new(false, false, LarkRegion::Feishu).await;
+    let (sender, api) = sender(&f);
+    api.fault.store(6, Ordering::SeqCst);
+    let gate = RecordingGate::new(true);
+    let ctx = SendContext {
+        trace: &tracing::Span::none(),
+        channel: &f.channel,
+        first_send_done: false,
+        gate: &gate,
+    };
+    let sent = sender
+        .reply(&ctx, &f.event, &message(false, "image/png"))
+        .await
+        .0;
+    assert_eq!(sent.delivery.kind(), "rejected");
+    assert!(sent.message_ref.is_none());
+    let calls = api.calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(_, u, _, _)| u.path().ends_with("/bot/v3/info"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(m, u, _, _)| *m == Method::POST && !u.path().contains("tenant_access_token"))
             .count(),
         1
     );
