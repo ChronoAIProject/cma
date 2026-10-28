@@ -920,7 +920,6 @@ seconds. Source `forms_enabled` is separate owner consent; operator discovery us
 `native_whatsapp_forms_enabled` and `native_whatsapp_flow_writes_enabled`.
 See `docs/CMAEG_Native_WhatsApp_Forms.md` for the supported subset and retained gaps.
 
-
 ### Native Telegram forum topic lifecycle
 
 The source's independent `topic_lifecycle: true` consent and the gateway's
