@@ -409,6 +409,7 @@ async fn native_lark_image_control_discovery_is_image_only_and_requires_current_
                     assert_eq!(combination.max_attachments, 1);
                     assert_eq!(combination.caption_max_chars, 0);
                     assert!(combination.buttons && combination.choices && combination.update);
+                    assert!(combination.replace_media.is_none());
                 }
             }
         }
