@@ -4421,5 +4421,11 @@ The existing page shape and Discord behavior remain unchanged. A native internal
 v2 cursor and retained admission custody bind the original source, human, selected
 consumer/provider/key, partition and original expiry. Text/supported posts are
 projected; unsupported media/formats are counted omissions without invented
-attachment size or filename. Source consent authoring and capability discovery are
+attachment size or filename. The separate default-off
+`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` projection preserves supported post text
+around images/video and emits `omitted_content: ["media"]` without attachment
+facts, resource locators or extra requests. Retained posts do not increment the
+whole-row omission count. The flag must remain off until all consumers and their
+rollback readers accept the additive `media` enum value; old strict SDKs reject it.
+Source consent authoring and capability discovery are
 optional additions. [Full native contract, setup, tests and platform limits](CMAEG_Native_Lark_History.md).

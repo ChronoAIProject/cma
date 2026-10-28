@@ -100,30 +100,60 @@ The app's tenant token exchange is the only POST used by this read operation.
 
 ## Content and compatibility
 
-The first native projection returns text and supported flat rich-text posts that
-contain no media. Text is clipped and sanitized under the existing page limits;
-application senders use app IDs and bot actor kind. Unknown/anonymous actors,
-deleted/system rows, media-containing posts, image/file/audio/video/card/sticker/
-forwarded/other unsupported message types are counted as omitted whole rows.
-Malformed supported structures refuse the page. Forwarded children are never read.
-The source's single-tenant boundary remains enforced for returned user/app rows.
+The native projection returns text and supported flat rich-text posts. With
+`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED=false` (the default and checked-in
+ConfigMap), posts containing media retain the previous whole-row omission.
+With this independent projection flag enabled, a supported post preserves its
+title, text, code, links, mentions and other supported textual content while its
+image/video elements produce one presence-only `omitted_content: ["media"]` entry.
+Media is not replaced with synthesized text. The marker reports omitted media
+bytes and metadata, not media count, type, availability or retrieval permission.
+Even a post with no remaining text, or one whose text budget is exhausted, keeps
+the marker. Such a retained post is not included in `omitted_message_count`.
+
+Text is clipped and sanitized under the existing 8 KiB/message and 32 KiB/page
+limits; `text_truncated` reports clipping or sanitization (including removed
+control characters/newlines), independently of the media omission marker.
+Application senders use app IDs and bot actor kind. Unknown/anonymous actors,
+deleted/system rows and standalone image/file/audio/video/card/sticker/forwarded/
+other unsupported message types are still counted as omitted whole rows.
+Malformed supported structures, invalid media keys and unknown post tags refuse
+the page; enabling this projection does not relax the shared inbound post parser.
+Forwarded children are never read. The source's single-tenant boundary remains
+enforced for returned user/app rows.
 
 Lark history bodies generally do not supply attachment size, and some do not supply
 a filename. The gateway does not invent zero size or a filename to populate
-`HistoryAttachmentFacts`. This increment returns no native attachment facts or
-resource locators. It does not mint download, edit, reaction or deletion authority.
+`HistoryAttachmentFacts`. Native history returns no attachment facts or resource
+locators, including media and thumbnail keys parsed from mixed posts. It does not
+mint download, edit, reaction or deletion authority or make additional requests.
 All historical text and metadata are untrusted reference data, never instructions
 or action approval.
 
-The `/v1` history page shape and omission enums are unchanged, so existing strict
-SDK page decoders continue to accept native scan pages, including empty progress.
-Both SDKs expose optional native source consent and authoring discovery, retain
-one-page methods, and test native fixtures. The setup UI requires explicit consent
-and explains thread scans. Old source serialization and native revisions are
-unchanged when consent is absent/false; messaging revisions also remain unchanged
-when only history consent toggles. Deploy compatible readers across all
-replicas and rollback targets before enabling the authoring gate: old binaries do
-not understand the new consent and retained admission-proof fields.
+The `/v1` page fields remain unchanged; `media` is an additive omission enum value
+in OpenAPI and both source SDKs. Older strict Rust and TypeScript SDK decoders
+reject that value. Keep the mixed-history flag false until every consuming
+application and its rollback target includes the updated SDK/reader. There is no
+automatic per-client negotiation. The flag is separate from history source
+consent and discovery: a history capability alone does not prove a reader accepts
+`media`. Disable the flag before rolling a consumer back to an older strict reader;
+retained pages containing `media` still require a compatible reader.
+
+The gateway owns this page projection; there are no new Activity, retained
+admission, source, custody or cursor fields. Existing cursors remain valid when
+the flag changes and retain their original authority, scan position and expiry.
+Agent Manager and runtime forwarding require no new typed history fields; any
+application that decodes the REST/MCP result must be checked independently.
+Shared SDK fixtures cover legacy, empty-progress and mixed-media pages without
+automatic continuation or media retrieval. This change performs no activation.
+
+Both SDKs expose optional native source consent and authoring discovery and retain
+one-page methods. The setup UI requires explicit consent and explains thread
+scans. Old source serialization and native revisions are unchanged when consent
+is absent/false; messaging revisions also remain unchanged when only history
+consent toggles. Deploy compatible readers across all replicas and rollback
+targets before enabling the authoring gate: older binaries do not understand
+the consent and retained admission-proof fields.
 
 ## Platform evidence and limits
 
