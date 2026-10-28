@@ -8,7 +8,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
     ) -> crate::Result<crate::DesktopConnectionHandle> {
         let endpoint = self.endpoint(handle).await?;
         let stream = self
-            .native_stream(&endpoint, RuntimeStreamKind::Request)
+            .native_stream(&endpoint, RuntimeStreamKind::Desktop)
             .await?;
         let mut request = endpoint
             .desktop()?
@@ -16,12 +16,22 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             .into_client_request()
             .map_err(|_| AdapterError::Rejected("runtime desktop request is invalid".into()))?;
         let (name, token) = self.auth_header(&endpoint);
-        let header = http::HeaderValue::from_str(token)
+        let mut header = http::HeaderValue::from_str(token)
             .map_err(|_| AdapterError::Rejected("runtime token is not a valid header".into()))?;
+        header.set_sensitive(true);
         request.headers_mut().insert(name, header);
-        let (socket, _) = tokio_tungstenite::client_async(request, stream)
-            .await
-            .map_err(|_| AdapterError::Unavailable("runtime desktop WebSocket failed".into()))?;
+        let config = WebSocketConfig {
+            max_message_size: Some(8 * 1024 * 1024),
+            max_frame_size: Some(8 * 1024 * 1024),
+            ..WebSocketConfig::default()
+        };
+        let (socket, _) = tokio::time::timeout(
+            CONNECT_DEADLINE,
+            tokio_tungstenite::client_async_with_config(request, stream, Some(config)),
+        )
+        .await
+        .map_err(|_| AdapterError::Unavailable("runtime desktop connection timed out".into()))?
+        .map_err(|_| AdapterError::Unavailable("runtime desktop WebSocket failed".into()))?;
         Ok(Box::new(TungsteniteDesktopConnection { socket }))
     }
 

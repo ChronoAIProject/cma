@@ -5,10 +5,12 @@
 //! same authenticated stream through CMA.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{ws::WebSocket, State, WebSocketUpgrade};
 use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt as _, StreamExt as _};
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
 use super::protocol_failure;
@@ -26,15 +28,40 @@ pub(super) async fn websocket(
             false,
         );
     }
-    ws.on_upgrade(relay).into_response()
+    let config = WebSocketConfig {
+        max_message_size: Some(8 * 1024 * 1024),
+        max_frame_size: Some(8 * 1024 * 1024),
+        ..WebSocketConfig::default()
+    };
+    let Ok(Ok((upstream, _))) = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio_tungstenite::connect_async_with_config(
+            "ws://127.0.0.1:6080/websockify",
+            Some(config),
+            false,
+        ),
+    )
+    .await
+    else {
+        return protocol_failure(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "desktop_unavailable",
+            "the desktop display service is unavailable",
+            true,
+        );
+    };
+    ws.max_message_size(8 * 1024 * 1024)
+        .max_frame_size(8 * 1024 * 1024)
+        .on_upgrade(move |socket| relay(socket, upstream))
+        .into_response()
 }
 
-async fn relay(socket: WebSocket) {
-    let Ok((upstream, _)) =
-        tokio_tungstenite::connect_async("ws://127.0.0.1:6080/websockify").await
-    else {
-        return;
-    };
+async fn relay(
+    socket: WebSocket,
+    upstream: tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) {
     let (mut upstream_sink, mut upstream_source) = upstream.split();
     let (mut sink, mut source) = socket.split();
     loop {
