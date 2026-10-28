@@ -69,6 +69,8 @@ const server = createServer(async (request, response) => {
 (async () => {
   assert.equal(process.getuid(), 10001);
   assert.equal(process.env.DISPLAY, ':99');
+  assert.equal(execFileSync('/usr/local/bin/codex', ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.165.0');
+  assert.match(execFileSync('/usr/local/bin/codex', ['features', 'list'], { encoding: 'utf8' }), /^computer_use\s+stable\s+true$/m);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
   writeFileSync(home + '/config.toml', [
