@@ -21,6 +21,7 @@ mod bot_setup_cases;
 mod channel_usage_cases;
 mod creation_inventory_cases;
 mod credential_cases;
+mod desktop_cases;
 mod document_cases;
 mod domains;
 mod event_worker_cases;
@@ -151,6 +152,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = Box::pin(desktop_cases::scenario(name)).await {
+        return scenario;
+    }
     if let Some(scenario) = document_cases::scenario(name).await {
         return scenario;
     }
