@@ -140,6 +140,15 @@ fn same_operation(left: &Record, right: &Record) -> bool {
 }
 
 pub(super) fn read_record(path: &Path) -> Result<Option<Record>> {
+    let Some(bytes) = read_bytes(path)? else {
+        return Ok(None);
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|error| corrupt(&format!("decode workspace operation journal: {error}")))
+}
+
+pub(super) fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
     let mut file = match open_no_follow(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -159,9 +168,7 @@ pub(super) fn read_record(path: &Path) -> Result<Option<Record>> {
     if bytes.len() as u64 > MAX_JOURNAL_BYTES {
         return Err(corrupt("workspace journal entry is unsafe or oversized"));
     }
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(|error| corrupt(&format!("decode workspace operation journal: {error}")))
+    Ok(Some(bytes))
 }
 
 pub(super) fn persist_new(path: &Path, bytes: &[u8]) -> Result<()> {

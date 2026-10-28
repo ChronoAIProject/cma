@@ -317,7 +317,8 @@ impl HostedBackend for InMemoryHostedBackend {
             RequestFrame::ToolProxyStatus(_) => Err(AdapterError::Unsupported(
                 "this runtime has no credential tool proxy".into(),
             )),
-            RequestFrame::WorkspaceRemovalSupport(_)
+            RequestFrame::RecoverWorkspacePrepare(_)
+            | RequestFrame::WorkspaceRemovalSupport(_)
             | RequestFrame::ReconcileWorkspaceRemoval(_) => Err(AdapterError::Unsupported(
                 "guarded Workspace removal is unavailable in this runtime".into(),
             )),

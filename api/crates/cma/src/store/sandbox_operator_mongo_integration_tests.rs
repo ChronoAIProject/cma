@@ -368,3 +368,6 @@ async fn operator_retirement_uses_the_shared_transaction_and_leaves_agents_for_t
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "workspace_prepare_recovery_mongo_tests.rs"]
+mod prepare_recovery;
