@@ -4,6 +4,8 @@ import hashlib
 import os
 import socket
 import struct
+import subprocess
+import time
 
 
 class Stream:
@@ -105,6 +107,16 @@ def main():
             stream.key(ord(char), True)
             stream.key(ord(char), False)
         stream.click(120, 220)
+        # A browser connection stays open while the user observes the result.
+        # Closing here can tear down a relay before its queued input reaches X.
+        deadline = time.monotonic() + 5
+        while True:
+            title = subprocess.check_output(
+                ['xdotool', 'getactivewindow', 'getwindowname'], text=True).strip()
+            if title.startswith('cma-ui:cma-user'):
+                break
+            assert time.monotonic() < deadline, 'stream input did not update browser title: ' + title
+            time.sleep(0.1)
         print('authenticated-framebuffer-and-input: pass')
     finally:
         stream.socket.close()

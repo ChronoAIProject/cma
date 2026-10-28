@@ -2,7 +2,7 @@
 // Model responses are a loopback fixture; this check makes no inference request.
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
-const { mkdtempSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
@@ -16,6 +16,11 @@ const calls = [];
 let failure;
 let command;
 let retainedProfile;
+function captureFailureScreen() {
+  const path = '/tmp/cma-desktop-failed-screen.png';
+  try { if (!existsSync(path)) execFileSync('scrot', [path]); }
+  catch { /* Preserve the original error when the display is unavailable. */ }
+}
 function output(response, index, item) {
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   const id = 'resp_desktop_' + index;
@@ -76,8 +81,7 @@ const server = createServer(async (request, response) => {
           process.stderr.write(item.output.slice(0, 2000) + '\n');
         }
       }
-      try { execFileSync('scrot', ['/tmp/cma-desktop-failed-screen.png']); }
-      catch { /* Preserve the first failure when the display itself is unavailable. */ }
+      captureFailureScreen();
     }
     // A fixture assertion must finish the native turn and report its original
     // failure, rather than turning into repeated HTTP retries that hide it.
@@ -148,9 +152,9 @@ const server = createServer(async (request, response) => {
       if (title.startsWith('cma-ui:cma-user')) break;
       await delay(100);
     }
-    assert(title.startsWith('cma-ui:cma-user'), 'user input did not reach the same browser');
+    assert(title.startsWith('cma-ui:cma-user'), 'user input did not reach the same browser: ' + title);
     console.log(JSON.stringify({ checks: ['codex-shell-click-type', 'codex-view-image', 'authenticated-framebuffer', 'shared-browser-user-input'], screenshotSha256: createHash('sha256').update(bytes).digest('hex') }));
   } finally {
     await bridge.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }
-})().catch(error => { console.error(error); process.exitCode = 1; server.closeAllConnections(); server.close(); });
+})().catch(error => { captureFailureScreen(); console.error(error); process.exitCode = 1; server.closeAllConnections(); server.close(); });
