@@ -249,6 +249,7 @@ mod tests {
             .unwrap()
             .payload;
         base.received_reaction = None;
+        base.route_id = base.route_id.strip_prefix("received:").unwrap().to_owned();
         let base = MessageRef::seal(&base, &fixture.app.state.keys).unwrap();
         let message = enrich(
             &base,
@@ -263,6 +264,14 @@ mod tests {
         .unwrap()
         .payload;
         let original = routing_hash(&legacy);
+        assert_eq!(
+            original,
+            "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        );
+        assert_eq!(
+            message.telegram_effect.as_ref().unwrap().routing_sha256,
+            original
+        );
         assert_ne!(original, routing_hash(&channel));
         assert!(routing_matches(&channel, &message, &original));
 
