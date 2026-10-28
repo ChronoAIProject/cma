@@ -1,0 +1,103 @@
+use super::attachments::runtime::UnusedRuntime;
+use super::*;
+use crate::{Authorization, Caller, Capability};
+
+struct Resources;
+#[async_trait::async_trait]
+impl SandboxResourceReader for Resources {
+    async fn sandbox_resources(
+        &self,
+        _: &Sandbox,
+    ) -> Result<SandboxResourceReading, SandboxResourceReadError> {
+        panic!("desktop authorization must not read resource usage")
+    }
+}
+
+async fn desktop_fixture(
+    machine: bool,
+    isolated: bool,
+    status: SandboxStatus,
+    bound: bool,
+) -> DesktopService {
+    let store = Arc::new(store::InMemorySandboxStore::default());
+    let mut root = sandbox();
+    root.status = status;
+    if machine {
+        root.profile.content.runtime_image = Some(format!("runtime@sha256:{}", "a".repeat(64)));
+        root.profile
+            .content
+            .environment_variables
+            .push(crate::profiles::EnvironmentVariable {
+                name: "CMA_MACHINE_INCLUDED".into(),
+                value: "1".into(),
+            });
+    }
+    root.runtime = bound.then(|| RuntimeBinding {
+        boot_id: None,
+        runtime_id: "runtime-test".into(),
+        runtime_version: "runtime-image".into(),
+        provision_generation: Some(1),
+        bound_at: NOW.into(),
+    });
+    store.create_sandbox(root).await.unwrap();
+    store.create_workspace(workspace()).await.unwrap();
+    store.create_worktree(worktree()).await.unwrap();
+    let mut a = agent();
+    a.status = AgentStatus::Ready;
+    a.profile.content.isolated_agent = isolated;
+    a.conversation.conversation_id = Some("conversation".into());
+    a.conversation.runtime_generation = Some(1);
+    a.work.step = AgentWorkStep::None;
+    store.create_agent(a).await.unwrap();
+    DesktopService::new(
+        AgentReadService::new(store, Arc::new(Resources)),
+        Arc::new(UnusedRuntime { status: None }),
+    )
+}
+
+#[tokio::test]
+async fn desktop_uses_sandbox_configuration_without_changing_frozen_conversation_grants() {
+    let service = desktop_fixture(true, false, SandboxStatus::Active, true).await;
+    let owner = Caller::new(
+        SubjectId("owner".into()),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let id = AgentId("agt_test".into());
+    assert!(service.available(&owner, &id).await.is_ok());
+    // The ordinary runtime fixture does not implement a desktop stream. The
+    // authorized open reaches that runtime and returns its unavailability.
+    assert!(matches!(
+        service.open(&owner, &id).await,
+        Err(DesktopError::RuntimeUnavailable)
+    ));
+    let other = Caller::new(SubjectId("other".into()), owner.authorization.clone());
+    assert!(matches!(
+        service.available(&other, &id).await,
+        Err(DesktopError::Unavailable)
+    ));
+    let denied = Caller::new(owner.subject, Authorization::new([]));
+    assert!(matches!(
+        service.available(&denied, &id).await,
+        Err(DesktopError::Unavailable)
+    ));
+}
+
+#[tokio::test]
+async fn desktop_refuses_headless_isolated_paused_and_unbound_sandboxes() {
+    let owner = Caller::new(
+        SubjectId("owner".into()),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    for (machine, isolated, status, bound) in [
+        (false, false, SandboxStatus::Active, true),
+        (true, true, SandboxStatus::Active, true),
+        (true, false, SandboxStatus::Paused, true),
+        (true, false, SandboxStatus::Active, false),
+    ] {
+        let service = desktop_fixture(machine, isolated, status, bound).await;
+        assert!(matches!(
+            service.available(&owner, &AgentId("agt_test".into())).await,
+            Err(DesktopError::Unavailable)
+        ));
+    }
+}

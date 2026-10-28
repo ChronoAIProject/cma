@@ -302,12 +302,15 @@ impl AgentView {
                 });
         Self {
             id: agent.id.to_string(),
-            desktop: sandbox
-                .profile
-                .content
-                .environment_variables
-                .iter()
-                .any(|variable| variable.name == "CMA_MACHINE_INCLUDED" && variable.value == "1"),
+            desktop: !agent.profile.content.isolated_agent
+                && sandbox
+                    .profile
+                    .content
+                    .environment_variables
+                    .iter()
+                    .any(|variable| {
+                        variable.name == "CMA_MACHINE_INCLUDED" && variable.value == "1"
+                    }),
             bootstrap,
             status: agent.status,
             profile: (&agent).into(),
@@ -394,10 +397,6 @@ fn agent_conformance(capabilities: &RuntimeCapabilities) -> Vec<&'static str> {
         (
             RuntimeCapability::Resources,
             concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/resources"),
-        ),
-        (
-            RuntimeCapability::Desktop,
-            concat!("https://spec.chrono-ai.fun/cma/1.0/conf", "/desktop"),
         ),
     ] {
         if capabilities.supports(capability) {
