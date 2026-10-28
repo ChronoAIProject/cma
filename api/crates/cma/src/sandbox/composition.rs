@@ -78,7 +78,19 @@ impl SandboxLifecycleComposition {
             config.deployment_id.clone(),
         )
         .with_profile_agents(Arc::clone(&dependencies.agents))
-        .with_runtime_version(config.runtime_version.clone());
+        .with_runtime_version(config.runtime_version.clone())
+        .with_failed_runtime_recovery(Arc::new(
+            layer2_core::sandbox::SandboxRuntimeUpdateService::new(
+                dependencies.store.clone(),
+                config.runtime_version.clone(),
+            )
+            .with_unpublished_recovery(Arc::new(
+                super::unpublished_recovery::UnpublishedRuntimeRecovery::new(
+                    dependencies.adapter.clone(),
+                    config.deployment_id.clone(),
+                ),
+            )),
+        ));
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
         let titles = AgentTitleScheduler::new(AgentTitleWorker::new(

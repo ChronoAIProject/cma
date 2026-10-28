@@ -14,6 +14,14 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox
+            .lifecycle
+            .unpublished_recovery
+            .as_ref()
+            .is_some_and(|state| state.quiescence.is_none())
+        {
+            return self.quiesce_unpublished_runtime(sandbox, now).await;
+        }
         if let Err(failure) = self.verify_retained_home_and_absence(&sandbox).await {
             return self.handle_lifecycle_failure(sandbox, failure, now).await;
         }
@@ -37,6 +45,11 @@ impl SandboxWorker {
         &self,
         sandbox: &Sandbox,
     ) -> Result<(), WorkerFailure> {
+        sandbox
+            .require_unpublished_runtime_quiescence()
+            .map_err(|_| {
+                WorkerFailure::retryable("original runtime quiescence has not been recorded")
+            })?;
         let source = sandbox
             .retained_home_recovery()
             .ok_or_else(missing_source)?;
