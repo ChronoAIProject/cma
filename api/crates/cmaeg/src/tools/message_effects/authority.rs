@@ -214,11 +214,75 @@ pub(crate) fn routing_hash(channel: &ResolvedChannel) -> String {
 }
 fn routing_matches(channel: &ResolvedChannel, message: &MessageRefPayload, original: &str) -> bool {
     original == routing_hash(channel)
-        || (crate::telegram::messaging_compat::accepts_unrouted_default(
+        || (message.telegram_effect.as_ref().is_some_and(|authority| {
+            message.route_id == crate::telegram::route(&authority.bot_id, &authority.chat_id)
+        }) && crate::telegram::messaging_compat::accepts_unrouted_default(
             &channel.definition,
             message.consumer.as_ref(),
         ) && original == format!("{:x}", Sha256::digest(b"null")))
 }
 fn denied() -> Problem {
     Problem::new(ProblemCode::Forbidden, 403, "message_effect_revoked")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::message_effects::received_fixture::{Fixture, Native};
+
+    #[tokio::test]
+    async fn legacy_routing_fallback_requires_exact_telegram_authority_and_destination() {
+        let fixture = Fixture::new(Native::Telegram, false, false).await;
+        let channel = fixture
+            .app
+            .state
+            .resolver
+            .resolve_current(fixture.app.event.channel_id.as_str())
+            .await
+            .unwrap();
+        let mut legacy = (*channel).clone();
+        legacy.definition.routing = None;
+        let mut base = fixture
+            .reference()
+            .await
+            .open(&fixture.app.state.keys)
+            .unwrap()
+            .payload;
+        base.received_reaction = None;
+        let base = MessageRef::seal(&base, &fixture.app.state.keys).unwrap();
+        let message = enrich(
+            &base,
+            &fixture.app.event,
+            &legacy,
+            &fixture.app.state.keys,
+            crate::tools::message_effects::now(),
+            false,
+        )
+        .unwrap()
+        .open(&fixture.app.state.keys)
+        .unwrap()
+        .payload;
+        let original = routing_hash(&legacy);
+        assert_ne!(original, routing_hash(&channel));
+        assert!(routing_matches(&channel, &message, &original));
+
+        // Even a retained Telegram authority cannot transfer its compatibility
+        // exception to another platform or a different Telegram destination.
+        for route in [
+            "discord:77:42",
+            "native-lark:app:42",
+            "whatsapp:77:42",
+            "telegram:77:43",
+        ] {
+            let mut other = message.clone();
+            other.route_id = route.into();
+            assert!(!routing_matches(&channel, &other, &original), "{route}");
+            other.telegram_effect = None;
+            assert!(!routing_matches(&channel, &other, &original), "{route}");
+        }
+        let mut absent = message;
+        absent.telegram_effect = None;
+        assert!(!routing_matches(&channel, &absent, &original));
+        assert_eq!(fixture.writes(), 0);
+    }
 }
