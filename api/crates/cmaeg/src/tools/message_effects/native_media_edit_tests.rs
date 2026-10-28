@@ -205,7 +205,7 @@ async fn native_media_final_custody_check_refuses_mutations_during_message_read(
         "provider",
         "key",
         "native_token",
-        "provider_credential",
+        "consumer_credential",
     ] {
         let (mut app, reference) = media_app().await;
         let entered = Arc::new(tokio::sync::Semaphore::new(0));

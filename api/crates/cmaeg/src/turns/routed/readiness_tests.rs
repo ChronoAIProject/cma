@@ -42,12 +42,19 @@ async fn cold_custom_conversation_retries_frozen_turn_then_completes_once() {
     let plan = tokio::time::timeout(Duration::from_secs(4), async {
         loop {
             if let Some(plan) = app.plans().await.first() {
+                // Prepared also exists before the first POST. Observe that POST
+                // before waiting for the refusal to restore its frozen state.
                 if app
-                    .journal
-                    .read::<TargetState>(&plan.targets[0].id)
-                    .await
-                    .unwrap()
-                    .is_some_and(|(state, _)| state.phase == Phase::Prepared)
+                    .provider
+                    .seen()
+                    .iter()
+                    .any(|request| request.method == "POST")
+                    && app
+                        .journal
+                        .read::<TargetState>(&plan.targets[0].id)
+                        .await
+                        .unwrap()
+                        .is_some_and(|(state, _)| state.phase == Phase::Prepared)
                 {
                     break plan.clone();
                 }
