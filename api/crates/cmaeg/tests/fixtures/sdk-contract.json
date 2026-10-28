@@ -940,7 +940,8 @@
           "caption_max_chars": 1024,
           "choices": true,
           "max_attachments": 1,
-          "update": false
+          "update": true,
+          "replace_media": true
         }
       },
       "whatsapp_templates": true,
@@ -3486,7 +3487,8 @@
             "caption_max_chars": 1024,
             "choices": true,
             "max_attachments": 1,
-            "update": false
+            "update": true,
+            "replace_media": true
           }
         },
         "whatsapp_templates": true,
@@ -3744,7 +3746,8 @@
             "caption_max_chars": 1024,
             "choices": true,
             "max_attachments": 1,
-            "update": false
+            "update": true,
+            "replace_media": true
           }
         },
         "whatsapp_templates": true,
@@ -4693,7 +4696,8 @@
       "caption_max_chars": 1024,
       "choices": true,
       "max_attachments": 1,
-      "update": false
+      "update": true,
+      "replace_media": true
     }
   ],
   "MediaDownload": [
@@ -7089,7 +7093,8 @@
         "caption_max_chars": 1024,
         "choices": true,
         "max_attachments": 1,
-        "update": false
+        "update": true,
+        "replace_media": true
       }
     },
     {
@@ -7150,7 +7155,8 @@
         "caption_max_chars": 1024,
         "choices": true,
         "max_attachments": 1,
-        "update": false
+        "update": true,
+        "replace_media": true
       }
     }
   ],

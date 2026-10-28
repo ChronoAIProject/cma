@@ -1,6 +1,7 @@
 //! Native Discord REST. Bot credentials go only to the fixed official API origin.
 mod component_channel;
 mod component_edit;
+mod component_media_edit;
 pub(crate) use component_edit::media_card_snapshot;
 mod effects;
 #[cfg(test)]
