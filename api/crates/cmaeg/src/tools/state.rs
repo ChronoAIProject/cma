@@ -45,6 +45,7 @@ pub struct ToolsState {
     pub native_discord_media_controls_enabled: bool,
     pub native_discord_media_card_edits_enabled: bool,
     pub native_discord_media_card_replacements_enabled: bool,
+    pub native_discord_media_card_sets_enabled: bool,
     pub whatsapp_interactions_enabled: bool,
     /// Native issuance only; retained callback consumption is independent.
     pub native_whatsapp_interactions_enabled: bool,
@@ -176,11 +177,15 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
-            if message.native_media_update.is_some() {
+            if message.native_media_update.is_some() || message.clear_native_attachments {
                 return Err(Problem::new(
                     ProblemCode::InvalidRequest,
                     400,
-                    "native_media_update_requires_updateMessage",
+                    if message.clear_native_attachments {
+                        "native_attachment_clear_requires_updateMessage"
+                    } else {
+                        "native_media_update_requires_updateMessage"
+                    },
                 ));
             }
             let (channel, event, _) = self

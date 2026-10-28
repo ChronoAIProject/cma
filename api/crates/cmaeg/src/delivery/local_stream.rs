@@ -69,6 +69,7 @@ impl CustomStreamEffect {
                         text: Some(text.clone()),
                         blocks: vec![],
                         reply_to: None,
+                        clear_native_attachments: false,
                         native_media_update: None,
                         native_attachments: vec![],
                         whatsapp_template: None,
