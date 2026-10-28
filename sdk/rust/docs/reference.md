@@ -18,7 +18,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `profile_authoring()` | `bounds`, `services`, `search_skills`, read-only `resolve_repository` |
 | `marketplace::<C>()` | `list`, `read`, `fork` |
 | `sandboxes()` | `list`, `read`, `create`, `delete`, `pause`, `revive`, `events` |
-| `workspaces()` | `list`, `read`, `create`, `delete` |
+| `workspaces()` | `list`, `read`, `create`, `recover_prepare`, `delete` |
 | `worktrees()` | `list`, `read` |
 | `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `update_settings`, `skills`, `install_skill`, `access_requests`, `approve_access_request`, `deny_access_request`, `update_service_access` |
 | `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
@@ -31,6 +31,11 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
 | Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a` |
+
+`workspaces().recover_prepare(id, &key)` sends a keyed, bodyless command for the same failed,
+never-ready Workspace. HTTP 202 confirms recovery admission; read the original
+Workspace for readiness. Reuse the same key after an uncertain response; a new
+key cannot bypass active work and is eligible only after a terminal failed attempt.
 
 `C` is one of `AgentProfileContent`, `WorkspaceProfileContent`, or
 `SandboxProfileContent` from `cma_sdk::profiles`. Profile drafts and immutable
