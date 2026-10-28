@@ -84,6 +84,7 @@ impl ConsumerGateway {
         native_lark_received_reactions_enabled: false,
         native_whatsapp_writes_enabled: false,
             native_whatsapp_groups_writes_enabled: false,
+        native_whatsapp_message_events_enabled: false,
         native_whatsapp_forms_enabled: false,
         native_whatsapp_flow_writes_enabled: false,
             native_whatsapp_media_enabled: false,
