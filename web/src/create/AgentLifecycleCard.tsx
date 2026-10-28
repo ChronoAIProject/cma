@@ -163,7 +163,7 @@ function AgentLifecycleForm({
         </label>
         <p id="agent-machine-included-help" className="field__hint">
           {machineIncludedAvailable
-            ? 'Provision a Linux desktop with Chrome and native computer use. It uses a dedicated immutable runtime.'
+            ? 'Add a shared Linux desktop with Chromium that you and your Agent can control.'
             : 'Machine Included is available when creating a new Sandbox; existing Sandboxes keep their immutable runtime.'}
         </p>
       </div>
