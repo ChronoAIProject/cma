@@ -21,7 +21,32 @@ const labels: Readonly<Record<string, string>> = {
   prepareFormReply: 'Prepare a WhatsApp form',
   readFormPreparation: 'Check form preparation and delivery',
 };
-function Tools({ items }: { readonly items: readonly AgentToolCapability[] }) {
+/** Known source prerequisites from the public tool descriptions; never an execution grant. */
+function missingSetup(tool: string, channel: Channel): string | undefined {
+  const requirements: Readonly<Record<string, readonly [string, string, string]>> = {
+    listEventThreads: ['discord', 'thread_lifecycle', 'Enable Discord thread management'],
+    createEventThread: ['discord', 'thread_lifecycle', 'Enable Discord thread management'],
+    manageThread: ['discord', 'thread_lifecycle', 'Enable Discord thread management'],
+    readEventHistory: ['discord', 'conversation_history', 'Enable Discord conversation history'],
+    prepareFormReply: ['whatsapp', 'forms_enabled', 'Enable WhatsApp Forms'],
+  };
+  const requirement = Object.hasOwn(requirements, tool) ? requirements[tool] : undefined;
+  if (!requirement) return undefined;
+  const [type, consent, hint] = requirement;
+  const sources = channel.definition.sources.map(object).filter((source) => source.type === type);
+  if (sources.length === 0)
+    return type === 'discord'
+      ? 'Requires a direct Discord source'
+      : 'Requires a direct WhatsApp source';
+  return sources.some((source) => source[consent] === true) ? undefined : hint;
+}
+function Tools({
+  items,
+  channel,
+}: {
+  readonly items: readonly AgentToolCapability[];
+  readonly channel: Channel;
+}) {
   return (
     <ul className="channel-tools-list">
       {items.map((tool) => (
@@ -32,6 +57,9 @@ function Tools({ items }: { readonly items: readonly AgentToolCapability[] }) {
               <code>{tool.name}</code>
             </div>
             <p>{tool.description}</p>
+            {missingSetup(tool.name, channel) ? (
+              <p className="channel-field-hint">{missingSetup(tool.name, channel)}</p>
+            ) : null}
             <p>
               {tool.read_only ? 'Read only' : 'Can make changes'}
               {tool.destructive ? ' · May remove or replace data' : ''}
@@ -46,14 +74,29 @@ function Tools({ items }: { readonly items: readonly AgentToolCapability[] }) {
 export function ChannelToolsets({ channel }: { readonly channel: Channel }) {
   const discovery = useRelayCapabilities();
   const { consumers } = channelNodes(channel);
+  const conditional =
+    discovery.agentTools?.filter((tool) => !missingSetup(tool.name, channel)) ?? [];
+  const other = discovery.agentTools?.filter((tool) => missingSetup(tool.name, channel)) ?? [];
   return (
     <>
       <Section
         title="Event tools"
-        description="These tools are advertised by the gateway. Each call still checks authorization and platform support; this list does not confirm installation in an agent."
+        description="These tools are advertised by the gateway. Support depends on the event, platform and permissions; this list does not confirm installation in an agent."
       >
         {discovery.agentTools?.length ? (
-          <Tools items={discovery.agentTools} />
+          <>
+            {conditional.length > 0 ? <Tools items={conditional} channel={channel} /> : null}
+            {other.length > 0 ? (
+              <details>
+                <summary>Other advertised tools ({other.length})</summary>
+                <p className="channel-field-hint">
+                  These tools need source settings that are missing from this channel. Saved events
+                  and receipts are checked separately when used.
+                </p>
+                <Tools items={other} channel={channel} />
+              </details>
+            ) : null}
+          </>
         ) : (
           <p className="channel-field-hint" role="status">
             {discovery.agentTools

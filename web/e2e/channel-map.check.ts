@@ -140,6 +140,11 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
                 'setMessageReaction',
                 'Set or clear the bot’s own reaction on an authorized confirmed message without changing other reactions.',
               ],
+              [
+                'readEventHistory',
+                'Read earlier messages in the original native Discord conversation with source conversation history consent.',
+              ],
+              ['prepareFormReply', 'Prepare a native WhatsApp form with explicit source consent.'],
             ] as const
           ).map(([name, description]) => ({
             name,
@@ -259,6 +264,15 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await map.getByRole('button', { name: /^Toolsets: Agent toolsets/ }).click();
   await expect(page.getByText('readEventContext', { exact: true })).toBeVisible();
+  const otherTools = page.getByText('Other advertised tools (2)');
+  await expect(otherTools).toBeVisible();
+  await expect(page.getByText('prepareFormReply', { exact: true })).not.toBeVisible();
+  await capture('channel-toolsets-conditional-light-1600.png', 'light');
+  await otherTools.click();
+  await expect(page.getByText('Requires a direct Discord source')).toBeVisible();
+  await expect(page.getByText('Requires a direct WhatsApp source')).toBeVisible();
+  await capture('channel-toolsets-other-light-1600.png', 'light');
+  await otherTools.click();
   await expect(
     page
       .getByRole('navigation', { name: 'Configuration sections' })
@@ -345,7 +359,11 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await expect(page.getByLabel('Bot username', { exact: true })).toHaveValue('retained_bot');
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(map.getByText('Browse delivery nodes')).toHaveCount(0);
-  await expect(map.locator('.react-flow__edge-path[marker-end]')).toHaveCount(8);
+  await expect(map.locator('.react-flow__edge-path[marker-end]')).toHaveCount(6);
+  await expect(map.locator('.delivery-flow__tool-catalog')).toHaveCount(2);
+  await expect(
+    map.locator('.delivery-flow__tool-catalog .react-flow__edge-path[marker-end]'),
+  ).toHaveCount(0);
   for (const theme of ['light', 'dark'] as const) {
     await page.evaluate((value) => {
       localStorage.setItem('cma:appearance', value);
@@ -450,6 +468,41 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
       .first()
       .evaluate((element) => getComputedStyle(element).transitionDuration),
   ).toBe('0s');
+  await page.getByRole('button', { name: 'New channel', exact: true }).click();
+  const creation = page.locator('.gateway-detail--create');
+  for (const width of [1600, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(creation.getByRole('heading', { name: 'New channel', exact: true })).toBeVisible();
+    const inset = width <= 600 ? 16 : 24;
+    const layout = await creation.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const header = element.querySelector('header')!.getBoundingClientRect();
+      const form = element.querySelector('form')!.getBoundingClientRect();
+      const input = element.querySelector('.input')!.getBoundingClientRect();
+      const actions = [...element.querySelectorAll('button')].filter((button) =>
+        ['Create channel', 'Cancel'].includes(button.textContent ?? ''),
+      );
+      return {
+        headerInset: header.left - bounds.left,
+        formInset: form.left - bounds.left,
+        formRightInset: bounds.right - form.right,
+        inputInset: input.left - bounds.left,
+        actionInsets: actions.map((action) => action.getBoundingClientRect().left - bounds.left),
+        overflow: element.scrollWidth - element.clientWidth,
+      };
+    });
+    expect(layout.headerInset).toBeCloseTo(inset, 0);
+    expect(layout.formInset).toBeCloseTo(inset, 0);
+    expect(layout.formRightInset).toBeCloseTo(inset, 0);
+    expect(layout.inputInset).toBeCloseTo(inset, 0);
+    expect(layout.actionInsets).toEqual([inset, inset]);
+    expect(layout.overflow).toBeLessThanOrEqual(1);
+    await creation.locator('header').scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: info.outputPath(`new-channel-dark-${width}.png`),
+      animations: 'disabled',
+    });
+  }
   expect(writes).toBe(0);
   expect(boundary.errors).toEqual([]);
 });

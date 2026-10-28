@@ -3781,3 +3781,20 @@ inert, and unavailable files keep their visible label instead of disappearing.
 | 2026-10-28 | Render authorized local and remote reply media with bounded layout, native playback, lazy file reads, and visible preview recovery. |
 
 | 2026-10-28 | Distinguish WhatsApp API acceptance from authenticated sent, delivered, read, played and failed receipts in the existing animated Channel Activity rows. Preserve provider timestamps, original recipients and independent failure evidence; add no polling, new layout or notifications. |
+
+New channel uses one 24px page inset for its header, fields and actions, reduced
+to 16px below 600px, matching the existing service-page spacing. The delivery map
+retains its full-width workspace.
+
+Agent toolsets describes the gateway's advertised catalog and current channel
+source setup. Known Discord thread/history and WhatsApp form preparation tools
+whose direct source or saved consent is absent remain available in the existing
+native disclosure pattern, **Other advertised tools**, with concise setup hints.
+Matching source settings do not promise event support, permissions or agent
+installation. Other tools, including future advertised names and historical form
+receipt reads, remain conditional on the event and retain their server text.
+Catalog associations are static dashed **Catalog reference** lines without
+arrowheads; pending consumers have no catalog association. This supersedes the
+earlier **Tool access** label and arrowheads while retaining routing arrows.
+
+| 2026-10-28 | Align New channel header, form and actions with shared page spacing; show source-specific setup hints for advertised tools, preserve the complete catalog, and distinguish catalog references from confirmed tool access. |
