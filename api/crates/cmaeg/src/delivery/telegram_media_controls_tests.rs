@@ -5,6 +5,7 @@ use super::{
     telegram_media_controls_fixture::{message, Fixture},
 };
 use crate::{
+    channels::definition::fixture::{replace_default_binding, replace_default_credential},
     ingress::{routing_plan::fixture, routing_store::test_server::Fault},
     interactions::{Destination, Error},
     telegram::media_fixture::{self, Answer},
@@ -146,10 +147,10 @@ async fn telegram_media_controls_callback_fences_actor_chat_topic_message_source
             2 => activity.conversation.thread_id = Some("8".into()),
             3 => id = "801",
             4 => activity.source = cmaeg_core::activity::SourceKind::Custom,
-            5 => {
-                Arc::make_mut(&mut channel).definition.provider.binding_id =
-                    "replacement".parse().unwrap()
-            }
+            5 => replace_default_binding(
+                &mut Arc::make_mut(&mut channel).definition,
+                "replacement".parse().unwrap(),
+            ),
             6 => Arc::make_mut(&mut channel).definition.sources.clear(),
             _ => unreachable!(),
         }
@@ -176,10 +177,10 @@ async fn telegram_media_controls_callback_fences_actor_chat_topic_message_source
         .definition
         .secrets
         .telegram_bot_token = Some(Secret::new("77:rotated"));
-    Arc::make_mut(&mut rotated)
-        .definition
-        .secrets
-        .provider_credential = Some(Secret::new("provider-rotated"));
+    replace_default_credential(
+        &mut Arc::make_mut(&mut rotated).definition,
+        Some("provider-rotated"),
+    );
     assert!(f
         .store
         .consume_for_dispatch(
