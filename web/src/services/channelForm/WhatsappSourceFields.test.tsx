@@ -325,3 +325,31 @@ it('keeps managed form consent separate from operator availability and permits w
   fireEvent.click(checkbox);
   expect(change).toHaveBeenCalledWith(expect.objectContaining({ forms_enabled: false }));
 });
+
+it('gates coexistence incoming changes independently and allows saved consent withdrawal', () => {
+  const consenting = { ...source, message_events: true };
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [consenting] }, { sources: [source] }),
+  ).toThrow('incoming message change consent');
+  const enabled = {
+    ...available,
+    authoring: { ...available.authoring!, native_whatsapp_message_events_enabled: true },
+  };
+  expect(() =>
+    validateRelayAuthoring(enabled, { sources: [consenting] }, { sources: [source] }),
+  ).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [source] }, { sources: [consenting] }),
+  ).not.toThrow();
+  const change = vi.fn();
+  render(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={consenting} onChange={change} />
+    </RelayCapabilitiesContext>,
+  );
+  const checkbox = screen.getByLabelText(/Allow coexistence incoming edits and deletions/);
+  expect(checkbox).toBeEnabled();
+  fireEvent.click(checkbox);
+  expect(change).toHaveBeenCalledWith(expect.objectContaining({ message_events: false }));
+  expect(screen.getByText(/Business App coexistence accounts/)).toBeInTheDocument();
+});
