@@ -46,6 +46,7 @@ async fn compiled_gateway_accepts_cma_profiles_and_full_lifecycle_after_restart(
     let client = client::GatewayClient::new(
         http,
         &GatewayConfig {
+            binding_preparation_enabled: false,
             base_url: gateway.base.clone(),
             public_url: gateway.base.clone(),
             public_api_url: gateway.base.clone(),

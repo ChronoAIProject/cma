@@ -331,6 +331,19 @@ impl BindingService {
         id: &str,
         conversation_id: &str,
     ) -> Result<(BindingConversation, bool), BindingError> {
+        self.ensure_conversation_at_generation(caller, id, conversation_id, None)
+            .await
+    }
+
+    /// A provider request pins its parent before source-user routing. A
+    /// generation change cannot redirect a late ensure into a new hierarchy.
+    pub async fn ensure_conversation_at_generation(
+        &self,
+        caller: &Caller,
+        id: &str,
+        conversation_id: &str,
+        expected_generation: Option<u64>,
+    ) -> Result<(BindingConversation, bool), BindingError> {
         if !super::model::valid_id(conversation_id, 8) {
             return Err(BindingError::InvalidRequest(
                 "invalid conversation identifier".into(),
@@ -338,6 +351,9 @@ impl BindingService {
         }
         for _ in 0..8 {
             let binding = self.read(caller, id).await?;
+            binding
+                .require_generation(expected_generation)
+                .map_err(|_| BindingError::Conflict)?;
             let conversation_id = if binding.existing_agent.is_some() {
                 EXISTING_AGENT_CONVERSATION
             } else {

@@ -121,7 +121,7 @@ async fn snapshot(
     id: &AgentId,
 ) -> Result<AgentEventStreamSnapshot, Box<Response>> {
     let auth = auth.map_err(|_| Box::new(error::unauthenticated()))?;
-    let id = state.resolve_conversation(&auth, id).await?;
+    let id = state.resolve_conversation(&auth, id, None).await?;
     let authorization = state
         .reads
         .authorize_event_stream(

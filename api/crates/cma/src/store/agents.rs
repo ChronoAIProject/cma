@@ -85,6 +85,11 @@ pub(super) fn agent_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        // Preparation checks both authority and its lookup projection, so a
+        // malformed projection cannot hide a live child or force a full scan.
+        IndexModel::builder()
+            .keys(doc! { "record.sandbox_id": 1 })
+            .build(),
     ]
 }
 

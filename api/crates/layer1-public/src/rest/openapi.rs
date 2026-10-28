@@ -488,6 +488,7 @@ struct ApiDoc;
 pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = ApiDoc::openapi();
     document.merge(super::documents::document());
+    document.merge(super::bindings::preparation::document());
     document.merge(crate::responses::document());
     document.merge(crate::agui::document());
     document.merge(crate::agent_v2::document());
