@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
-const { readFileSync } = require("node:fs");
+const { mkdtempSync, readFileSync, writeFileSync, rmSync } = require("node:fs");
 const { test } = require("node:test");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { openCompletion, withoutOpenCompletion, sourceSha256 } = require("./open_completion.cjs");
@@ -172,17 +172,48 @@ test("close or prompt racing completion cannot mint proof; opening retires prior
   }
 });
 
-test("opens serialize inventory and setup, and queued requests retain their original generation", async () => {
-  const f = fixture(), params = request();
-  const release = deferred(), entered = deferred();
-  const first = f.open("new", params, { afterInstall: async () => { entered.resolve(); await release.promise; } });
-  await entered.promise;
-  const second = f.open("load", { ...params, sessionId: "session-1" });
-  assert.equal(f.state.nativeCalls, 1);
-  f.generations.set("session-1", 1); f.proof.retire("session-1");
-  release.resolve(); await first; await second;
-  assert.equal(f.state.nativeCalls, 2);
-  assert.equal(f.read("session-1", params).complete, false);
+test("queued load/resume cannot reopen a target closed before dispatch or change files", async () => {
+  const directory = mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "cma-queued-close-"));
+  const file = require("node:path").join(directory, "preserved-work.txt");
+  try {
+    for (const kind of ["load", "resume"]) {
+      const f = fixture(), params = request();
+      const target = await f.open("new", params);
+      const release = deferred(), entered = deferred();
+      const blocker = f.open("new", params, { afterInstall: async () => { entered.resolve(); await release.promise; } });
+      await entered.promise;
+      writeFileSync(file, "preserved");
+      let dispatched = false;
+      const queued = assert.rejects(f.open(kind, { ...params, sessionId: target.sessionId }, {
+        beforeNative: () => { dispatched = true; writeFileSync(file, "unexpected setup"); },
+      }), /Session changed while operation was queued/);
+      f.generations.set(target.sessionId, 1); f.proof.retire(target.sessionId);
+      f.agent.sessions.delete(target.sessionId); f.native.delete(target.sessionId);
+      release.resolve(); await blocker; await queued;
+      assert.equal(dispatched, false);
+      assert.equal(f.state.nativeCalls, 2, "no native resume follows the completed close");
+      assert.equal(f.agent.sessions.has(target.sessionId), false);
+      assert.equal(f.native.has(target.sessionId), false);
+      assert.equal(readFileSync(file, "utf8"), "preserved");
+      assert.equal(f.read(target.sessionId, params).complete, false);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("queued target work rejects changed state and closed fences even with unchanged generation", async () => {
+  for (const replacement of [false, true]) {
+    const f = fixture(), params = request();
+    const { sessionId } = await f.open("new", params);
+    const release = deferred();
+    const blocker = f.proof.exclusive(() => release.promise);
+    let applied = false;
+    const queued = assert.rejects(f.proof.exclusive(() => { applied = true; }, sessionId),
+      /Session changed while operation was queued/);
+    if (replacement) f.agent.sessions.set(sessionId, { ...f.agent.sessions.get(sessionId) });
+    else f.proof.retire(sessionId); // Instructions can close/reopen using the same state and ACP generation.
+    release.resolve(); await blocker; await queued;
+    assert.equal(applied, false);
+  }
 });
 
 test("ambiguous descriptor names, inherited conflicts, and dropped native configuration refuse proof", async () => {
@@ -191,6 +222,8 @@ test("ambiguous descriptor names, inherited conflicts, and dropped native config
     { options: { badConfig: true } },
     { mutate: params => { params.mcpServers.push(structuredClone(params.mcpServers[0])); } },
     { mutate: params => { params.mcpServers[0].name = "cma access"; } },
+    { mutate: params => { params.mcpServers[0].name = "owner_tool"; } },
+    { mutate: params => { params.mcpServers[0].type = "stdio"; } },
     { mutate: params => { params.mcpServers = []; } },
     { mutate: params => { params.mcpServers[0].headers[0].value = "x".repeat(65536); } },
   ];
@@ -208,4 +241,31 @@ test("a native fork, review, or turn already in flight prevents cold absence pro
   await f.open("load", params);
   assert.equal(f.read(params.sessionId, params).complete, false);
   release.resolve(); await nativeWork;
+});
+
+test("each normal CMA tool family qualifies independently without requiring access", async () => {
+  for (const name of ["cma_access", "cmaeg", "cma_channel"]) {
+    const f = fixture(), params = request();
+    params.mcpServers[0].name = name;
+    if (name === "cmaeg") params.mcpServers[0].headers = [];
+    const { sessionId } = await f.open("new", params);
+    assert.equal(f.read(sessionId, params).complete, true);
+    f.state.configNames.add(name);
+    await f.open("load", { ...params, sessionId });
+    assert.equal(f.read(sessionId, params).complete, false, "each family rejects inherited name conflicts");
+  }
+});
+
+test("canonical binding digest agrees with fixed cross-language JSON vectors", async () => {
+  const vectors = JSON.parse(readFileSync(require("node:path").join(__dirname, "open_completion_vectors.json"), "utf8"));
+  for (const vector of vectors) {
+    const f = fixture();
+    assert.equal(canonical({ cwd: vector.input.cwd, mcpServers: vector.input.mcpServers ?? [] }), vector.canonical, vector.name);
+    assert.equal(digest(vector.input), vector.bindingDigest, vector.name);
+    if (vector.exerciseReceipt === false) continue;
+    const { sessionId } = await f.open("new", vector.input);
+    const receipt = f.proof.read({ sessionId, bindingDigest: vector.bindingDigest, challenge: "vector_challenge_1234" });
+    assert.equal(receipt.complete, true, vector.name);
+    assert.equal(receipt.bindingDigest, vector.bindingDigest, vector.name);
+  }
 });

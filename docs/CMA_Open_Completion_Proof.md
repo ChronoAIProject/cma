@@ -48,21 +48,67 @@ snapshot; descriptors newly assembled during recovery cannot substitute for it.
 Snapshots are cloned before the first await, deeply frozen and capped at 64 KiB
 with at most 32 descriptors. Names must be unique ASCII letters, digits,
 underscores or hyphens, 1–64 characters, so sanitization cannot collapse distinct
-names. This version requires an HTTP `cma_access` descriptor. It accepts optional
-`cmaeg` alongside it. Unsupported snapshots permit ordinary ACP behavior but
+names. At least one HTTP descriptor must be a normal CMA tool family:
+`cma_access`, `cmaeg`, or `cma_channel`. Each qualifies independently; provider-only
+or channel-only Agents do not need an access binding. Other descriptors, when
+present alongside a recognized family, remain part of the same exact snapshot and
+native-config checks. Unsupported snapshots permit ordinary ACP behavior but
 cannot obtain a completion receipt.
+
+The current hosted `acp_server` constructors produce:
+
+| Family | Descriptor | Headers | Native startup policy |
+| --- | --- | --- | --- |
+| Access | `cma_access`, HTTP, `/api/v1/agent-tools` | One `Authorization` header | Required when present |
+| Provider | `cmaeg`, HTTP, `http://127.0.0.1:9093/` | Empty array | Optional |
+| Channel | `cma_channel`, HTTP, `/api/v1/channel-tools` | One `Authorization` header | Optional |
+
+The handshake appends these in channel, provider, access order, omitting absent
+families. The digest retains that array order and the actual endpoint and headers;
+this extension does not infer authority from a family name or endpoint shape.
 
 Reads inspect only local retained state and the native child's exit/signal
 status. They perform no native discovery, MCP or model calls, file writes,
 close/load/resume, turn creation, or recovery action. Raw descriptors, headers,
 URLs and native errors never enter the receipt.
 
+## Canonical vectors for later Rust integration
+
+`api/crates/layer3-adapter/src/codex/open_completion_vectors.json` contains eleven
+fixed test vectors with `input`, exact `canonical` UTF-8 text, and `bindingDigest`.
+They cover each normal constructor shape, combined handshake order, object-key
+reordering, array reordering, Unicode plus JSON escaping, absent/empty servers,
+absent headers, and null metadata. Canonical-only cases that are outside the current typed constructors
+are marked `exerciseReceipt:false`; these do not claim native acceptance. The
+Node tests feed the fixed expected digests directly to the real receipt registry
+for supported shapes, rather than only comparing a separate helper. An independent
+Python implementation also verified the UTF-16 ordering and string/array encodings when authoring the vectors.
+
+For Rust, serialize the original descriptor values, retain arrays exactly, and
+sort object keys by UTF-16 code units to match JavaScript. Default Rust string or
+UTF-8 ordering differs for supplementary characters: the emoji key in the Unicode
+vector sorts before `U+E000`. Emit Unicode as UTF-8 without ASCII escaping and use
+JSON escaping for quotes, reverse solidus and control characters. Do not reorder
+headers, normalize URLs or cwd, omit an empty `headers` array, or add absent
+metadata. The current normal constructors contain only objects, arrays and
+strings; an extension introducing numeric metadata must also match ECMAScript
+number serialization rather than assuming Rust's default formatting is identical.
+A later API caller must restrict its supported descriptor subset to the current
+typed constructors until broader metadata has separate interoperability evidence.
+These fixtures provide an interoperability contract without adding a Rust caller
+or claiming Rust execution in this increment.
+
 ## Evidence and invalidation
 
 An outer setup is serialized with other opens and instruction refreshes. At most
-32 operations may wait or run. Before replacement starts, its previous receipt is
-retired. The exact native start/resume request must contain the transformed
-original descriptors, and a bounded config read must show no requested name in
+32 operations may wait or run. Targeted operations capture the original state,
+generation and close-fence validity before entering the queue. If a close,
+replacement or instruction refresh intervenes, queued load/resume and instruction
+mutation fail with invalid request before invoking their original callback. They
+cannot reopen a closed target or write files after that close. A new operation has
+no target ID at enqueue; its existing native-ID close tracking applies once that
+identity becomes known. Before replacement starts, its previous receipt is retired.
+The exact native start/resume request must contain the transformed original descriptors, and a bounded config read must show no requested name in
 user/project MCP configuration. This conservatively refuses cases where ACP's
 conflict filtering or native configuration merging obscures the original setup.
 
@@ -96,8 +142,9 @@ evicting oldest proof conservatively at capacity.
 
 Successful ACP setup can precede optional MCP startup failure. The native test
 intentionally supplies an unavailable optional `cmaeg` endpoint and still obtains
-a completion receipt. The existing patch keeps `cma_access` required and `cmaeg`
-optional. Callers must not interpret this extension as a tool catalog receipt or
+a completion receipt. The existing patch keeps `cma_access` required when present and `cmaeg`
+and `cma_channel` optional. A provider-only `cmaeg` setup can therefore complete
+without an access binding and without proving provider tool availability. Callers must not interpret this extension as a tool catalog receipt or
 use it to bypass their current binding, reservation, generation, credential,
 request, lineage, or runtime-boot authority checks.
 
@@ -122,7 +169,11 @@ A future API integration may use a matching retained receipt to finish the
 original confirmation transaction after rechecking all current authority. It
 must preserve the original exact binding, validate a fresh challenge response and
 the current runtime/process/generation fences, and fail closed on missing proof.
-This increment does not implement or authorize that path.
+The provider descriptor is a constant loopback endpoint with no authorization
+header, so its digest does not encode the proxy's upstream URL or credential
+custody generation. The caller must separately validate the current provider
+binding and exact runtime/proxy observation. This increment does not implement or
+authorize that path.
 
 Affected old processes need a separately reviewed and authorized lifecycle
 migration/recovery: preserve the Agent home, worktree, persisted conversation and
@@ -151,8 +202,9 @@ All network fixtures listen on loopback and use synthetic values. Focused tests
 cover immutable snapshots, read purity, exact carry, malformed/paginated inventory,
 unknown loaded state, descriptor/config ambiguity, setup/history failure,
 serialization, close/prompt races, state/generation replacement and process death.
-Real native tests exercise new, cached load/resume, cold load/resume after process
-restart, ignored changed descriptors, optional-server failure, and native SIGKILL.
+Real native tests exercise access-only, provider-only and channel-only new, cached
+load/resume and cold load/resume after process restart; ignored changed access and
+provider descriptors; provider-only optional-server failure; and native SIGKILL.
 Receipt reads preserve rollout bytes, dirty files, MCP request counts and model
 request counts. Docker builds, Cargo compilation, production writes and lifecycle
 actions are outside this local validation.
