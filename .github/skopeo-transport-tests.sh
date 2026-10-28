@@ -75,6 +75,23 @@ clear_skopeo_log() {
   : > "$skopeo_log"
 }
 
+pull_pinned_image() {
+  local image attempt delay
+  image=$1
+  for attempt in 1 2 3 4; do
+    if docker pull "$image" >/dev/null; then
+      return 0
+    fi
+    if [ "$attempt" -lt 4 ]; then
+      delay=$((attempt * 10))
+      printf 'Pinned image pull failed (%s/4); retrying in %ss: %s\n' \
+        "$attempt" "$delay" "$image" >&2
+      sleep "$delay"
+    fi
+  done
+  fail "could not pull pinned image $image after 4 attempts"
+}
+
 cleanup() {
   local status cleanup_failed image resource volume
   status=$1
@@ -171,7 +188,7 @@ for image in "$skopeo_image" "$registry_image" "$buildkit_image"; do
   if ! docker image inspect "$image" >/dev/null 2>&1; then
     pulled_images+=("$image")
   fi
-  docker pull "$image" >/dev/null || fail "could not pull pinned image $image"
+  pull_pinned_image "$image"
 done
 
 docker network create "$network_name" >/dev/null \
