@@ -11,6 +11,39 @@ fn exact_provider() -> FakeProviderConfig {
 }
 
 #[tokio::test]
+async fn legacy_nyxbot_ingress_does_not_require_the_optional_context_reader() {
+    let mut app = App::new(
+        |value| {
+            value["provider"]["slug"] = "nyxbot".into();
+            value["profile"]["metadata"]["provider"] = "nyxbot".into();
+        },
+        FakeProviderConfig {
+            context_status: Some(405),
+            ..Default::default()
+        },
+        Default::default(),
+        0,
+    )
+    .await;
+    let response = app
+        .request(&app.url, app.event("legacy-nyxbot").to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 202);
+    app.drain().await;
+    assert_eq!(app.provider.requests().len(), 1);
+    assert!(app
+        .provider
+        .log()
+        .iter()
+        .all(|request| request.method != "GET"));
+    let results = app.receiver.events();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["type"], "cmaeg.response.completed");
+}
+
+#[tokio::test]
 async fn completed_event_retries_preserve_admission_context_output_and_waiter_ownership() {
     let mut app = App::new(|_| {}, exact_provider(), Default::default(), 0).await;
     let event = app.event("completed-replay").to_string();
