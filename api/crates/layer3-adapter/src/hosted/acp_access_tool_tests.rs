@@ -227,23 +227,24 @@ async fn missing_http_capability_refuses_access_tool_before_open() {
 async fn access_setup_error_does_not_disclose_echoed_capability() {
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
-    let serving = tokio::spawn(async move {
-        let initialize = receive_json(&mut server).await;
-        respond(
-            &mut server,
-            &initialize,
-            serde_json::json!({
-                "agentCapabilities":{"mcpCapabilities":{"http":true}}
-            }),
-        )
-        .await;
-        let open = receive_json(&mut server).await;
-        server.send(Message::Binary(serde_json::to_vec(&serde_json::json!({
+    let serving =
+        tokio::spawn(async move {
+            let initialize = receive_json(&mut server).await;
+            respond(
+                &mut server,
+                &initialize,
+                serde_json::json!({
+                    "agentCapabilities":{"mcpCapabilities":{"http":true}}
+                }),
+            )
+            .await;
+            let open = receive_json(&mut server).await;
+            send_json(&mut server, serde_json::json!({
             "jsonrpc":"2.0", "id":open["id"],
             "error":{"code":-32603,"message":format!("echoed {}", open["params"]["mcpServers"])}
-        })).unwrap())).await.unwrap();
-        let _ = server.next().await;
-    });
+        })).await;
+            let _ = server.next().await;
+        });
     let (updates, _receiver) = tokio::sync::mpsc::channel(8);
     let mut configured = settings(None, false);
     configured.access_tool = Some(binding(None));
@@ -259,7 +260,40 @@ async fn access_setup_error_does_not_disclose_echoed_capability() {
     let Err(error) = result else {
         panic!("setup must fail");
     };
+    assert!(matches!(error, AdapterError::Rejected(_)));
     assert!(!error.to_string().contains("cma_at_"));
     assert!(!error.to_string().contains("cma.example"));
+    serving.await.unwrap();
+}
+
+#[tokio::test]
+async fn unrelated_initialize_failure_is_redacted_even_with_retained_tool_authority() {
+    let (client, mut server) = socket_pair().await;
+    send_ready(&mut server, "agent-1").await;
+    let serving = tokio::spawn(async move {
+        let initialize = receive_json(&mut server).await;
+        send_json(&mut server, serde_json::json!({
+            "jsonrpc": "2.0", "id": initialize["id"],
+            "error": {"code": -32603, "message": "Internal error", "data": {"details": "echoed protected access configuration"}},
+        })).await;
+        while let Some(Ok(frame)) = server.next().await {
+            assert!(!matches!(frame, Message::Binary(_)));
+        }
+    });
+    let (updates, _receiver) = mpsc::channel(8);
+    let mut configured = settings(None, false);
+    configured.access_tool = Some(binding(Some("access-conversation")));
+    let result = Bridge::open(
+        client,
+        "agent-1",
+        "/workspace".into(),
+        configured,
+        Some("access-conversation".into()),
+        updates,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AdapterError::Rejected(detail)) if detail == "channel tool session setup did not complete")
+    );
     serving.await.unwrap();
 }
