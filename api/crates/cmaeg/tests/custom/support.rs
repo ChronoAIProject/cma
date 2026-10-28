@@ -99,7 +99,10 @@ impl App {
             },
         );
         let provider = FakeProvider::start(provider_config).await;
-        let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":8}]).to_string()).unwrap();
+        let entry = |slug: &str| json!({"slug":slug,"base_url":provider.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":8});
+        let registry =
+            ProviderRegistry::parse(&json!([entry("cma_codex"), entry("nyxbot")]).to_string())
+                .unwrap();
         let providers = Arc::new(
             ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(2), 8)
                 .unwrap(),

@@ -11,6 +11,12 @@ use tokio::sync::oneshot;
 
 pub(super) fn eligible(turn: &LaunchRequest) -> bool {
     turn.consumer.is_none()
+        // Full-context GET is an optional provider extension. Only CMA's
+        // deployed retained-admission reader has been verified; do not add
+        // a new read dependency to legacy Nyxbot or other provider ingress.
+        && turn.channel.consumer(None).is_some_and(|consumer| {
+            consumer.provider.slug.as_str() == "cma_codex"
+        })
         && turn.activity.routing.is_none()
         && turn.activity.source == SourceKind::Custom
         && matches!(turn.activity.kind, ActivityKind::Event { .. })
