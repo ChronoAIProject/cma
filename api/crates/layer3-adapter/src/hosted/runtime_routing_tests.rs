@@ -13,6 +13,81 @@ impl RuntimeRoutingStore for Routes {
             .or_insert(default_new))
     }
 }
+
+struct InspectionBackend(&'static str);
+
+#[async_trait::async_trait]
+impl HostedBackend for InspectionBackend {
+    async fn inspect_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        command: &super::super::RuntimeInspectionCommand,
+    ) -> Result<Vec<u8>> {
+        assert_eq!(command.program, "/usr/bin/python3");
+        assert_eq!(command.args, ["-I"]);
+        assert_eq!(command.input, b"private-input");
+        Ok(format!("{}:{}", self.0, handle.0).into_bytes())
+    }
+    async fn provision(&self, _: ProviderSandboxRequest) -> Result<RuntimeHandle> {
+        unreachable!("inspection cannot allocate a runtime")
+    }
+    async fn exchange(&self, _: &RuntimeHandle, _: RequestFrame) -> Result<ResponseFrame> {
+        unreachable!("inspection cannot use the supervisor control API")
+    }
+    async fn open_agent(
+        &self,
+        _: &RuntimeHandle,
+        _: FencedRequest<AgentLaunch>,
+        _: Option<String>,
+        _: HostedAgentOpenSettings,
+        _: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        unreachable!("inspection cannot open an agent")
+    }
+    async fn teardown(&self, _: &RuntimeHandle) -> Result<()> {
+        unreachable!("inspection cannot delete a runtime")
+    }
+}
+
+#[tokio::test]
+async fn inspection_keeps_exact_runtime_route_and_never_falls_back_or_allocates() {
+    let routes = Arc::new(Routes::default());
+    let mut backend = RuntimeBackends {
+        home_routes: None,
+        agent_sandbox: Some(Arc::new(InspectionBackend("native"))),
+        opensandbox: Some(Arc::new(InspectionBackend("legacy"))),
+        allocate_agent_sandbox: true,
+        routing: routes.clone(),
+    };
+    let command = super::super::RuntimeInspectionCommand {
+        program: "/usr/bin/python3".into(),
+        args: vec!["-I".into()],
+        input: b"private-input".to_vec(),
+    };
+    let native = RuntimeHandle::new("agent-sandbox:claimed:sandbox-uid");
+    let legacy = RuntimeHandle::new("existing-provider-runtime");
+    for default_new in [true, false] {
+        backend.allocate_agent_sandbox = default_new;
+        for (handle, provider) in [(&native, "native"), (&legacy, "legacy")] {
+            assert_eq!(
+                backend.inspect_runtime(handle, &command).await.unwrap(),
+                format!("{provider}:{}", handle.0).into_bytes()
+            );
+        }
+    }
+    backend.agent_sandbox = None;
+    assert!(matches!(
+        backend.inspect_runtime(&native, &command).await,
+        Err(AdapterError::Unavailable(_))
+    ));
+    backend.agent_sandbox = Some(Arc::new(super::super::InMemoryHostedBackend::default()));
+    assert!(matches!(
+        backend.inspect_runtime(&native, &command).await,
+        Err(AdapterError::Unsupported(_))
+    ));
+    assert!(routes.0.lock().await.is_empty());
+}
+
 #[tokio::test]
 async fn unknown_creation_retry_keeps_original_backend_across_default_change() {
     let old = Arc::new(super::super::InMemoryHostedBackend::default());

@@ -7,6 +7,16 @@ use crate::{
     ConversationUpdate, Result, RuntimeHandle, RuntimeObservation,
 };
 
+/// Trusted provider-rendered, read-only inspection; never user-supplied exec.
+/// Configuration belongs on stdin, not in Kubernetes command arguments.
+/// Fields are crate-private to keep command construction inside the adapter.
+#[doc(hidden)]
+pub struct RuntimeInspectionCommand {
+    pub(crate) program: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) input: Vec<u8>,
+}
+
 /// Kernel-specific settings used while opening its ACP conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedAgentOpenSettings {
@@ -204,6 +214,19 @@ pub trait HostedBackend: Send + Sync {
         _home: &crate::HomeVolumeAttachment,
     ) -> Result<Option<crate::RuntimeInspection>> {
         Ok(None)
+    }
+
+    /// Internal bounded read-only inspection of the exact existing runtime.
+    /// Implementations must fence resource identity, bound I/O and duration,
+    /// and require successful termination before returning stdout.
+    async fn inspect_runtime(
+        &self,
+        _handle: &RuntimeHandle,
+        _command: &RuntimeInspectionCommand,
+    ) -> Result<Vec<u8>> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime inspection is not supported".into(),
+        ))
     }
 
     async fn reclaim(&self, _observation: &RuntimeObservation) -> Result<()> {
