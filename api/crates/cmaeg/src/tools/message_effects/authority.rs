@@ -270,8 +270,8 @@ mod tests {
         // exception to another platform or a different Telegram destination.
         for route in [
             "discord:77:42",
-            "native-lark:app:42",
-            "whatsapp:77:42",
+            "native-lark:lark:app:42",
+            "whatsapp:app:waba:77:42",
             "telegram:77:43",
         ] {
             let mut other = message.clone();

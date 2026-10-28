@@ -50,8 +50,15 @@ impl DiscordThreads {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Operation {
-    Create { request: CreateThreadRequest },
-    Manage { action: ThreadAction },
+    Create {
+        request: CreateThreadRequest,
+    },
+    Manage {
+        action: ThreadAction,
+        // Preserve every pre-rename operation's serialized bytes and durable claim hash.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
 }
 
 impl ToolsState {
@@ -130,6 +137,7 @@ impl ToolsState {
                 ThreadAction::Reopen,
                 ThreadAction::Join,
                 ThreadAction::Leave,
+                ThreadAction::Rename,
             ],
             expires_at: event.expires_at,
         })
@@ -237,6 +245,9 @@ impl ToolsState {
         key: &str,
     ) -> Result<ThreadReceipt, Problem> {
         super::validate_reply_key(Some(key))?;
+        request
+            .validate()
+            .map_err(|e| Problem::new(ProblemCode::InvalidRequest, 400, e.to_string()))?;
         if let ThreadTarget::Event { event_ref } = &request.target {
             let event = event_ref
                 .open(&self.keys, now())
@@ -303,6 +314,7 @@ impl ToolsState {
             target,
             Operation::Manage {
                 action: request.action,
+                name: request.name,
             },
             key,
             budget,
@@ -461,5 +473,7 @@ fn now() -> i64 {
 
 #[cfg(test)]
 mod fixture;
+#[cfg(test)]
+mod rename_tests;
 #[cfg(test)]
 mod tests;
