@@ -3086,8 +3086,9 @@ are enabled (plus the named-consumer gate when applicable). It uses the existing
 `native_attachments` and `blocks` request fields and one delivered card/message;
 `update: false` excludes media-card edits. With its separate media-card-edit
 and ordinary card-edit gates, `update: true` permits content/control edits while
-preserving the exact confirmed upload; binary/caption replacement remains
-unsupported. Historical cards do not acquire new authority. See
+preserving the exact confirmed upload. Its independent replacement gate may
+add `replace_media: true` for one same-card upload replacement with complete
+content/controls. Historical cards do not acquire new authority. See
 [native Discord controls](CMAEG_Native_Discord_Interactions.md). Historical context
 serialization omits this optional capability; no existing wire field is removed.
 
@@ -3106,8 +3107,9 @@ the fourteen MIME types documented in its [native media profile](CMAEG_Native_La
 `max_total_bytes: 8388608`, `max_image_bytes: 8388608` and `max_caption_chars: 0`.
 It supports RGB/RGBA PNG/JPEG, TXT/PDF/DOC/DOCX/XLS/XLSX/PPT/PPTX/ZIP and opaque
 files, mono Opus Ogg and the shared
-Baseline H.264/AAC-LC MP4 structural profile. Explanation text remains separate;
-unsupported captions/control mixtures fail before upload. Every upload and send
+Baseline H.264/AAC-LC MP4 structural profile. Ordinary explanation text remains
+separate; the independent image-card capability combines one PNG/JPEG with
+controls. Captions and other unsupported control mixtures fail before upload. Every upload and send
 rechecks regional bot custody and exact current default/named consumer/provider
 and source authority. Confirmed messages retain durable receipts; unknown or
 partial delivery never automatically resends. See [native Lark outbound media](CMAEG_Native_Lark_Outbound_Media.md)
