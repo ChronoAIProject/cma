@@ -120,8 +120,8 @@ pub(crate) fn valid(card: &Card) -> bool {
         && identity.media.as_ref().is_none_or(|media| {
             media.valid()
                 && identity.form.is_none()
-                && card.revision == 1
-                && card.discord_edit.is_none()
+                && (media.has_edit_authority()
+                    || (card.revision == 1 && card.discord_edit.is_none()))
         })
         && card.native_whatsapp_flow.is_none()
         && card.lark.is_none()
@@ -178,6 +178,11 @@ pub(crate) fn render(message: &OutboundMessage, id: &str, revision: u64) -> Resu
         || message.reply_to.is_some()
         || message.whatsapp_template.is_some()
         || message.native_attachments.len() > 1
+        || (!message.native_attachments.is_empty()
+            && message
+                .blocks
+                .iter()
+                .any(|block| matches!(block, Block::Form { .. })))
     {
         return Err(Error::Denied);
     }
