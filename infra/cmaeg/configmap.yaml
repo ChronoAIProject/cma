@@ -15,6 +15,9 @@ data:
   # Keep recovery and selected records after stopping admission, until retained work expires.
   CMAEG_ROUTED_RECOVERY_ENABLED: "true"
   CMAEG_ROUTED_ADMISSION_ENABLED: "true"
+  # Reader-first preparation; no binding can be replaced without explicit enrollment.
+  CMAEG_BINDING_PREPARATION_ENABLED: "false"
+  CMAEG_BINDING_REPLACEMENT_BINDINGS: ""
   CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED: "true"
   # Compatible readers are deployed; each delivery still requires owner commit.
   CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED: "true"
