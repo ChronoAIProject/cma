@@ -349,3 +349,27 @@ async fn native_whatsapp_video_derives_mime_and_extension_from_unlabeled_contain
         assert_eq!(upload.metadata, json!({"caption":"A caption"}));
     }
 }
+
+#[test]
+fn interactive_headers_require_the_upload_phone_and_supported_captionless_media() {
+    for (kind, phone, caption, allowed) in [
+        ("image", "34567", false, true),
+        ("document", "34567", false, true),
+        ("video", "34567", false, true),
+        ("image", "99999", false, false),
+        ("audio", "34567", false, false),
+        ("sticker", "34567", false, false),
+        ("image", "34567", true, false),
+    ] {
+        let mut metadata = json!({"id":"45678"});
+        if caption {
+            metadata["caption"] = json!("Caption");
+        }
+        let uploaded = UploadedMedia {
+            phone: phone.into(),
+            kind,
+            metadata,
+        };
+        assert_eq!(uploaded.into_interactive_header("34567").is_ok(), allowed);
+    }
+}

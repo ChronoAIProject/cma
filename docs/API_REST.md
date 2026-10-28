@@ -1613,6 +1613,23 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `POST /api/v1/sandboxes/{id}/workspaces` | CreateWorkspaceRequest; key | - | 201 WorkspaceView |
 | `GET /api/v1/workspaces/{id}` | - | - | 200 AccessibleWorkspaceDetailView |
 | `DELETE /api/v1/workspaces/{id}` | -; key | - | 202 WorkspaceView |
+| `POST /api/v1/workspaces/{id}/recover-prepare` | -; required key | - | 202 WorkspaceView |
+
+`recover-prepare` admits another preparation attempt for the same failed Workspace;
+HTTP 202 confirms admission, not readiness. The Workspace must never have reached
+Ready, have no resolved commit, Agents, Worktrees, pending preparation or active
+lease, and retain an Active, idle parent Sandbox. Its original identity, source,
+path, profile and data remain bound to the recovery. The owner needs
+`UseOwnSandboxes`; an operator with `ControlAnySandbox` may also admit recovery,
+with the actual operator retained as the requester.
+
+The command has no body and requires a valid `Idempotency-Key`. Repeating the same
+key replays its result. A new key is eligible only after a previous attempt has
+failed terminally; it cannot bypass active or uncertain work. Missing or invalid
+keys return 400, unauthenticated callers 401, and insufficient capability 403.
+Missing or foreign Workspaces return 404. Ineligible state returns 409 with
+`workspace_prepare_recovery_conflict`; unavailable storage returns 503. Read the
+original Workspace to observe eventual preparation success or failure.
 
 ### Service connections
 

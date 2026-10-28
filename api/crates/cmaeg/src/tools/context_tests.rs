@@ -2,6 +2,56 @@ use super::*;
 use crate::channels::routing_fixture;
 use cmaeg_core::{ids::ChannelId, seal::ChannelPointer};
 
+#[tokio::test]
+async fn native_lark_thread_start_discovery_requires_verified_original_group_and_gate() {
+    let mut app = crate::tools::message_effects::lark_fixture::App::new(Platform::Lark).await;
+    for mode in ["root", "private", "thread", "forged"] {
+        let mut f = if mode == "root" || mode == "forged" {
+            crate::interactions::native_lark::fixture::Fixture::new_group(
+                true,
+                cmaeg_core::channel::LarkRegion::Lark,
+            )
+            .await
+        } else {
+            crate::interactions::native_lark::fixture::Fixture::new(
+                true,
+                mode == "thread",
+                cmaeg_core::channel::LarkRegion::Lark,
+            )
+            .await
+        };
+        if mode == "forged" {
+            f.context.activity.actor.id = "ou_other".into();
+        }
+        for enabled in [false, true] {
+            for verified in [false, true] {
+                app.state.native_lark_thread_start_enabled = enabled;
+                let consumer =
+                    consumer_view(&f.channel, f.event.consumer.as_ref().unwrap()).unwrap();
+                let response = project(
+                    &f.channel,
+                    &consumer,
+                    &f.event,
+                    f.context.activity.clone(),
+                    verified,
+                    None,
+                    &app.state,
+                );
+                assert_eq!(
+                    response.capabilities.native_thread_start,
+                    (enabled && verified && mode == "root").then_some(true)
+                );
+                if response.capabilities.native_thread_start.is_none() {
+                    assert!(serde_json::to_value(response.capabilities)
+                        .unwrap()
+                        .get("native_thread_start")
+                        .is_none());
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn relay_text_edit_discovery_preserves_legacy_shape_and_limits_supported_platforms() {
     for platform in [
@@ -359,6 +409,14 @@ fn native_lark_media_discovery_is_independent_and_reports_bounded_subset() {
             "image/png",
             "application/pdf",
             "text/plain",
+            "application/msword",
+            "application/vnd.ms-excel",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/zip",
+            "application/octet-stream",
             "audio/ogg",
             "video/mp4"
         ]
@@ -370,4 +428,51 @@ fn native_lark_media_discovery_is_independent_and_reports_bounded_subset() {
     assert_eq!(capability.max_caption_chars, Some(0));
     assert!(capability.sticker.is_none());
     assert_eq!(capability.video.unwrap().max_duration_ms, 600_000);
+}
+
+#[tokio::test]
+async fn native_lark_image_control_discovery_is_image_only_and_requires_current_verified_custody() {
+    let mut app = crate::tools::message_effects::lark_fixture::App::new(Platform::Lark).await;
+    let f = crate::interactions::native_lark::fixture::Fixture::new(
+        true,
+        true,
+        cmaeg_core::channel::LarkRegion::Lark,
+    )
+    .await;
+    for media in [false, true] {
+        for controls in [false, true] {
+            for verified in [false, true] {
+                app.state.native_lark_outbound_media_enabled = media;
+                app.state.native_lark_media_controls_enabled = controls;
+                let caps = NativeMediaCapabilities::for_event(
+                    &app.state,
+                    &f.channel,
+                    &f.event,
+                    &f.context.activity,
+                    verified,
+                );
+                assert_eq!(caps.is_some(), media);
+                let combination = caps.and_then(|caps| caps.controls);
+                assert_eq!(combination.is_some(), media && controls && verified);
+                if let Some(combination) = combination {
+                    assert_eq!(combination.kinds, Some(vec!["image".into()]));
+                    assert_eq!(combination.max_attachments, 1);
+                    assert_eq!(combination.caption_max_chars, 0);
+                    assert!(combination.buttons && combination.choices && combination.update);
+                    assert!(combination.replace_media.is_none());
+                }
+            }
+        }
+    }
+    let mut channel = f.channel.as_ref().clone();
+    channel.definition.sources.clear();
+    let caps = NativeMediaCapabilities::for_event(
+        &app.state,
+        &channel,
+        &f.event,
+        &f.context.activity,
+        true,
+    )
+    .unwrap();
+    assert!(caps.controls.is_none());
 }

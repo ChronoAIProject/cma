@@ -175,6 +175,7 @@ export const NativeVideoCapabilitiesSchema = object({
 });
 export type NativeVideoCapabilities = Output<typeof NativeVideoCapabilitiesSchema>;
 export const MediaControlsCapabilitiesSchema = object({
+  kinds: optional(nullable(array(text))),
   max_attachments: integer,
   buttons: boolean,
   choices: boolean,

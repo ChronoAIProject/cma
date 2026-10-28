@@ -82,7 +82,7 @@ inode numbers. Missing, extra, named or shared endpoints are refused.
 Inspection permits only PID 1's verified supervisor, the current inspector,
 the exact requested Agent process trees and the source-pinned supervisor relay.
 That existing control transport has exact `/usr/bin/python3 -I -u -c` arguments,
-the checked `runtime_exec_relay.py` source, no Agent home and no children. Its
+the checked `runtime_control_relay.py` source, no Agent home and no children. Its
 fixed implementation only relays stdio to the supervisor's loopback port. The
 helper revalidates these service identities before signals and final proof.
 An orphan or unrequested Agent, or an

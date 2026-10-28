@@ -8,10 +8,16 @@ use super::{
 mod destinations;
 mod durable;
 mod native_lark_control_tests;
+mod native_lark_document_tests;
+mod native_lark_media_fixture;
+mod native_lark_media_tests;
 mod native_lark_tests;
+pub(crate) mod native_lark_thread_start_fixture;
+mod native_lark_thread_start_tests;
 mod native_whatsapp_control_tests;
 mod native_whatsapp_document_tests;
 mod native_whatsapp_group_tests;
+mod native_whatsapp_media_control_tests;
 mod native_whatsapp_sticker_tests;
 mod native_whatsapp_template_tests;
 mod native_whatsapp_tests;
