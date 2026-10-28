@@ -1,7 +1,7 @@
 use super::*;
 use crate::hosted::HostedChannelToolBinding;
 
-fn binding(retained: Option<&str>) -> HostedChannelToolBinding {
+pub(super) fn binding(retained: Option<&str>) -> HostedChannelToolBinding {
     let request = crate::AgentOpenRequest::new(
         "open-tool-fixture",
         crate::RuntimeOptions {

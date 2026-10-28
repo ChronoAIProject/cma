@@ -28,6 +28,7 @@ impl HostedAgentRuntime for CodexRuntime {
                 "message": "Internal error",
                 "data": { "details": "Already initialized" },
             })),
+            open_completion: Some(crate::hosted::HostedOpenCompletionProtocol::V1),
             context_refresh: None,
             permission_mode: Some(permission_mode.into()),
             own_credential: request.options.own_credential,

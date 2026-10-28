@@ -427,6 +427,7 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
             None,
             HostedAgentOpenSettings {
                 already_initialized_error: None,
+                open_completion: None,
                 context_refresh: None,
                 permission_mode: None,
                 own_credential: false,
