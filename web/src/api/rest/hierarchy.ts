@@ -240,6 +240,7 @@ export function agentDetail(value: Wire.Agent): AgentDetail {
       resolvedCommit: value.workspace.resolved_commit,
     },
     sandbox: value.sandbox,
+    desktop: value.desktop,
     conformsTo: value.conforms_to,
     reach: value.reach,
     title: value.title,

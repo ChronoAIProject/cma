@@ -31,6 +31,7 @@ import {
   problemExtensions,
 } from './public-contract/expectations.js';
 import { browserOperations, verifyNavigation } from './public-contract/navigation.js';
+import { verifyDesktopUpgrade } from './public-contract/desktop.js';
 
 const dispatch = {
   ...documentDispatch,
@@ -188,7 +189,9 @@ describe('shared public contract', () => {
         fetch,
       });
       if (mode === 'browser-only') {
-        await verifyNavigation(client, fixture, response(fixture));
+        if (fixture.operation === 'GET /api/v1/agents/{id}/desktop/ws')
+          await verifyDesktopUpgrade(fixture);
+        else await verifyNavigation(client, fixture, response(fixture));
         expect(fetch).not.toHaveBeenCalled();
         return;
       }

@@ -30,7 +30,7 @@ import {
 import type { ResolvedConfig } from './config.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { ProtocolError } from './errors.js';
-import { array, boolean, integer, object, optional, type Parser } from './schema.js';
+import { array, boolean, integer, object, optional, text, type Parser } from './schema.js';
 import {
   command,
   identity,
@@ -123,6 +123,15 @@ export class Agents {
     return setMessageFeedback(this.config, id, messageId, vote, options);
   }
 
+  /** Discover the owner-authenticated desktop stream. The host opens its WebSocket. */
+  desktop(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(id)}/desktop`,
+      object({ websocket_url: text }),
+      options,
+    );
+  }
   /** Discover admitted models and their current runtime availability. */
   models(id: string, options: OperationOptions = {}) {
     return listAgentModels(this.config, id, options);

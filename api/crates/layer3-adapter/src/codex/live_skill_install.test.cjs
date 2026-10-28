@@ -57,7 +57,7 @@ function config(directory, provider, origin) {
 
 test("pinned running Codex discovers an atomically added skill on the next turn", { timeout: 120000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   const directory = mkdtempSync(join(tmpdir(), "cma-live-skill-test-"));
   const home = join(directory, "agent-home");
   const fixture = await modelFixture();
@@ -88,6 +88,6 @@ test("pinned running Codex discovers an atomically added skill on the next turn"
     assert(after.includes(name));
     assert.equal(fixture.calls.length, 2);
   } finally {
-    await bridge.close(); await fixture.close(); rmSync(directory, { recursive: true, force: true });
+    await bridge.close(); await fixture.close(); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

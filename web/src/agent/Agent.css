@@ -229,6 +229,12 @@
   padding: 12px 20px 0;
 }
 
+.agent-surface__desktop-action {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
 .agent-surface__alerts:empty {
   display: none;
 }

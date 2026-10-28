@@ -9,11 +9,18 @@ use crate::{
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// Inline configuration; omitted image and profile options use deployment defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentLifecycleCreateRequest {
     /// Agent display name.
     pub name: String,
+    /// Provision an immutable Linux desktop runtime shared by the owner and Agent.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub machine_included: bool,
     /// Existing owned Workspace; inherits its image, repository and Sandbox scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
