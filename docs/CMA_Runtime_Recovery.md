@@ -169,6 +169,16 @@ separately, preserves source binding and home, and allocates the replacement abo
 the retained ceiling. Missing, foreign or higher provider authority is refused.
 Automatic recovery does not admit this legacy exception.
 
+The sixty-second age guard covers the normal assignment call bounds: the adapter
+wraps identity checks, exec delivery and acknowledgement in thirty seconds; the
+remote assignment helper separately bounds stdin reading by ten seconds and socket
+assignment by ten seconds. Dropping the exec client does **not** prove cancellation
+of the remote process or undo an accepted assignment. Once accepted, supervisor
+initialization may continue independently. These timeouts therefore reduce ordinary
+request overlap; sixty seconds is not a process quiescence receipt and cannot rule
+out arbitrarily delayed remote scheduling. The fresh complete process observations
+and durable fences below remain mandatory, with their stated observation/CAS boundary.
+
 For the pinned legacy runtime `sha256:3c5bccfabe8d20bd1fb5900cbfb2958878a316d75cfd1d186bcbfcf91c6fbf28`,
 a read-only exec can additionally prove an idle assignment bootstrap after an
 exit-2 startup failure. Pod Ready and bootstrap argv alone are insufficient:
