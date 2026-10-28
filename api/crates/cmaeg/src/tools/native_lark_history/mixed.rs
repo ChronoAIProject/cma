@@ -1,7 +1,7 @@
 use super::*;
 use cmaeg_core::conversation_history::HistoryOmittedContent;
 
-fn enable(f: &mut Fixture) {
+pub(super) fn enable(f: &mut Fixture) {
     Arc::get_mut(
         f.app
             .state
@@ -13,7 +13,7 @@ fn enable(f: &mut Fixture) {
     .mixed_media = true;
 }
 
-fn post(id: &str, created: i64, threaded: bool, title: &str, items: Value) -> Value {
+pub(super) fn post(id: &str, created: i64, threaded: bool, title: &str, items: Value) -> Value {
     let mut row = row(id, created, threaded);
     row["msg_type"] = "post".into();
     row["body"]["content"] = json!({"title":title, "content":[items]}).to_string().into();
@@ -45,7 +45,8 @@ async fn native_history_mixed_posts_preserve_text_and_report_media_without_autho
             assert_eq!(old.omitted_message_count, 1);
             let old_cursor = cursor(old);
             enable(&mut f);
-            let page = f.read(None).await.unwrap();
+            let page = f.read_with_media(None, true).await.unwrap();
+            let mixed_cursor = cursor(page.clone());
             assert_eq!(page.scanned_messages, 1);
             assert_eq!(page.omitted_message_count, 0);
             assert_eq!(page.messages.len(), 1);
@@ -79,7 +80,7 @@ async fn native_history_mixed_posts_preserve_text_and_report_media_without_autho
                 10,
                 "no media fetch or automatic next page"
             );
-            // The projection flag changes neither custody nor cursor authority.
+            // Old cursors keep their legacy projection even after activation.
             f.set_page(
                 "next_page",
                 vec![post(
@@ -94,6 +95,9 @@ async fn native_history_mixed_posts_preserve_text_and_report_media_without_autho
                 None,
             );
             let next = f.read(Some(&old_cursor)).await.unwrap();
+            assert!(next.messages.is_empty());
+            assert_eq!(next.omitted_message_count, 1);
+            let next = f.read_with_media(Some(&mixed_cursor), true).await.unwrap();
             assert_eq!(next.messages[0].text, "Older");
             assert_eq!(
                 next.messages[0].omitted_content,
@@ -124,7 +128,7 @@ async fn native_history_mixed_posts_keep_omission_when_text_budget_is_exhausted(
         })
         .collect();
     f.set_page("", rows, None);
-    let page = f.read(None).await.unwrap();
+    let page = f.read_with_media(None, true).await.unwrap();
     assert_eq!(page.scanned_messages, 7);
     assert_eq!(page.omitted_message_count, 0);
     assert_eq!(page.messages.len(), 7);
@@ -159,6 +163,6 @@ async fn native_history_mixed_projection_still_refuses_malformed_supported_posts
             vec![post("om_malformed", f.created - 1, false, "Title", items)],
             None,
         );
-        assert!(f.read(None).await.is_err());
+        assert!(f.read_with_media(None, true).await.is_err());
     }
 }

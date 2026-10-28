@@ -35,6 +35,8 @@ data:
   # Native single-attachment Telegram edits are enabled after compatible reader rollout.
   # Requires every reader to support durable media-card custody before enabling.
   CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED: "false"
+  CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED: "true"
   # Native single-attachment Discord edits are enabled after compatible reader rollout.
   CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED: "true"
@@ -42,6 +44,7 @@ data:
   CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED: "false"
   # Retained exact file proofs allow content/control edits without replacing media.
   CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED: "false"
   # Requires separately migrated persistent fence storage and runtime grants.
   CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED: "false"
   CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED: "false"

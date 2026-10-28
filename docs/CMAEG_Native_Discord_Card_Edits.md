@@ -16,8 +16,9 @@ as documented for native controls. A text/link-only replacement explicitly sends
 `components: []`, removing all old controls. Its returned card reference permits
 subsequent edits to that same message.
 
-Native attachments, caller-supplied reply targets, new thread destinations and
-multipart replacements are refused before an edit claim or platform request.
+Caller-supplied reply targets and new thread destinations are refused before an
+edit claim or platform request. Upload replacement requires the separate
+media-card replacement gate described below.
 A retained thread card stays in its original thread even when the replacement
 omits `thread_reply`; setting it on an ordinary card is unsupported. Editing does
 not grant thread creation, membership, history, delete or reaction authority.
@@ -93,7 +94,8 @@ The original message author may edit content
 and components; edits return a Message object, and `allowed_mentions` must be
 supplied again because an edit does not inherit the original mention policy.
 CMA uses the existing action-row component format and does not set
-`IS_COMPONENTS_V2` or edit attachments.
+`IS_COMPONENTS_V2`. The separate upload replacement path supplies explicit final
+attachment membership in the same PATCH.
 
 Local REST, encrypted-store, callback and provider fixtures establish the CMA
 contract. Actual Discord edit/render/callback acceptance requires a separately
@@ -106,7 +108,6 @@ final acknowledgements keep the destination fenced across revisions. See
 [native card effects](CMAEG_Native_Discord_Card_Effects.md) for reader rollout and
 accepted callback recovery after deletion.
 
-
 ## Media-bearing control cards
 
 The separate `CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED` gate extends this
@@ -115,5 +116,40 @@ confirmed upload proof. `updateMessage` changes content/controls and preserves
 the upload by omitting `attachments` from PATCH. Both the native pre-read and
 write response must match retained attachment identity, metadata and presentation.
 Uncertain writes do not resend or bind a new reference. Historical media cards
-without proof remain callback-only. Binary/caption replacement and media/form
+without proof remain callback-only. This gate alone does not allow binary/caption
+replacement; the separate replacement gate is described below. Media/form
 combinations remain unsupported; see [media-control edits](CMAEG_Native_Discord_Interactions.md#preserve-an-upload-while-editing-its-controls).
+
+## Same-card media replacement
+
+`CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED` defaults to `false` and
+also requires the media-card-edit gate. When discovery reports
+`native_media.controls.replace_media=true`, update an existing confirmed media
+card using its current `message_ref` and a complete `message` with exactly one
+`native_attachments` item, plus the complete replacement text and controls. An
+empty attachment list preserves the existing file. Removing the file entirely,
+multiple uploads and forms with media remain unsupported. The replacement can
+be an image, file, audio or video; existing source and byte limits still apply.
+
+The operation keeps the original message, channel/thread, actor, consumer,
+conversation and expiry. It verifies the old native message and fully prepares
+the multipart request before admission, then saves a successor with compact
+new-byte metadata and
+`media.pending_replacement=true`. This state is readable but has no callback,
+message-effect or edit authority. Source URLs and base64 are never stored on the
+card. One multipart PATCH replaces the complete attachment membership and
+controls together. Only an exact response for the new file and controls can
+bind the successor; original reply, message flags and spoiler state must remain.
+Generated previews and media dimensions may change with the new file.
+
+Retries must retain the original `message_ref` and identical complete request.
+The immutable request hash resolves exact replay before downloading an attachment
+again. An accepted but uncertain PATCH stays fenced and never reuploads. A
+successful result returns the successor `message_ref` for the next revision.
+Turning the gate off stops fresh replacements but preserves exact replay,
+callbacks and same-file edits using retained confirmed successors.
+
+Deploy every retained reader with support for pending successors before enabling
+replacement issuance. Older media-preserving readers cannot recover the new
+pending state. These tests use local native HTTP fixtures; no Discord platform
+messages are sent by the test suite.

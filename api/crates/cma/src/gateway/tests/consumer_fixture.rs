@@ -72,6 +72,7 @@ impl ConsumerGateway {
             .with_state(platform.clone());
         let platform_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config = cmaeg::Config {
+            native_split_text_refs_enabled: false,
             native_telegram_message_events_writes_enabled: false,
             native_lark_writes_enabled: false,
         native_lark_intake_enabled: false,
@@ -81,9 +82,11 @@ impl ConsumerGateway {
         native_lark_mixed_history_enabled: false,
         native_telegram_media_edits_enabled: false,
         native_telegram_media_controls_enabled: false,
+        native_telegram_media_control_edits_enabled: false,
         native_discord_media_edits_enabled: false,
         native_discord_media_controls_enabled: false,
         native_discord_media_card_edits_enabled: false,
+        native_discord_media_card_replacements_enabled: false,
         native_lark_message_effects_enabled: false,
         native_lark_received_reactions_enabled: false,
         native_whatsapp_writes_enabled: false,
@@ -156,6 +159,8 @@ impl ConsumerGateway {
             native_telegram_media_controls_enabled: false,
             native_discord_media_controls_enabled: false,
             native_discord_media_card_edits_enabled: false,
+            native_discord_media_card_replacements_enabled: false,
+            native_telegram_media_control_edits_enabled: false,
             native_media_edits: None,
             native_whatsapp_forms: None,
             native_lark_effects: None,
