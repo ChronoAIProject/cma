@@ -299,9 +299,10 @@ impl std::io::Write for Capture {
 }
 
 /// The fake CMA runs on this current-thread runtime, so a thread-scoped
-/// subscriber captures every log line without touching global state.
+/// subscriber captures every log line without installing a global subscriber.
 #[tokio::test(flavor = "current_thread")]
 async fn no_secret_owner_subject_or_blob_reaches_the_output_or_logs() {
+    keep_log_callsite_registry_shared();
     let capture = Capture::default();
     let writer = capture.clone();
     let _logs = tracing::subscriber::set_default(
@@ -317,7 +318,10 @@ async fn no_secret_owner_subject_or_blob_reaches_the_output_or_logs() {
     let blob = STANDARD_NO_PAD.encode(&cma.records()[original.record_id.as_str()].blob);
     cma.put_conflicts.store(1, Ordering::SeqCst);
     let mut output = audit(&cma, false).await.lines().join("\n");
-    output.push_str(&audit(&cma, true).await.lines().join("\n"));
+    let cleared = audit(&cma, true).await;
+    assert_eq!(cleared.cleared, 1);
+    assert!(cleared.complete());
+    output.push_str(&cleared.lines().join("\n"));
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     let hash = cmaeg::telemetry::channel_hash(channel.unwrap().as_str());
     assert!(logs.contains("custom attachments cleared"), "{logs}");

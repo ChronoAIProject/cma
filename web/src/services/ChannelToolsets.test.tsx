@@ -290,3 +290,37 @@ it('discards a previous owner catalog response after identity changes', async ()
   expect(screen.getByText('This gateway advertises no agent tools.')).toBeVisible();
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
+
+it('accepts original-history consent from a direct Lark source without granting Discord thread tools', async () => {
+  const names = ['readEventHistory', 'listEventThreads'];
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValue(response({ agent_tools: names.map((name) => ({ ...context, name })) })),
+  );
+  const current = {
+    ...channel,
+    definition: {
+      ...channel.definition,
+      sources: [{ type: 'native_lark', conversation_history: true }],
+    },
+  };
+  const view = render(<Catalog current={current} />);
+  await screen.findByText('readEventHistory');
+  const other = screen.getByText('Tools requiring setup (1)').closest('details')!;
+  expect(other).not.toContainElement(screen.getByText('readEventHistory'));
+  expect(other).toContainElement(screen.getByText('listEventThreads'));
+  view.rerender(
+    <Catalog
+      current={{
+        ...current,
+        definition: {
+          ...current.definition,
+          sources: [{ type: 'native_lark', conversation_history: false }],
+        },
+      }}
+    />,
+  );
+  expect(screen.getByText('Enable Lark / Feishu conversation history')).toBeInTheDocument();
+});

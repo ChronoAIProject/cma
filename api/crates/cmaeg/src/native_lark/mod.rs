@@ -5,6 +5,9 @@ pub(crate) mod content;
 pub(crate) mod control_recovery;
 pub(crate) mod controls;
 pub(crate) mod effects;
+pub(crate) mod history_authority;
+pub(crate) mod history_projection;
+pub(crate) mod history_read;
 pub use client::{Client, Error, Transport};
 pub(crate) mod management;
 pub(crate) mod message;
@@ -17,11 +20,14 @@ use cmaeg_core::{
 };
 use sha2::{Digest, Sha256};
 pub(crate) fn revision(source: &NativeLarkSource, credentials: &NativeLarkCredentials) -> String {
+    // History is a separate read consent. Its admission proof binds the full source;
+    // toggling it must not revoke existing messaging/media/control authority.
+    let source = messaging_source(source);
     format!(
         "{:x}",
         Sha256::digest(
             serde_json::to_vec(&(
-                source,
+                &source,
                 credentials.app_secret.as_str(),
                 credentials.encrypt_key.as_str(),
                 credentials.verification_token.as_str()
@@ -29,6 +35,19 @@ pub(crate) fn revision(source: &NativeLarkSource, credentials: &NativeLarkCreden
             .expect("native revision serializes")
         )
     )
+}
+fn messaging_source(source: &NativeLarkSource) -> NativeLarkSource {
+    let mut source = source.clone();
+    source.conversation_history = false;
+    source
+}
+pub(crate) fn same_messaging_source(left: &Source, right: &Source) -> bool {
+    match (left, right) {
+        (Source::NativeLark(left), Source::NativeLark(right)) => {
+            messaging_source(left) == messaging_source(right)
+        }
+        _ => left == right,
+    }
 }
 pub(crate) fn credentials<'a>(
     definition: &'a ChannelDefinition,

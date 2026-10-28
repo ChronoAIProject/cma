@@ -26,7 +26,7 @@ pub trait Transport: Send + Sync {
         body: Vec<u8>,
     ) -> BoxFuture<'_, Result<HttpReply, TransportError>>;
 }
-struct HttpTransport(reqwest::Client);
+struct HttpTransport(reqwest::Client, usize);
 impl Transport for HttpTransport {
     fn exchange(
         &self,
@@ -48,7 +48,7 @@ impl Transport for HttpTransport {
             Ok(HttpReply {
                 status: response.status(),
                 headers: response.headers().clone(),
-                body: read_bounded(response, 64 * 1024).await,
+                body: read_bounded(response, self.1).await,
             })
         })
     }
@@ -56,9 +56,16 @@ impl Transport for HttpTransport {
 #[derive(Clone)]
 pub struct Client {
     transport: Arc<dyn Transport>,
+    response_limit: usize,
 }
 impl Client {
     pub fn production() -> Result<Self, crate::ConfigError> {
+        Self::bounded(64 * 1024)
+    }
+    pub(crate) fn history_reader() -> Result<Self, crate::ConfigError> {
+        Self::bounded(1024 * 1024)
+    }
+    fn bounded(response_limit: usize) -> Result<Self, crate::ConfigError> {
         let http = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -68,7 +75,8 @@ impl Client {
                 detail: "cannot configure native Lark client".into(),
             })?;
         Ok(Self {
-            transport: Arc::new(HttpTransport(http)),
+            transport: Arc::new(HttpTransport(http, response_limit)),
+            response_limit,
         })
     }
     pub fn with_transport(mut self, transport: Arc<dyn Transport>) -> Self {
@@ -132,7 +140,7 @@ impl Client {
             return Err(Error::Unconfirmed);
         }
         let bytes = response.body.map_err(|_| Error::Unconfirmed)?;
-        if bytes.len() > 64 * 1024 {
+        if bytes.len() > self.response_limit {
             return Err(Error::Unconfirmed);
         }
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| Error::Unconfirmed)?;

@@ -25,7 +25,9 @@ pub mod reply_target;
 pub mod thread_ref;
 pub use thread_ref::{ThreadRef, ThreadRefPayload};
 mod history_cursor;
-pub use history_cursor::{HistoryCursor, HistoryCursorPayload, HistoryOrigin};
+pub use history_cursor::{
+    HistoryCursor, HistoryCursorPayload, HistoryOrigin, NativeLarkHistoryCursorPayload,
+};
 pub mod telegram_effect;
 pub mod whatsapp_reaction;
 

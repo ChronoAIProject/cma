@@ -187,9 +187,28 @@ impl DiscordRest {
         token: &Secret,
         target: &Identity,
         action: ThreadAction,
+        name: Option<&str>,
     ) -> Result<Option<Thread>, RestError> {
         self.ready(token)?;
         match action {
+            ThreadAction::Close => Err(RestError::Rejected),
+            ThreadAction::Rename => {
+                let name = name.ok_or(RestError::Rejected)?;
+                let response = self
+                    .client
+                    .patch(self.url(&format!("channels/{}", target.id))?)
+                    .header("Authorization", format!("Bot {}", token.as_str()))
+                    .json(&json!({"name":name}))
+                    .send()
+                    .await
+                    .map_err(|_| RestError::Unknown)?;
+                let value = self.decode(response, token, true).await?;
+                let thread = Thread::parse(&value, target).map_err(|_| RestError::Unknown)?;
+                if thread.name != name || thread.archived {
+                    return Err(RestError::Unknown);
+                }
+                Ok(Some(thread))
+            }
             ThreadAction::Archive | ThreadAction::Reopen => {
                 let archived = action == ThreadAction::Archive;
                 let response = self

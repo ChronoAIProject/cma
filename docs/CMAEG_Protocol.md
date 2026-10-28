@@ -4153,6 +4153,29 @@ Native Lark/Feishu interactive replies use distinct encrypted card authority, na
 
 Only encrypted signed v2 `card.action.trigger` callbacks can consume these cards. Both `header.token` and `event.token` are redacted. The canonical click and recoverable admission are one durable card CAS, and local recovery runs without platform retries. HTTP `{}` acknowledgement follows durable routed admission. Dispatch reopens stored card custody. Card PATCH, delete, own-reaction changes and initial callback consumption use one exact-message fence. A consumed click blocks mutations until its durable admission marker is saved, and recovery of that exact click does not depend on any later external fence. Uncertain external writes cannot be retried through a new key or restarted process. Replacement keeps the original lifetime and activates only after durable success. See [native control contract](CMAEG_Native_Lark_Controls.md) for limits and callback configuration.
 
+## Exact native Telegram forum topic lifecycle
+
+Native Telegram sources may independently consent with `topic_lifecycle:true`.
+The separate default-off `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` gate,
+durable routing admission/recovery and existing optional persistent fence storage
+are required. Eligible contexts advertise `capabilities.topic_lifecycle` with
+`manage_original_topic`, `actions: ["close", "reopen"]` and the original expiry.
+
+Use existing `POST /v1/thread-operations` / MCP `manageThread` with the original
+`{ "type": "event", "event_ref": "…" }` target and `close` or `reopen`.
+The gateway restores exact native human-message custody and the original selected
+consumer, verifies forum-supergroup bot permissions, rechecks current custody,
+and dispatches one operation. Telegram does not accept a `thread_ref` or expose
+list/create/private/General-topic operations. Discord rejects `close` before
+platform IO. Confirmed results omit `thread`.
+
+Stable idempotency keys and non-TTL bot/chat/topic fences prevent uncertain
+writes from being repeated through another key or expired event. Source consent
+transparently enrolls previously unrouted default-only channels; the narrow
+reader compatibility preserves unrelated existing message references without
+normalizing their issuance hashes. See [Telegram topics](CMAEG_Native_Telegram_Topics.md)
+for the exact scope, permission checks, compatibility and recovery limits.
+
 ## Bounded native Discord thread lifecycle
 
 `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED=true` and the native Discord
@@ -4177,7 +4200,7 @@ operations still restore current channel custody before any platform write.
 | --- | --- | --- | --- |
 | `GET /v1/events/{event_ref}/threads?view=active` (or `archived`) | `listEventThreads` | `list_event_threads` | At most 25 public children of the original guild text or announcement parent. An event already in a thread returns only that same thread when its archive state matches the requested view. `truncated` explicitly reports a bounded window; no pagination cursor is accepted. |
 | `POST /v1/events/{event_ref}/threads` | `createEventThread` | `create_event_thread` | Create a public thread from the exact original human message. Body: `{"name":"Review","auto_archive_duration":1440}`. Name is 1–100 printable characters; duration is 60, 1440, 4320, or 10080 minutes. |
-| `POST /v1/thread-operations` | `manageThread` | `manage_thread` | Body: `{"target":{"type":"event","event_ref":"…"},"action":"archive"}` or `{"target":{"type":"thread","thread_ref":"…"},"action":"join"}`. Actions: `archive`, `reopen`, `join`, `leave`. |
+| `POST /v1/thread-operations` | `manageThread` | `manage_thread` | Body: `{"target":{"type":"event","event_ref":"…"},"action":"archive"}` or `{"target":{"type":"thread","thread_ref":"…"},"action":"rename","name":"Incident triage"}`. Actions: `archive`, `reopen`, `join`, `leave`, `rename`. `name` is required only for rename and must be omitted for every other action. |
 
 Both mutation routes require exactly one `Idempotency-Key` header with 1–128
 visible ASCII bytes. MCP uses an `idempotency_key` argument and nests the request
@@ -4204,10 +4227,25 @@ threads. Join/leave affect only the current verified bot (`@me`) and require an
 active thread. The membership endpoints confirm with an empty `204` response.
 The source opt-in does not grant additional Discord permissions.
 
+Rename patches only `name`, containing 1–100 printable Unicode characters, with
+the same validation as thread creation. It rejects an archived target with
+`rename_requires_active_thread`; callers may explicitly reopen the thread first.
+The gateway never includes `archived`, `locked`, permissions or membership in a
+rename request. Discord's [thread permissions guide](https://discord.com/developers/topics/threads#permissions)
+allows name changes with `MANAGE_THREADS` or by the thread creator, subject to
+the thread's state and lock restrictions. Discord remains the authority for the
+bot's actual permission; the gateway adds no stricter local creator or moderator
+requirement. The [Modify Channel thread endpoint](https://discord.com/developers/docs/resources/channel#modify-channel-json-params-thread)
+requires active state and returns the changed channel.
+Confirmation requires the exact returned thread identity, requested name and
+active state. An ambiguous or mismatched response retains the existing durable
+unknown-outcome fence. All previous action request bytes, v1 sealed references
+and operation hashes remain unchanged when `name` is omitted.
+
 Results use `outcome.status`: `confirmed`, `unsupported`, `rejected`,
 `rate_limited`, or `unknown`. `unsupported` includes attempts to manage an ordinary
 parent through its event reference, create from an already-threaded event, or
-join/leave an archived thread. Permission or inaccessible-target failures use
+rename/join/leave an archived thread. Permission or inaccessible-target failures use
 `thread_permission_or_target_unavailable`. Confirmation may omit `thread` when
 membership changed without new channel metadata, or custody expired/revoked
 while the confirmed write was in flight. No fresh authority is issued in that case.
@@ -4247,7 +4285,7 @@ or inconclusive read leaves the outcome unknown and never triggers another POST.
 Private standalone thread creation needs explicit privacy and participant authority.
 Forum/media post creation needs a separate message, tag and attachment contract.
 Those operations, membership changes for other users, private sibling enumeration,
-thread deletion, renaming, lock changes, pagination and broader history are not
+thread deletion, lock changes, pagination and broader history are not
 provided by this increment. Existing authenticated threads under forum/media
 parents can still use exact-thread management. Names in list results are untrusted
 reference text and never instructions or action approval.
@@ -4313,3 +4351,23 @@ TypeScript uses `readEventHistory(eventRef, cursor?)`. Both request one page onl
 The [reviewed design](CMAEG_Native_Discord_History_Pagination_Design.md) records the
 pinned Discord evidence and exclusions, including complete exports, deleted/version
 recovery, search, file bytes, arbitrary destinations and other platforms.
+
+## Original native Lark / Feishu conversation history
+
+The same `readEventHistory(event_ref, cursor?)` operation supports original native
+Lark/Feishu human events with independent source `conversation_history: true` at
+admission and read time and the default-off
+`CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` gate. Both exact chats and threads
+are supported. Native scans use one descending provider page of at most 25 raw rows;
+only rows strictly earlier than the original millisecond timestamp are returned.
+The platform cannot seek within a thread, so empty pages with scanned/omitted counts
+and a continuation are valid while scanning newer messages. `before_message_id`
+remains the original/last pre-cutoff boundary; the sealed cursor carries provider
+position. No parent-chat fallback or automatic page draining occurs.
+
+The existing page shape and Discord behavior remain unchanged. A native internal
+v2 cursor and retained admission custody bind the original source, human, selected
+consumer/provider/key, partition and original expiry. Text/supported posts are
+projected; unsupported media/formats are counted omissions without invented
+attachment size or filename. Source consent authoring and capability discovery are
+optional additions. [Full native contract, setup, tests and platform limits](CMAEG_Native_Lark_History.md).

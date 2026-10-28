@@ -468,6 +468,7 @@ async fn thread_lifecycle_uses_exact_scoped_routes_and_never_retries_unknown_wri
             thread_ref: "cmaeg1.tr.original".into(),
         },
         action: ThreadAction::Leave,
+        name: None,
     };
     let confirmed = json!({"outcome":{"status":"confirmed"}});
     let mut request = wire::json(
@@ -485,6 +486,33 @@ async fn thread_lifecycle_uses_exact_scoped_routes_and_never_retries_unknown_wri
     same(
         client.manage_thread("leave-stable", &manage).await.unwrap(),
         confirmed,
+    );
+    let rename = ManageThreadRequest {
+        target: manage.target,
+        action: ThreadAction::Rename,
+        name: Some("Incident triage".into()),
+    };
+    let unknown = json!({"outcome":{"status":"unknown","reason":"thread_write_unconfirmed"}});
+    let mut request = wire::json(
+        "POST",
+        "/v1/thread-operations",
+        Some(
+            json!({"target":{"type":"thread","thread_ref":"cmaeg1.tr.original"},"action":"rename","name":"Incident triage"}),
+        ),
+        200,
+        unknown.clone(),
+        true,
+    );
+    request
+        .headers
+        .insert("idempotency-key".into(), "rename-stable".into());
+    server.expect(request);
+    same(
+        client
+            .manage_thread("rename-stable", &rename)
+            .await
+            .unwrap(),
+        unknown,
     );
     server.assert_drained();
 }

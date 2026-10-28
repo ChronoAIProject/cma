@@ -44,7 +44,7 @@ fn revision(channel: &ResolvedChannel, bot: &str) -> Result<String, Error> {
         .ok_or(Error::Invalid)?;
     Ok(hash_secret(&cmaeg_core::profile::canonical_json(
         serde_json::json!({
-            "source":source,"owner":channel.definition.owner.subject,
+            "source":crate::telegram::messaging_source(source),"owner":channel.definition.owner.subject,
             "token":hash_secret(token.as_str()),"webhook":hash_secret(secret.as_str())
         }),
     )))
@@ -57,11 +57,19 @@ fn id(channel: &ResolvedChannel, bot: &str, chat: &str, message: &str) -> String
 }
 impl Context {
     pub(crate) fn capture(state: &IngressState, request: &LaunchRequest, now: i64) -> Option<Self> {
-        if !crate::ingress::routed::telegram::opted_in(request)
-            || !state
-                .routed
-                .as_ref()
-                .is_some_and(|routing| routing.telegram_selected(request))
+        if !matches!(
+            request
+                .channel
+                .definition
+                .source_of(&request.activity.source),
+            Some(cmaeg_core::channel::Source::Telegram {
+                message_events: true,
+                ..
+            })
+        ) || !state
+            .routed
+            .as_ref()
+            .is_some_and(|routing| routing.telegram_selected(request))
             || request.channel.definition.routing.is_none()
             || !matches!(request.activity.kind, ActivityKind::Message { .. })
         {

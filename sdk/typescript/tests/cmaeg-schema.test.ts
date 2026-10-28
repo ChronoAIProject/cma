@@ -25,6 +25,7 @@ import {
   ThreadListSchema,
   ThreadReceiptSchema,
   ThreadCapabilitiesSchema,
+  TopicLifecycleCapabilitiesSchema,
   ConversationHistoryPageSchema,
   ConversationHistoryCapabilitiesSchema,
   CreateThreadRequestSchema,
@@ -477,6 +478,20 @@ it('round-trips bounded thread lifecycle contracts and preserves absent consent'
   });
 });
 
+it('requires a rename name and rejects it on every existing thread action', () => {
+  const target = { type: 'event', event_ref: 'cmaeg1.ev.fixture' };
+  const rename = { target, action: 'rename', name: 'Incident triage' };
+  expect(ManageThreadRequestSchema(rename)).toEqual(rename);
+  expect(() => ManageThreadRequestSchema({ target, action: 'rename' })).toThrow();
+  expect(() => ManageThreadRequestSchema({ target, action: 'rename', name: null })).toThrow();
+  for (const action of ['archive', 'reopen', 'join', 'leave']) {
+    const legacy = { target, action };
+    expect(ManageThreadRequestSchema(legacy)).toEqual(legacy);
+    expect(() => ManageThreadRequestSchema({ ...legacy, name: 'Unexpected' })).toThrow();
+    expect(() => ManageThreadRequestSchema({ ...legacy, name: null })).toThrow();
+  }
+});
+
 it('round-trips paginated history facts and keeps consent independent', () => {
   const fixtures = JSON.parse(
     readFileSync(
@@ -497,4 +512,45 @@ it('round-trips paginated history facts and keeps consent independent', () => {
   };
   expect(SourceSchema(source)).toEqual(source);
   expect(SourceRequestSchema(source)).toEqual(source);
+});
+
+it('keeps native Lark history consent optional and accepts bounded empty thread progress without new page fields', () => {
+  const source = {
+    type: 'native_lark',
+    separate_app: true,
+    identity: { region: 'feishu', app_id: 'cli_app', tenant_key: 'tenant', bot_open_id: 'ou_bot' },
+    admission: { type: 'all' },
+  };
+  expect(SourceSchema(source)).toEqual(source);
+  expect(SourceRequestSchema({ ...source, conversation_history: true })).toEqual({
+    ...source,
+    conversation_history: true,
+  });
+  const fixtures = JSON.parse(
+    readFileSync(
+      new URL('../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json', import.meta.url),
+      'utf8',
+    ),
+  ) as Record<string, unknown[]>;
+  const page = fixtures.ConversationHistoryPage![2];
+  expect(ConversationHistoryPageSchema(page)).toEqual(page);
+});
+
+it('keeps Telegram topic consent independent and discovers only close/reopen', () => {
+  const source = { type: 'telegram', bot_id: '77', admission: { type: 'all' } };
+  expect(SourceSchema(source)).toEqual(source);
+  expect(SourceRequestSchema(source)).toEqual(source);
+  const opted = { ...source, topic_lifecycle: true };
+  expect(SourceSchema(opted)).toEqual(opted);
+  expect(SourceRequestSchema(opted)).toEqual(opted);
+  const caps = {
+    manage_original_topic: true,
+    actions: ['close', 'reopen'],
+    expires_at: 1800000600,
+  };
+  expect(TopicLifecycleCapabilitiesSchema(caps)).toEqual(caps);
+  expect(() => TopicLifecycleCapabilitiesSchema({ ...caps, actions: ['archive'] })).toThrow();
+  expect(TopicLifecycleCapabilitiesSchema({ ...caps, list: 'original_thread' })).toEqual(caps);
+  const request = { target: { type: 'event', event_ref: 'cmaeg1.ev.fixture' }, action: 'close' };
+  expect(ManageThreadRequestSchema(request)).toEqual(request);
 });

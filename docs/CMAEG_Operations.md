@@ -152,6 +152,7 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_LARK_INTAKE_ENABLED` | `true` or `false` | `false` | Admit encrypted signed callbacks on `/v1/native-lark/{channel_id}`. Retained work and replies continue through the durable recovery path when intake is paused. |
 | `CMAEG_NATIVE_LARK_MEDIA_ENABLED` | `true` or `false` | `false` | Admits new native image, file, audio, video and rich-post resources after compatible locator readers deploy. Requires `CMAEG_MEDIA_ENABLED`; pauses preserve exact duplicate admission and retained reads. Direct regional message-resource retrieval rechecks original consumer/provider and current source/credential authority, including cache hits. See [native Lark media](CMAEG_Native_Lark_Media.md). |
 | `CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED` | `true` or `false` | `false` | Independent bounded native JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and Baseline H.264 MP4 upload/send gate. Requires retained native source custody and exact routed default/named consumer/provider authority; rejects native captions and controls. Advertises exact MIME/size/video limits through `native_media`. See [native outbound media](CMAEG_Native_Lark_Outbound_Media.md). |
+| `CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` | `true` or `false` | `false` | Independently enables consented original native Lark/Feishu chat and exact-thread history through REST/MCP. Each call scans at most 25 raw rows; threads may return empty progress pages. Off disables native history execution and capability discovery. Requires compatible source/admission-proof readers before authoring. See [native history](CMAEG_Native_Lark_History.md). |
 | `CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED` | `true` or `false` | `false` | Issue revisioned single-upload caption/replacement references after durable media receipt storage. Retained references remain usable when issuance is disabled. See [native media edits](CMAEG_Native_Media_Edits.md). |
 | `CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED` | `true` or `false` | `false` | Issue revisioned single-upload content/attachment-description/replacement references after durable receipt storage. Historical effects-only references never gain edit authority. |
 | `CMAEG_NATIVE_LARK_CONTROLS_ENABLED` | `true` or `false` | `false` | Issue direct-app JSON 2.0 cards, buttons and choices for the exact original human, conversation and retained existing group thread. Requires native intake and durable routed recovery. Existing callbacks and references retain their authority when issuance is disabled. See [native controls](CMAEG_Native_Lark_Controls.md). |
@@ -169,7 +170,8 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue 24-hour delete/reaction authority on exact confirmed native Discord messages. Text/link replies also require native edit issuance; native uploads instead require the separate media effects gate. Deploy compatible readers before enabling. Retained references remain readable with issuance off. Reactions change only the bot’s own reaction; custom emoji IDs resolve in the destination guild. |
 | `CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue effects-only references for native uploads fully contained in one confirmed Discord message, with up to four files. Requires the message effects gate, independently of text edits. Multiple native messages and uncertain sends get no reference; content/attachment edits remain unsupported. Deploy serving and rollback readers for the new sealed scope before enabling. Checked-in ConfigMap stays off. See [native media effects](CMAEG_Native_Discord_Media_Effects.md). |
 | `CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED` | `true` or `false` | `false` | Allows new native source `thread_history` opt-ins and explicit bounded `readEventContext` history reads after compatible readers are deployed. Both this gate and source consent are required for execution. Off revokes history reads, retained settings can be removed; ordinary context reads are unchanged. See [native thread history](CMAEG_Protocol.md#bounded-native-discord-thread-history). |
-| `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows native source `thread_lifecycle` consent and bounded create/list/archive/reopen/current-bot join/leave operations only when the optional persistent fence collection and grants are ready. Off revokes execution including retained references. See [lifecycle rollout](#native-discord-thread-lifecycle-rollout). |
+| `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows independent native Telegram `topic_lifecycle` consent and exact admitted non-General forum-topic close/reopen. Requires durable admission/recovery and existing optional persistent fence readiness. Off revokes execution. See [Telegram topic rollout](#native-telegram-topic-lifecycle-rollout). |
+| `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows native source `thread_lifecycle` consent and bounded create/list/rename/archive/reopen/current-bot join/leave operations only when the optional persistent fence collection and grants are ready. Off revokes execution including retained references. See [lifecycle rollout](#native-discord-thread-lifecycle-rollout). |
 | `CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` | `true` or `false` | `false` | Allows independently consented, bounded original-conversation history pages through REST and MCP. Off disables execution and discovery. See [history gate](#native-discord-conversation-history-gate). |
 | `CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` | `true` or `false` | `false` | Persists verified native channel metadata in immutable inbox bodies and issues exact-thread reply evidence. Deploy compatible inbox and sealed-reference readers first. This uses one bounded authenticated channel read per new admitted message, with no per-channel cache; duplicate inbox messages reuse their original evidence. Disabling stops new metadata writes but retained evidence continues to replay. |
 | `CMAEG_NATIVE_DISCORD_ENABLED` | `true` or `false` | `false` | Enables supervised native source connections and durable inbox recovery for explicit canaries or bounded automatic discovery. Off starts no native worker, scans or Discord requests. Authoring remains separately gated. |
@@ -2847,12 +2849,18 @@ The independent verifier recorded
 Native Discord lifecycle is separately gated by
 `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED` (`true`/`false`, default `false`).
 The gate permits new source `thread_lifecycle:true` settings and executes bounded
-create/list/archive/reopen/current-bot join/leave operations. Turning it off
+create/list/rename/archive/reopen/current-bot join/leave operations. Turning it off
 revokes lifecycle execution, including retained references. Retained settings may
 be removed without enabling the gate. No runtime or infrastructure flag is
 activated by this source increment. See [thread lifecycle](CMAEG_Protocol.md#bounded-native-discord-thread-lifecycle)
 for authority boundaries, persistent uncertain-write fences, unsupported private
 and forum creation, and exact API semantics.
+
+Rename uses the same consent, optional storage, v1 thread references and durable
+fences. It requires a reader advertising the `rename` action and an active exact
+thread; it never implicitly reopens or unlocks it. This addition introduces no
+new runtime grants or source permission. Previous action payloads and hashes
+remain unchanged when the new optional `name` field is omitted.
 
 Before enabling lifecycle, install its optional Mongo storage separately from
 the base schema. `--print-thread-fences-migration-role` emits
@@ -2942,8 +2950,9 @@ after admission does not upgrade an old event. Saved consent can be retained or
 removed while the writer gate is disabled; normal native source gates still apply.
 
 Deploy readers that understand the additive source field before authoring it.
-When disabled, no history platform reads execute and the tool is omitted from
-discovery. This increment does not enable production history or establish connected
+When disabled, no Discord history platform reads execute. The shared tool is
+omitted from discovery when both native history gates are disabled. This increment
+does not enable production history or establish connected
 Discord acceptance. Permission and Message Content behavior still require acceptance
 with the intended bot. The legacy 20-message thread context option retains its
 separate flag and consent.
@@ -2961,3 +2970,59 @@ performs no enrichment I/O for other platforms or sources without consent, and
 allows at most 100 ms for retained history authority. Slow or busy discovery omits
 the capability hint. Explicit history reads still perform fresh authority checks
 under their independent eight-second total budget.
+
+## Native Lark / Feishu conversation history gate
+
+`CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` accepts `true`/`false`, defaults
+to `false`, and is explicitly false in the checked-in ConfigMap. It enables native
+history source authoring, execution and optional context discovery independently
+of Discord history, native message/media/control issuance and thread-following.
+Deploy compatible readers and rollback targets before enabling authoring: the
+source consent and encrypted routing-plan admission proof are additive fields.
+
+Owners must consent before the original human event is admitted, and current
+consent remains mandatory for every page. History consent changes preserve
+existing messaging/media/card authority while separately revoking history when
+removed. Reads retain original expiry and exact chat/thread custody, check the
+original message before and after one descending 25-row list, and share an
+eight-second total budget with eight immediate-acquisition slots. Thread scans
+cannot seek to the original event and can return several empty progress pages.
+No caller or server automatically drains pages or substitutes the parent chat.
+
+Provision the separate native app with `im:message:readonly` and group
+`im:message.group_msg` permissions. Platform visibility and native acceptance
+remain owner testing; this checked-in false declaration performs no rollout or
+native request. See the [native history contract](CMAEG_Native_Lark_History.md)
+for cutoff, content omission, cursor, permission and regional limits.
+
+
+## Native Telegram topic lifecycle rollout
+
+`CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` defaults to `false` and remains
+false in the checked-in ConfigMap. This source increment has no production
+activation or connected native acceptance. It is independent of Telegram message
+events, Discord lifecycle/history, and media-edit issuance gates.
+
+Before enabling the gate, deploy readers that accept the additive source
+`topic_lifecycle`, `ThreadAction::Close` and optional context `topic_lifecycle`
+fields, including rollback readers and SDK/portal consumers. Verify existing
+durable routing admission and recovery, provider response replay support and
+the optional persistent fence store described in the Discord lifecycle rollout.
+Telegram reuses that store with distinct encrypted claims and bot/chat/topic
+fence namespaces; no schema or grant change is introduced here. Missing storage
+readiness disables authoring, discovery and execution. Legacy CMA HTTP storage
+cannot supply these non-TTL fences.
+
+The owner can then enable **Manage the original forum topic** on the native
+Telegram source. Previously unrouted channels enroll in canonical default-only
+routing automatically; the selected provider/key and existing routing are
+preserved. The server requires multi-consumer authoring for that enrollment.
+Message-event retention remains separately controlled. Only new events admitted
+with topic consent can acquire topic authority.
+
+Turning the operator gate off stops execution, including retained events. Owners
+can remove consent with the gate off. Retain durable records on rollback. An
+unknown topic mutation, lost receipt or interrupted dispatch keeps its exact
+bot/chat/topic fence held without a TTL; new keys and event expiry must not reset
+it. This increment exposes no reconciliation/reset command. Read the
+[topic contract](CMAEG_Native_Telegram_Topics.md) before operator acceptance.

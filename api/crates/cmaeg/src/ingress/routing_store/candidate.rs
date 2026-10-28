@@ -121,7 +121,17 @@ impl Candidate {
             || original.conversation_id != request.conversation_id
             || request.channel.definition.source_of(&incoming.source) != Some(&plan.source)
             || plan.targets.iter().any(|target| {
-                target.event.expires_at != original.expires_at
+                target.history_custody
+                    != if native {
+                        None
+                    } else {
+                        crate::native_lark::history_authority::admission_custody(
+                            &request.channel,
+                            &target.event,
+                            &plan.activity,
+                        )
+                    }
+                    || target.event.expires_at != original.expires_at
                     || target.event.reply != original.reply
                     || request
                         .channel

@@ -39,3 +39,41 @@ fn history_consent_requires_its_independent_gate_and_can_be_retained_or_removed(
     *conversation_history = false;
     check(Some(&next), &removed, flags).unwrap();
 }
+
+#[test]
+fn native_lark_history_is_independent_and_consent_removal_survives_write_shutdown() {
+    let mut source = crate::native_lark::test_support::source();
+    let cmaeg_core::channel::Source::NativeLark(s) = &mut source else {
+        panic!()
+    };
+    s.conversation_history = true;
+    let mut next = definition(json!([source]));
+    next.secrets.native_lark = Some(crate::native_lark::test_support::credentials());
+    let flags = WriteFlags {
+        native_lark: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        check(None, &next, flags).unwrap_err(),
+        ValidationError::new(
+            "/sources/0/conversation_history",
+            "native_lark_conversation_history_disabled"
+        )
+    );
+    check(
+        None,
+        &next,
+        WriteFlags {
+            native_lark_conversation_history: true,
+            ..flags
+        },
+    )
+    .unwrap();
+    check(Some(&next), &next, WriteFlags::default()).unwrap();
+    let mut removed = next.clone();
+    let cmaeg_core::channel::Source::NativeLark(s) = &mut removed.sources[0] else {
+        panic!()
+    };
+    s.conversation_history = false;
+    check(Some(&next), &removed, WriteFlags::default()).unwrap();
+}

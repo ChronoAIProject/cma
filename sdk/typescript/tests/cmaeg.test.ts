@@ -31,6 +31,19 @@ const event = (): CloudEvent => ({
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 
+it('returns an empty native thread scan page without automatically fetching its continuation', async () => {
+  const expected = examples.ConversationHistoryPage?.[2];
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(expected));
+  const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+  const page = await client.readEventHistory('original');
+  expect(page).toEqual(expected);
+  expect(page.messages).toEqual([]);
+  expect(page.scanned_messages).toBe(25);
+  expect(page.continuation.status).toBe('more_visible_rows');
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0]?.[0]).toBe('https://gateway.example/v1/events/original/history');
+});
+
 describe('independent CMAEG client', () => {
   it('emits all management and tool methods with opaque IDs, complete bodies and exact versions', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
@@ -436,4 +449,16 @@ it('uses scoped thread references, explicit stable keys and exact lifecycle wire
   await client.manageThread('leave-stable', request);
   expect(fetch.mock.calls[2]?.[0]).toBe('https://gateway.example/v1/thread-operations');
   expect(JSON.parse(fetch.mock.calls[2]?.[1]?.body as string)).toEqual(request);
+  const rename = { ...request, action: 'rename' as const, name: 'Incident triage' };
+  fetch.mockResolvedValueOnce(
+    json({ outcome: { status: 'unknown', reason: 'thread_write_unconfirmed' } }),
+  );
+  const renamed = await client.manageThread('rename-stable', rename);
+  expect(renamed.outcome.status).toBe('unknown');
+  expect(fetch).toHaveBeenCalledTimes(4);
+  expect(fetch.mock.calls[3]?.[0]).toBe('https://gateway.example/v1/thread-operations');
+  expect(new Headers(fetch.mock.calls[3]?.[1]?.headers).get('Idempotency-Key')).toBe(
+    'rename-stable',
+  );
+  expect(JSON.parse(fetch.mock.calls[3]?.[1]?.body as string)).toEqual(rename);
 });

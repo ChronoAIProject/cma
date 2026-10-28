@@ -621,9 +621,14 @@ original event scope. `list_event_threads(event_ref, ThreadListView::Active)`
 returns a bounded `ThreadList`; `Archived` selects archived results.
 `create_event_thread(event_ref, key, &CreateThreadRequest { name, auto_archive_duration: 1440 })`
 creates a public thread from the exact original message.
-`manage_thread(key, &ManageThreadRequest { target, action })` accepts
+`manage_thread(key, &ManageThreadRequest { target, action, name: None })` accepts
 `ThreadTarget::Event` for the event's own thread or `ThreadTarget::Thread` for a
 scoped returned reference, and `ThreadAction::{Archive, Reopen, Join, Leave}`.
+To rename an active exact thread, use `ThreadAction::Rename` and
+`name: Some("Incident triage".into())`. The name must contain 1–100 printable
+characters. Every other action requires `name: None`, preserving its existing
+wire bytes. Rename never reopens an archived thread or changes its lock;
+Discord enforces the bot's permission.
 Keep a stable key; unknown writes remain fenced and must not be resent with a
 new key. References retain the original consumer and expiry. Set the new source
 option to `None` to preserve legacy wire bytes. Private/forum creation and
@@ -639,3 +644,44 @@ from a customer send attempt and retains the unchanged `IntentReceipt`. Retry wi
 identical keys/content; never change keys after Unknown. Source `forms_enabled`
 requires owner consent separately from operator Forms/Flow-write flags. Preparation
 and status use a two-second total deadline; commit retains eight seconds.
+
+
+### Native Telegram forum topic lifecycle
+
+The source's independent `topic_lifecycle: true` consent and the gateway's
+separate default-off topic gate enable exact original non-General forum-topic
+close/reopen. Check `context.capabilities.topic_lifecycle` for
+`manage_original_topic`, `actions` and `expires_at`. Both default and named
+consumers retain only their original admitted authority. Enabling consent
+transparently enrolls a previously unrouted channel in default-only durable
+routing when authoring prerequisites are available; it does not enable incoming
+edit/reaction retention.
+
+Use the existing method:
+
+```rust,no_run
+use cma_sdk::cmaeg::{Cmaeg, types::{ManageThreadRequest, ThreadAction, ThreadTarget}};
+
+async fn close_topic(client: &Cmaeg, event_ref: &str) -> cma_sdk::Result<()> {
+    let receipt = client.manage_thread("stable-close", &ManageThreadRequest {
+        target: ThreadTarget::Event { event_ref: event_ref.into() },
+        action: ThreadAction::Close,
+        name: None,
+    }).await?;
+    // Inspect the receipt before claiming that the topic was closed.
+    let _ = receipt;
+    Ok(())
+}
+```
+
+Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the
+original Event target and issues no `thread_ref`. There is no list, create,
+private-chat or General-topic operation. Discord rejects the additive Close
+action before platform IO. A confirmed receipt can omit `thread`.
+
+Keep a stable idempotency key. Same-key replay returns the saved outcome;
+conflicting action reuse fails. An unknown write keeps a permanent bot/chat/topic
+fence across process restart, different keys and event expiry. Never retry an
+unknown result with a new key. Discovery describes scope; current Telegram bot
+administrator topic permissions are checked at execution. Source support and
+local tests do not establish connected-account native acceptance.
