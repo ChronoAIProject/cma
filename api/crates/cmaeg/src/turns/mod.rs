@@ -1,6 +1,7 @@
 //! Bounded, stateless provider turn execution and drain.
 mod audience;
 mod consume;
+mod custom_replay;
 mod metadata;
 pub mod observer;
 pub mod outcomes;

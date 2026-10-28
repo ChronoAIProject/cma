@@ -43,6 +43,21 @@ impl ProviderClient {
         event: &EventId,
         agent_key: &Secret,
     ) -> Result<EventContextSnapshot, ProviderError> {
+        self.find_event_context(provider, binding, conversation, event, agent_key)
+            .await?
+            .ok_or_else(|| ProviderError::Unavailable("provider context is unavailable".into()))
+    }
+
+    /// Read admitted context under the current binding authority. Only an
+    /// explicit 404 proves absence; authentication and transport failures do not.
+    pub async fn find_event_context(
+        &self,
+        provider: &ProviderSlug,
+        binding: &BindingId,
+        conversation: &ConversationId,
+        event: &EventId,
+        agent_key: &Secret,
+    ) -> Result<Option<EventContextSnapshot>, ProviderError> {
         if matches!(event.as_str(), "." | "..") {
             return Err(ProviderError::InvalidRequest(
                 "invalid event identifier".into(),
@@ -71,6 +86,15 @@ impl ProviderClient {
             .send()
             .await
             .map_err(|_| ProviderError::Unavailable("provider context is unavailable".into()))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if matches!(response.status().as_u16(), 401 | 403) {
+            return Err(ProviderError::Rejected {
+                status: response.status().as_u16(),
+                code: "provider_context_not_authorized".into(),
+            });
+        }
         if !response.status().is_success() {
             return Err(ProviderError::Unavailable(
                 "provider context is unavailable".into(),
@@ -102,6 +126,6 @@ impl ProviderClient {
                 "provider context identity mismatch".into(),
             ));
         }
-        Ok(snapshot)
+        Ok(Some(snapshot))
     }
 }
