@@ -27,10 +27,26 @@ export function validateRelayAuthoring(
   for (const source of records(next.sources)) {
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
     if (source.type === 'native_lark') {
+      if (
+        source.conversation_history === true &&
+        !unchanged &&
+        discovery.authoring?.native_lark_conversation_history_enabled !== true
+      )
+        throw new Error(
+          'New Lark / Feishu history consent is disabled on this gateway. Your draft has been retained.',
+        );
       const saved = oldSources.some((old) => old.type === 'native_lark');
+      const onlyRemovedHistory = oldSources.some(
+        (old) =>
+          old.type === 'native_lark' &&
+          old.conversation_history === true &&
+          source.conversation_history !== true &&
+          canonical({ ...old, conversation_history: undefined }) ===
+            canonical({ ...source, conversation_history: undefined }),
+      );
       const replacement = credentialsPatch(credentials, false)?.native_lark;
       const reason = nativeLarkUnavailable(discovery, !saved);
-      if (reason && (!unchanged || replacement))
+      if (reason && ((!unchanged && !onlyRemovedHistory) || replacement))
         throw new Error(`${reason} Your draft has been retained.`);
       if (!saved && !replacement) throw new Error('Enter all three Lark / Feishu credentials.');
       const identity = object(source.identity);
