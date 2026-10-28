@@ -176,7 +176,7 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue 24-hour delete/reaction authority on exact confirmed native Discord messages. Text/link replies also require native edit issuance; native uploads instead require the separate media effects gate. Deploy compatible readers before enabling. Retained references remain readable with issuance off. Reactions change only the bot’s own reaction; custom emoji IDs resolve in the destination guild. |
 | `CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue effects-only references for native uploads fully contained in one confirmed Discord message, with up to four files. Requires the message effects gate, independently of text edits. Multiple native messages and uncertain sends get no reference; content/attachment edits remain unsupported. Deploy serving and rollback readers for the new sealed scope before enabling. Checked-in ConfigMap stays off. See [native media effects](CMAEG_Native_Discord_Media_Effects.md). |
 | `CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED` | `true` or `false` | `false` | Allows new native source `thread_history` opt-ins and explicit bounded `readEventContext` history reads after compatible readers are deployed. Both this gate and source consent are required for execution. Off revokes history reads, retained settings can be removed; ordinary context reads are unchanged. See [native thread history](CMAEG_Protocol.md#bounded-native-discord-thread-history). |
-| `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows independent native Telegram `topic_lifecycle` consent and exact admitted non-General forum-topic close/reopen. Requires durable admission/recovery and existing optional persistent fence readiness. Off revokes execution. See [Telegram topic rollout](#native-telegram-topic-lifecycle-rollout). |
+| `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows independent native Telegram `topic_lifecycle` consent and exact admitted non-General forum-topic rename/close/reopen. Requires durable admission/recovery and existing optional persistent fence readiness. Off revokes execution. See [Telegram topic rollout](#native-telegram-topic-lifecycle-rollout). |
 | `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows native source `thread_lifecycle` consent and bounded create/list/rename/archive/reopen/current-bot join/leave operations only when the optional persistent fence collection and grants are ready. Off revokes execution including retained references. See [lifecycle rollout](#native-discord-thread-lifecycle-rollout). |
 | `CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` | `true` or `false` | `false` | Allows independently consented, bounded original-conversation history pages through REST and MCP. Off disables execution and discovery. See [history gate](#native-discord-conversation-history-gate). |
 | `CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` | `true` or `false` | `false` | Persists verified native channel metadata in immutable inbox bodies and issues exact-thread reply evidence. Deploy compatible inbox and sealed-reference readers first. This uses one bounded authenticated channel read per new admitted message, with no per-channel cache; duplicate inbox messages reuse their original evidence. Disabling stops new metadata writes but retained evidence continues to replay. |
@@ -3059,7 +3059,12 @@ Telegram source. Previously unrouted channels enroll in canonical default-only
 routing automatically; the selected provider/key and existing routing are
 preserved. The server requires multi-consumer authoring for that enrollment.
 Message-event retention remains separately controlled. Only new events admitted
-with topic consent can acquire topic authority.
+with topic consent can acquire topic authority. The existing `manageThread` rename
+request changes only the exact admitted topic name (shared limit 1–100 printable
+characters); no new schema or platform gate is needed. Its current context action
+list intentionally stays the conservative close/reopen subset for strict older
+SDK compatibility. It is not an exhaustive operation list. Deploy compatible
+rename writers before advertising rename; mixed older writers may return unsupported.
 
 Turning the operator gate off stops execution, including retained events. Owners
 can remove consent with the gate off. Retain durable records on rollback. An

@@ -938,8 +938,12 @@ See `docs/CMAEG_Native_WhatsApp_Forms.md` for the supported subset and retained 
 
 The source's independent `topic_lifecycle: true` consent and the gateway's
 separate default-off topic gate enable exact original non-General forum-topic
-close/reopen. Check `context.capabilities.topic_lifecycle` for
-`manage_original_topic`, `actions` and `expires_at`. Both default and named
+rename/close/reopen. Rename uses the existing manage-thread request with `action: "rename"`
+and a required `name` of 1–100 printable characters. It changes only the original
+topic name, preserving its icon and open/closed state. Check `context.capabilities.topic_lifecycle` for
+`manage_original_topic`, `actions` and `expires_at`. The action list stays the
+conservative `["close", "reopen"]` subset for strict older readers; it is not an
+exhaustive operation list. Both default and named
 consumers retain only their original admitted authority. Enabling consent
 transparently enrolls a previously unrouted channel in default-only durable
 routing when authoring prerequisites are available; it does not enable incoming
