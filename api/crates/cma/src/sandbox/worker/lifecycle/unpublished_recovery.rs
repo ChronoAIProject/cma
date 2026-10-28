@@ -86,6 +86,27 @@ impl SandboxWorker {
             return Err(SandboxStoreError::Conflict);
         }
         let proof = &state.proof;
+        if proof.boot_id.is_none() {
+            let request = self.nonexecuting_recovery_request(sandbox).await?;
+            self.dependencies
+                .adapter
+                .runtime_recovery()
+                .ok_or_else(unavailable)?
+                .verify_nonexecuting_recovery(&request)
+                .await
+                .map_err(|_| unavailable())?;
+            return Ok(SandboxUnpublishedRecoveryQuiescence {
+                operation_id: state.operation_id.clone(),
+                runtime_id: proof.runtime_id.clone(),
+                runtime_generation: proof.runtime_generation,
+                home_identity: proof.home_identity.clone(),
+                boot_id: None,
+                provider_plan_sha256: proof.provider_plan_sha256.clone(),
+                runtime_process_absent: true,
+                conversations: vec![],
+                completed_at: rfc3339_at(now),
+            });
+        }
         let source = RuntimeRecoveryInspectionRequest {
             runtime: RuntimeHandle::new(&proof.runtime_id),
             identity: RuntimeStatusRequest {
@@ -145,6 +166,43 @@ impl SandboxWorker {
             runtime_process_absent: true,
             conversations: crate::sandbox::unpublished_recovery::histories(evidence.histories)?,
             completed_at: rfc3339_at(now),
+        })
+    }
+
+    pub(super) async fn nonexecuting_recovery_request(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<layer3_adapter::NonexecutingRecoveryVerification, SandboxStoreError> {
+        let state = sandbox
+            .lifecycle
+            .unpublished_recovery
+            .as_ref()
+            .ok_or_else(unavailable)?;
+        state.validate_for(sandbox).map_err(model_error)?;
+        let proof = &state.proof;
+        if proof.boot_id.is_some()
+            || !proof.runtime_process_absent
+            || !proof.conversations.is_empty()
+            || !self.lifecycle_agents(sandbox).await?.is_empty()
+            || !self.lifecycle_state_matches(sandbox).await?
+        {
+            return Err(unavailable());
+        }
+        let binding = sandbox
+            .lifecycle
+            .suspended_runtime
+            .as_deref()
+            .ok_or_else(unavailable)?;
+        let source = crate::sandbox::runtime_attachment::retained_runtime_request(
+            sandbox,
+            binding,
+            &self.config.deployment_id,
+        )
+        .map_err(|_| unavailable())?;
+        Ok(layer3_adapter::NonexecutingRecoveryVerification {
+            source,
+            provider_plan: proof.provider_plan.clone(),
+            provider_plan_sha256: proof.provider_plan_sha256.clone(),
         })
     }
 }

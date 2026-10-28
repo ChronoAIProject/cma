@@ -28,8 +28,7 @@ pub(super) fn snapshot(
     agents.sort_by(|a, b| a.id.cmp(&b.id));
     workspaces.sort_by(|a, b| a.id.cmp(&b.id));
     let generation = sandbox
-        .runtime
-        .as_ref()
+        .unpublished_recovery_binding()
         .and_then(|binding| binding.provision_generation)
         .ok_or(SandboxStoreError::Conflict)?;
     for agent in &agents {
