@@ -1449,7 +1449,8 @@ Keepalive comments are not events. A slow consumer receives terminal
 There is no durable replay or Last-Event-ID contract. Disconnect removes the
 waiter without cancelling the admitted turn.
 
-On both the durable routed lane and legacy Custom ingress, repeating an already-admitted event with
+On both the durable routed lane and legacy Custom ingress using the verified
+`cma_codex` provider, repeating an already-admitted event with
 `?mode=stream` returns the normal 202 accepted JSON body when the current request
 does not own the original primary waiter. This includes concurrent duplicate
 requests and retrying an event first submitted asynchronously. It does not
@@ -1460,7 +1461,7 @@ is confirmed, the request returns 202 JSON and releases its waiter; pending
 admission and provider work continue. It does not open an unowned stream that
 could remain empty when a concurrent duplicate is resolved.
 
-Legacy Custom retries read the provider's original admitted event under the
+Legacy Custom retries using `cma_codex` read the provider's original admitted event under the
 channel's current credential before starting work. Missing CloudEvent `time`
 retains the original generated timestamp; an explicit time, source, subject,
 extensions, data and extracted attachments must still match exactly. Changed
@@ -1469,6 +1470,9 @@ delivery that loses provider admission performs the same retained-context check.
 Retries never send a second result webhook or replace the original response.
 401 and 403 from the authority check remain distinct; a failed lookup cannot
 authorize a new turn.
+This additional lookup is not required of legacy Nyxbot or other providers:
+their original direct submission behavior remains available because the
+event-context reader is an optional extension and has not been verified there.
 
 After losing a live sync response, an authorized channel owner can read
 `GET /v1/channels/{channel_id}/activity`, find the original event's consumer
