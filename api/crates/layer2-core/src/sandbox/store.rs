@@ -172,6 +172,8 @@ pub enum SandboxStoreError {
     WorkspaceHasLiveAgents,
     #[error("workspace provisioning origin is already occupied")]
     WorkspaceOriginConflict,
+    #[error("workspace preparation recovery is not eligible")]
+    WorkspaceRecoveryConflict,
     #[error("sandbox trigger origin is already bound to another request")]
     SandboxOriginConflict,
     #[error("workspace is not ready for agent admission")]
@@ -282,6 +284,15 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         &self,
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError>;
+
+    /// Explicitly recover only an original never-ready Workspace; all guards are atomic.
+    async fn begin_workspace_prepare_recovery(
+        &self,
+        id: &WorkspaceId,
+        caller: &crate::Caller,
+        operation_id: &str,
+        now: String,
+    ) -> Result<Workspace, SandboxStoreError>;
 
     /// Fence new child admission and durably schedule removal, including child cleanup.
     async fn begin_workspace_removal(

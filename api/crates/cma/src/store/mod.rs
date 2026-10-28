@@ -115,6 +115,7 @@ mod trigger_first_messages;
 mod warm_sandboxes;
 pub(crate) use native_prepared::{NativePreparedClaim, NativePreparedPlan};
 mod workspace_admission;
+mod workspace_prepare_recovery;
 mod workspace_profiles;
 mod workspace_removal;
 mod workspace_worker_store;

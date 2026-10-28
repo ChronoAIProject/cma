@@ -10,7 +10,7 @@
 | `profileAuthoring`                                      | `bounds`, `services`, `searchSkills`, read-only `resolveRepository`                                                                                                                                                                                                                                                           |
 | `marketplace.agent`, `.workspace`, `.sandbox`           | `list`, `read`, `fork`                                                                                                                                                                                                                                                                                                        |
 | `sandboxes`                                             | `list`, `read`, `create`, `pause`, `revive`, `updateRuntime`, `delete`, `events`                                                                                                                                                                                                                                              |
-| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `delete`                                                                                                                                                                                                                                                       |
+| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `recoverPrepare`, `delete`                                                                                                                                                                                                                                     |
 | `worktrees`                                             | `list(workspaceId)`, `read`                                                                                                                                                                                                                                                                                                   |
 | `agents`                                                | `list`, `read`, `create(workspaceId, body, options)`, `input`, `steer`, `interrupt`, `answerApproval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `updateSettings`, `skills`, `installSkill`, `accessRequests`, `approveAccessRequest`, `denyAccessRequest`, `updateServiceAccess` |
 | `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                                                                                                    |
@@ -76,6 +76,11 @@ Sandbox and Workspace creation return base views with HTTP 201. Use `read` for
 expanded hierarchy detail. Their lifecycle commands return base views with
 HTTP 202; acceptance does not mean the lifecycle has completed. Agent operations
 likewise return HTTP 202, with only `input` carrying `{ queued: boolean }`.
+
+`workspaces.recoverPrepare(id, { idempotencyKey })` sends a keyed, bodyless command for the same failed,
+never-ready Workspace. HTTP 202 confirms recovery admission; read the original
+Workspace for readiness. Reuse the same key after an uncertain response; a new
+key cannot bypass active work and is eligible only after a terminal failed attempt.
 
 Profile `save` and `publish` require the last observed `draft_version` for
 compare-and-swap. `marketplace.*.read` returns a complete immutable revision and

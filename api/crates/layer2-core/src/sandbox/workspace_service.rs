@@ -57,6 +57,8 @@ pub enum WorkspaceServiceError {
     InvalidProfile(String),
     #[error("workspace provisioning origin conflicts with an existing workspace")]
     OriginConflict,
+    #[error("workspace preparation recovery is not eligible")]
+    RecoveryConflict,
     #[error("workspace launch origin is invalid")]
     InvalidOrigin,
     #[error("workspace data is not usable: {0}")]
@@ -79,6 +81,7 @@ impl WorkspaceServiceError {
             Self::TrustConfirmationRequired { .. } => "trust_confirmation_required",
             Self::InvalidProfile(_) => "workspace_profile_invalid",
             Self::OriginConflict => "workspace_origin_conflict",
+            Self::RecoveryConflict => "workspace_prepare_recovery_conflict",
             Self::InvalidOrigin => "invalid_workspace_origin",
             Self::Corrupt(_) => "stored_workspace_corrupt",
             Self::Unavailable(_) => "workspace_service_unavailable",
@@ -311,6 +314,7 @@ impl WorkspaceService {
         self.owned_workspace(caller, id).await
     }
 
+    /// Preserve original Workspace identity/data and admit one explicit preparation retry.
     pub async fn remove(
         &self,
         caller: &Caller,
