@@ -3071,6 +3071,17 @@ Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 `delivery.outcome: "unsupported"` before any platform send. The field does not
 enable a new native connection.
 
+An optional `native_media.controls` object reports an explicitly supported
+same-message media/control combination: `max_attachments`, `buttons`, `choices`,
+`caption_max_chars`, and `update`. Absence does not grant combined delivery.
+Native Discord advertises one upload with buttons/choices only for verified
+eligible human context when its media-controls and interaction issuance gates
+are enabled (plus the named-consumer gate when applicable). It uses the existing
+`native_attachments` and `blocks` request fields and one delivered card/message;
+`update: false` explicitly excludes media-card edits. See
+[native Discord controls](CMAEG_Native_Discord_Interactions.md). Historical context
+serialization omits this optional capability; no existing wire field is removed.
+
 Native Lark/Feishu advertises `kinds: ["image", "file", "audio", "video"]`,
 `mime_types: ["image/jpeg", "image/png", "application/pdf", "text/plain", "audio/ogg", "video/mp4"]`,
 `max_total_bytes: 8388608`, `max_image_bytes: 8388608` and `max_caption_chars: 0`.

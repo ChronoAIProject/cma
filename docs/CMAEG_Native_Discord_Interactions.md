@@ -52,7 +52,7 @@ string-select menu per row. Neutral message validation currently bounds a select
 to twenty options, below Discord's twenty-five-option limit. Single-select menus
 require one value. Multi-select menus allow zero through all authored options,
 and reflect authored `selected` defaults. Modals, user/role/channel selectors and
-native attachments combined with controls remain unsupported. Interactive
+multiple native attachments combined with controls remain unsupported. One native upload can accompany buttons or choices only under the separate media-controls gate below. Interactive
 message edits have a separate default-off gate; see
 [native card edits](CMAEG_Native_Discord_Card_Edits.md). A control message must fit
 one ordinary Discord text part. Non-control blocks retain their existing text
@@ -162,3 +162,37 @@ Native card replacement uses the existing `updateMessage` operation and a
 separate `CMAEG_DISCORD_CARD_EDITS_ENABLED` gate. Existing native card references
 remain unchanged. See [native card edits](CMAEG_Native_Discord_Card_Edits.md) for
 exact control removal, retained ownership and durable replay semantics.
+
+## One upload with native controls
+
+`CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED` defaults to `false`. After all
+serving and rollback readers understand the optional native identity `media`
+receipt, enable it alongside `CMAEG_DISCORD_INTERACTIONS_ENABLED`; named consumers
+also require their existing issuance gate. One image, file, audio or video upload
+can then share **one** Discord multipart message with buttons or string-select
+choices. It retains one durable card and the exact same delivered message ID.
+A multi-select additionally keeps its existing multi-select gate. More than one
+upload, forms mixed with media, or a text body needing multiple Discord parts
+returns `unsupported`; no separate control message is silently sent.
+
+`context.capabilities.native_media.controls`, when present for the verified
+human/source/consumer destination, reports `max_attachments: 1`, `buttons: true`,
+`choices: true`, `caption_max_chars: 1024` and `update: false`. Shared attachment
+metadata byte limits, inline 64 KiB, downloaded aggregate 8 MiB, URL protection,
+text limits and mention suppression still apply. Discord attachment captions
+are attachment descriptions; the ordinary text remains message content.
+
+The upload is materialized within the existing bounded fetch policy before the
+delivery commit and card creation. Its encrypted card retains only SHA256 of the
+actual uploaded bytes, length, kind, filename, MIME and caption. It does not
+retain source URLs or base64 file bytes, so ordinary uploads cannot overflow the
+64 KiB interaction-record limit. Callback recovery never downloads the media.
+The same actor/source/consumer/thread/message authority checks govern clicks.
+Unknown or lost send receipts leave the card unbound and do not cause a resend.
+
+Media-bearing cards currently refuse text/card `updateMessage` before mutation;
+no media-edit authority is issued. Disabling the media-controls flag stops new
+issuance but leaves retained clicks and recovery available. An older reader that
+rejects the native identity's `media` field cannot serve as a rollback after
+issuance. Local multipart, callback replay, authority and uncertain-send fixtures
+prove this contract; external Discord activation and live proof are separate.
