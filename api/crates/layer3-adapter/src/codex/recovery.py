@@ -25,7 +25,7 @@ LAUNCHER_NATIVES = {
 }
 BRIDGE_PATH = "/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js"
 RELAY_SOURCE = "e595835b6314ff0770fdf97817d6920295ea384a5ac3bfdd0476b90c81b79a4f"
-DESKTOP_SOURCE = "fee5279c20c915647af8ff15c4b73c0f62fbcca530c92fc9c6c0949a39be48a2"
+DESKTOP_SOURCE = "cda611c3cdd3f470d27c1e6dd5d507bbd821e486b44147da31d8d0eb2f958a5d"
 DESKTOP_PATH = "/usr/local/bin/cma-desktop-session"
 
 
