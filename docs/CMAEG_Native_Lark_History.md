@@ -112,7 +112,8 @@ Even a post with no remaining text, or one whose text budget is exhausted, keeps
 the marker. Such a retained post is not included in `omitted_message_count`.
 
 Text is clipped and sanitized under the existing 8 KiB/message and 32 KiB/page
-limits; `text_truncated` remains independent of the media omission marker.
+limits; `text_truncated` reports clipping or sanitization (including removed
+control characters/newlines), independently of the media omission marker.
 Application senders use app IDs and bot actor kind. Unknown/anonymous actors,
 deleted/system rows and standalone image/file/audio/video/card/sticker/forwarded/
 other unsupported message types are still counted as omitted whole rows.

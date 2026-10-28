@@ -52,7 +52,7 @@ async fn native_thread_empty_and_mixed_scan_pages_remain_single_explicit_reads()
         } else {
             assert_eq!(
                 decoded.messages[0].text,
-                "Earlier post\nText before and after omitted media"
+                "Earlier postText before and after omitted media"
             );
             assert!(
                 decoded.messages[0].omitted_content
