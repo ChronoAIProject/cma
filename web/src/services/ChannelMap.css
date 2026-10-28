@@ -245,14 +245,14 @@
   box-shadow: var(--dsw-shadow-lv1);
   white-space: nowrap;
 }
-.delivery-flow__tool-access .react-flow__edge-path {
+.delivery-flow__tool-catalog .react-flow__edge-path {
   stroke-dasharray: 4 4;
 }
-.delivery-flow__tool-access .react-flow__edge-text {
+.delivery-flow__tool-catalog .react-flow__edge-text {
   font-size: 12px;
   fill: var(--dsw-alias-label-secondary);
 }
-.delivery-flow__tool-access .react-flow__edge-textbg {
+.delivery-flow__tool-catalog .react-flow__edge-textbg {
   fill: var(--dsw-alias-bg-layer-1);
 }
 @media (max-width: 720px) {
