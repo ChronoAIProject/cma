@@ -41,6 +41,9 @@ impl Sender {
         if (candidate.card.revision == 1
             && (!self.relay.discord_card_edits_enabled()
                 || (reference.consumer.is_some() && !self.relay.consumer_interactions_enabled())))
+            || (candidate.card.revision == 1
+                && identity.media.is_some()
+                && !self.relay.discord_media_card_edits_enabled())
             || (discord::multiselect_requested(message)
                 && !self.relay.discord_multiselect_enabled()
                 && !discord::multiselect_requested(&candidate.card.message))
@@ -137,23 +140,44 @@ impl Sender {
             Ok(Admission::Ready(candidate)) => candidate,
             _ => return discord_edit::uncertain(),
         };
+        // The platform may have changed independently. Refuse before card CAS
+        // if its current upload/content/controls no longer match the retained proof.
+        if let Err(error) = self.verify_discord_card_media(&candidate, credential).await {
+            let _ = serial.release(held).await;
+            return refused(rendering, outcome(error));
+        }
         let mut claim = match store.begin_discord_edit(*candidate, message).await {
             Ok(claim) => claim,
             Err(_) => return discord_edit::uncertain(),
         };
-        let delivery = match self
-            .relay
+        let edited = if claim
+            .prepared
+            .card
             .discord
-            .edit_components(
+            .as_ref()
+            .is_some_and(|i| i.media.is_some())
+        {
+            self.edit_discord_card_media(
+                &claim.prepared,
                 credential,
-                &bot,
                 &native_channel,
-                &reference.platform_message_id,
                 &parts[0].text,
-                &claim.prepared.markup,
             )
             .await
-        {
+        } else {
+            self.relay
+                .discord
+                .edit_components(
+                    credential,
+                    &bot,
+                    &native_channel,
+                    &reference.platform_message_id,
+                    &parts[0].text,
+                    &claim.prepared.markup,
+                )
+                .await
+        };
+        let delivery = match edited {
             Ok(()) => DeliveryOutcome::Confirmed {
                 platform_message_id: Some(reference.platform_message_id.clone()),
             },

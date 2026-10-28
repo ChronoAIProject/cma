@@ -699,3 +699,27 @@ accounts. Events use existing `cma.message.updated.v1` (`data.patch.text`) and
 consumer/conversation. Caption changes preserve original attachments; outgoing
 edit/delete and history import are outside this feature. See
 [the incoming-change contract](../../../docs/CMAEG_Native_WhatsApp_Message_Events.md).
+
+`read_event_history(event_ref, cursor)` returns one bounded history page and never
+fetches a continuation automatically. Native Lark/Feishu mixed posts may preserve
+their textual content with `HistoryOmittedContent::Media` and empty `attachments`;
+this marker conveys no media count, type, keys or download authority. Whole-row
+omission counts exclude retained mixed posts, while `text_truncated` independently
+reports clipped or sanitized text. Older SDK decoders reject `media`, so the gateway's separate
+`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag stays off until all consumers and
+rollback readers support this value. See [native history](../../../docs/CMAEG_Native_Lark_History.md).
+
+### Native media with controls
+
+Check the optional `capabilities.native_media.controls` object before combining
+`native_attachments` with buttons or choices. It declares `max_attachments`,
+`buttons`, `choices`, `caption_max_chars` and `update`; absence grants no combined
+send capability. The gated Telegram and Discord combinations each use one upload and one
+native message/card. Its `update: false` excludes media-card edits. Existing
+attachment bounds and event/consumer authority still apply.
+
+For native Discord, `native_media.controls.update` is true only with the separate
+media-card-edit gates. It permits changing message content/controls while keeping
+the exact confirmed upload. It does not grant binary/caption replacement or
+media/form combinations. Historical cards without a retained native file proof
+remain callback-only.

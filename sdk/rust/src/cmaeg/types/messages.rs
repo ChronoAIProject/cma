@@ -311,6 +311,9 @@ pub struct NativeAttachment {
 /// Deployment-attested outbound media capabilities.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeMediaCapabilities {
+    /// Same-message native upload and controls, omitted when not supported for this event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controls: Option<MediaControlsCapabilities>,
     /// Media categories supported for this event's destination.
     pub kinds: Vec<String>,
     /// Accepted source forms, such as url or base64.
@@ -337,6 +340,21 @@ pub struct NativeMediaCapabilities {
     /// Bounded video profile; absent when no destination-specific profile is declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<NativeVideoCapabilities>,
+}
+
+/// Native upload and controls in one confirmed platform message.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaControlsCapabilities {
+    /// Maximum upload count in the same controlled message.
+    pub max_attachments: u64,
+    /// Whether native buttons can accompany the upload.
+    pub buttons: bool,
+    /// Whether native choices can accompany the upload.
+    pub choices: bool,
+    /// Caption character limit; metadata byte bounds also apply.
+    pub caption_max_chars: u32,
+    /// Whether content/control edits may preserve this message's confirmed upload.
+    pub update: bool,
 }
 
 /// Exact dimensions, size and animation limits for native sticker delivery.

@@ -279,6 +279,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         NativeMediaKind,
         NativeMediaSource,
         NativeMediaCapabilities,
+        MediaControlsCapabilities,
         NativeMediaUpdate,
         NativeMediaReplacement,
         NativeMediaEditCapabilities,
@@ -645,4 +646,13 @@ fn legacy_native_media_capabilities_omit_unknown_transport_limits() {
     let legacy = json!({"kinds":["image","file","audio","video"],"sources":["url","base64"],"max_attachments":4,"max_inline_bytes":65536});
     let decoded: NativeMediaCapabilities = serde_json::from_value(legacy.clone()).unwrap();
     assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
+}
+
+#[test]
+fn native_media_control_capabilities_round_trip_without_changing_legacy_shape() {
+    let value = json!({"kinds":["image"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "controls":{"max_attachments":1,"buttons":true,"choices":true,"caption_max_chars":1024,"update":false}});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert!(!decoded.controls.as_ref().unwrap().update);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
 }
