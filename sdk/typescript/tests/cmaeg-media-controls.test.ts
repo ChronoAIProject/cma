@@ -21,6 +21,20 @@ describe('native media/control discovery', () => {
     };
     expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
   });
+  it('distinguishes a confirmed upload replacement from a preserving edit', () => {
+    const value = {
+      ...legacy,
+      controls: {
+        max_attachments: 1,
+        buttons: true,
+        choices: true,
+        caption_max_chars: 1024,
+        update: true,
+        replace_media: true,
+      },
+    };
+    expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
+  });
   it('keeps legacy capability bytes without inventing combined delivery', () => {
     expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);
   });

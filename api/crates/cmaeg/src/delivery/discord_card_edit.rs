@@ -34,13 +34,18 @@ impl Sender {
             Ok(Admission::Ready(candidate)) => candidate,
             Err(_) => return unsupported(),
         };
+        let replacement = !message.native_attachments.is_empty();
+        let mut content = message.clone();
+        content.native_attachments.clear();
         let form = crate::interactions::discord_form::schema(message).is_ok();
         let Some(identity) = candidate.card.discord.as_ref() else {
             return unsupported();
         };
-        if (candidate.card.revision == 1
-            && (!self.relay.discord_card_edits_enabled()
-                || (reference.consumer.is_some() && !self.relay.consumer_interactions_enabled())))
+        if (replacement && !self.relay.discord_media_card_replacements_enabled())
+            || (candidate.card.revision == 1
+                && (!self.relay.discord_card_edits_enabled()
+                    || (reference.consumer.is_some()
+                        && !self.relay.consumer_interactions_enabled())))
             || (candidate.card.revision == 1
                 && identity.media.is_some()
                 && !self.relay.discord_media_card_edits_enabled())
@@ -51,7 +56,7 @@ impl Sender {
             || (form && identity.form.is_none() && !self.relay.discord_forms_enabled())
             || (!form
                 && discord::render_replacement(
-                    message,
+                    &content,
                     "00000000000000000000000000000000",
                     candidate.card.revision.saturating_add(1),
                 )
@@ -63,7 +68,7 @@ impl Sender {
             buttons: "inline_keyboard".into(),
             ..Capabilities::native_discord()
         };
-        let (parts, mut rendering) = RelayText.render(message, &capabilities);
+        let (parts, mut rendering) = RelayText.render(&content, &capabilities);
         if form {
             crate::interactions::discord_form::report(message, &mut rendering);
         }
@@ -95,6 +100,21 @@ impl Sender {
             Ok(_) => return unsupported(),
             Err(error) => return refused(rendering, outcome(error)),
         }
+        let file = if replacement {
+            match crate::discord::outbound_media::prepare(&message.native_attachments).await {
+                Ok(mut files) if files.len() == 1 => files.pop(),
+                _ => {
+                    return refused(
+                        rendering,
+                        DeliveryOutcome::Rejected {
+                            reason: "attachment_preparation_failed".into(),
+                        },
+                    )
+                }
+            }
+        } else {
+            None
+        };
         let bot = identity.bot_id.clone();
         let native_channel = candidate.conversation.id.clone();
         let _ticket = match ctx.gate.enter_route(&reference.route_id).await {
@@ -142,15 +162,52 @@ impl Sender {
         };
         // The platform may have changed independently. Refuse before card CAS
         // if its current upload/content/controls no longer match the retained proof.
-        if let Err(error) = self.verify_discord_card_media(&candidate, credential).await {
-            let _ = serial.release(held).await;
-            return refused(rendering, outcome(error));
-        }
-        let mut claim = match store.begin_discord_edit(*candidate, message).await {
+        let before = match self.verify_discord_card_media(&candidate, credential).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let _ = serial.release(held).await;
+                return refused(rendering, outcome(error));
+            }
+        };
+        let replacement_request = if let (Some(file), Some(before)) = (file, before.as_ref()) {
+            match self
+                .prepare_discord_card_replacement(&candidate, message, &parts[0].text, file, before)
+                .await
+            {
+                Ok(prepared) => Some(prepared),
+                Err(error) => {
+                    let _ = serial.release(held).await;
+                    return refused(rendering, outcome(error));
+                }
+            }
+        } else {
+            None
+        };
+        let (claimed, request) = if let Some((replacement, request)) = replacement_request {
+            (
+                store
+                    .begin_discord_media_replacement(*candidate, message, replacement)
+                    .await,
+                Some(request),
+            )
+        } else {
+            (store.begin_discord_edit(*candidate, message).await, None)
+        };
+        let mut claim = match claimed {
             Ok(claim) => claim,
             Err(_) => return discord_edit::uncertain(),
         };
-        let edited = if claim
+        let edited = if let (Some(request), Some(before)) = (request, before) {
+            self.replace_discord_card_media(
+                &mut claim.prepared,
+                credential,
+                &native_channel,
+                &parts[0].text,
+                request,
+                &before,
+            )
+            .await
+        } else if claim
             .prepared
             .card
             .discord
@@ -189,6 +246,7 @@ impl Sender {
         }
         ctx.gate.progress();
         let mut receipt = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery,

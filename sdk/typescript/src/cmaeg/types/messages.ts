@@ -117,7 +117,14 @@ export const RenderingReportSchema = object({
 });
 export type RenderingReport = Output<typeof RenderingReportSchema>;
 
+export const ConfirmedMessagePartSchema = object({
+  index: integer,
+  message_ref: MessageRefSchema,
+});
+export type ConfirmedMessagePart = Output<typeof ConfirmedMessagePartSchema>;
+
 export const IntentReceiptSchema = object({
+  message_parts: optional(array(ConfirmedMessagePartSchema)),
   delivery: DeliveryOutcomeSchema,
   message_ref: optional(nullable(MessageRefSchema)),
   rendering: RenderingReportSchema,
@@ -173,6 +180,7 @@ export const MediaControlsCapabilitiesSchema = object({
   choices: boolean,
   caption_max_chars: integer,
   update: boolean,
+  replace_media: optional(nullable(boolean)),
 });
 export type MediaControlsCapabilities = Output<typeof MediaControlsCapabilitiesSchema>;
 export const NativeMediaCapabilitiesSchema = object({
