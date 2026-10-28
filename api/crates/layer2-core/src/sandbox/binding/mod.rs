@@ -10,6 +10,10 @@ mod profile;
 mod profile_input;
 mod profiles;
 mod readiness;
+mod reprovision;
+pub use reprovision::{
+    BindingGenerationGuard, BindingPreparationIntent, BindingPreparationReceipt,
+};
 mod recovery;
 mod retry;
 mod rotation;
