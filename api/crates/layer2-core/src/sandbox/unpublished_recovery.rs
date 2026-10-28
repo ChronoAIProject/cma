@@ -129,12 +129,48 @@ impl Sandbox {
             && !self.lifecycle.unpublished_recovery_attempted
     }
 
+    fn stalled_unpublished_reopen(&self) -> bool {
+        self.runtime.is_some()
+            && self.work.step == SandboxWorkStep::RunLifecycleOperation
+            && self.work.attempts > 0
+            && matches!(
+                (&self.status, &self.lifecycle.operation),
+                (
+                    SandboxStatus::Reviving,
+                    Some(SandboxLifecycleOperation::Revive {
+                        phase: SandboxRevivePhase::ConversationReopen,
+                        ..
+                    })
+                ) | (
+                    SandboxStatus::Rotating,
+                    Some(SandboxLifecycleOperation::ImageRotation {
+                        phase: SandboxImageRotationPhase::ConversationReopen,
+                        ..
+                    })
+                )
+            )
+    }
+
+    /// An automatic repair cannot supersede an owner's queued or started update.
+    pub(super) fn automatic_unpublished_recovery_target(&self) -> Option<&str> {
+        self.runtime_update_request()
+            .filter(|request| request.completed_at.is_none())
+            .map(|request| request.target_version.as_str())
+            .or_else(|| self.admitted_runtime_update_target())
+            .or_else(|| {
+                self.unpublished_recovery_binding()
+                    .map(|binding| binding.runtime_version.as_str())
+            })
+    }
+
     /// Cheap preselection only; complete child and native proof is still required.
     pub fn unpublished_recovery_candidate(&self) -> bool {
         if !self.supports_retained_runtime_update()
             || self.unpublished_recovery_binding().is_none()
             || self.work.lease.is_some()
-            || (self.work.step != SandboxWorkStep::None && !self.stalled_unpublished_revival())
+            || (self.work.step != SandboxWorkStep::None
+                && !self.stalled_unpublished_revival()
+                && !self.stalled_unpublished_reopen())
             || self.lifecycle.checkpoint_capture.is_some()
             || (self.lifecycle.runtime_provision.is_some() && !self.stalled_unpublished_revival())
             || self
@@ -155,7 +191,10 @@ impl Sandbox {
         {
             return false;
         }
-        if self.stalled_unpublished_revival() {
+        // A persisted retry at reopen can stall indefinitely without a parked
+        // update failure. The lease guard above admits only between workers;
+        // complete child/log and native proofs still decide whether it is safe.
+        if self.stalled_unpublished_revival() || self.stalled_unpublished_reopen() {
             return true;
         }
         match &self.lifecycle.operation {
@@ -392,15 +431,7 @@ pub fn apply_unpublished_runtime_recovery(
     if request.automatic
         && (current.sandbox.lifecycle.unpublished_recovery_attempted
             || current.sandbox.lifecycle.unpublished_recovery.is_some()
-            || current
-                .sandbox
-                .admitted_runtime_update_target()
-                .or_else(|| {
-                    current
-                        .sandbox
-                        .unpublished_recovery_binding()
-                        .map(|binding| binding.runtime_version.as_str())
-                })
+            || current.sandbox.automatic_unpublished_recovery_target()
                 != Some(request.target_runtime_version.as_str()))
     {
         return Err(refused());
