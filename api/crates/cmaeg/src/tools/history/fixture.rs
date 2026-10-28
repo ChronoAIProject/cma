@@ -276,6 +276,7 @@ impl App {
         let state = ToolsState {
             native_whatsapp_forms: None,
             native_media_edits: None,
+            telegram_topics: None,
             discord_threads: None,
             discord_conversation_history: Some(Arc::new(DiscordConversationHistory::new(
                 DiscordRest::fixture(&format!("{platform_base}/api/v10/")),

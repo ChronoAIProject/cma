@@ -110,6 +110,7 @@ impl Files {
         let client = Arc::new(TelegramClient::new(&origin, Duration::from_secs(5)).unwrap());
         let channel = resolved(|definition| {
             definition.sources = vec![Source::Telegram {
+                topic_lifecycle: false,
                 message_events: false,
                 channel_posts: false,
                 bot_id: BOT_ID.into(),
@@ -265,6 +266,7 @@ async fn unsafe_file_paths_are_rejected_without_a_download() {
 async fn a_bot_no_longer_configured_or_without_a_token_is_not_retrievable() {
     let other_bot = Files::new(|definition| {
         definition.sources = vec![Source::Telegram {
+            topic_lifecycle: false,
             message_events: false,
             channel_posts: false,
             bot_id: "78".into(),
