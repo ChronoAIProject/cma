@@ -151,6 +151,7 @@ impl InteractionStore {
 }
 pub(crate) fn uncertain() -> IntentReceipt {
     IntentReceipt {
+        message_parts: vec![],
         message_ref: None,
         rendering: cmaeg_core::message::RenderingReport {
             outcome: cmaeg_core::message::RenderingOutcome::Unsupported,

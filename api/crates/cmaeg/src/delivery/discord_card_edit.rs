@@ -165,6 +165,7 @@ impl Sender {
         }
         ctx.gate.progress();
         let mut receipt = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery,

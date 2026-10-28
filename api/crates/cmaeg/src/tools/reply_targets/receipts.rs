@@ -1,7 +1,10 @@
 //! A durable claim precedes every external send. An abandoned claim is never resent.
 use super::unavailable;
 use crate::{
-    delivery::intents::{DeliveryOutcome, IntentReceipt},
+    delivery::{
+        intents::{DeliveryOutcome, IntentReceipt},
+        retained_receipt::{ReceiptStore, StoredReceipt},
+    },
     records::{RecordClient, RecordError},
 };
 use cmaeg_core::{
@@ -30,7 +33,7 @@ pub(crate) struct Claim {
     scope: String,
     request_hash: String,
     expires_at: i64,
-    receipt: Option<IntentReceipt>,
+    receipt: Option<StoredReceipt>,
     #[serde(skip)]
     version: u64,
 }
@@ -103,7 +106,7 @@ impl Store {
             .record_url(&claim.id)
             .map_err(|_| unavailable())?;
         match self.records.get(url.as_str()).await {
-            Ok(value) => return self.replay(&claim, &value.blob),
+            Ok(value) => return self.replay(&claim, &value.blob).await,
             Err(RecordError::NotFound) => {}
             Err(_) => return Err(unavailable()),
         }
@@ -118,7 +121,7 @@ impl Store {
                     .get(url.as_str())
                     .await
                     .map_err(|_| unavailable())?;
-                self.replay(&claim, &value.blob)
+                self.replay(&claim, &value.blob).await
             }
             Err(_) => Err(unavailable()),
         }
@@ -175,7 +178,7 @@ impl Store {
             .record_url(&claim.id)
             .map_err(|_| unavailable())?;
         match self.records.get(url.as_str()).await {
-            Ok(value) => match self.replay(&claim, &value.blob)? {
+            Ok(value) => match self.replay(&claim, &value.blob).await? {
                 Admission::Replay(receipt) => Ok(Some(receipt)),
                 Admission::Claimed(_) => unreachable!("replay never claims"),
             },
@@ -183,7 +186,7 @@ impl Store {
             Err(_) => Err(unavailable()),
         }
     }
-    fn replay(&self, expected: &Claim, blob: &[u8]) -> Result<Admission, Problem> {
+    async fn replay(&self, expected: &Claim, blob: &[u8]) -> Result<Admission, Problem> {
         let opened = open_interaction(&self.keys, &expected.id, blob).map_err(|_| unavailable())?;
         let saved: Claim = serde_json::from_slice(&opened.payload).map_err(|_| unavailable())?;
         if saved.kind != expected.kind
@@ -212,16 +215,36 @@ impl Store {
                 },
             ));
         }
-        Ok(Admission::Replay(saved.receipt.unwrap_or_else(|| {
-            uncertain("delivery_in_progress_or_uncertain")
-        })))
+        let receipt = match &saved.receipt {
+            Some(receipt) => self
+                .parts(&saved)
+                .load(receipt)
+                .await
+                .map_err(|_| unavailable())?,
+            None => uncertain("delivery_in_progress_or_uncertain"),
+        };
+        Ok(Admission::Replay(receipt))
     }
     pub async fn finish(&self, mut claim: Claim, receipt: &IntentReceipt) -> Result<(), Problem> {
-        claim.receipt = Some(receipt.clone());
+        claim.receipt = Some(
+            self.parts(&claim)
+                .retain(receipt)
+                .await
+                .map_err(|_| unavailable())?,
+        );
         self.save(&claim, Some(claim.version))
             .await
             .map_err(|_| unavailable())?;
         Ok(())
+    }
+    fn parts<'a>(&'a self, claim: &'a Claim) -> ReceiptStore<'a> {
+        ReceiptStore {
+            records: &self.records,
+            keys: &self.keys,
+            scope: &claim.id,
+            owner: &claim.owner,
+            retained_until: claim.expires_at,
+        }
     }
     async fn save(&self, claim: &Claim, expected: Option<u64>) -> Result<u64, RecordError> {
         let bytes = serde_json::to_vec(claim).map_err(|e| RecordError::Malformed(e.to_string()))?;
@@ -248,6 +271,7 @@ pub(crate) fn hash(value: &impl Serialize) -> String {
 }
 pub(crate) fn uncertain(reason: &str) -> IntentReceipt {
     IntentReceipt {
+        message_parts: vec![],
         message_ref: None,
         rendering: RenderingReport {
             outcome: RenderingOutcome::Unsupported,
@@ -258,3 +282,7 @@ pub(crate) fn uncertain(reason: &str) -> IntentReceipt {
         },
     }
 }
+
+#[cfg(test)]
+#[path = "receipt_tests.rs"]
+mod tests;

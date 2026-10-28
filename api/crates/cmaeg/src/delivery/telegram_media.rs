@@ -47,6 +47,7 @@ impl Sender {
         }
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_telegram());
         let mut receipt = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery: DeliveryOutcome::Rejected {
