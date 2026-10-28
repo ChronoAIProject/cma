@@ -39,10 +39,8 @@ import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
 import { DesktopPanel } from './DesktopPanel';
-
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
-
 interface AgentSurfaceProps {
   readonly lifecycleClient?: CmaWebClient;
   readonly accessUncertain?: boolean;
@@ -65,7 +63,6 @@ interface AgentSurfaceProps {
   readonly actionsBusy?: boolean;
   readonly onAgentAction?: (action: TreeAction) => void;
 }
-
 export function AgentSurface({
   lifecycleClient,
   draft,
@@ -101,7 +98,6 @@ export function AgentSurface({
     accessUncertain ||
     (viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner);
   const feedback = useMessageFeedback(agentId, viewerId, !readOnly && state.status === 'ready');
-
   const connection = useAgentConnectionReadiness(
     agentId,
     viewerId,
@@ -124,7 +120,6 @@ export function AgentSurface({
     discardPrepared();
   }, [detailsOpen, discardPrepared]);
   usePreparedConfiguration(state, connection.scope, discardPrepared);
-
   useEffect(() => {
     if (state.status !== 'ready') headingRef.current?.focus({ preventScroll: true });
   }, [agentId, state.status]);

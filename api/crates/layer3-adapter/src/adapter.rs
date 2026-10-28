@@ -20,14 +20,10 @@ pub trait SandboxAdapter: Send + Sync {
     fn runtime_recovery(&self) -> Option<&dyn crate::RuntimeRecovery> {
         None
     }
-
     /// Abilities proved for the admitted runtime contract.
     fn capabilities(&self) -> AdapterCapabilities;
 
-    async fn open_desktop(
-        &self,
-        _handle: &RuntimeHandle,
-    ) -> Result<crate::DesktopConnectionHandle> {
+    async fn open_desktop(&self, _: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         Err(crate::AdapterError::Unsupported(
             "runtime desktop is unavailable".into(),
         ))
@@ -47,7 +43,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<crate::HomeVolumeRequest> {
         Ok(home.clone())
     }
-
     /// Verify retained home authority before provider operations that only take a handle.
     fn verify_retained_home_route(
         &self,
@@ -56,7 +51,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
-
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
         None
     }
@@ -67,7 +61,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
         Ok(self.native_pools())
     }
-
     /// Select a provider and an eligible pool before any home allocation. The
     /// caller persists the returned binding (or ordinary home decision).
     async fn select_native_pool(
