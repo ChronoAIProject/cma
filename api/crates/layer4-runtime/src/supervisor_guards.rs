@@ -5,6 +5,28 @@ use crate::failure::{Result, RuntimeError};
 use crate::paths::safe_component;
 
 impl Supervisor {
+    pub(super) async fn authorize_workspace_recovery(
+        &self,
+        frame: &layer3_adapter::WorkspacePrepareRecoveryFrame,
+    ) -> Result<()> {
+        frame.validate().map_err(|error| {
+            RuntimeError::rejected("workspace_recovery_authority", error.to_string())
+        })?;
+        self.require_credentialed().await?;
+        let current = self.runtime_status(frame.runtime_request()).await?;
+        if !layer3_adapter::same_runtime_writer(&current, &frame.runtime)
+            || self.config.home_identity.is_none()
+            || !self.agents.read().await.is_empty()
+            || !crate::mutation_journal::active_agents(&self.config)?.is_empty()
+        {
+            return Err(RuntimeError::rejected("workspace_recovery_authority", "Workspace recovery requires the exact current runtime and an empty live and durable Agent inventory"));
+        }
+        self.writer_boundary.require_no_writers().map_err(|error| {
+            RuntimeError::unavailable("workspace_recovery_writer_present", error)
+        })?;
+        Ok(())
+    }
+
     /// Public preparation may run after installation without any user credential.
     pub(super) async fn require_preparation(&self) -> Result<()> {
         if self.allow_unowned_preparation && *self.phase.read().await == Phase::Installed {
