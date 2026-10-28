@@ -181,6 +181,7 @@ impl App {
                     } => {
                         recording.lock().unwrap().push(message);
                         let _ = receipt.send(IntentReceipt {
+                            message_parts: vec![],
                             message_ref: Some(returned_ref.clone()),
                             rendering: RenderingReport {
                                 outcome: RenderingOutcome::Rendered,
@@ -193,6 +194,7 @@ impl App {
                     }
                     DeliveryCommand::Update { receipt, .. } => {
                         let _ = receipt.send(IntentReceipt {
+                            message_parts: vec![],
                             message_ref: None,
                             rendering: RenderingReport {
                                 outcome: RenderingOutcome::Unsupported,

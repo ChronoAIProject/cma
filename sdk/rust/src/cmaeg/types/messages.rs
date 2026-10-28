@@ -199,9 +199,21 @@ pub enum FormFieldKind {
     Date {},
 }
 
+/// One confirmed native text part; the aggregate outcome can still be unknown.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfirmedMessagePart {
+    /// Zero-based rendered text position.
+    pub index: u16,
+    /// Exact native destination under the original consumer authority.
+    pub message_ref: MessageRef,
+}
+
 /// CMAEG `IntentReceipt` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct IntentReceipt {
+    /// Confirmed split-text parts. Legacy receipts omit this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_parts: Vec<ConfirmedMessagePart>,
     /// Wire field `delivery`.
     pub delivery: DeliveryOutcome,
     /// Wire field `message_ref`.

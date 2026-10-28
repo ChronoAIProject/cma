@@ -4607,6 +4607,58 @@
         ],
         "outcome": "rendered"
       }
+    },
+    {
+      "delivery": {
+        "outcome": "confirmed",
+        "platform_message_id": "800"
+      },
+      "message_parts": [
+        {
+          "index": 0,
+          "message_ref": "confirmed-part-one"
+        },
+        {
+          "index": 1,
+          "message_ref": "confirmed-part-two"
+        }
+      ],
+      "rendering": {
+        "blocks": [
+          {
+            "index": 65535,
+            "outcome": {
+              "how": "chunked:2",
+              "type": "degraded"
+            }
+          }
+        ],
+        "outcome": "degraded"
+      }
+    },
+    {
+      "delivery": {
+        "outcome": "unknown",
+        "reason": "partial_delivery"
+      },
+      "message_parts": [
+        {
+          "index": 0,
+          "message_ref": "confirmed-part-one"
+        }
+      ],
+      "rendering": {
+        "blocks": [
+          {
+            "index": 65535,
+            "outcome": {
+              "how": "chunked:2",
+              "type": "degraded"
+            }
+          }
+        ],
+        "outcome": "degraded"
+      }
     }
   ],
   "InteractionResult": [
@@ -8639,6 +8691,16 @@
       "origin": "parent_text",
       "text": "A bounded quoted passage",
       "truncated": false
+    }
+  ],
+  "ConfirmedMessagePart": [
+    {
+      "index": 0,
+      "message_ref": "confirmed-part-one"
+    },
+    {
+      "index": 1,
+      "message_ref": "confirmed-part-two"
     }
   ]
 }

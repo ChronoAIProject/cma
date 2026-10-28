@@ -170,6 +170,7 @@ impl Sender {
         if !lark && parts.len() != 1 {
             return (
                 IntentReceipt {
+                    message_parts: vec![],
                     message_ref: None,
                     rendering,
                     delivery: DeliveryOutcome::Rejected {
@@ -217,6 +218,7 @@ impl Sender {
                 }
                 return (
                     IntentReceipt {
+                        message_parts: vec![],
                         message_ref: None,
                         rendering,
                         delivery: DeliveryOutcome::Rejected {
@@ -258,6 +260,7 @@ impl Sender {
                 .await
         };
         let mut result = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery,
@@ -384,6 +387,7 @@ impl Sender {
             .then(|| MessageRef::seal(reference, &self.keys).ok())
             .flatten();
         IntentReceipt {
+            message_parts: vec![],
             message_ref,
             rendering,
             delivery,
