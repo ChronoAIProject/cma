@@ -5893,6 +5893,13 @@
               "null"
             ]
           },
+          "native_telegram_general_topic_lifecycle_enabled": {
+            "description": "General-topic execution additionally requires the original native forum envelope.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_telegram_message_events_enabled": {
             "type": [
               "boolean",
