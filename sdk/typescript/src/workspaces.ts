@@ -84,11 +84,16 @@ export class Workspaces {
 
   /** Preserve original identity/data and retry preparation of a failed, never-ready workspace. */
   recoverPrepare(id: string, options: CommandOptions) {
-    return read(this.config, `/api/v1/workspaces/${segment(id)}/recover-prepare`, identity(workspace, id), {
-      ...command(options),
-      method: 'POST',
-      expectedStatus: 202,
-    });
+    return read(
+      this.config,
+      `/api/v1/workspaces/${segment(id)}/recover-prepare`,
+      identity(workspace, id),
+      {
+        ...command(options),
+        method: 'POST',
+        expectedStatus: 202,
+      },
+    );
   }
 
   delete(id: string, options: CommandOptions) {
