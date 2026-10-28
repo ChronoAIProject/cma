@@ -6,6 +6,7 @@ use cmaeg_core::thread_lifecycle::{TopicAction, TopicLifecycleCapabilities};
 
 pub struct TelegramTopics {
     api: Arc<TelegramClient>,
+    general_enabled: bool,
     slots: Semaphore,
     budget: std::time::Duration,
 }
@@ -13,9 +14,14 @@ impl TelegramTopics {
     pub fn new(api: Arc<TelegramClient>) -> Self {
         Self {
             api,
+            general_enabled: false,
             slots: Semaphore::new(8),
             budget: budget::TOTAL,
         }
+    }
+    pub fn with_general_topics(mut self, enabled: bool) -> Self {
+        self.general_enabled = enabled;
+        self
     }
 }
 impl ToolsState {
@@ -50,14 +56,15 @@ impl ToolsState {
         let client = self.telegram_topics.as_deref()?;
         let ReplyAddress::Telegram {
             bot_id,
-            thread_id: Some(topic),
+            thread_id,
             chat_id,
             ..
         } = &event.reply
         else {
             return None;
         };
-        if !crate::telegram::topics::valid_topic(topic) || !crate::telegram::topics::valid_chat(chat_id)
+        if !thread_id.as_deref().map_or(client.general_enabled, crate::telegram::topics::valid_topic)
+            || !crate::telegram::topics::valid_chat(chat_id)
             || !channel.definition.sources.iter().any(|s| matches!(s, Source::Telegram { bot_id: configured, topic_lifecycle: true, .. } if configured == bot_id))
         { return None; }
         let _permit = client.slots.try_acquire().ok()?;
@@ -126,7 +133,7 @@ impl ToolsState {
         let (channel, authority) = self.topic_authority(caller, &event).await?;
         let store = ledger::Store::telegram(self.resolver.record_client(), self.keys.clone());
         let scope = hash(
-            &serde_json::json!({"channel":event.channel_id,"record":event.record_id,"event":event.event_id,"consumer":event.consumer,"platform":"telegram","bot":authority.bot,"chat":authority.chat,"topic":authority.topic}),
+            &serde_json::json!({"channel":event.channel_id,"record":event.record_id,"event":event.event_id,"consumer":event.consumer,"platform":"telegram","bot":authority.bot,"chat":authority.chat,"topic":authority.topic.id()}),
         );
         budget.start_ledger();
         let claim = match store
@@ -146,7 +153,7 @@ impl ToolsState {
             .acquire_topic(
                 &authority.bot,
                 &authority.chat,
-                &authority.topic,
+                authority.topic.id(),
                 &channel.definition.owner.subject,
             )
             .await?
