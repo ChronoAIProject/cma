@@ -5,6 +5,8 @@ pub(crate) mod groups;
 mod interactive;
 pub(crate) mod management;
 pub(crate) mod media;
+pub(crate) mod message_changes;
+pub(crate) mod message_context;
 pub(crate) mod outbound;
 mod reaction;
 pub mod receipts;
@@ -84,9 +86,23 @@ pub(crate) fn legacy_source(source: &cmaeg_core::channel::Source) -> cmaeg_core:
     // Retained group revisions serialize the typed source in declaration order.
     // A JSON Value would sort fields, or swap them on removal with preserve_order,
     // changing issued revisions even though the source remains semantically equal.
-    let mut source = source.clone();
+    let mut source = without_message_events(source);
     if let cmaeg_core::channel::Source::Whatsapp { forms_enabled, .. } = &mut source {
         *forms_enabled = false;
     }
     source
 }
+
+/// Keep existing independent authority hashes stable when incoming-change consent changes.
+pub(crate) fn without_message_events(
+    source: &cmaeg_core::channel::Source,
+) -> cmaeg_core::channel::Source {
+    let mut source = source.clone();
+    if let cmaeg_core::channel::Source::Whatsapp { message_events, .. } = &mut source {
+        *message_events = false;
+    }
+    source
+}
+
+#[cfg(test)]
+pub(crate) mod message_changes_tests;
