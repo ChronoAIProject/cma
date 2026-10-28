@@ -6,6 +6,7 @@ mod construction;
 mod filesystem;
 mod home;
 mod hosted_runtime;
+mod recovery;
 use hosted_runtime::CodexRuntime;
 
 use std::sync::Arc;
@@ -50,6 +51,9 @@ pub struct CodexAdapter {
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    fn runtime_recovery(&self) -> Option<&dyn crate::RuntimeRecovery> {
+        Some(self)
+    }
     async fn list_agent_files(
         &self,
         handle: &RuntimeHandle,
@@ -143,15 +147,12 @@ impl SandboxAdapter for CodexAdapter {
     fn capabilities(&self) -> AdapterCapabilities {
         self.hosted.capabilities()
     }
-
     fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
         self.hosted.home_volumes()
     }
-
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
         self.hosted.provision(spec).await
     }
-
     async fn teardown_retained_runtime(&self, handle: &RuntimeHandle) -> crate::Result<()> {
         self.hosted.teardown_retained_runtime(handle).await
     }

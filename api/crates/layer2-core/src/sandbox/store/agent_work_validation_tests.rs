@@ -505,6 +505,20 @@ fn stop_and_delete_publications_consume_only_their_exact_terminal_state() {
         None,
     );
     assert_valid(&deleting, &removed_worktree, &delete);
+    // Deleted is durable proof that the exact owned worktree finished removal.
+    // Runtime-update admission may rely on this when retained turns are history.
+    for variant in 0..6 {
+        let mut invalid_worktree = removed_worktree.clone();
+        match variant {
+            0 => invalid_worktree.status = WorktreeStatus::Removing,
+            1 => invalid_worktree.id = crate::ids::WorktreeId("foreign".into()),
+            2 => invalid_worktree.workspace_id = crate::ids::WorkspaceId("foreign".into()),
+            3 => invalid_worktree.sandbox_id = crate::ids::SandboxId("foreign".into()),
+            4 => invalid_worktree.owner = crate::ids::SubjectId("foreign".into()),
+            _ => invalid_worktree.agent_id = Some(crate::ids::AgentId("foreign".into())),
+        }
+        assert_conflict(&deleting, &invalid_worktree, &delete);
+    }
 
     let mut invalid = delete.clone();
     invalid

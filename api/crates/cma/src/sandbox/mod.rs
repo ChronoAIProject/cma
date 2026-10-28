@@ -27,6 +27,7 @@ mod title_scheduler;
 mod title_worker;
 mod titles;
 mod unavailable_credentials;
+pub(crate) mod unpublished_recovery;
 mod warmup;
 pub(crate) mod worker;
 mod workspace_worker;

@@ -101,6 +101,18 @@ pub use runtime_update::{
 mod runtime_update_service;
 pub use runtime_update_service::{SandboxRuntimeUpdateError, SandboxRuntimeUpdateService};
 mod runtime_recovery_agents;
+mod unpublished_recovery;
+mod unpublished_recovery_state;
+mod unpublished_recovery_transition;
+pub use unpublished_recovery::{
+    apply_unpublished_runtime_recovery, SandboxRecoveryConversationProof,
+    SandboxUnpublishedRecoveryMutation, SandboxUnpublishedRecoveryProof,
+    SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoverySnapshot,
+    SandboxUnpublishedRecoveryVerifier,
+};
+pub use unpublished_recovery_state::{
+    SandboxUnpublishedRecoveryQuiescence, SandboxUnpublishedRecoveryState,
+};
 #[allow(clippy::module_inception)]
 mod sandbox;
 mod service;

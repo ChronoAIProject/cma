@@ -188,6 +188,24 @@ async fn recover_prepared_receipt(
     if !staged_path.exists() {
         return Ok(None);
     }
+    // Only the exact journal-owned staging path can be an unfinished clone.
+    // The identity is written after Git succeeds; its absence cannot be healed
+    // by replaying inspection. Preserve the files and settle the preparation.
+    match std::fs::symlink_metadata(staged_path.join(".git/info/cma-workspace-id")) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(RuntimeError::rejected(
+                "workspace_prepare_indeterminate",
+                "staged workspace preparation has no completed identity metadata",
+            ));
+        }
+        Err(error) => {
+            return Err(RuntimeError::unavailable(
+                "workspace_io_failed",
+                format!("inspect staged workspace identity: {error}"),
+            ));
+        }
+        Ok(_) => {}
+    }
     let staged = staged_request(request);
     let Some(receipt) = crate::workspace_source::inspect_prepared(
         &staging_root(&config.home),

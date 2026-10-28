@@ -70,6 +70,30 @@ pub trait BindingCredentialCustody: Send + Sync {
         ))
     }
 
+    /// Restore only the binding's readiness after its original hierarchy has
+    /// recovered. Implementations atomically fence the binding, both parents and
+    /// the current retained credential; they must not provision or rotate.
+    async fn retry_recovered_binding(
+        &self,
+        _binding: &super::ProviderBinding,
+        _credential: &ProvidedCredential,
+    ) -> Result<super::ProviderBinding, CoreError> {
+        Err(CoreError::RuntimeUnavailable(
+            "binding recovery admission is unavailable".into(),
+        ))
+    }
+
+    /// Continue the original durable binding intent using only its existing
+    /// encrypted credential. The same recovery fences as an identical PUT apply.
+    async fn recover_binding(
+        &self,
+        _binding: &super::ProviderBinding,
+    ) -> Result<super::ProviderBinding, CoreError> {
+        Err(CoreError::RuntimeUnavailable(
+            "binding recovery admission is unavailable".into(),
+        ))
+    }
+
     async fn forget_binding(
         &self,
         _binding: &super::ProviderBinding,

@@ -14,6 +14,14 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox
+            .lifecycle
+            .unpublished_recovery
+            .as_ref()
+            .is_some_and(|state| state.quiescence.is_none())
+        {
+            return self.quiesce_unpublished_runtime(sandbox, now).await;
+        }
         if let Err(failure) = self.verify_retained_home_and_absence(&sandbox).await {
             return self.handle_lifecycle_failure(sandbox, failure, now).await;
         }
@@ -37,6 +45,11 @@ impl SandboxWorker {
         &self,
         sandbox: &Sandbox,
     ) -> Result<(), WorkerFailure> {
+        sandbox
+            .require_unpublished_runtime_quiescence()
+            .map_err(|_| {
+                WorkerFailure::retryable("original runtime quiescence has not been recorded")
+            })?;
         let source = sandbox
             .retained_home_recovery()
             .ok_or_else(missing_source)?;
@@ -121,6 +134,46 @@ impl SandboxWorker {
                     &self.config.deployment_id,
                 )
                 .map_err(adapter_failure)?;
+                if sandbox
+                    .lifecycle
+                    .unpublished_recovery
+                    .as_ref()
+                    .is_some_and(|state| state.proof.boot_id.is_none())
+                {
+                    // A completed suspension can lose its reply. Its exact
+                    // retained provider graph proves replay without a vanished Pod.
+                    if self
+                        .dependencies
+                        .adapter
+                        .verify_suspended_runtime(&request)
+                        .await
+                        .is_ok()
+                    {
+                        return volumes.verify(&attachment).await.map_err(adapter_failure);
+                    }
+                    // Read the full Agent set and current authority, then re-read
+                    // the exact stopped container immediately before suspension.
+                    let source =
+                        self.nonexecuting_recovery_request(sandbox)
+                            .await
+                            .map_err(|_| {
+                                WorkerFailure::retryable(
+                                    "original nonexecuting runtime evidence changed; home retained",
+                                )
+                            })?;
+                    self.dependencies
+                        .adapter
+                        .runtime_recovery()
+                        .ok_or_else(missing_source)?
+                        .suspend_nonexecuting_recovery(&source)
+                        .await
+                        .map_err(|_| {
+                            WorkerFailure::retryable(
+                                "original nonexecuting runtime is not yet verified; home retained",
+                            )
+                        })?;
+                    return volumes.verify(&attachment).await.map_err(adapter_failure);
+                }
                 self.dependencies
                     .adapter
                     // A lost process does not imply a suspended provider object.

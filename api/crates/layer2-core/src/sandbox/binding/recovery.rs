@@ -49,6 +49,12 @@ impl BindingService {
         use BindingWork::*;
         let mut next = binding.clone();
         match binding.work {
+            Idle if super::store::binding_is_recovery_candidate(binding) => {
+                return match self.credentials.recover_binding(binding).await {
+                    Ok(_) | Err(crate::CoreError::InvalidState(_)) => Ok(()),
+                    Err(error) => Err(unavailable(error)),
+                };
+            }
             AwaitingCredential | Idle => return Ok(()),
             DeliverCredential => {
                 let sandbox = self
