@@ -39,7 +39,7 @@ sys.exit(code if code>=0 else 128-code)
 }
 function connect(directory, home, phase) {
   const native = wrapper(directory, phase);
-  const frames = [];
+  const frames = [], sentFrames = [];
   const child = spawn(process.execPath, [bridgeProgram], {
     cwd: directory, detached: true,
     env: { PATH: process.env.PATH, CODEX_HOME: home, CODEX_PATH: native.launcher, RUST_LOG: 'warn' },
@@ -48,13 +48,14 @@ function connect(directory, home, phase) {
   const stderr = fs.createWriteStream(join(directory, phase + '-bridge-stderr.log'));
   child.stderr.pipe(stderr);
   const pending = new Map(); let serial = 0;
+  const send = frame => { sentFrames.push(frame); child.stdin.write(JSON.stringify(frame) + '\n'); };
   const lines = createInterface({ input: child.stdout });
   lines.on('line', line => {
     const frame = JSON.parse(line); frames.push(frame);
     if (frame.method === 'session/request_permission') {
       const option = frame.params.options.find(x => x.kind === 'allow_once');
       assert(option);
-      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: frame.id, result: { outcome: { outcome: 'selected', optionId: option.optionId } } }) + '\n');
+      send({ jsonrpc: '2.0', id: frame.id, result: { outcome: { outcome: 'selected', optionId: option.optionId } } });
     } else pending.get(frame.id)?.resolve(frame);
   });
   const exited = new Promise(resolve => child.once('exit', (code, signal) => {
@@ -62,14 +63,14 @@ function connect(directory, home, phase) {
     resolve({ code, signal });
   }));
   return {
-    child, native, frames, exited,
+    child, native, frames, sentFrames, exited, phase,
     async call(method, params) {
       const id = ++serial; let timer;
       const promise = new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
         timer = setTimeout(() => reject(new Error('RPC deadline: ' + method)), 30000);
       });
-      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+      send({ jsonrpc: '2.0', id, method, params });
       try { const frame = await promise; assert.equal(frame.error, undefined, JSON.stringify(frame.error)); return frame.result; }
       finally { clearTimeout(timer); pending.delete(id); }
     },
@@ -130,7 +131,8 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
   const dirtyPath = join(directory, 'dirty.txt');
   const toolPidPath = join(directory, 'tool.pid');
   const receipts = { binarySha256: sha(fs.readFileSync(binary)), bridgeSha256: sha(fs.readFileSync(bridgeProgram)), directory };
-  let modelCalls = 0, serverError, phase = 'original';
+  let modelCalls = 0, serverError, phase = 'original', stage = 'initialize', failure;
+  const bridges = [];
   const requests = [];
   const server = createServer(async (request, response) => {
     try {
@@ -163,15 +165,22 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
   ].join('\n'));
   let bridge, pendingPrompt, toolPid;
   try {
-    bridge = connect(directory, home, 'original');
+    bridge = connect(directory, home, 'original'); bridges.push(bridge);
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
     const { sessionId } = await bridge.call('session/new', { cwd: directory, mcpServers: [] }); receipts.sessionId = sessionId;
+    // ACP applies its session mode to every turn, overriding config.toml.
+    // Select full access explicitly: the runtime container cannot nest the
+    // default workspace-write Linux sandbox when launching the fixture shell.
+    await bridge.call('session/set_mode', { sessionId, modeId: 'agent-full-access' });
+    stage = 'completed checkpoint';
     await bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Record the completed checkpoint.' }] });
+    stage = 'active native turn and shell';
     pendingPrompt = bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Create the fixture dirty file and keep the turn waiting.' }] });
     void pendingPrompt.catch(() => {});
     await until(() => { if (serverError) throw serverError; return modelCalls >= 3 && exists(toolPidPath); }, 'active native turn and shell');
     toolPid = Number(fs.readFileSync(toolPidPath, 'utf8')); assert(alive(toolPid));
     receipts.before = { modelCalls, toolPid, dirtySha256: sha(fs.readFileSync(dirtyPath)), nativePid: Number(fs.readFileSync(bridge.native.pidPath, 'utf8')) };
+    stage = 'first graceful shutdown';
     receipts.firstShutdown = await bridge.stopBridgeOnly();
     await pendingPrompt.catch(() => {});
     await until(() => !alive(toolPid), 'native shutdown must stop unified-exec shell');
@@ -183,15 +192,19 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
     assert(firstHistory.bytes.includes('Create the fixture dirty file'));
     assert.equal(sha(fs.readFileSync(dirtyPath)), receipts.before.dirtySha256);
     receipts.afterShutdown = { historyPath: firstHistory.path, historySha256: sha(firstHistory.bytes), historyBytes: firstHistory.bytes.length, eventTypes: events, toolGone: !alive(toolPid) };
-    phase = 'reloaded'; bridge = connect(directory, home, 'reloaded');
+    stage = 'cold reload';
+    phase = 'reloaded'; bridge = connect(directory, home, 'reloaded'); bridges.push(bridge);
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
     const callsBeforeLoad = modelCalls;
     await bridge.call('session/load', { sessionId, cwd: directory, mcpServers: [] });
     assert.equal(modelCalls, callsBeforeLoad, 'cold load without a goal must not request model work');
     assert(JSON.stringify(bridge.frames).includes('Completed before recovery.'));
+    await bridge.call('session/set_mode', { sessionId, modeId: 'agent-full-access' });
+    stage = 'recovered prompt';
     await bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Verify recovery.' }] });
     assert.equal(modelCalls, callsBeforeLoad + 1);
     assert.equal(sha(fs.readFileSync(dirtyPath)), receipts.before.dirtySha256);
+    stage = 'second graceful shutdown';
     receipts.secondShutdown = await bridge.stopBridgeOnly();
     const finalHistory = history(home, sessionId);
     assert(finalHistory.bytes.includes('Recovered same conversation.'));
@@ -201,10 +214,35 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
     console.log(JSON.stringify({ nativeSha256: receipts.binarySha256, bridgeSha256: receipts.bridgeSha256,
       firstShutdown: receipts.firstShutdown, secondShutdown: receipts.secondShutdown,
       originalHistoryExactPrefix: receipts.afterReload.oldHistoryExactPrefix, shellGone: receipts.afterShutdown.toolGone }));
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
+    if (failure) {
+      const tail = value => String(value).slice(-6000);
+      const read = path => exists(path) ? tail(fs.readFileSync(path, 'utf8')) : null;
+      const diagnostics = { stage, phase, directory, modelCalls, error: failure.stack,
+        serverError: serverError?.stack, toolPid: read(toolPidPath), dirtyFileExists: exists(dirtyPath),
+        bridges: bridges.map(current => ({ phase: current.phase, bridgePid: current.child.pid,
+          bridgeAlive: alive(current.child.pid), nativePid: read(current.native.pidPath),
+          nativeStatus: read(current.native.statusPath), nativeStderr: read(current.native.stderrPath),
+          bridgeStderr: read(join(directory, current.phase + '-bridge-stderr.log')),
+          sentFrames: tail(JSON.stringify(current.sentFrames)), receivedFrames: tail(JSON.stringify(current.frames)) })),
+        // The next model request carries shell failure/output even when no PID
+        // file was created. Include it in CI logs as well as retained evidence.
+        lastModelInput: tail(JSON.stringify(requests.at(-1)?.input)) };
+      fs.writeFileSync(join(directory, 'failure.json'), JSON.stringify(diagnostics, null, 2));
+      console.error('Native EOF fixture failure: ' + JSON.stringify(diagnostics));
+    }
     if (bridge && alive(bridge.child.pid)) { await bridge.stopBridgeOnly().catch(error => { console.error(error); }); }
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-    if (process.env.CMA_EOF_EVIDENCE_ROOT) fs.writeFileSync(join(directory, 'model-requests.json'), JSON.stringify(requests, null, 2));
+    if (failure || process.env.CMA_EOF_EVIDENCE_ROOT) {
+      fs.writeFileSync(join(directory, 'model-requests.json'), JSON.stringify(requests, null, 2));
+      for (const current of bridges) {
+        fs.writeFileSync(join(directory, current.phase + '-acp-frames.json'), JSON.stringify(current.frames, null, 2));
+        fs.writeFileSync(join(directory, current.phase + '-acp-sent-frames.json'), JSON.stringify(current.sentFrames, null, 2));
+      }
+    }
     else fs.rmSync(directory, { recursive: true, force: true });
   }
 });
