@@ -147,8 +147,53 @@ generation 3. Every provider step still verifies the original Claim, native Sand
 and PVC UIDs, home identity and complete admitted request. Unreserved generations,
 changed operations, changed homes and request mismatches remain refusals.
 
+A terminal RuntimeLost provisioning failure clears runnable work but retains its
+exact failed operation, allocation reservation, owner, source binding and home
+identity as `failed_provision`. Recovery may use this evidence only with a complete
+empty Agent set, no worker lease, and fresh provider proof of the same nonexecuting
+allocation. It admits a new operation; it never replays the failed operation or
+lowers the generation fence. A failed snapshot survives API restarts and keeps the
+same pending Workspace and files. Generic saves cannot add, replace or erase this
+evidence; admitted recovery consumes it and explicit retirement may discard it.
+
+Older Failed records that already lost their allocation reservation cannot use
+that historical-reservation path. A separate explicit owner/operator recovery
+requires a Failed provisioning record with its original suspended binding and
+native home, no operation, lease or runnable work, a complete empty Agent set and
+the last failed worker observation at least sixty seconds old. The high-water
+mark bounds an independently verified current allocation; it never recreates an
+operation or reservation. The adapter must render the same image/environment at
+that generation and prove the exact live Claim/Sandbox/PVC graph, complete Pod
+policy and request hash. Admission records `observed_provision_generation`
+separately, preserves source binding and home, and allocates the replacement above
+the retained ceiling. Missing, foreign or higher provider authority is refused.
+Automatic recovery does not admit this legacy exception.
+
+For the pinned legacy runtime `sha256:3c5bccfabe8d20bd1fb5900cbfb2958878a316d75cfd1d186bcbfcf91c6fbf28`,
+a read-only exec can additionally prove an idle assignment bootstrap after an
+exit-2 startup failure. Pod Ready and bootstrap argv alone are insufficient:
+assignment preserves argv. The script verifies the executable digest
+`5a39d8c147fb9061e85831aa5fc7f42c405374719c4bc6d040e94dd2f997939b`,
+PID/start identity, complete process and thread inventories, and every runtime
+descriptor and socket. Only PID 1 and the inspecting process may exist. Only the
+main and Tokio worker threads, standard pipes, reactor descriptors, internal
+socket pair and exact assignment listener are permitted. The source revision
+`4d1ed46a4ef4ebef6f12d927192151baa53613cf` starts a permanent child-reaper thread
+before constructing the supervisor; its absence, along with the complete
+descriptor proof, distinguishes the bootstrap from an assigned supervisor.
+The image layer independently matches that binary digest. Other images are not
+implicitly granted this capability.
+
+The script repeats the inventory without sending an assignment, reading tenant
+files, signaling, or modifying the home. The adapter rechecks Pod/container and
+Sandbox identities around exec, then repeats the exact witness before the existing
+Sandbox UID/resource-version suspension CAS. This is an observation plus the
+durable no-work and empty-child fences, not an atomic process-freeze protocol.
+Any new assignment, process, descriptor or identity visible at recheck refuses
+recovery. The later suspension completion and retained-home proofs remain mandatory.
+
 This recovery uses API code and the retained runtime image. Once admission persists
-`reserved_provision`, rollback must use an API binary that can read that evidence;
+`reserved_provision`, `observed_provision_generation` or `failed_provision`, rollback must use an API binary that can read that evidence;
 an older strict reader that rejects the optional field cannot safely resume the
 in-flight recovery. Do not erase the evidence or lower the generation fence to
 make an older binary accept the record.
