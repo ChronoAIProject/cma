@@ -43,6 +43,7 @@ fn fixture() -> (InMemorySandboxStore, SandboxId) {
 
 fn proof(snapshot: &SandboxUnpublishedRecoverySnapshot) -> SandboxUnpublishedRecoveryProof {
     SandboxUnpublishedRecoveryProof {
+        reserved_provision: None,
         sandbox_id: snapshot.sandbox.id.clone(),
         runtime_id: snapshot
             .sandbox

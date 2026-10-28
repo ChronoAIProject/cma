@@ -28,6 +28,7 @@ pub(super) struct NativeBackend {
     pub run_before_suspend: Arc<AtomicBool>,
     pub interrupted_workspace: Arc<AtomicBool>,
     pub calls: ActionLog,
+    pub inspected_generations: Arc<Mutex<Vec<u64>>>,
 }
 
 impl NativeBackend {
@@ -46,6 +47,15 @@ impl NativeBackend {
     }
     pub async fn request(&self) -> ProviderSandboxRequest {
         self.row.lock().await.as_ref().unwrap().request.clone()
+    }
+    pub async fn stage_reserved_request(&self, request: ProviderSandboxRequest) {
+        let mut rows = self.row.lock().await;
+        let row = rows.as_mut().unwrap();
+        assert_eq!(row.request.image, request.image);
+        assert_eq!(row.request.volumes, request.volumes);
+        row.observation.generation = request.metadata["cma/runtime-generation"].parse().unwrap();
+        row.request = request;
+        // The retained provider object and failed Pod have not been replaced.
     }
     pub async fn restart_process(&self) {
         let rows = self.row.lock().await;
@@ -93,6 +103,10 @@ impl HostedBackend for NativeBackend {
         home: &layer3_adapter::HomeVolumeAttachment,
     ) -> layer3_adapter::Result<Option<layer3_adapter::hosted::NonexecutingRuntimeProof>> {
         use sha2::{Digest, Sha256};
+        self.inspected_generations
+            .lock()
+            .unwrap()
+            .push(request.metadata["cma/runtime-generation"].parse().unwrap());
         let rows = self.row.lock().await;
         let row = rows.as_ref().ok_or_else(absent)?;
         if !self.nonexecuting.load(Ordering::SeqCst) || row.pod.is_none() {

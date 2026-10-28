@@ -46,6 +46,7 @@ async fn fixture(store: &MongoSandboxStore, id: &str) -> SandboxUnpublishedRecov
         .await
         .unwrap();
     let proof = SandboxUnpublishedRecoveryProof {
+        reserved_provision: None,
         sandbox_id: sandbox.id.clone(),
         runtime_id: sandbox.runtime.as_ref().unwrap().runtime_id.clone(),
         runtime_generation: 2,
@@ -362,7 +363,9 @@ async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_gener
         .unwrap();
     snapshot.validate().unwrap();
     let provider_plan = serde_json::json!({"original": "nonexecuting-provider-proof"});
+    let reservation = snapshot.recovery_provision_reservation().unwrap().cloned();
     let proof = SandboxUnpublishedRecoveryProof {
+        reserved_provision: reservation.clone(),
         sandbox_id: sandbox.id.clone(),
         runtime_id: sandbox.runtime.as_ref().unwrap().runtime_id.clone(),
         runtime_generation: 1,
@@ -396,6 +399,16 @@ async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_gener
         1
     );
     assert!(admitted.lifecycle.runtime_provision.is_none());
+    assert_eq!(
+        admitted
+            .lifecycle
+            .unpublished_recovery
+            .as_ref()
+            .unwrap()
+            .proof
+            .reserved_provision,
+        reservation
+    );
     assert_eq!(
         store.get_sandbox(&sandbox.id).await.unwrap().unwrap(),
         admitted
