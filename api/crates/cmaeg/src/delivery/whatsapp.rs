@@ -124,6 +124,7 @@ impl Sender {
         };
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_whatsapp());
         let mut result = IntentReceipt {
+            message_parts: vec![],
             rendering,
             ..rejected("empty_message")
         };

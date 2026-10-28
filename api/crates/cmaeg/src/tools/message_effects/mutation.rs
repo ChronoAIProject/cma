@@ -16,7 +16,7 @@ pub(crate) struct Store {
     domain: &'static str,
     kind: &'static str,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Lock {
     kind: String,
@@ -28,7 +28,43 @@ pub(crate) struct Lock {
     #[serde(skip)]
     version: u64,
 }
+/// A card receipt can release only the exact lock version that its edit held.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RetainedLock {
+    lock: Lock,
+    version: u64,
+}
+impl RetainedLock {
+    pub fn telegram_media(&self, destination: &str, owner: &str, expires_at: i64) -> bool {
+        self.lock.kind == "telegram_media_mutation_v1"
+            && self.lock.held
+            && self.version > 0
+            && self.lock.destination == destination
+            && self.lock.id == lock_id("cmaeg.telegram-media-mutation.v1", destination)
+            && self.lock.owner == owner
+            && self.lock.expires_at >= expires_at
+    }
+}
 impl Store {
+    pub fn retain(&self, lock: &Lock) -> RetainedLock {
+        RetainedLock {
+            lock: lock.clone(),
+            version: lock.version,
+        }
+    }
+    pub async fn release_retained(&self, saved: &RetainedLock) -> Result<(), Problem> {
+        if saved.lock.kind != self.kind
+            || !saved.lock.held
+            || saved.version == 0
+            || saved.lock.id != lock_id(self.domain, &saved.lock.destination)
+        {
+            return Err(unavailable());
+        }
+        let mut lock = saved.lock.clone();
+        lock.version = saved.version;
+        self.release(lock).await
+    }
     pub fn telegram_received(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
             records: records.interactions(),
@@ -67,13 +103,9 @@ impl Store {
         owner: &str,
         expires_at: i64,
     ) -> Result<Option<Lock>, Problem> {
-        let digest = Sha256::digest(format!("{}\0{destination}", self.domain));
-        let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
-        bytes[6] = (bytes[6] & 0x0f) | 0x40;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
         let mut lock = Lock {
             kind: self.kind.into(),
-            id: uuid::Uuid::from_bytes(bytes).to_string(),
+            id: lock_id(self.domain, &destination),
             owner: owner.into(),
             destination,
             held: true,
@@ -138,6 +170,13 @@ impl Store {
             )
             .await
     }
+}
+fn lock_id(domain: &str, destination: &str) -> String {
+    let digest = Sha256::digest(format!("{domain}\0{destination}"));
+    let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes).to_string()
 }
 fn unavailable() -> Problem {
     Problem::new(

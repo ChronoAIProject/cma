@@ -37,6 +37,8 @@ pub(crate) async fn serve(
     telegram_media_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let discord_media_edits = config.native_discord_media_card_edits_enabled && discord_card_edits;
+    let discord_media_replacements =
+        config.native_discord_media_card_replacements_enabled && discord_media_edits;
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
     service_auth.bearer().await?;
@@ -129,6 +131,7 @@ pub(crate) async fn serve(
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
         .with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
         .with_native_lark_effects(config.native_lark_message_effects_enabled)
+        .with_native_split_text_refs(config.native_split_text_refs_enabled)
         .with_native_media_edits(
             config.native_telegram_media_edits_enabled,
             config.native_discord_media_edits_enabled,
@@ -159,11 +162,13 @@ pub(crate) async fn serve(
         .with_discord_multiselect(discord_multiselect)
         .with_discord_media_controls(config.native_discord_media_controls_enabled)
         .with_discord_media_card_edits(discord_media_edits)
+        .with_discord_media_card_replacements(discord_media_replacements)
         .with_discord_card_edits(discord_card_edits)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
         .with_telegram_media_effects(telegram_media_effects)
         .with_telegram_media_controls(config.native_telegram_media_controls_enabled)
+        .with_telegram_media_control_edits(config.native_telegram_media_control_edits_enabled)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
@@ -274,6 +279,8 @@ pub(crate) async fn serve(
             .map(|composition| composition.tool_replies.clone()),
         telegram_effects_issuance_enabled: telegram_effects,
         native_telegram_media_controls_enabled: config.native_telegram_media_controls_enabled,
+        native_telegram_media_control_edits_enabled: config
+            .native_telegram_media_control_edits_enabled,
         native_media_edits: Some(std::sync::Arc::new(crate::native_media::Client::new(
             telegram.clone(),
             crate::discord::DiscordRest::new()?,
@@ -281,14 +288,10 @@ pub(crate) async fn serve(
             config.native_discord_media_edits_enabled,
         ))),
         native_whatsapp_forms: Some(whatsapp_forms.clone()),
-        native_lark_effects: Some(std::sync::Arc::new(
-            tools::NativeLarkEffectsClient::new(
-                crate::native_lark::Client::production()?,
-                config.native_lark_message_effects_enabled,
-                config.native_lark_received_reactions_enabled,
-            )
-            .with_controls(native_lark_controls, config.native_lark_forms_enabled),
-        )),
+        native_lark_effects: Some(source_settings::lark_effects(
+            &config,
+            native_lark_controls,
+        )?),
         lark_effects_issuance_enabled: config.lark_message_effects_writes_enabled,
         lark_effects: Some(std::sync::Arc::new(
             tools::message_effects::lark_transport::LarkEffectsClient::new(
@@ -303,6 +306,7 @@ pub(crate) async fn serve(
         discord_interactions_enabled: discord_interactions,
         native_discord_media_controls_enabled: config.native_discord_media_controls_enabled,
         native_discord_media_card_edits_enabled: discord_media_edits,
+        native_discord_media_card_replacements_enabled: discord_media_replacements,
         whatsapp_interactions_enabled: whatsapp_interactions,
         native_whatsapp_interactions_enabled: config.native_whatsapp_interactions_enabled,
         consumer_interactions_enabled: consumer_interactions,

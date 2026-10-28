@@ -1,4 +1,4 @@
-use crate::delivery::intents::{DeliveryOutcome, IntentReceipt};
+use crate::delivery::{intents::DeliveryOutcome, retained_receipt::StoredReceipt};
 use serde::{Deserialize, Serialize};
 
 /// One bounded checkpoint per target; hashes bind the exact frame and effect.
@@ -20,7 +20,13 @@ pub struct DeliveryCheckpoint {
 #[serde(rename_all = "snake_case", tag = "state", deny_unknown_fields)]
 pub enum DeliveryStatus {
     Intent,
-    Settled { receipt: Option<IntentReceipt> },
+    Settled {
+        receipt: Option<StoredReceipt>,
+    },
+    /// Retains confirmed parts while the aggregate stays unresolved.
+    Partial {
+        receipt: StoredReceipt,
+    },
     Unknown,
 }
 impl DeliveryStatus {

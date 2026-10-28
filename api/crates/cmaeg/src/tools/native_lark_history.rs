@@ -1,5 +1,5 @@
 //! Caller-driven native chat/thread scans; never auto-drain or expand the original container.
-use super::ToolsState;
+use super::{history::HistoryReadOptions, ToolsState};
 use crate::{
     auth::AgentCaller,
     channels::resolver::ResolvedChannel,
@@ -139,7 +139,7 @@ impl ToolsState {
         &self,
         caller: AgentCaller,
         reference: &EventRef,
-        cursor: Option<&HistoryCursor>,
+        options: HistoryReadOptions<'_>,
         event: EventRefPayload,
         started: Instant,
     ) -> Result<ConversationHistoryPage, Problem> {
@@ -149,13 +149,20 @@ impl ToolsState {
             .ok_or_else(|| {
                 Problem::new(ProblemCode::Forbidden, 403, "conversation_history_disabled")
             })?;
+        if options.include_media && !client.mixed_media {
+            return Err(Problem::new(
+                ProblemCode::Forbidden,
+                403,
+                "mixed_history_disabled",
+            ));
+        }
         let end = started + client.budget;
         let _permit = client.slots.try_acquire().map_err(|_| {
             Problem::new(ProblemCode::RateLimited, 429, "conversation_history_busy")
         })?;
         tokio::time::timeout_at(
             end,
-            self.native_history_inner(caller, reference, cursor, event, client, end),
+            self.native_history_inner(caller, reference, options, event, client, end),
         )
         .await
         .map_err(|_| unavailable())?
@@ -164,13 +171,13 @@ impl ToolsState {
         &self,
         caller: AgentCaller,
         reference: &EventRef,
-        cursor: Option<&HistoryCursor>,
+        options: HistoryReadOptions<'_>,
         event: EventRefPayload,
         client: &NativeLarkConversationHistory,
         end: Instant,
     ) -> Result<ConversationHistoryPage, Problem> {
         let (channel, authority) = self.native_history_authority(caller, &event).await?;
-        let mut position = if let Some(cursor) = cursor {
+        let mut position = if let Some(cursor) = options.cursor {
             let p = cursor
                 .open_native_lark(&self.keys, now())
                 .map_err(|_| invalid_cursor())?
@@ -181,12 +188,16 @@ impl ToolsState {
                 || p.origin != a.origin
                 || p.anchor_created_ms != a.anchor_created_ms
                 || p.expires_at != event.expires_at
+                || p.include_media != options.include_media
             {
                 return Err(invalid_cursor());
             }
             p
         } else {
-            authority.cursor.clone()
+            let mut first = authority.cursor.clone();
+            first.include_media = options.include_media;
+            first.v = if options.include_media { 3 } else { 2 };
+            first
         };
         let credential = crate::native_lark::credentials(&channel.definition, &event.reply)
             .ok_or_else(denied)?;
@@ -208,7 +219,7 @@ impl ToolsState {
         let fetched_at = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .map_err(|_| unavailable())?;
-        let projection = history_projection::project(&rows, &position, client.mixed_media)
+        let projection = history_projection::project(&rows, &position, options.include_media)
             .map_err(read_problem)?;
         client
             .api
