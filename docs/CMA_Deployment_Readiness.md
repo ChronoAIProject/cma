@@ -1733,3 +1733,27 @@ and the fixture key was confirmed revoked. The source deployment manifests now
 pin the verified images while preserving all prior Web asset initializers.
 Publication SHA-256:
 `196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7`.
+
+### Explicit recovery of an unpublished Workspace preparation
+
+`POST /api/v1/workspaces/{id}/recover-prepare` is an explicit operator/owner
+command; deploying the code does not admit it automatically. Deploy compatible
+API readers and the runtime recovery protocol before issuing the command. An
+unsupported runtime fails the attempt without removing the retained stage; after
+upgrading that runtime, an explicit new key can admit a new attempt.
+
+Admission persists `work.prepare_recovery` and `work.step = recover_prepare` on
+the original Workspace. Once any attempt has been admitted, all API replicas
+and rollback binaries must retain these readers, including after that Workspace
+becomes Ready. Preserve the original record, its attempt history, the immutable
+preparation journal, and `/home/cma/.cma/prepare-recovery/<workspace-id>/` on the
+same persistent home. Do not repair state by deleting markers, moving the
+original files manually, or changing the original operation/source/profile.
+
+Before acceptance, record the original Workspace/Sandbox IDs, PV identity,
+source/profile/execution policy, staged-directory identity and journal hash.
+Use one stable idempotency key until the attempt settles. Verify Ready only
+after preparation and setup have returned validated receipts; check the same
+Workspace path and PV, preserved original archive/journal, and the real resolved
+Git commit. An ineligible or uncertain outcome must retain the data and fail
+closed rather than publish a synthetic Ready state.

@@ -1,5 +1,38 @@
 use super::*;
 
+#[tokio::test]
+async fn workspace_prepare_recovery_is_keyed_bodyless_and_checks_exact_identity_and_status() {
+    let server = Server::new().await;
+    let path = "/workspaces/workspace-1/recover-prepare";
+    let mut pending = workspace();
+    pending["status"] = json!("preparing");
+    for _ in 0..2 {
+        server.expect("POST", path, None, 202, Some(pending.clone()));
+        let workspace = server
+            .client
+            .workspaces()
+            .recover_prepare("workspace-1", &key())
+            .await
+            .unwrap();
+        assert_eq!(workspace.id, "workspace-1");
+        assert_eq!(workspace.status, WorkspaceStatus::Preparing);
+    }
+    let mut foreign = pending.clone();
+    foreign["id"] = json!("another-workspace");
+    for (status, response) in [(202, foreign), (200, pending)] {
+        server.expect("POST", path, None, status, Some(response));
+        assert!(matches!(
+            server
+                .client
+                .workspaces()
+                .recover_prepare("workspace-1", &key())
+                .await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.assert_drained();
+}
+
 #[test]
 fn sandbox_detail_preserves_optional_pinned_providers() {
     let legacy: SandboxDetail = serde_json::from_value(sandbox_detail()).unwrap();
