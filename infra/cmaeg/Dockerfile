@@ -66,9 +66,9 @@ RUN --network=none test "$(/usr/local/bin/gitleaks version)" = '8.30.1'
 # identical to the runtime's tested authentication protocol.
 FROM alpine:3.22 AS codex-auth
 ARG TARGETARCH
-ARG CODEX_VERSION=0.165.0
-ARG CODEX_NATIVE_SHA256_AMD64=c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5
-ARG CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f
+ARG CODEX_VERSION=0.147.0
+ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
+ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
 RUN apk add --no-cache curl ca-certificates
 RUN set -eu; \
     case "${TARGETARCH}" in \

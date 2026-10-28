@@ -123,7 +123,6 @@ export function AgentSurface({
   useEffect(() => {
     if (state.status !== 'ready') headingRef.current?.focus({ preventScroll: true });
   }, [agentId, state.status]);
-
   if (state.status === 'idle' || state.status === 'loading')
     return <AgentOpening headingRef={headingRef} />;
   if (state.status === 'error')
@@ -134,7 +133,6 @@ export function AgentSurface({
         onRetry={controller.reload}
       />
     );
-
   const { detail, conversation } = state;
   const messageQueue = queuePresentation(
     conversation,
@@ -171,12 +169,10 @@ export function AgentSurface({
   // A subscription Agent can be signed in again from the header menu.
   const signInAgain =
     !readOnly && verified?.services.some((service) => service.service === subscriptionService);
-
   const uploadAttachment = agentAttachmentUploader(
     agentId,
     readOnly || verified === undefined ? undefined : lifecycleClient,
   );
-
   return (
     <section className="agent-surface">
       {connections.dialog}
@@ -227,7 +223,6 @@ export function AgentSurface({
                 })
         }
       />
-
       {/*
         One row for every state message, so a second message can never be
         auto-placed below the composer, and each takes its severity's tone.
@@ -271,7 +266,6 @@ export function AgentSurface({
             </Alert>
           )}
         </Presence>
-
         {controller.pendingMessage === undefined && !controller.pendingControl ? null : (
           <Alert
             tone="warning"
@@ -295,11 +289,9 @@ export function AgentSurface({
               : 'Your response action is awaiting confirmation.'}
           </Alert>
         )}
-
         {controller.controlNotice === undefined ? null : (
           <Alert tone="info">{controller.controlNotice}</Alert>
         )}
-
         {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
           <AgentLifecycleFollowup client={lifecycleClient} viewerId={viewerId} agentId={agentId} />
         ) : null}
@@ -493,7 +485,11 @@ export function AgentSurface({
         />
       ) : null}
       {desktopAgentId === agentId ? (
-        <DesktopPanel agentId={agentId} onClose={() => setDesktopAgentId(undefined)} />
+        <DesktopPanel
+          agentId={agentId}
+          running={running}
+          onClose={() => setDesktopAgentId(undefined)}
+        />
       ) : null}
     </section>
   );

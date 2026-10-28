@@ -1,5 +1,7 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
 
+mod desktop;
+pub use desktop::{DesktopConnection, DesktopError, DesktopFrame, DesktopService};
 mod admin;
 mod agent;
 pub mod agent_artifacts;

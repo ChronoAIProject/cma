@@ -7,23 +7,41 @@
 The lifecycle request accepts `machine_included: true` for a new Sandbox. CMA
 resolves `CHRONO_MACHINE_SANDBOX_IMAGE`, records the immutable image and the
 `CMA_MACHINE_INCLUDED=1` marker in the Sandbox profile, and keeps the existing
-2,000 millicore / 8,192 MiB Agent Manager reservation. The desktop image is
-built with `RUNTIME_DESKTOP=1`, installs Chromium, Xvfb, Openbox, x11vnc and
-noVNC, and starts a rootless desktop session inside the runtime. The runtime
-endpoint `/runtime/desktop` is authenticated by the same supervisor control
-token and relays the local noVNC WebSocket. CMA exposes an owner-authenticated
-`/api/v1/agents/{id}/desktop` page and `/desktop/ws` relay, with one serialized
-control lease per Agent. The page uses the pinned noVNC client from the public
-CDN for this prototype; a production rollout should vendor and pin that asset
-before enabling the option for general users.
+2,000 millicore / 8,192 MiB reservation. The option remains disabled when that
+image setting is empty. Only the image built with `RUNTIME_DESKTOP=1` installs
+Chromium, Xvfb, Openbox, x11vnc, websockify, scrot and xdotool. Its rootless desktop
+starts on display `:99` before runtime readiness. Ports 5900 and 6080 bind to
+loopback; `/runtime/desktop` uses the supervisor's control authentication.
 
-Codex still runs in the same Sandbox and uses its local display. The runtime
-pins Codex CLI 0.165.0 and explicitly points the ACP bridge at
-`/usr/local/bin/codex`, so a bridge's nested dependency cannot silently select
-an older native binary. The image build requires `codex features list` to report
-`computer_use stable true`; the acceptance run must still prove a screenshot,
-click and type against the Xvfb display. Video and audio playback are outside
-this prototype.
+The public owner-authenticated `GET /api/v1/agents/{id}/desktop` returns the
+WebSocket URL. `/desktop/ws` opens a bounded runtime connection before upgrading,
+refuses a second browser connection to the same Sandbox, checks browser Origin,
+and rechecks owner lineage and runtime identity every 30 seconds. Connections
+expire after 30 minutes and can reconnect. CMA bundles the pinned noVNC 1.7.0
+client with the web application. The viewer offers full screen, explicit user
+input and reconnect. It pauses user input while the current Agent is working;
+this UI behavior is not an input lock against commands from other Agents in the
+same Sandbox. Isolated Agents cannot access the shared desktop.
+
+Codex runs beside Chromium and uses its existing shell and image tools. A
+computer-use feature flag does not prove a Linux screenshot/click/type driver.
+A clean CLI 0.165.0 tool-inventory check exposed shell and image tools but no
+computer-use tool. Official OpenAI documentation describes the desktop Computer
+Use plugin on macOS and Windows, not a bundled Linux CLI driver:
+https://learn.chatgpt.com/docs/computer-use . The prototype retains CMA's
+validated CLI 0.147.0 and ACP 1.4.0 pins. An Agent can take a screenshot with
+`scrot /tmp/desktop.png`, inspect it with `view_image`, and click/type through
+`xdotool` on `DISPLAY=:99`; no additional computer-use MCP server is involved.
+
+CI builds a separate desktop image and executes its shared display contract
+using a loopback model fixture: real Codex shell click/type, `view_image` delivery,
+authenticated framebuffer transfer, and subsequent user input in the same
+browser. This is tool execution evidence, not a live model task or production
+provider acceptance. The image must pass that check and a disposable production
+Sandbox demonstration before enabling its immutable digest. Audio and video
+playback are outside this prototype. Graceful recovery of unexpected desktop
+background processes and retained Chromium profile recovery remain acceptance
+items; they must not be inferred from a regular headless runtime test.
 
 The Sandbox/Agent implementation requires runtime contract **3**, declared by
 the image label `dev.chrono.cma.runtime-contract`. The control plane provisions
