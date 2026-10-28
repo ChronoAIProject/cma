@@ -47,6 +47,11 @@ pub(crate) async fn dispatch(
 async fn dispatch_locked(config: &RuntimeConfig, request: RequestFrame) -> Result<ResponseFrame> {
     match request {
         RequestFrame::PrepareWorkspace(request) => prepare(config, request).await,
+        RequestFrame::RecoverWorkspacePrepare(frame) => {
+            crate::workspace_prepare_recovery::execute(config, &frame.request)
+                .await
+                .map(ResponseFrame::RecoverWorkspacePrepare)
+        }
         RequestFrame::WorkspaceSetup(request) => setup(config, request).await,
         RequestFrame::RemoveWorkspace(request) => remove(config, request),
         _ => Err(RuntimeError::rejected(
@@ -67,7 +72,10 @@ pub(crate) async fn recover_locked(
         config.allow_local_git,
     )? {
         match pending.kind.as_str() {
-            "prepare" => recover_prepare(config, pending).await?,
+            "prepare" => {
+                let _writer = supervisor.removal_writer_guard()?;
+                recover_prepare(config, pending).await?;
+            }
             "setup" => {
                 let request: layer3_adapter::WorkspaceSetupRequest = pending.request()?;
                 if !request.has_valid_sha256()

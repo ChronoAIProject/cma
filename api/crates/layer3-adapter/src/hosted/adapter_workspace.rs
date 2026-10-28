@@ -195,3 +195,35 @@ pub(super) async fn reconcile_removal(
     adapter.verify_bound_home(handle).await?;
     Ok(observation)
 }
+
+pub(super) async fn recover_prepare(
+    adapter: &HostedAdapter,
+    handle: &RuntimeHandle,
+    request: &crate::WorkspacePrepareRecoveryRequest,
+) -> crate::Result<crate::WorkspacePrepareRecoveryReceipt> {
+    request.validate()?;
+    let state = adapter.known_state(handle).await?;
+    let runtime = adapter.inspect_runtime_status(handle).await?;
+    let frame = crate::WorkspacePrepareRecoveryFrame {
+        runtime,
+        request: request.clone(),
+    };
+    frame.validate()?;
+    let ResponseFrame::RecoverWorkspacePrepare(receipt) = adapter
+        .exchange(handle, RequestFrame::RecoverWorkspacePrepare(frame))
+        .await?
+    else {
+        return Err(AdapterError::unexpected_reply(
+            "Workspace preparation recovery",
+        ));
+    };
+    if Path::new(&receipt.prepared.path)
+        != Path::new(&state.home_directory).join(&request.original.name)
+    {
+        return Err(AdapterError::Rejected(
+            "recovered Workspace receipt changed its original path".into(),
+        ));
+    }
+    adapter.verify_bound_home(handle).await?;
+    Ok(receipt)
+}
