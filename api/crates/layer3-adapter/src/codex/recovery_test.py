@@ -20,8 +20,11 @@ OP = "sandbox-lifecycle-v1:sbx_" + "b" * 32 + ":2"
 JOURNAL = m.sha(OP.encode()) + ".json"
 
 
-def line(kind, payload):
-    return json.dumps({"type": kind, "payload": payload}).encode() + b"\n"
+def line(kind, payload, timestamp=None):
+    value = {"type": kind, "payload": payload}
+    if timestamp is not None:
+        value["timestamp"] = timestamp
+    return json.dumps(value).encode() + b"\n"
 
 
 def process(pid, parent, start=None):
@@ -298,6 +301,101 @@ class Quiesce(Fixture):
         self.live = {10: self.supervisor}
         with self.assertRaisesRegex(m.Refused, "native_turn_unsettled"):
             m.quiesce(self.request)
+
+    def preboot_history(self, timestamp="2026-10-28T06:04:26.503Z"):
+        self.initial = line("session_meta", {"id": AGENT["conversationId"], "cli_version": "0.147.0"})
+        self.initial += line("event_msg", {"type": "task_started", "turn_id": BOOT[:8] + "-3333-7333-8333-333333333333"}, "2026-10-28T04:59:50.666Z")
+        self.initial += line("event_msg", {"type": "task_complete", "turn_id": AGENT["conversationId"]}, "2026-10-28T05:59:17.653Z")
+        self.initial += line("event_msg", {"type": "task_started", "turn_id": TURN}, timestamp)
+        self.history.write_bytes(self.initial)
+        self.plan["histories"] = [m.history_summary(AGENT)]
+        file = self.plan["histories"][0]["files"][0]
+        self.topology.update(nativeStartEpochMs=1793168177880, openHistoryPaths=[file["path"]])
+        file["historicalOpenTurns"] = m.historical_turns(file, self.topology)
+        self.assertNotIn(TURN, file["historicalOpenTurns"])
+        return file
+
+    def test_existing_admitted_journal_accepts_unchanged_preboot_start_after_drain(self):
+        self.preboot_history()
+        self.terminal = lambda: None
+        # Reproduce the previous final-history decision after its graceful EOF.
+        with patch.dict(m.__dict__, preboot_turns=lambda *_: []):
+            with self.assertRaisesRegex(m.Refused, "native_turn_unsettled"):
+                m.quiesce(self.request)
+        journal_path = self.root / ".cma/recovery" / JOURNAL
+        admitted = json.loads(journal_path.read_bytes())
+        self.assertEqual(admitted["status"], "admitted")
+        self.assertEqual(set(self.live), {10})
+        result = m.quiesce(self.request)
+        self.assertEqual(result["status"], "quiesced")
+        self.assertIn(TURN, result["histories"][0]["files"][0]["historicalOpenTurns"])
+        self.assertEqual(self.history.read_bytes(), self.initial)
+        self.assertEqual(result["histories"][0]["conversationId"], AGENT["conversationId"])
+        completed = json.loads(journal_path.read_bytes())
+        for key in ("operationId", "planSha256", "plan"):
+            self.assertEqual(completed[key], admitted[key])
+        self.assertEqual(m.quiesce(self.request), result)
+        self.assertEqual(self.signals, [signal.SIGTERM])
+
+    def test_preboot_fallback_refuses_live_reused_and_untracked_processes(self):
+        self.preboot_history()
+        with self.assertRaisesRegex(m.Refused, "process_reappeared"):
+            m.final_history(self.plan)
+        self.live = {10: self.supervisor, 40: {**self.native, "start": 99999}}
+        with self.assertRaisesRegex(m.Refused, "pid_reused"):
+            m.final_history(self.plan)
+        self.live = {10: self.supervisor, 99: process(99, 1)}
+        with self.assertRaisesRegex(m.Refused, "untracked_process"):
+            m.final_history(self.plan)
+
+    def test_preboot_fallback_replays_plan_without_legacy_classification_field(self):
+        prior = self.preboot_history()
+        del prior["historicalOpenTurns"]
+        self.live = {10: self.supervisor}
+        original_plan = copy.deepcopy(self.plan)
+        result = m.quiesce(self.request)
+        self.assertEqual(result["histories"][0]["files"][0]["historicalOpenTurns"], prior["openTurns"])
+        self.assertEqual(self.plan, original_plan)
+        self.assertEqual(self.history.read_bytes(), self.initial)
+        self.assertFalse(self.signals)
+
+    def test_preboot_fallback_requires_original_clock_margin(self):
+        self.live = {10: self.supervisor}
+        for stamp in (None, "invalid", "2026-10-28T06:15:17.880Z", "2026-10-28T06:16:17.880Z", "2026-10-28T06:17:00Z"):
+            with self.subTest(timestamp=stamp):
+                self.preboot_history(stamp)
+                with self.assertRaisesRegex(m.Refused, "native_turn_unsettled"):
+                    m.final_history(self.plan)
+        self.preboot_history()
+        del self.topology["nativeStartEpochMs"]
+        with self.assertRaisesRegex(m.Refused, "native_turn_unsettled"):
+            m.final_history(self.plan)
+
+    def test_preboot_fallback_does_not_accept_appended_or_restarted_turns(self):
+        self.live = {10: self.supervisor}
+        for turn, timestamp, error in [
+            (AGENT["conversationId"], "2026-10-28T06:04:26.503Z", "native_turn_unsettled"),
+            (TURN, "2026-10-28T06:04:26.503Z", "native_turn_restarted"),
+            (TURN, "2026-10-28T06:18:00Z", "native_turn_restarted"),
+        ]:
+            with self.subTest(turn=turn, timestamp=timestamp):
+                self.preboot_history()
+                with self.history.open("ab") as file:
+                    file.write(line("event_msg", {"type": "task_started", "turn_id": turn}, timestamp))
+                with self.assertRaisesRegex(m.Refused, error):
+                    m.final_history(self.plan)
+
+    def test_preboot_fallback_keeps_exact_prefix_and_start_ordinal(self):
+        self.preboot_history()
+        self.live = {10: self.supervisor}
+        self.history.write_bytes(self.initial.replace(b"0.147.0", b"0.146.0"))
+        with self.assertRaisesRegex(m.Refused, "history_prefix_changed"):
+            m.final_history(self.plan)
+        self.history.write_bytes(self.initial)
+        prior = self.plan["histories"][0]["files"][0]
+        prior["openTurnStarts"][TURN]["ordinal"] -= 1
+        with self.assertRaisesRegex(m.Refused, "native_turn_restarted"):
+            m.final_history(self.plan)
 
     def test_changed_plan_cannot_replay_operation(self):
         m.quiesce(self.request)

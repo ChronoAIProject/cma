@@ -114,14 +114,22 @@ def native_history_clock(native, home, identity):
     return {"nativeStartEpochMs": started, "openHistoryPaths": sorted(opened)}
 
 
+def preboot_turns(file, topology):
+    started = topology.get("nativeStartEpochMs")
+    if type(started) is not int or started <= 60000:
+        return []
+    cutoff = started - 60000
+    return sorted(turn for turn, start in file["openTurnStarts"].items()
+                  if start["at"] is not None and start["at"] < cutoff)
+
+
 def historical_turns(file, topology):
-    cutoff = topology.get("nativeStartEpochMs", 0) - 60000
     opened = file["path"] in topology.get("openHistoryPaths", [])
     terminal = file["lastTerminal"]
-    return sorted(turn for turn, start in file["openTurnStarts"].items()
-                  if start["at"] is not None and start["at"] < cutoff
-                  and (not opened or (terminal and terminal["at"] is not None
-                       and terminal["at"] > start["at"] and terminal["ordinal"] > start["ordinal"])))
+    return [turn for turn in preboot_turns(file, topology)
+            if not opened or (terminal and terminal["at"] is not None
+                and terminal["at"] > file["openTurnStarts"][turn]["at"]
+                and terminal["ordinal"] > file["openTurnStarts"][turn]["ordinal"])]
 
 
 def topology(agent, processes, supervisor):
@@ -268,16 +276,25 @@ def send_eof(plan, item):
 
 
 def final_history(plan):
+    require(absent(plan, inventory()), "process_reappeared")
     result = []
+    topology = {item["agentId"]: item for item in plan["topology"]}
     for agent, previous in zip(plan["agents"], plan["histories"]):
         item = history_summary(agent, previous["files"])
         prior = {f["path"]: f for f in previous["files"]}
         for file in item["files"]:
-            historical = prior.get(file["path"], {}).get("historicalOpenTurns", [])
-            require(set(file["openTurns"]) <= set(historical), "native_turn_unsettled")
+            original = prior.get(file["path"])
+            historical = set((original or {}).get("historicalOpenTurns", []))
+            if original:
+                # Cold load opens a previous process's unfinished history but
+                # does not run that turn. After the pinned processes are absent,
+                # its unchanged preboot start needs no fabricated terminal row.
+                # Derive this from the admitted prefix so old journals replay.
+                historical.update(preboot_turns(original, topology.get(agent["agentId"], {})))
+            require(set(file["openTurns"]) <= historical, "native_turn_unsettled")
             require(all(file["openTurnStarts"][turn] == prior[file["path"]]["openTurnStarts"][turn]
                         for turn in file["openTurns"]), "native_turn_restarted")
-            file["historicalOpenTurns"] = [turn for turn in historical if turn in file["openTurns"]]
+            file["historicalOpenTurns"] = sorted(historical.intersection(file["openTurns"]))
         result.append(item)
     return result
 

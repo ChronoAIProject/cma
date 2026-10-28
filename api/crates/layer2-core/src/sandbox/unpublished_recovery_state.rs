@@ -63,6 +63,7 @@ impl SandboxUnpublishedRecoveryProof {
 impl SandboxUnpublishedRecoveryState {
     pub fn validate_for(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
         self.proof.validate_provider_plan()?;
+        self.validate_reserved_provision_for(sandbox)?;
         let operation = sandbox.lifecycle.operation.as_ref().ok_or_else(invalid)?;
         let SandboxLifecycleOperation::ImageRotation { identity, .. } = operation else {
             return Err(invalid());
