@@ -10,6 +10,7 @@ use std::time::Duration;
 use axum::extract::{ws::WebSocket, State, WebSocketUpgrade};
 use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt as _, StreamExt as _};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
@@ -20,26 +21,31 @@ pub(super) async fn websocket(
     ws: WebSocketUpgrade,
     State(supervisor): State<Arc<Supervisor>>,
 ) -> Response {
-    if !supervisor.desktop_enabled() {
+    let Some(token) = supervisor.desktop_websocket_token() else {
         return protocol_failure(
             axum::http::StatusCode::NOT_FOUND,
             "desktop_unavailable",
             "this Sandbox was not provisioned with a desktop machine",
             false,
         );
-    }
+    };
     let config = WebSocketConfig {
         max_message_size: Some(8 * 1024 * 1024),
         max_frame_size: Some(8 * 1024 * 1024),
         ..WebSocketConfig::default()
     };
+    let mut request = "ws://127.0.0.1:6080/websockify"
+        .into_client_request()
+        .expect("constant desktop URL is valid");
+    // websockify's host-token mode keeps the boot credential out of request
+    // paths and access logs. Browser pages cannot set this private Host value.
+    let mut credential: axum::http::HeaderValue =
+        token.parse().expect("generated desktop token is valid");
+    credential.set_sensitive(true);
+    request.headers_mut().insert("host", credential);
     let Ok(Ok((upstream, _))) = tokio::time::timeout(
         Duration::from_secs(5),
-        tokio_tungstenite::connect_async_with_config(
-            "ws://127.0.0.1:6080/websockify",
-            Some(config),
-            false,
-        ),
+        tokio_tungstenite::connect_async_with_config(request, Some(config), false),
     )
     .await
     else {
