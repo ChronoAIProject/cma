@@ -177,7 +177,7 @@ async fn recovered_binding_retry_refuses_unsettled_or_changed_authority() {
             changed.clone(),
             &digest,
             &f.key,
-            Some("https://other.example/mcp".into())
+            Some("https://other.example/tools".into())
         )
         .await
         .is_err());
