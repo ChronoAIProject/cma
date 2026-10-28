@@ -29,11 +29,17 @@ for name in ('SingletonLock', 'SingletonCookie', 'SingletonSocket'):
 PY
 children=()
 trap 'trap - INT TERM EXIT; kill "${children[@]}" 2>/dev/null || true; wait "${children[@]}" 2>/dev/null || true' INT TERM EXIT
+require_process() {
+  if ! kill -0 "$1" 2>/dev/null; then
+    tail -c 4000 "$2" >&2
+    exit 1
+  fi
+}
 Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp -ac >/tmp/cma-xvfb.log 2>&1 &
 children+=("$!")
 for ((attempt=0; attempt<100; attempt++)); do
   xdotool getdisplaygeometry >/dev/null 2>&1 && break
-  kill -0 "${children[0]}"
+  require_process "${children[0]}" /tmp/cma-xvfb.log
   sleep 0.1
 done
 xdotool getdisplaygeometry >/dev/null
@@ -44,7 +50,7 @@ chrome_pid=$!
 children+=("$chrome_pid")
 for ((attempt=0; attempt<200; attempt++)); do
   xdotool search --onlyvisible --class chromium >/dev/null 2>&1 && break
-  kill -0 "$chrome_pid"
+  require_process "$chrome_pid" /tmp/cma-chromium.log
   sleep 0.1
 done
 xdotool search --onlyvisible --class chromium >/dev/null

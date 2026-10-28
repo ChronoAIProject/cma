@@ -107,7 +107,10 @@ it('shows authorized history while later pages load and preserves the editable d
   const draft = screen.getByRole('textbox', { name: 'Message' });
   expect(draft).toBeEnabled();
   fireEvent.change(draft, { target: { value: 'Keep this draft' } });
-  expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+  // Prepared configuration can arrive after the first history page. Sending
+  // must become available while later history is still held by the fixture.
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+  expect(loadingNotice).toBeInTheDocument();
   await act(async () => finish({ items: [] }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
   // Retain the node: a busy test worker can finish the exit before waitFor resolves.
