@@ -15,8 +15,19 @@ durable response replay support must be available.
 
 ## Scope and discovery
 
-Only the exact non-General forum topic containing the original admitted human
-message is supported. Authority comes from the retained native webhook bytes,
+Only the exact forum topic containing the original admitted human message is
+supported. Numbered topics require the retained native topic ID greater than `1`
+and `is_topic_message: true`. General additionally requires the separate
+`CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED` gate (default `false`).
+The original native message must positively prove `chat.type: "supergroup"` and
+`chat.is_forum: true`, with both `message_thread_id` and `is_topic_message` absent.
+Telegram omits those two fields for General. Omission alone never proves General,
+and a later `getChat` response cannot retrofit historical authority. A synthetic
+incoming topic ID `1`, null topic field or direct-message-topic marker is refused.
+The normalized Activity and sealed ReplyAddress keep `thread_id: None`; internal
+General scope `1` is assigned only after the full original-envelope proof.
+
+Authority comes from the retained native webhook bytes,
 committed routing plan and original selected consumer, together with the current
 source, owner, provider, credential and bot custody. Both default and named
 consumers are supported. A source opted in after an event was admitted cannot
@@ -45,10 +56,12 @@ continue decoding it. It is not exhaustive: rename uses the already-supported
 No new action or field is emitted in topic capability responses.
 
 There is no Telegram list/create, caller-supplied chat/topic ID, `thread_ref`,
-private-chat topic or General-topic operation. Channel posts, edits,
+private-chat topic, explicit General hide/unhide or topic deletion operation.
+Channel posts, edits,
 callbacks, business/guest messages, anonymous `sender_chat` messages, bot actors
-and relay-normalized input do not provide authority. General topic ID `1` is
-excluded because Telegram provides separate General-topic methods.
+and relay-normalized input do not provide authority. General uses dedicated
+Telegram methods. Reopening General automatically unhides it, as specified by
+Telegram; this visible-state change is part of the reopen action.
 
 ## Existing REST, MCP and SDK operation
 
@@ -76,8 +89,9 @@ Use `"action": "reopen"` to reopen that same topic. Rename uses the same exact t
 blank, null, control-containing and longer names are rejected before platform I/O.
 Telegram's upstream `editForumTopic` contract accepts up to 128 characters, but
 CMA keeps its existing shared 100-character public limit. Omit `name` for other
-actions. Rename sends only `chat_id`, `message_thread_id` and `name`; it preserves
-the icon and open/closed state without issuing a close or reopen operation.
+actions. Numbered-topic rename sends only `chat_id`, `message_thread_id` and
+`name`; General rename sends only `chat_id` and `name`. Both preserve the icon
+and open/closed state without issuing a close or reopen operation.
  MCP `manageThread` uses
 `{"request": <body>, "idempotency_key": "<stable-key>"}`. The existing TypeScript
 `manageThread` and Rust `manage_thread` methods use the same request. Telegram-only
@@ -90,7 +104,10 @@ with `getChat`, and checks its own `getChatMember` administrator
 `can_manage_topics` permission (or chat owner status). This bounded implementation
 does not rely on Telegram's topic-creator exception because the retained human
 message does not prove bot topic creation. It rechecks local custody immediately
-before exactly one `editForumTopic`, `closeForumTopic` or `reopenForumTopic` dispatch. A successful
+before exactly one `editForumTopic`, `closeForumTopic` or `reopenForumTopic` dispatch
+for numbered topics, or `editGeneralForumTopic`, `closeGeneralForumTopic` or
+`reopenGeneralForumTopic` for proven General. General close/reopen send only
+`chat_id`; none of the General methods sends `message_thread_id`. A successful
 boolean `true` produces `{"outcome":{"status":"confirmed"}}`; no new thread
 reference is issued and the event lifetime is never extended.
 
@@ -103,7 +120,9 @@ receipt persistence. No detached platform writer continues after that budget.
 
 Claims and fences use separate encrypted Telegram namespaces. The persistent
 fence destination includes platform, bot, chat and topic; topic IDs are only
-unique within a chat. Concurrent events, consumers and new request keys cannot
+unique within a chat. Proven General uses internal canonical topic `1` in this
+fence and never changes public event/reply thread fields. Concurrent events,
+consumers and new request keys cannot
 bypass an uncertain operation. Same-key replay returns the retained receipt;
 reusing the key for a different action or a different rename name conflicts.
 Close/reopen action bytes and durable claim hashes remain unchanged. Unknown dispatch, cancellation
@@ -138,6 +157,11 @@ opt-out leaves the enrolled routing intact and ordinary references usable.
 - [Telegram editForumTopic](https://core.telegram.org/bots/api#editforumtopic)
 - [Telegram closeForumTopic](https://core.telegram.org/bots/api#closeforumtopic)
 - [Telegram reopenForumTopic](https://core.telegram.org/bots/api#reopenforumtopic)
+- [Telegram editGeneralForumTopic](https://core.telegram.org/bots/api#editgeneralforumtopic)
+- [Telegram closeGeneralForumTopic](https://core.telegram.org/bots/api#closegeneralforumtopic)
+- [Telegram reopenGeneralForumTopic](https://core.telegram.org/bots/api#reopengeneralforumtopic)
+- [Telegram forum and General semantics](https://core.telegram.org/api/forum)
+- [Official Bot API server General serialization](https://github.com/tdlib/telegram-bot-api/blob/e3e9dd8e5b3d7ab8537cd5a10dc31d5ffa8f82d1/telegram-bot-api/Client.cpp)
 - [Telegram ChatMemberAdministrator](https://core.telegram.org/bots/api#chatmemberadministrator)
 
 Public documentation was checked on 2026-10-29. Local tests use in-process

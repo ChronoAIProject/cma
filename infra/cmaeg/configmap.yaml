@@ -49,6 +49,7 @@ data:
   CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED: "false"
   # Requires separately migrated persistent fence storage and runtime grants.
   CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED: "false"
   CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED: "false"
   # Bounded original Discord history is enabled; source consent remains required.
   CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED: "true"
