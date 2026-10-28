@@ -28,6 +28,7 @@ mod provider_transport;
 mod reply;
 mod startup_timing;
 mod subscriptions;
+mod tool_confirmation;
 mod update_relay;
 
 pub use adapter::HostedAdapter;
