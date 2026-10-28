@@ -17,9 +17,12 @@ control lease per Agent. The page uses the pinned noVNC client from the public
 CDN for this prototype; a production rollout should vendor and pin that asset
 before enabling the option for general users.
 
-Codex still runs in the same Sandbox and uses its local display. A separate
-model-side computer-use service is not required when the selected Codex CLI
-build proves native computer-use support. Video and audio playback are outside
+Codex still runs in the same Sandbox and uses its local display. The runtime
+pins Codex CLI 0.165.0 and explicitly points the ACP bridge at
+`/usr/local/bin/codex`, so a bridge's nested dependency cannot silently select
+an older native binary. The image build requires `codex features list` to report
+`computer_use stable true`; the acceptance run must still prove a screenshot,
+click and type against the Xvfb display. Video and audio playback are outside
 this prototype.
 
 The Sandbox/Agent implementation requires runtime contract **3**, declared by

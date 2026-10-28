@@ -219,6 +219,10 @@ fn bridge_launch_uses_per_agent_home_worktree_slot_and_acp_resume() {
     assert_eq!(fresh.cwd, options.working_directory);
     assert_eq!(fresh.home, options.home_directory);
     assert_eq!(fresh.env.get("CODEX_HOME"), Some(&fresh.home));
+    assert_eq!(
+        fresh.env.get("CODEX_PATH").map(String::as_str),
+        Some(CODEX_PROGRAM)
+    );
 }
 
 #[test]
