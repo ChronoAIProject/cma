@@ -58,7 +58,8 @@ const server = createServer(async (request, response) => {
     else if (index === 2) {
       // The command fits within one native tool wait; prove its screen interaction
       // before asking the model to view the resulting image.
-      assert.equal(execFileSync('xdotool', ['getactivewindow', 'getwindowname'], { encoding: 'utf8' }).trim().startsWith('cma-ui:cma-codex'), true);
+      const title = execFileSync('xdotool', ['getactivewindow', 'getwindowname'], { encoding: 'utf8' }).trim();
+      assert(title.startsWith('cma-ui:cma-codex'), 'desktop click/type did not update the browser title: ' + title);
       item = call(value, index, 'view_image', { path: screenshot });
     } else {
       assert.equal(index, 3);
@@ -67,9 +68,24 @@ const server = createServer(async (request, response) => {
     }
     output(response, index, item);
   } catch (error) {
-    failure = error;
-    if (!response.headersSent) response.writeHead(500);
-    response.end();
+    if (!failure) {
+      failure = error;
+      process.stderr.write(`Desktop model round ${calls.length}: ${error.message}\n`);
+      for (const item of calls.at(-1)?.input ?? []) {
+        if ((item.type === 'function_call_output' || item.type === 'custom_tool_call_output') && typeof item.output === 'string') {
+          process.stderr.write(item.output.slice(0, 2000) + '\n');
+        }
+      }
+      try { execFileSync('scrot', ['/tmp/cma-desktop-failed-screen.png']); }
+      catch { /* Preserve the first failure when the display itself is unavailable. */ }
+    }
+    // A fixture assertion must finish the native turn and report its original
+    // failure, rather than turning into repeated HTTP retries that hide it.
+    if (!response.headersSent) output(response, calls.length, {
+      type: 'message', id: 'msg_desktop_failed', role: 'assistant', status: 'completed',
+      content: [{ type: 'output_text', text: 'Desktop fixture failed.', annotations: [] }],
+    });
+    else response.end();
   }
 });
 (async () => {
