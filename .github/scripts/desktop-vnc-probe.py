@@ -98,6 +98,10 @@ def main():
             assert encoding == 0
             pixels += len(stream.read(w * h * (header[4] // 8)))
         assert pixels > 100000
+        # Viewers request the next update after rendering a frame. x11vnc also
+        # uses that request for initial link calibration; omitting it stalls
+        # queued input until the calibration timeout despite a healthy relay.
+        stream.send(struct.pack("!BBHHHH", 3, 1, 0, 0, width, height))
         stream.click(120, 120)
         stream.key(0xffe3, True)  # Control
         stream.key(ord('a'), True)
