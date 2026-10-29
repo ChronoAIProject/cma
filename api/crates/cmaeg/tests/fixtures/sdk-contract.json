@@ -10655,6 +10655,16 @@
       "message_operations": false,
       "max_attachments": 1,
       "text": false
+    },
+    {
+      "kind": "voice",
+      "mime_types": ["audio/ogg"],
+      "max_bytes": 8388608,
+      "caption": false,
+      "profile": "One complete mono Opus Ogg stream, 0.1 to less than 120 seconds; uploaded unchanged; metadata derived with the shared sandboxed decoder",
+      "message_operations": false,
+      "max_attachments": 1,
+      "text": false
     }
   ]
 }
