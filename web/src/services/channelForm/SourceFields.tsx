@@ -168,8 +168,11 @@ export function SourceFields({
             />
             <p className="channel-field-hint">
               Agents may rename, close or reopen the forum topic containing an admitted message.
-              Requires a forum supergroup and bot administrator permission to manage topics. General
-              topics, private chats, topic creation and browsing are excluded.
+              Requires a forum supergroup and bot administrator permission to manage topics.
+              {discovery.authoring?.native_telegram_general_topic_lifecycle_enabled === true
+                ? ' General topics are included; reopening General also makes it visible. '
+                : ' General topics are unavailable. '}
+              Private chats, topic creation and browsing are excluded.
             </p>
             <Toggle
               label="Receive message edits and reactions"

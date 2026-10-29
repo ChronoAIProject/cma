@@ -4187,7 +4187,7 @@
             "type": "integer"
           },
           "replace_media": {
-            "description": "Replace one upload on the same durable card through a confirmed native PATCH.",
+            "description": "Replace the supported upload set on the same durable card through a confirmed PATCH.",
             "type": [
               "boolean",
               "null"
@@ -5888,6 +5888,13 @@
           },
           "native_media_writes_enabled": {
             "description": "The configured relay accepts new native attachments; platform limits still apply.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_telegram_general_topic_lifecycle_enabled": {
+            "description": "General-topic execution additionally requires the original native forum envelope.",
             "type": [
               "boolean",
               "null"

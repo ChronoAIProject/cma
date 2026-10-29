@@ -182,6 +182,7 @@ pub struct Config {
     pub native_lark_outbound_media_enabled: bool,
     pub native_lark_media_controls_enabled: bool,
     pub native_lark_multi_image_controls_enabled: bool,
+    pub native_lark_media_card_replacements_enabled: bool,
     pub native_telegram_albums_enabled: bool,
     /// Start an exact admitted root thread with one explicit text reply.
     pub native_lark_thread_start_enabled: bool,
@@ -197,6 +198,7 @@ pub struct Config {
     pub native_telegram_message_events_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_telegram_topic_lifecycle_enabled: bool,
+    pub native_telegram_general_topic_lifecycle_enabled: bool,
     pub native_discord_thread_lifecycle_enabled: bool,
     pub native_lark_conversation_history_enabled: bool,
     pub native_lark_mixed_history_enabled: bool,
@@ -305,6 +307,9 @@ impl Config {
             native_telegram_topic_lifecycle_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED",
             )?,
+            native_telegram_general_topic_lifecycle_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED",
+            )?,
             native_discord_thread_lifecycle_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED",
             )?,
@@ -380,6 +385,9 @@ impl Config {
             )?,
             native_lark_multi_image_controls_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED",
+            )?,
+            native_lark_media_card_replacements_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_MEDIA_CARD_REPLACEMENTS_ENABLED",
             )?,
             native_lark_outbound_media_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED",

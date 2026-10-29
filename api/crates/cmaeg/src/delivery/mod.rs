@@ -43,6 +43,7 @@ pub mod local_stream;
 mod native_clients;
 mod native_lark;
 mod native_lark_card_edit;
+mod native_lark_card_media;
 mod native_lark_controls;
 mod native_lark_thread_start;
 mod pacing;

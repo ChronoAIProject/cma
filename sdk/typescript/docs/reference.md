@@ -942,7 +942,7 @@ See `docs/CMAEG_Native_WhatsApp_Forms.md` for the supported subset and retained 
 ### Native Telegram forum topic lifecycle
 
 The source's independent `topic_lifecycle: true` consent and the gateway's
-separate default-off topic gate enable exact original non-General forum-topic
+separate default-off topic gate enable exact original numbered forum-topic
 rename/close/reopen. Rename uses the existing manage-thread request with `action: "rename"`
 and a required `name` of 1–100 printable characters. It changes only the original
 topic name, preserving its icon and open/closed state. Check `context.capabilities.topic_lifecycle` for
@@ -969,7 +969,11 @@ export function closeOriginalTopic(client: Cmaeg, eventRef: string) {
 
 Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the
 original Event target and issues no `thread_ref`. There is no list, create,
-private-chat or General-topic operation. Discord rejects the additive Close
+or private-chat topic operation. General uses the same Event request only when
+`relay_authoring.native_telegram_general_topic_lifecycle_enabled` is true and
+the retained native human message proves the original forum. It keeps the public
+thread absent; clients must never synthesize topic ID `1` from a missing thread.
+General reopen also unhides General. Discord rejects the additive Close
 action before platform IO. A confirmed receipt can omit `thread`.
 
 Keep a stable idempotency key. Same-key replay returns the saved outcome;
@@ -1044,9 +1048,21 @@ For native Lark/Feishu, the separate image-card issuance gate adds
 `caption_max_chars: 0` and `update: true`. This narrows the combination to one
 PNG/JPEG even when ordinary media lists file/audio/video. Supply explanatory
 message text instead of an attachment caption. Content/control edits retain the
-confirmed image; binary replacement, image removal and forms are not supported.
+confirmed image. Binary replacement requires the independent gate described below;
+image removal and forms are not supported.
 The optional `kinds` field remains absent for older responses. See
 [native Lark image controls](../../../docs/CMAEG_Native_Lark_Image_Controls.md).
+
+An independent replacement gate can advertise `replace_media: true` for a retained
+native Lark image card. Pass the complete replacement set of 1–4 PNG/JPEG
+`native_attachments` with full text/control content to `updateMessage`. Image-count
+changes are supported, including one to four and four to one. The parent
+`native_media.max_attachments` bounds replacement sets; `controls.max_attachments`
+continues to limit new-card issuance. Omitted attachments preserve all old images.
+Failed preflight/upload preserves the old card; unknown PATCH results are fenced
+and must not be blindly retried. Use the newly confirmed message reference after
+success. Destination, consumer and original expiry cannot change.
+
 The additional multi-image gate can raise `controls.max_attachments` to `4`;
 check discovery before combining two to four PNG/JPEG images with controls.
 Content/control edits preserve every confirmed image in its original order.
