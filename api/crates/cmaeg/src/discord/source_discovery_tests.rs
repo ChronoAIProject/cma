@@ -75,6 +75,7 @@ fn selection() -> Selection {
     Selection::new(&crate::NativeDiscordConfig {
         enabled: true,
         discovery_enabled: true,
+        rich_content_enabled: false,
         records: BTreeSet::new(),
     })
 }

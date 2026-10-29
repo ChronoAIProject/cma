@@ -4822,6 +4822,16 @@
               "null"
             ]
           },
+          "presentation_profiles": {
+            "description": "Explicit native presentation profiles; absent while issuance is disabled.",
+            "items": {
+              "$ref": "#/components/schemas/NativePresentationProfile"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "sources": {
             "items": {
               "type": "string"
@@ -4911,6 +4921,8 @@
           "file",
           "audio",
           "video",
+          "voice",
+          "animation",
           "sticker"
         ],
         "type": "string"
@@ -5000,6 +5012,56 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "NativePresentationProfile": {
+        "description": "Explicit native presentation profiles; ordinary audio/video keep their existing meaning.",
+        "properties": {
+          "caption": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "max_attachments": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message_operations": {
+            "type": "boolean"
+          },
+          "mime_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "text": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "mime_types",
+          "max_bytes",
+          "caption",
+          "profile",
+          "message_operations"
+        ],
         "type": "object"
       },
       "NativeStickerCapabilities": {
@@ -6052,6 +6114,13 @@
             ]
           },
           "native_discord_reactions_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_discord_rich_content_enabled": {
+            "description": "Descriptive sticker/embed/poll intake, not media download or poll actions.",
             "type": [
               "boolean",
               "null"
