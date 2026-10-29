@@ -128,6 +128,15 @@ Legacy encrypted Gateway storage methods remain for older installations and migr
 
 Provider binding management uses `client.provider_bindings().put/get/delete/ensure_conversation/delete_conversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
 
+`client.provider_bindings().inspect_preparation(binding_id, &request)` inspects
+the generation for an authenticated, durably admitted event without mutating
+resources. A `BindingPreparationInspection::Pending` returns an immutable intent;
+retain it and call `prepare(binding_id, &request, &operation_key)` with that exact
+intent and operation key. Preparation requires enabled server support and
+management authority. Reuse both after an uncertain response; never create a new
+key to retry. This reserves a new home after original retirement and does not
+recover the released home. Request Debug formatting omits the agent credential.
+
 ## CMA Event Gateway
 
 `cma_sdk::cmaeg::Cmaeg` is an independent client configured with the gateway origin,
@@ -198,6 +207,7 @@ use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
     let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
     let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        clear_native_attachments: None,
         native_media_update: None,
         whatsapp_template: None,
         native_attachments: None,
@@ -668,7 +678,7 @@ and status use a two-second total deadline; commit retains eight seconds.
 ### Native Telegram forum topic lifecycle
 
 The source's independent `topic_lifecycle: true` consent and the gateway's
-separate default-off topic gate enable exact original non-General forum-topic
+separate default-off topic gate enable exact original numbered forum-topic
 rename/close/reopen. Rename uses the existing manage-thread request with `action: "rename"`
 and a required `name` of 1–100 printable characters. It changes only the original
 topic name, preserving its icon and open/closed state. Check `context.capabilities.topic_lifecycle` for
@@ -699,7 +709,11 @@ async fn close_topic(client: &Cmaeg, event_ref: &str) -> cma_sdk::Result<()> {
 
 Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the
 original Event target and issues no `thread_ref`. There is no list, create,
-private-chat or General-topic operation. Discord rejects the additive Close
+or private-chat topic operation. General uses the same Event request only when
+`relay_authoring.native_telegram_general_topic_lifecycle_enabled` is true and
+the retained native human message proves the original forum. It keeps the public
+thread absent; clients must never synthesize topic ID `1` from a missing thread.
+General reopen also unhides General. Discord rejects the additive Close
 action before platform IO. A confirmed receipt can omit `thread`.
 
 Keep a stable idempotency key. Same-key replay returns the saved outcome;
@@ -770,15 +784,54 @@ advertise `replace_media: true` for one same-card upload replacement with comple
 content/controls. Media/form combinations remain unsupported. Historical cards without a retained native file proof
 remain callback-only.
 
+The additional Discord attachment-set gate can raise `controls.max_attachments`
+to four. Send the complete new set to replace all previous files on one confirmed
+card. When `controls.clear_media` is true, `updateMessage` also accepts
+`clear_native_attachments: true` with complete replacement text/controls to remove
+every upload. Clear plus nonempty attachments is invalid; omitted/false clear and
+empty attachments retain the previous set. Ordinary sends and unsupported
+platforms reject clear intent. A confirmed clear returns an ordinary card reference
+with no media authority; uncertain results must not be replayed as a new write.
+New-card issuance gates do not revoke retained edits or otherwise enabled
+replacements. See [Discord attachment sets](../../../docs/CMAEG_Native_Discord_Card_Edits.md#complete-attachment-sets-and-explicit-removal).
+
+
 For native Lark/Feishu, the separate image-card issuance gate adds
 `native_media.controls.kinds: ["image"]`, `max_attachments: 1`,
 `caption_max_chars: 0` and `update: true`. This narrows the combination to one
 PNG/JPEG even when ordinary media lists file/audio/video. Supply explanatory
 message text instead of an attachment caption. Content/control edits retain the
-confirmed image; binary replacement, image removal and forms are not supported.
+confirmed image. Binary replacement requires the independent gate described below;
+image removal and forms are not supported.
 The optional `kinds` field remains absent for older responses. See
 [native Lark image controls](../../../docs/CMAEG_Native_Lark_Image_Controls.md).
+
+An independent replacement gate can advertise `replace_media: true` for a retained
+native Lark image card. Pass the complete replacement set of 1–4 PNG/JPEG
+`native_attachments` with full text/control content to `updateMessage`. Image-count
+changes are supported, including one to four and four to one. The parent
+`native_media.max_attachments` bounds replacement sets; `controls.max_attachments`
+continues to limit new-card issuance. Omitted attachments preserve all old images.
+Failed preflight/upload preserves the old card; unknown PATCH results are fenced
+and must not be blindly retried. Use the newly confirmed message reference after
+success. Destination, consumer and original expiry cannot change.
+
+The additional multi-image gate can raise `controls.max_attachments` to `4`;
+check discovery before combining two to four PNG/JPEG images with controls.
+Content/control edits preserve every confirmed image in its original order.
 
 ### Native Lark / Feishu thread starts
 
 When verified context advertises `capabilities.native_thread_start: true`, `replyToEvent` may send one plain-text reply with `thread_reply: true` to start the exact originally admitted group message thread. The text must contain 1–4,000 characters and no blocks, attachments or explicit reply target. Only that root can be selected; no caller-selected chat, message or thread ID is accepted. The operation may continue that same root’s thread if it already exists, confirms the returned root/parent/chat/thread identity, and never falls back to top-level delivery. The feature is independently default-off; existing retained-thread replies keep their behavior. This is not the Discord `createThread` name/archive operation and grants no list/manage authority. See [native thread starts](../../../docs/CMAEG_Native_Lark_Thread_Start.md).
+
+### Native Telegram albums
+
+The optional `capabilities.native_media.albums` object describes ordered album
+support for the current native Telegram destination. It declares two to four
+attachments and `kind_groups: [["image", "video"], ["file"], ["audio"]]`.
+`controls: false` and `message_operations: false` mean album delivery provides no
+interactive controls or editable/deletable/reactable message references. Use the
+existing ordered `native_attachments` array. Single-upload requests and their
+references are unchanged. Captions stay per attachment and top-level text is
+separate. Preserve the exact idempotency key on unknown outcomes; never resend an
+uncertain album under another key. The field is omitted when issuance is disabled.

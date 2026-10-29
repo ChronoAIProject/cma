@@ -5910,6 +5910,15 @@
       "max_attachments": 1,
       "caption_max_chars": 0,
       "update": false
+    },
+    {
+      "max_attachments": 4,
+      "buttons": true,
+      "choices": true,
+      "caption_max_chars": 1024,
+      "update": true,
+      "replace_media": true,
+      "clear_media": true
     }
   ],
   "MediaDownload": [
@@ -6019,6 +6028,11 @@
         },
         "text": "Updated visible content"
       }
+    },
+    {
+      "clear_native_attachments": true,
+      "text": "Uploads removed",
+      "blocks": []
     }
   ],
   "PartitionKey": [
@@ -7241,6 +7255,7 @@
         "native_discord_conversation_history_enabled": false,
         "native_lark_conversation_history_enabled": false,
         "native_telegram_topic_lifecycle_enabled": true,
+        "native_telegram_general_topic_lifecycle_enabled": true,
         "native_whatsapp_message_events_enabled": false
       },
       "agent_tools": [
@@ -7304,6 +7319,7 @@
         "native_discord_conversation_history_enabled": false,
         "native_lark_conversation_history_enabled": false,
         "native_telegram_topic_lifecycle_enabled": true,
+        "native_telegram_general_topic_lifecycle_enabled": true,
         "native_whatsapp_message_events_enabled": false
       },
       "agent_tools": [
@@ -7376,6 +7392,7 @@
         "native_discord_conversation_history_enabled": false,
         "native_lark_conversation_history_enabled": false,
         "native_telegram_topic_lifecycle_enabled": true,
+        "native_telegram_general_topic_lifecycle_enabled": true,
         "native_whatsapp_message_events_enabled": false
       },
       "source_features": [
@@ -8241,6 +8258,26 @@
       }
     }
   ],
+  "NativeAlbumCapabilities": [
+    {
+      "min_attachments": 2,
+      "max_attachments": 4,
+      "kind_groups": [
+        [
+          "image",
+          "video"
+        ],
+        [
+          "file"
+        ],
+        [
+          "audio"
+        ]
+      ],
+      "controls": false,
+      "message_operations": false
+    }
+  ],
   "NativeAttachment": [
     {
       "caption": "Image",
@@ -8306,6 +8343,24 @@
         "choices": true,
         "max_attachments": 1,
         "update": false
+      },
+      "albums": {
+        "min_attachments": 2,
+        "max_attachments": 4,
+        "kind_groups": [
+          [
+            "image",
+            "video"
+          ],
+          [
+            "file"
+          ],
+          [
+            "audio"
+          ]
+        ],
+        "controls": false,
+        "message_operations": false
       }
     },
     {
@@ -8959,6 +9014,7 @@
       "native_discord_conversation_history_enabled": false,
       "native_lark_conversation_history_enabled": false,
       "native_telegram_topic_lifecycle_enabled": true,
+      "native_telegram_general_topic_lifecycle_enabled": true,
       "native_whatsapp_message_events_enabled": false
     },
     {
@@ -9006,6 +9062,7 @@
       "native_discord_conversation_history_enabled": false,
       "native_lark_conversation_history_enabled": false,
       "native_telegram_topic_lifecycle_enabled": true,
+      "native_telegram_general_topic_lifecycle_enabled": true,
       "native_whatsapp_message_events_enabled": false
     },
     {
@@ -9053,6 +9110,7 @@
       "native_discord_conversation_history_enabled": false,
       "native_lark_conversation_history_enabled": false,
       "native_telegram_topic_lifecycle_enabled": true,
+      "native_telegram_general_topic_lifecycle_enabled": true,
       "native_whatsapp_message_events_enabled": false
     },
     {
@@ -9100,6 +9158,7 @@
       "native_discord_conversation_history_enabled": false,
       "native_lark_conversation_history_enabled": false,
       "native_telegram_topic_lifecycle_enabled": true,
+      "native_telegram_general_topic_lifecycle_enabled": true,
       "native_whatsapp_message_events_enabled": false
     }
   ],

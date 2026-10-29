@@ -29,6 +29,10 @@ const MAX_NON_HUMAN_PROVIDERS: usize = 8;
 pub struct RoutingConfig {
     /// Keep enabled while any durably admitted target still needs recovery.
     pub recovery_enabled: bool,
+    /// Keep the generation reader active after any binding migrates.
+    pub binding_preparation_enabled: bool,
+    /// Only newly admitted ordinary events can capture replacement opt-in.
+    pub binding_replacement_bindings: BTreeSet<String>,
     /// Reader-first gate for new native reply-context snapshots.
     pub quoted_context_enabled: bool,
     /// Pauses new routed admissions without abandoning accepted work or retries.
@@ -54,6 +58,18 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
         }
     };
     let config = RoutingConfig {
+        binding_preparation_enabled: write_flag("CMAEG_BINDING_PREPARATION_ENABLED")?,
+        binding_replacement_bindings: binding_replacements(
+            env::var("CMAEG_BINDING_REPLACEMENT_BINDINGS")
+                .map(Some)
+                .or_else(|error| match error {
+                    env::VarError::NotPresent => Ok(None),
+                    _ => Err(ConfigError::Routing(
+                        "CMAEG_BINDING_REPLACEMENT_BINDINGS must be valid UTF-8".into(),
+                    )),
+                })?
+                .as_deref(),
+        )?,
         quoted_context_enabled: write_flag("CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED")?,
         recovery_enabled: write_flag(CMAEG_ROUTED_RECOVERY_ENABLED)?,
         admission_enabled: write_flag(CMAEG_ROUTED_ADMISSION_ENABLED)?,
@@ -71,6 +87,15 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
         non_human_providers: non_human_providers(value.as_deref(), providers)?,
     };
     config.validate()?;
+    if config.binding_preparation_enabled
+        && providers
+            .get(&ProviderSlug::new("cma_codex").expect("constant slug"))
+            .is_none_or(|entry| entry.paths.preparation.is_none())
+    {
+        return Err(ConfigError::Routing(
+            "binding preparation requires explicit CMA provider preparation paths".into(),
+        ));
+    }
     Ok(config)
 }
 
@@ -79,14 +104,48 @@ impl RoutingConfig {
         if !self.recovery_enabled
             && (self.admission_enabled
                 || self.quoted_context_enabled
+                || self.binding_preparation_enabled
                 || !self.execution_records.is_empty())
         {
             return Err(ConfigError::Routing(format!(
                 "{CMAEG_ROUTED_RECOVERY_ENABLED} must be enabled before selecting records or admitting routed events"
             )));
         }
+        if !self.binding_preparation_enabled && !self.binding_replacement_bindings.is_empty() {
+            return Err(ConfigError::Routing(
+                "binding replacements require generation-aware preparation".into(),
+            ));
+        }
         Ok(())
     }
+}
+
+fn binding_replacements(value: Option<&str>) -> Result<BTreeSet<String>, ConfigError> {
+    let mut selected = BTreeSet::new();
+    for binding in value
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if binding.len() > 128
+            || !binding
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+            || cmaeg_core::ids::BindingId::new(binding).is_err()
+        {
+            return Err(ConfigError::Routing(
+                "CMAEG_BINDING_REPLACEMENT_BINDINGS requires explicit binding IDs".into(),
+            ));
+        }
+        selected.insert(binding.to_owned());
+        if selected.len() > 256 {
+            return Err(ConfigError::Routing(
+                "binding replacement selection allows at most 256 bindings".into(),
+            ));
+        }
+    }
+    Ok(selected)
 }
 
 fn execution_records(value: Option<&str>) -> Result<BTreeSet<String>, ConfigError> {
@@ -191,6 +250,29 @@ pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn replacement_selection_is_explicit_and_can_stop_without_disabling_generation_readers() {
+        let mut config = RoutingConfig::default();
+        assert!(!config.binding_preparation_enabled);
+        assert!(config.binding_replacement_bindings.is_empty());
+        assert!(binding_replacements(None).unwrap().is_empty());
+        assert!(binding_replacements(Some("*")).is_err());
+        assert!(binding_replacements(Some("binding/path")).is_err());
+        assert_eq!(
+            binding_replacements(Some(" binding_one,binding_one ")).unwrap(),
+            BTreeSet::from(["binding_one".into()])
+        );
+        config
+            .binding_replacement_bindings
+            .insert("binding_one".into());
+        assert!(config.validate().is_err());
+        config.recovery_enabled = true;
+        config.binding_preparation_enabled = true;
+        assert!(config.validate().is_ok());
+        config.binding_replacement_bindings.clear();
+        assert!(config.validate().is_ok());
+    }
 
     #[test]
     fn admission_requires_recovery_but_recovery_can_continue_after_admission_stops() {

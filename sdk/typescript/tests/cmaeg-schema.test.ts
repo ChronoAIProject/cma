@@ -53,6 +53,23 @@ it('keeps omitted native WhatsApp capabilities unavailable on older servers', ()
   }
 });
 
+it('does not infer General topics from the numbered topic gate on older servers', () => {
+  const legacy = {
+    dynamic_sources_writes_enabled: true,
+    relay_raw_verification_writes_enabled: true,
+    multi_consumer_writes_enabled: true,
+    native_bot_mentions_writes_enabled: false,
+    thread_contract_writes_enabled: false,
+    native_telegram_topic_lifecycle_enabled: true,
+    platforms: [],
+  };
+  expect(RelayAuthoringCapabilitiesSchema(legacy)).toEqual(legacy);
+  for (const enabled of [false, true, null]) {
+    const value = { ...legacy, native_telegram_general_topic_lifecycle_enabled: enabled };
+    expect(RelayAuthoringCapabilitiesSchema(value)).toEqual(value);
+  }
+});
+
 interface Schema {
   readonly $ref?: string;
   readonly type?: string | readonly string[];

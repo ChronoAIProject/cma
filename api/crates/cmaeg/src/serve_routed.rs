@@ -42,6 +42,15 @@ pub(crate) fn compose(
     if !config.routing.recovery_enabled {
         return Ok(None);
     }
+    if config.routing.binding_preparation_enabled
+        && !state
+            .providers
+            .supports_binding_preparation(&cmaeg_core::ids::ProviderSlug::new("cma_codex")?)
+    {
+        return Err(
+            "binding preparation requires exact configured CMA management authority".into(),
+        );
+    }
     let plans = PlanStore::new((*state.records).clone(), state.master_keys.clone());
     let journal = Journal::new((*state.records).clone(), state.master_keys.clone())
         .with_activity(state.activity.clone());
@@ -100,6 +109,10 @@ pub(crate) fn compose(
             replay_providers,
         )
         .with_native_discovery(state.native_discord.clone())
+        .with_binding_preparation(
+            config.routing.binding_preparation_enabled,
+            config.routing.binding_replacement_bindings.clone(),
+        )
         .with_admissions_enabled(config.routing.admission_enabled)
         .with_quoted_context(config.routing.quoted_context_enabled)
         .with_sync_delivery(true),

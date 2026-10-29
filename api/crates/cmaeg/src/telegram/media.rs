@@ -1,6 +1,9 @@
 //! Native uploads use bounded prepared bytes, never platform file locators or remote URLs.
+#[path = "media_album.rs"]
+mod album;
 use super::{positive, valid_token, Error, TelegramClient};
 use crate::media::outbound::{PreparedFile, MAX_OUTBOUND_BYTES};
+pub(crate) use album::{album_supported, AlbumUpload};
 use cmaeg_core::{channel::Secret, message::NativeMediaKind};
 use http_body_util::BodyExt;
 use reqwest::{
@@ -112,6 +115,19 @@ impl TelegramClient {
         bot: &str,
         upload: MediaUpload,
     ) -> Result<Value, Error> {
+        let chat = upload.chat.clone();
+        let thread = upload.thread.clone();
+        let value = self.send_upload(token, bot, upload).await?;
+        message_identity(&value, &chat, thread.as_deref())?;
+        Ok(value)
+    }
+
+    async fn send_upload(
+        &self,
+        token: &Secret,
+        bot: &str,
+        upload: MediaUpload,
+    ) -> Result<Value, Error> {
         if !media_token_matches(token, bot) {
             return Err(Error::Rejected);
         }
@@ -141,8 +157,7 @@ impl TelegramClient {
                 Error::Unconfirmed
             });
         }
-        message_identity(&value["result"], &upload.chat, upload.thread.as_deref())?;
-        Ok(value["result"].clone())
+        value.get("result").cloned().ok_or(Error::Unconfirmed)
     }
 
     pub(crate) async fn send_media(

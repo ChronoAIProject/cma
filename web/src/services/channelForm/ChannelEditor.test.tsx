@@ -29,7 +29,6 @@ function fixture(): Channel {
         level: 'l3',
         target: { type: 'existing_agent', agent_id: 'agt_retained' },
       },
-      connection_ref: 'connection_retained',
       sources: [
         {
           type: 'nyxid_relay',
@@ -95,8 +94,9 @@ it('uses the registered CMA provider consistently for a new channel without chan
   });
 });
 it('preserves unknown writable fields and exact existing bindings while excluding server-only fields and unchanged credentials', () => {
-  const source = fixture(),
-    draft = channelDraft(source);
+  const source = fixture();
+  source.definition.connection_ref = 'connection_retained';
+  const draft = channelDraft(source);
   const body = channelRequest({ ...draft, name: 'Renamed' }, {}, source);
   expect(body).toMatchObject({
     name: 'Renamed',
