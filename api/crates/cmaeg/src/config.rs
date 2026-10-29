@@ -177,6 +177,7 @@ pub struct Config {
     pub native_whatsapp_message_events_enabled: bool,
     pub native_whatsapp_forms_enabled: bool,
     pub native_whatsapp_flow_writes_enabled: bool,
+    pub native_typing_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
     pub native_whatsapp_media_enabled: bool,
     pub native_lark_outbound_media_enabled: bool,
@@ -366,6 +367,7 @@ impl Config {
             native_whatsapp_flow_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED",
             )?,
+            native_typing_enabled: routing::write_flag("CMAEG_NATIVE_TYPING_ENABLED")?,
             native_whatsapp_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED",
             )?,

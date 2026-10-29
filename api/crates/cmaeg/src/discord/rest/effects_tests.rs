@@ -117,6 +117,16 @@ async fn handle(
             _ => StatusCode::NOT_FOUND.into_response(),
         };
     }
+    if method == Method::POST && uri.path() == "/api/v10/channels/99/typing" {
+        assert!(body.is_empty());
+        memory.writes.push((method, uri.path().into()));
+        if let Some((at, status)) = memory.reject_write {
+            if memory.writes.len() == at {
+                return (status, Json(json!({"retry_after":2}))).into_response();
+            }
+        }
+        return StatusCode::NO_CONTENT.into_response();
+    }
     if method == Method::POST || method == Method::PATCH {
         memory.bodies.push((
             headers
