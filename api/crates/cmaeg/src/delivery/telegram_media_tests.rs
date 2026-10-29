@@ -21,6 +21,8 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+#[path = "telegram_album_tests.rs"]
+mod albums;
 #[path = "telegram_media_effect_tests.rs"]
 mod effects;
 pub(super) fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPayload) {

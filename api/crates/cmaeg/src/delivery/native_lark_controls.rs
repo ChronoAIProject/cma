@@ -57,7 +57,10 @@ impl Sender {
             return (unsupported(), effects);
         }
         let retained = if media {
-            match interactions::native_lark::preflight_media(message) {
+            match interactions::native_lark::preflight_media(
+                message,
+                self.relay.native_lark_multi_image_controls,
+            ) {
                 Ok(retained) => retained,
                 Err(_) => return (unsupported(), effects),
             }
@@ -96,22 +99,22 @@ impl Sender {
         let Some(consumer) = ctx.channel.consumer(event.consumer.as_ref()) else {
             return (rejected("native_lark_consumer_unavailable"), effects);
         };
-        let upload = if media {
-            let Ok(mut files) = crate::media::outbound::prepare(&message.native_attachments).await
+        let uploads = if media {
+            let Ok(files) = crate::media::outbound::prepare(&message.native_attachments).await
             else {
                 return (rejected("native_lark_media_invalid"), effects);
             };
-            let Some(file) = files.pop() else {
-                return (rejected("native_lark_media_invalid"), effects);
-            };
-            match crate::native_lark::Client::prepare_media(&message.native_attachments[0], file)
-                .await
-            {
-                Ok(upload) => Some(upload),
-                Err(_) => return (rejected("native_lark_media_invalid"), effects),
+            let mut uploads = Vec::with_capacity(files.len());
+            // Validate all decoded image structures before the first platform write.
+            for (attachment, file) in message.native_attachments.iter().zip(files) {
+                match crate::native_lark::Client::prepare_media(attachment, file).await {
+                    Ok(upload) => uploads.push(upload),
+                    Err(_) => return (rejected("native_lark_media_invalid"), effects),
+                }
             }
+            uploads
         } else {
-            None
+            Vec::new()
         };
         let route = interactions::native_lark::route(reply);
         let _ticket = match ctx.gate.enter_route(&route).await {
@@ -140,10 +143,11 @@ impl Sender {
             Ok(t) => t,
             Err(_) => return (rejected("native_lark_custody_unverified"), effects),
         };
-        if cards.refresh_native_lark(&prepared.card).await.is_err() {
-            return (rejected("native_lark_control_authority_revoked"), effects);
-        }
-        if let Some(upload) = upload {
+        let mut confirmed = Vec::with_capacity(uploads.len());
+        for upload in uploads {
+            if cards.refresh_native_lark(&prepared.card).await.is_err() {
+                return (rejected("native_lark_control_authority_revoked"), effects);
+            }
             let permit = match ctx.gate.attempt().await {
                 Ok(p) => p,
                 Err(e) => return (refused(rendering, e.outcome()), effects),
@@ -159,13 +163,7 @@ impl Sender {
                 Ok(uploaded) => uploaded,
                 Err(e) => return (refused(rendering, outcome(e)), effects),
             };
-            if cards
-                .attach_native_lark_image(&mut prepared, uploaded)
-                .await
-                .is_err()
-            {
-                return (refused(rendering, unknown()), effects);
-            }
+            confirmed.push(uploaded);
             // Upload and card delivery are separate writes. Verify current app/bot
             // custody again before using the confirmed upload in a recipient message.
             token = match self
@@ -177,6 +175,16 @@ impl Sender {
                 Ok(token) => token,
                 Err(_) => return (rejected("native_lark_custody_unverified"), effects),
             };
+        }
+        // Persist the complete ordered set once. A partial upload never becomes
+        // a recipient message or grants callback/edit authority.
+        if media
+            && cards
+                .attach_native_lark_images(&mut prepared, confirmed)
+                .await
+                .is_err()
+        {
+            return (refused(rendering, unknown()), effects);
         }
         // A key upload never authorizes a later card send after source/consumer revocation.
         if cards.refresh_native_lark(&prepared.card).await.is_err() {
