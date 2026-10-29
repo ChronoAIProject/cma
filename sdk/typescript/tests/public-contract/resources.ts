@@ -3,6 +3,8 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/cmaeg/worker-credentials/classify': ({ client, body }) =>
+    client.providerBindings.classifyWorkerCredential(body),
   'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment':
     ({ client, param, fixture, query }) =>
       client.providerBindings.media.upload(

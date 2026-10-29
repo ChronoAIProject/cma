@@ -10,6 +10,9 @@ impl BindingStore for InMemorySandboxStore {
     async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
         Ok(self.lock().binding_key_history.contains(hash))
     }
+    async fn classify_worker_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
+        self.contains_key_hash(hash).await
+    }
     async fn find_by_key_hash(
         &self,
         hash: &str,

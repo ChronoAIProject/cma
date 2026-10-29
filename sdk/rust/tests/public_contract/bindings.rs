@@ -2,6 +2,9 @@ use super::context::Context;
 use cma_sdk::Result;
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let bindings = c.client.provider_bindings();
+    if c.case.operation == "POST /api/v1/cmaeg/worker-credentials/classify" {
+        return c.check(bindings.classify_worker_credential(&c.body()?).await);
+    }
     let id = c.param("binding_id");
     if c.case.operation.contains("/media/{attachment_index}/") {
         let target = cma_sdk::provider_bindings::BindingMediaTarget {
