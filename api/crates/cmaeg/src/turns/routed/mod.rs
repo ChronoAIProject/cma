@@ -17,6 +17,7 @@ mod dispatcher;
 mod dispatcher_authority;
 mod event_attestation;
 mod executor;
+mod expiry;
 mod generation_provenance;
 mod journal;
 mod media_delivery;
@@ -125,6 +126,8 @@ mod builder_tests;
 mod executor_activity_tests;
 #[cfg(test)]
 mod executor_tests;
+#[cfg(test)]
+mod expiry_tests;
 #[cfg(test)]
 mod projection_store_tests;
 #[cfg(test)]

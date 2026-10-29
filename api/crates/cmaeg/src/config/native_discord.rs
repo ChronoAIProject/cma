@@ -7,6 +7,8 @@ pub struct NativeDiscordConfig {
     pub enabled: bool,
     /// Discover explicit native sources in the current sealed channel index.
     pub discovery_enabled: bool,
+    /// Emit versioned sticker/embed/poll snapshots after compatible readers drain.
+    pub rich_content_enabled: bool,
     pub records: BTreeSet<String>,
 }
 pub(super) fn config_from_env(routing: &RoutingConfig) -> Result<NativeDiscordConfig, ConfigError> {
@@ -21,6 +23,9 @@ pub(super) fn config_from_env(routing: &RoutingConfig) -> Result<NativeDiscordCo
     let config = NativeDiscordConfig {
         enabled: super::routing::write_flag("CMAEG_NATIVE_DISCORD_ENABLED")?,
         discovery_enabled: super::routing::write_flag("CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED")?,
+        rich_content_enabled: super::routing::write_flag(
+            "CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED",
+        )?,
         records: parse_records(value.as_deref())?,
     };
     config.validate(routing)?;
@@ -33,9 +38,11 @@ impl NativeDiscordConfig {
                 "native Discord requires at most 64 canonical UUID v4 channel records".into(),
             ));
         }
-        if self.discovery_enabled && (!self.enabled || !routing.recovery_enabled) {
+        if (self.discovery_enabled || self.rich_content_enabled)
+            && (!self.enabled || !routing.recovery_enabled)
+        {
             return Err(ConfigError::Routing(
-                "native Discord discovery requires native runtime and routed recovery".into(),
+                "native Discord discovery and rich content require native runtime and routed recovery".into(),
             ));
         }
         if self.enabled
@@ -68,6 +75,20 @@ fn parse_records(value: Option<&str>) -> Result<BTreeSet<String>, ConfigError> {
 mod tests {
     use super::*;
     #[test]
+    fn rich_content_writer_is_independent_default_off_and_requires_native_recovery() {
+        let mut config = NativeDiscordConfig::default();
+        assert!(!config.rich_content_enabled);
+        config.rich_content_enabled = true;
+        let mut routing = RoutingConfig::default();
+        assert!(config.validate(&routing).is_err());
+        config.enabled = true;
+        assert!(config.validate(&routing).is_err());
+        routing.recovery_enabled = true;
+        config.validate(&routing).unwrap();
+        assert!(!config.discovery_enabled);
+        assert!(config.records.is_empty());
+    }
+    #[test]
     fn discovery_needs_native_runtime_and_recovery_but_no_http_record_expansion() {
         let mut config = NativeDiscordConfig {
             discovery_enabled: true,
@@ -92,6 +113,7 @@ mod tests {
         let config = NativeDiscordConfig {
             enabled: true,
             discovery_enabled: false,
+            rich_content_enabled: false,
             records: parse_records(Some(record)).unwrap(),
         };
         let mut routing = RoutingConfig::default();

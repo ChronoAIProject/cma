@@ -3,7 +3,7 @@ use super::problems::{problem, protocol_headers};
 use crate::{
     ingress::{launch::LaunchOutcome, relay::verify, IngressState},
     native_lark::{
-        message,
+        message, read_status,
         webhook::{self, Verified},
     },
 };
@@ -113,6 +113,25 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
             return invalid();
         }
     };
+    if event["header"]["event_type"] == read_status::EVENT_TYPE {
+        let status = match read_status::extract(&source.identity, &event, now) {
+            Ok(status) => status,
+            Err(_) => {
+                return problem(
+                    StatusCode::BAD_REQUEST,
+                    ProblemCode::InvalidRequest,
+                    "native_lark_read_status_invalid",
+                )
+            }
+        };
+        return match state
+            .observe_native_lark_read(&channel, source, &status, now)
+            .await
+        {
+            Ok(()) => Json(json!({"accepted":true})).into_response(),
+            Err(()) => unavailable("native_lark_read_status_unavailable"),
+        };
+    }
     if event["header"]["event_type"] == "card.action.trigger" {
         let callback =
             match crate::native_lark::callback::Callback::extract(&event, &source.identity, now) {

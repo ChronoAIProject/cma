@@ -296,6 +296,10 @@ pub enum NativeMediaKind {
     Audio,
     /// Video attachment.
     Video,
+    /// Native mono Opus voice presentation, only when advertised.
+    Voice,
+    /// Native animation presentation, only when advertised.
+    Animation,
     /// Sticker presentation, only when advertised by the event destination.
     Sticker,
 }
@@ -337,6 +341,9 @@ pub struct NativeAttachment {
 /// Deployment-attested outbound media capabilities.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeMediaCapabilities {
+    /// Explicit native presentation profiles; omitted when issuance is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_profiles: Option<Vec<NativePresentationProfile>>,
     /// Ordered album constraints; omitted when disabled for this destination.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub albums: Option<NativeAlbumCapabilities>,
@@ -369,6 +376,29 @@ pub struct NativeMediaCapabilities {
     /// Bounded video profile; absent when no destination-specific profile is declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<NativeVideoCapabilities>,
+}
+
+/// Explicit native presentation profile advertised by the exact destination.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativePresentationProfile {
+    /// Per-presentation attachment limit, when narrower than ordinary media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_attachments: Option<usize>,
+    /// Whether ordinary message text may accompany this presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<bool>,
+    /// Native presentation kind.
+    pub kind: String,
+    /// Accepted MIME types.
+    pub mime_types: Vec<String>,
+    /// Per-file encoded byte ceiling.
+    pub max_bytes: u64,
+    /// Whether the native attachment may carry a caption.
+    pub caption: bool,
+    /// Exact codec/container and dimension constraints.
+    pub profile: String,
+    /// Whether delivery grants message operation references.
+    pub message_operations: bool,
 }
 
 /// Exact album constraints; no public operation authority is issued for its members.

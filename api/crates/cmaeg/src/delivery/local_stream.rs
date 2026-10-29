@@ -107,6 +107,24 @@ impl CustomStreamEffect {
     }
 }
 impl CustomDelivery {
+    /// A terminal refusal can close the original waiter without sending content
+    /// under expired or revoked authority. This never invokes external sinks.
+    pub(crate) fn refuse_local(
+        &self,
+        event: &EventRefPayload,
+        refusal: Problem,
+    ) -> LocalStreamOutcome {
+        let ReplyAddress::Sync { waiter } = &event.reply else {
+            return LocalStreamOutcome::Unavailable;
+        };
+        let data = custom::data(event, None, None, Some(refusal));
+        if self.waiters.emit(waiter, "cmaeg.failed", &data, true) {
+            LocalStreamOutcome::Buffered
+        } else {
+            LocalStreamOutcome::Unavailable
+        }
+    }
+
     /// Only an explicitly negotiated waiter distinguishes response completion
     /// from final media completion. Existing clients keep their terminal frame.
     pub(crate) fn local_response(
