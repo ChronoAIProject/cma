@@ -10,6 +10,8 @@ mod channel_usage;
 mod hierarchy;
 #[path = "rest/lifecycle.rs"]
 mod lifecycle;
+#[path = "rest/provider_associations.rs"]
+mod provider_associations;
 #[path = "rest/source.rs"]
 mod source;
 

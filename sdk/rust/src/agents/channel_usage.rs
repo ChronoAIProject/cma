@@ -132,7 +132,9 @@ fn bindings(items: &[ChannelBinding]) -> Result<()> {
     Ok(())
 }
 impl Agents<'_> {
-    /// Read safe usage summary; current resource managers also receive bindings.
+    /// Read the legacy Bridge usage projection; resource managers receive bindings.
+    /// Provider admissions do not populate it. Use `provider_associations` for
+    /// retained membership; empty usage does not prove no prior association.
     pub async fn channel_usage(&self, agent_id: &str) -> Result<AgentChannelUsage> {
         let value: AgentChannelUsage = self
             .client

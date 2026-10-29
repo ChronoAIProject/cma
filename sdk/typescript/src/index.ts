@@ -42,6 +42,7 @@ export type * from './agents/provenance.js';
 export type * from './agents/artifacts.js';
 export type * from './agents/attachments.js';
 export type * from './agents/channel-usage.js';
+export type * from './agents/provider-associations.js';
 export type * from './instances/shared.js';
 export type * from './agents/events.js';
 export type * from './instances/types.js';
