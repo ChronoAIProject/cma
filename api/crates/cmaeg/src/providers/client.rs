@@ -239,45 +239,6 @@ impl ProviderClient {
             .await
     }
 
-    async fn conversation_request(
-        &self,
-        provider: &ProviderSlug,
-        binding_id: &BindingId,
-        conversation_id: &ConversationId,
-        agent_key: &Secret,
-        delete: bool,
-        generation: Option<u64>,
-    ) -> Result<(), ProviderError> {
-        let handle = self.handle(provider)?;
-        let _permit = acquire(&handle.inflight).await?;
-        let url = handle
-            .entry
-            .url(
-                "conversation",
-                &[
-                    ("binding_id", binding_id.as_str()),
-                    ("conversation_id", conversation_id.as_str()),
-                ],
-            )
-            .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
-        let bearer = self.management_bearer(provider, &url, agent_key).await?;
-        let mut request = if delete {
-            handle.client.delete(url)
-        } else {
-            handle.client.put(url).json(&json!({}))
-        };
-        request = request.bearer_auth(bearer.as_str());
-        if let Some(generation) = generation {
-            request = request.header("x-cma-binding-generation", generation);
-        }
-        let request = request.send();
-        let response = tokio::time::timeout(self.request_timeout, request)
-            .await
-            .map_err(|_| ProviderError::Unavailable("provider request timed out".into()))?
-            .map_err(transport_error)?;
-        self.success_or_error(response).await.map(|_| ())
-    }
-
     pub async fn start_turn(
         &self,
         provider: &ProviderSlug,

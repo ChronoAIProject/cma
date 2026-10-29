@@ -207,6 +207,39 @@ async fn busy_and_missing_conversation_errors_are_typed() {
 }
 
 #[tokio::test]
+async fn cma_binding_readiness_is_busy_only_for_conversation_creation() {
+    let fake = FakeProvider::start(FakeProviderConfig {
+        conversation_statuses: vec![(409, "binding_not_ready".into())],
+        conversation_delete_status: Some((409, "binding_not_ready".into())),
+        ..Default::default()
+    })
+    .await;
+    let client = client(&fake, 2);
+    let binding = BindingId::new("bind-cold").unwrap();
+    let conversation = ConversationId::new("conv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+    let secret = Secret::new("agent-secret");
+    assert!(matches!(
+        client
+            .ensure_conversation(&provider(), &binding, &conversation, &secret)
+            .await,
+        Err(ProviderError::Busy { retry_after: None })
+    ));
+    assert!(matches!(
+        client.delete_conversation(&provider(), &binding, &conversation, &secret).await,
+        Err(ProviderError::Rejected { status: 409, code }) if code == "binding_not_ready"
+    ));
+    assert_eq!(
+        fake.requests()
+            .iter()
+            .map(|r| r.method.as_str())
+            .collect::<Vec<_>>(),
+        ["PUT", "DELETE"]
+    );
+    assert!(fake.admitted().is_empty());
+    fake.close().await;
+}
+
+#[tokio::test]
 async fn full_provider_semaphore_returns_busy_without_waiting() {
     let fake = FakeProvider::start(FakeProviderConfig {
         response_delay: Duration::from_millis(200),
