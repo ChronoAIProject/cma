@@ -3818,14 +3818,27 @@ purpose without repeating that explanation.
 
 The optional **Machine Included** choice on Agent creation uses the existing
 selection-card spacing and surface tokens. Desktop-capable owned Agents expose
-**Machine desktop** beside the conversation header. Its desktop panel uses a
-12px viewport inset and radius, the layer-1 background, layer-2 border, and
-level-3 shadow tokens; below 30rem it fills the viewport. The header uses 12px
-by 16px padding and the standard 14px strong title. Actions wrap when needed.
-The locally bundled desktop canvas fills the remaining space and supports the
-browser's full-screen action. Connection status remains visible above it.
+**Machine desktop** beside the conversation header. Owned Machine conversations
+open with chat on the left and the live desktop on the right. The workspace
+uses a 2:3 grid split with a 360px chat minimum. At an available workspace width
+of 56rem or less, the panes stack, retaining chat above a desktop of
+`min(42dvh, 420px)`. Both stay visible and mounted during a turn. Hide/close
+removes only the viewer; opening it again preserves the exact chat composer,
+draft, transcript and stream. No desktop viewer opens for headless or read-only
+Agents. The split follows the available center width, including when Files or
+Details takes space.
+
+The desktop is a flat layer-1 pane with a layer-2 divider; it has no viewport
+overlay, shadow or corner radius. Its header uses wrapping actions, 12px by
+16px padding (8px by 12px in the stacked layout), a standard 14px strong title,
+and a visible 12px/18px connection and control status. Gaps are 16px in the
+header and 8px between actions, or 8px throughout the compact header. The
+bundled canvas fills the remaining space and scales the existing shared desktop
+without resizing its resolution during Agent work. Full screen expands the
+whole pane, retaining connection status, input controls and an exit action.
 **Control desktop** opts into keyboard and pointer input; while the Agent is
-working, the panel stays view-only. **Reconnect** resets input control.
+working or a message starts, the panel stays view-only and tells the user to
+watch its actions. **Reconnect** resets input control.
 
 | 2026-10-29 | Add the Machine Included creation choice and a bundled desktop viewer with explicit input control, connection status, reconnect and full-screen actions. |
 
@@ -3834,3 +3847,5 @@ working, the panel stays view-only. **Reconnect** resets input control.
 | 2026-10-29 | Scope the Machine Included hint alignment to its component class while retaining the shared field hint typography. |
 
 | 2026-10-29 | Apply Machine Included hint alignment through its containing section while using the existing shared field hint class. |
+
+| 2026-10-29 | Show owned Machine desktops beside their conversation by default, stack within narrow workspaces, preserve chat during viewer toggles, and retain controls in full screen without changing the shared desktop resolution. |
