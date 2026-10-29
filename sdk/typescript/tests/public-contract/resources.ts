@@ -3,6 +3,10 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections': ({ client, param, body }) =>
+    client.providerBindings.inspectPreparation(param('binding_id'), body),
+  'POST /api/v1/cmaeg/bindings/{binding_id}/preparations': ({ client, param, body, command }) =>
+    client.providerBindings.prepare(param('binding_id'), body, command),
   'GET /api/v1/agents/{id}/desktop': ({ client, param }) => client.agents.desktop(param('id')),
   'GET /api/v1/agents/{id}/files/tree': ({ client, param, query }) =>
     client.agentFiles.list(param('id'), query.get('path') ?? ''),

@@ -222,6 +222,11 @@ For this contract `native_media.controls.update: true` means content/control
 edits that preserve the upload. Upload replacement additionally requires
 `native_media.controls.replace_media: true` and the separate replacement gate;
 see [same-card media replacement](CMAEG_Native_Discord_Card_Edits.md#same-card-media-replacement).
-Caption-only updates, multiple uploads, adding uploads to text-only cards and
-forms mixed with uploads remain unavailable. Current source/consumer custody,
+Caption-only updates, adding uploads to text-only cards and forms mixed with
+uploads remain unavailable. The independent default-off
+`CMAEG_NATIVE_DISCORD_MEDIA_CARD_SETS_ENABLED` gate extends native cards to complete
+sets of 1–4 uploads and explicit `clear_native_attachments: true` on supported
+updates. Empty/omitted attachment lists without that flag still preserve files.
+See [complete attachment sets](CMAEG_Native_Discord_Card_Edits.md#complete-attachment-sets-and-explicit-removal)
+for replacement membership, prerequisites, reader compatibility and provider limits. Current source/consumer custody,
 original actor, exact destination/thread and expiry checks still apply.

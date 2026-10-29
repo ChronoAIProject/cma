@@ -226,6 +226,13 @@ pub struct IntentReceipt {
 /// CMAEG `OutboundMessage` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutboundMessage {
+    /// Update-only explicit removal; supported only when clear_media is advertised.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub clear_native_attachments: Option<bool>,
     /// Update-only patch: omitted preserves; an empty caption/text clears; null refuses.
     #[serde(
         default,
@@ -323,6 +330,9 @@ pub struct NativeAttachment {
 /// Deployment-attested outbound media capabilities.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeMediaCapabilities {
+    /// Ordered album constraints; omitted when disabled for this destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub albums: Option<NativeAlbumCapabilities>,
     /// Same-message native upload and controls, omitted when not supported for this event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controls: Option<MediaControlsCapabilities>,
@@ -354,6 +364,21 @@ pub struct NativeMediaCapabilities {
     pub video: Option<NativeVideoCapabilities>,
 }
 
+/// Exact album constraints; no public operation authority is issued for its members.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeAlbumCapabilities {
+    /// Minimum number of attachments sent together.
+    pub min_attachments: u64,
+    /// Maximum number of attachments sent together.
+    pub max_attachments: u64,
+    /// An album's kinds must all belong to one group.
+    pub kind_groups: Vec<Vec<String>>,
+    /// Whether interactive controls can accompany an album.
+    pub controls: bool,
+    /// Whether album delivery issues message operation references.
+    pub message_operations: bool,
+}
+
 /// Native upload and controls in one confirmed platform message.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaControlsCapabilities {
@@ -370,9 +395,12 @@ pub struct MediaControlsCapabilities {
     pub caption_max_chars: u32,
     /// Whether content/control edits may preserve this message's confirmed upload.
     pub update: bool,
-    /// Replace one upload on the same durable card through a confirmed native PATCH.
+    /// Replace the supported upload set on the same durable card through a confirmed PATCH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replace_media: Option<bool>,
+    /// Whether explicit clear_native_attachments may remove every upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clear_media: Option<bool>,
 }
 
 /// Exact dimensions, size and animation limits for native sticker delivery.

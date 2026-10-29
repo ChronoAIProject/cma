@@ -29,6 +29,9 @@ pub const MAX_BLOCKS: usize = 16;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutboundMessage {
+    /// Explicitly remove every native attachment; updateMessage only when advertised.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clear_native_attachments: bool,
     /// Explicit single-media update; accepted only by updateMessage.
     #[serde(
         default,
@@ -176,8 +179,15 @@ pub struct BlockRendering {
 impl OutboundMessage {
     /// Validate a provider response before handing it to a delivery adapter.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.clear_native_attachments && !self.native_attachments.is_empty() {
+            return Err(ValidationError::new(
+                "/clear_native_attachments",
+                "clear cannot be combined with replacement attachments",
+            ));
+        }
         if let Some(update) = &self.native_media_update {
-            if self.text.is_some()
+            if self.clear_native_attachments
+                || self.text.is_some()
                 || !self.blocks.is_empty()
                 || !self.native_attachments.is_empty()
                 || self.whatsapp_template.is_some()
@@ -193,7 +203,8 @@ impl OutboundMessage {
         }
         if let Some(template) = &self.whatsapp_template {
             template.validate()?;
-            if self.text.is_some()
+            if self.clear_native_attachments
+                || self.text.is_some()
                 || !self.blocks.is_empty()
                 || !self.native_attachments.is_empty()
                 || self.thread_reply

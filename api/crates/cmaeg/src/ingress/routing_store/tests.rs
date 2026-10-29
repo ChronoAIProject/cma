@@ -11,6 +11,7 @@ fn custom(size: usize) -> (LaunchRequest, Vec<u8>) {
     source["data"] = "x".repeat(size.saturating_sub(overhead)).into();
     let raw = serde_json::to_vec(&source).unwrap();
     let mut activity = fixture::custom(None);
+    activity.actor.id = source["source"].as_str().unwrap().to_string();
     activity.kind = serde_json::from_value(json!({"type":"event","ce":source})).unwrap();
     (fixture::request(fixture::targets, activity), raw)
 }
@@ -23,6 +24,68 @@ fn candidate(request: &LaunchRequest, raw: &[u8]) -> Candidate {
         fixture::NOW,
     )
     .unwrap()
+}
+
+#[tokio::test]
+async fn generation_preparation_enrollment_is_new_admission_only_and_authenticated_custom_can_replace(
+) {
+    let server = Server::start().await;
+    let request = fixture::request(fixture::targets, fixture::message("hello"));
+    let routed = fixture::routed(&request);
+    let replacements = routed
+        .targets
+        .iter()
+        .map(|target| target.provider.binding_id.to_string())
+        .collect();
+    let legacy = candidate(&request, b"raw");
+    let original = server.store().admit(&legacy).await.unwrap();
+    let enabled = Candidate::prepare_with_binding_preparation(
+        &request,
+        &routed,
+        b"raw",
+        &fixture::keys(),
+        fixture::NOW,
+        None,
+        &replacements,
+    )
+    .unwrap();
+    // Retrying an old event after operator enrollment cannot gain new authority.
+    assert_eq!(server.store().admit(&enabled).await.unwrap(), original);
+    assert!(original.binding_preparation_version.is_none());
+    assert!(original
+        .targets
+        .iter()
+        .all(|t| t.binding_replacement_version.is_none()));
+
+    let server = Server::start().await;
+    let (request, raw) = custom(128);
+    let routed = fixture::routed(&request);
+    let enabled = Candidate::prepare_with_binding_preparation(
+        &request,
+        &routed,
+        &raw,
+        &fixture::keys(),
+        fixture::NOW,
+        None,
+        &replacements,
+    )
+    .unwrap();
+    let plan = server.store().admit(&enabled).await.unwrap();
+    assert_eq!(plan.binding_preparation_version, Some(1));
+    assert!(plan.permits_binding_preparation());
+    assert!(plan.binding_custom_source.is_some());
+    let mut missing_custody = plan.clone();
+    missing_custody.binding_custom_source = None;
+    assert_eq!(missing_custody.validate(), Err(AdmissionError::Corrupt));
+    assert!(plan
+        .targets
+        .iter()
+        .filter(|t| plan.prepares_binding(t))
+        .all(|t| t.binding_replacement_version == Some(1)));
+    assert!(plan
+        .targets
+        .iter()
+        .any(|target| plan.prepares_binding(target)));
 }
 
 #[tokio::test]

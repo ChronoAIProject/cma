@@ -1,8 +1,6 @@
 //! Service composition: build every component from configuration, then serve
 //! HTTP until a termination signal drains turns, deliveries and connections.
-
 use std::{future::IntoFuture, net::SocketAddr, time::Instant};
-
 use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
@@ -111,6 +109,7 @@ pub(crate) async fn serve(
         state.native_whatsapp_forms_enabled && state.native_whatsapp_admission_enabled,
         state.native_whatsapp_flow_writes_enabled && state.native_whatsapp_admission_enabled,
     ));
+    let native_typing = source_settings::native_typing(&config, &state)?;
     let (native_lark_controls, native_lark_thread_start) =
         source_settings::lark_issuance(&config, &state);
     let delivery_engine = delivery::engine::DeliveryEngine::start_observed(
@@ -128,8 +127,6 @@ pub(crate) async fn serve(
             )),
         )
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
-        .with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
-        .with_native_lark_effects(config.native_lark_message_effects_enabled)
         .with_native_split_text_refs(config.native_split_text_refs_enabled)
         .with_native_media_edits(
             config.native_telegram_media_edits_enabled,
@@ -139,9 +136,8 @@ pub(crate) async fn serve(
                 state.master_keys.clone(),
             )),
         )
-        .with_native_lark_controls(native_lark_controls, config.native_lark_forms_enabled)
-        .with_native_lark_media_controls(config.native_lark_media_controls_enabled)
-        .with_native_lark_thread_start(native_lark_thread_start)
+        .with_native_lark_config(&config, native_lark_controls, native_lark_thread_start)
+        .with_native_telegram_albums(config.native_telegram_albums_enabled)
         .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
@@ -160,6 +156,7 @@ pub(crate) async fn serve(
         .with_discord_media_controls(config.native_discord_media_controls_enabled)
         .with_discord_media_card_edits(discord_media_edits)
         .with_discord_media_card_replacements(discord_media_replacements)
+        .with_discord_media_card_sets(config.native_discord_media_card_sets_enabled)
         .with_discord_card_edits(discord_card_edits)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
@@ -251,6 +248,7 @@ pub(crate) async fn serve(
     )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        native_typing,
         native_lark_conversation_history: source_settings::lark_history(
             config.native_lark_conversation_history_enabled,
             config.native_lark_mixed_history_enabled,
@@ -258,9 +256,7 @@ pub(crate) async fn serve(
         discord_conversation_history: source_settings::discord_history(
             config.native_discord_conversation_history_enabled,
         )?,
-        telegram_topics: state
-            .native_telegram_topic_lifecycle_enabled
-            .then(|| std::sync::Arc::new(tools::TelegramTopics::new(telegram.clone()))),
+        telegram_topics: source_settings::telegram_topics(&state, telegram.clone()),
         discord_threads: state
             .native_discord_thread_lifecycle_enabled
             .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreads::new))
@@ -302,6 +298,7 @@ pub(crate) async fn serve(
         native_discord_media_controls_enabled: config.native_discord_media_controls_enabled,
         native_discord_media_card_edits_enabled: discord_media_edits,
         native_discord_media_card_replacements_enabled: discord_media_replacements,
+        native_discord_media_card_sets_enabled: config.native_discord_media_card_sets_enabled,
         whatsapp_interactions_enabled: whatsapp_interactions,
         native_whatsapp_interactions_enabled: config.native_whatsapp_interactions_enabled,
         native_whatsapp_media_controls_enabled: config.native_whatsapp_media_controls_enabled,
@@ -311,6 +308,10 @@ pub(crate) async fn serve(
         native_lark_thread_start_enabled: native_lark_thread_start,
         native_lark_media_controls_enabled: config.native_lark_media_controls_enabled
             && native_lark_controls,
+        native_lark_multi_image_controls_enabled: config.native_lark_multi_image_controls_enabled,
+        native_lark_media_card_replacements_enabled: config
+            .native_lark_media_card_replacements_enabled,
+        native_telegram_albums_enabled: config.native_telegram_albums_enabled,
         native_whatsapp_outbound_media_enabled: config.native_whatsapp_outbound_media_enabled,
         whatsapp_reactions: Some(std::sync::Arc::new(tools::WhatsappReactionsClient::new(
             crate::whatsapp::Client::production()?,

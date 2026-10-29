@@ -2,7 +2,7 @@
 use crate::AuthenticatedCaller;
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::put,
     Json, Router,
@@ -14,6 +14,7 @@ use layer2_core::sandbox::binding::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
+pub(super) mod preparation;
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -82,10 +83,11 @@ pub struct BindingConversationView {
 }
 
 #[derive(Clone)]
-struct BindingRouteState {
+pub(super) struct BindingRouteState {
     service: Arc<BindingService>,
     native_endpoint: Option<String>,
     native_advertisement_alias: Option<String>,
+    preparation_enabled: bool,
 }
 
 pub fn binding_router(service: Arc<BindingService>) -> Router {
@@ -93,6 +95,7 @@ pub fn binding_router(service: Arc<BindingService>) -> Router {
         service,
         native_endpoint: None,
         native_advertisement_alias: None,
+        preparation_enabled: false,
     })
 }
 
@@ -112,6 +115,20 @@ pub fn binding_router_with_native_tools_alias(
     endpoint: &str,
     advertisement_alias: &str,
 ) -> Result<Router, String> {
+    binding_router_with_native_tools_alias_and_preparation(
+        service,
+        endpoint,
+        advertisement_alias,
+        false,
+    )
+}
+
+pub fn binding_router_with_native_tools_alias_and_preparation(
+    service: Arc<BindingService>,
+    endpoint: &str,
+    advertisement_alias: &str,
+    preparation_enabled: bool,
+) -> Result<Router, String> {
     validate_native_endpoint(endpoint)?;
     validate_native_endpoint(advertisement_alias)?;
     Ok(routes(BindingRouteState {
@@ -119,6 +136,7 @@ pub fn binding_router_with_native_tools_alias(
         native_endpoint: Some(endpoint.into()),
         native_advertisement_alias: (advertisement_alias != endpoint)
             .then(|| advertisement_alias.into()),
+        preparation_enabled,
     }))
 }
 
@@ -146,6 +164,7 @@ fn validate_native_endpoint(endpoint: &str) -> Result<(), String> {
 
 fn routes(state: BindingRouteState) -> Router {
     Router::new()
+        .merge(preparation::routes())
         .route(
             "/api/v1/cmaeg/bindings/{binding_id}",
             put(put_binding).get(get_binding).delete(delete_binding),
@@ -260,20 +279,27 @@ async fn delete_binding(
     }
 }
 #[utoipa::path(put, path = "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}", tag = "provider bindings",
-    params(("binding_id" = String, Path), ("conversation_id" = String, Path)),
+    params(("binding_id" = String, Path), ("conversation_id" = String, Path), ("x-cma-binding-generation" = Option<u64>, Header)),
     responses((status = 201, body = BindingConversationView), (status = 200, body = BindingConversationView), (status = 400), (status = 401), (status = 403), (status = 404), (status = 409), (status = 503)))]
 async fn put_conversation(
     State(state): State<BindingRouteState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, conversation)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
+    let generation = match preparation::generation_header(&headers) {
+        Ok(value) => value,
+        Err(value) => return error(value),
+    };
     match state.service.read(&caller, &id).await {
         Ok(binding)
             if binding.existing_agent.is_none()
                 && binding.profile.session_affinity
                     == layer2_core::sandbox::binding::SessionAffinity::SourceUser =>
         {
-            if binding.state != BindingState::Ready {
+            if binding.state != BindingState::Ready
+                || binding.require_generation(generation).is_err()
+            {
                 return error(BindingError::Conflict);
             }
             if !valid_conversation(&conversation) {
@@ -295,7 +321,7 @@ async fn put_conversation(
     }
     match state
         .service
-        .ensure_conversation(&caller, &id, &conversation)
+        .ensure_conversation_at_generation(&caller, &id, &conversation, generation)
         .await
     {
         Ok((value, created)) => (

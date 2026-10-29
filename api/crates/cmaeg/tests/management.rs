@@ -258,3 +258,6 @@ mod native_discord;
 
 #[path = "management/native_telegram.rs"]
 mod native_telegram;
+
+#[path = "management/native_lark.rs"]
+mod native_lark;

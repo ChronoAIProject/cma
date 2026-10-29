@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub native_typing: Option<Arc<super::NativeTyping>>,
     pub native_whatsapp_forms: Option<Arc<crate::whatsapp::forms::service::Forms>>,
     pub native_media_edits: Option<Arc<crate::native_media::Client>>,
     pub native_lark_effects: Option<Arc<super::NativeLarkEffectsClient>>,
@@ -45,6 +46,7 @@ pub struct ToolsState {
     pub native_discord_media_controls_enabled: bool,
     pub native_discord_media_card_edits_enabled: bool,
     pub native_discord_media_card_replacements_enabled: bool,
+    pub native_discord_media_card_sets_enabled: bool,
     pub whatsapp_interactions_enabled: bool,
     /// Native issuance only; retained callback consumption is independent.
     pub native_whatsapp_interactions_enabled: bool,
@@ -55,6 +57,9 @@ pub struct ToolsState {
     /// Bounded native Lark image/document/audio/video uploads, independently default-off.
     pub native_lark_outbound_media_enabled: bool,
     pub native_lark_media_controls_enabled: bool,
+    pub native_lark_multi_image_controls_enabled: bool,
+    pub native_lark_media_card_replacements_enabled: bool,
+    pub native_telegram_albums_enabled: bool,
     pub native_lark_thread_start_enabled: bool,
     /// Bounded native WhatsApp image/document/audio/sticker/video uploads, independently gated.
     pub native_whatsapp_outbound_media_enabled: bool,
@@ -173,11 +178,15 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
-            if message.native_media_update.is_some() {
+            if message.native_media_update.is_some() || message.clear_native_attachments {
                 return Err(Problem::new(
                     ProblemCode::InvalidRequest,
                     400,
-                    "native_media_update_requires_updateMessage",
+                    if message.clear_native_attachments {
+                        "native_attachment_clear_requires_updateMessage"
+                    } else {
+                        "native_media_update_requires_updateMessage"
+                    },
                 ));
             }
             let (channel, event, _) = self
@@ -254,6 +263,13 @@ impl ToolsState {
             let (channel, event, _) = self
                 .authorize_event(caller, reference, "sendTyping")
                 .await?;
+            if matches!(
+                event.reply,
+                cmaeg_core::seal::ReplyAddress::Whatsapp { .. }
+                    | cmaeg_core::seal::ReplyAddress::Discord { .. }
+            ) {
+                return self.send_native_typing(caller, &channel, &event).await;
+            }
             let (receipt, received) = oneshot::channel();
             self.deliver(
                 DeliveryCommand::Typing {
@@ -301,6 +317,9 @@ impl ToolsState {
                 self,
             );
             response.received_message = received_message;
+            response.capabilities.typing |= self
+                .native_typing_capability(caller, &channel, &event, verified)
+                .await;
             response.capabilities.topic_lifecycle =
                 self.topic_capabilities(caller, &event, &channel).await;
             response.capabilities.thread_lifecycle =
@@ -345,6 +364,9 @@ impl ToolsState {
             self,
         );
         response.received_message = received_message;
+        response.capabilities.typing |= self
+            .native_typing_capability(caller, &channel, &event, true)
+            .await;
         response.capabilities.topic_lifecycle =
             self.topic_capabilities(caller, &event, &channel).await;
         response.capabilities.thread_lifecycle =
