@@ -1882,6 +1882,8 @@ organization management). Provider manager or worker credentials do not gain
 owner-management access through this route. Foreign resources remain concealed;
 ordinary shared viewers cannot read the associations. Each buffered result is
 revalidated against current resource policy and Agent incarnation before release.
+The read and its schemas appear in both `/agent-manager/openapi.json` and the
+full `/openapi.json` compatibility document.
 
 The response contains `agent_id`, owner subject `owner`, `agent_created_at`,
 `items`, and optional `next`. Each item identifies the retained `binding_id`,
