@@ -34,7 +34,10 @@ impl IngressState {
         .map_err(|_| ())?;
         // Bound record fanout while avoiding a complete serial restore for
         // every ID inside the platform's 2.5-second callback deadline.
-        let mut proofs = stream::iter(status.message_ids.iter().enumerate().map(
+        // Own the bounded IDs so buffered futures do not carry iterator-item
+        // lifetimes into the HTTP handler's Send requirement.
+        let owned_message_ids = status.message_ids.clone();
+        let mut proofs = stream::iter(owned_message_ids.into_iter().enumerate().map(
             |(index, message)| {
                 let (store, plans, source_kind) = (&store, &plans, &source_kind);
                 async move {
@@ -47,7 +50,7 @@ impl IngressState {
                             source,
                             source_kind,
                             status,
-                            message,
+                            &message,
                             now,
                         )
                         .await,
