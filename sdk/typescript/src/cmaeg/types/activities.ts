@@ -335,6 +335,7 @@ export const ThreadHistorySchema = object({
 export type ThreadHistory = Output<typeof ThreadHistorySchema>;
 
 export const CapabilitiesSchema = object({
+  structured_replies: optional(nullable(array(text))),
   reply_with_received_sticker: optional(nullable(boolean)),
   native_thread_start: optional(nullable(boolean)),
   topic_creation: optional(nullable(boolean)),

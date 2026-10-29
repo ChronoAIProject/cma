@@ -3,6 +3,15 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    pub fn with_native_whatsapp_structured_replies(mut self, enabled: bool) -> Self {
+        self.native_whatsapp_structured_replies = enabled;
+        self
+    }
+
+    pub fn with_native_telegram_structured_replies(mut self, enabled: bool) -> Self {
+        self.native_telegram_structured_replies = enabled;
+        self
+    }
     pub(crate) fn with_discord_voice_decoder(
         mut self,
         decoder: Option<crate::discord::voice::Decoder>,

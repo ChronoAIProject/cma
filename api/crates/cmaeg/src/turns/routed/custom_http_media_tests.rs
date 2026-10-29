@@ -52,9 +52,19 @@ pub(super) fn inline_media_with(
 
 #[tokio::test]
 async fn public_custom_inline_attachment_survives_routed_provider_and_authenticated_tool_read() {
+    verify_inline_attachment(false).await;
+}
+
+#[tokio::test]
+async fn self_service_custom_inline_attachment_reaches_provider_without_record_allowlist() {
+    verify_inline_attachment(true).await;
+}
+
+async fn verify_inline_attachment(durable_custom_execution: bool) {
     let mut app = App::configured(
         true,
         |channel| {
+            channel["durable_custom_execution"] = durable_custom_execution.into();
             channel["sources"][0]["attachments"] = json!({"pointer":"/attachments","origins":[]});
         },
         Some(inline_media()),

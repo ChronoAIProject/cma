@@ -37,6 +37,9 @@ pub enum AdmissionPolicy {
 /// CMAEG `ChannelCreateRequest` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelCreateRequest {
+    /// Immutable owner opt-in to durable execution for authenticated Custom events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_custom_execution: Option<bool>,
     /// Opaque gateway connection selected for this channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_ref: Option<String>,
@@ -132,6 +135,9 @@ pub struct ChannelPage {
 /// CMAEG `ChannelUpdateRequest` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelUpdateRequest {
+    /// Optional immutable mode echo; a supplied value must match the stored marker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_custom_execution: Option<bool>,
     /// Opaque gateway connection selected for this channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_ref: Option<String>,
@@ -375,6 +381,9 @@ pub struct ProviderResponse {
 /// CMAEG `PublicChannelDefinition` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublicChannelDefinition {
+    /// Immutable Custom execution mode; absent means legacy selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_custom_execution: Option<bool>,
     /// Opaque connection retained by the channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_ref: Option<String>,

@@ -123,6 +123,8 @@ pub async fn update(
         state.write_flags(),
     )
     .map_err(ManagementError::Invalid)?;
+    super::custom_execution::validate_providers(&state.providers, &definition)?;
+    super::custom_execution::validate_media(state, Some(&current.definition), &definition)?;
     definition.version = current.record.version;
     let blob = seal_definition(&state.master_keys, &definition)?;
     let version = state

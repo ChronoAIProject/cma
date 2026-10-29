@@ -50,7 +50,7 @@ pub(crate) struct Deps {
 
 pub(crate) async fn compose(
     config: &Config,
-    state: &ManagementState,
+    state: &mut ManagementState,
     deps: Deps,
 ) -> Result<Option<Composition>, Box<dyn std::error::Error + Send + Sync>> {
     config.routing.validate()?;
@@ -76,6 +76,13 @@ pub(crate) async fn compose(
             "media continuations require the optional Mongo index and enabled media service".into(),
         );
     }
+    // This concrete continuation adapter is implemented only by CMA Responses v2.
+    state.custom_existing_agent_media_providers =
+        if config.routing.media_continuations_enabled && media_ready && deps.media.is_some() {
+            std::collections::BTreeSet::from(["cma_codex".to_owned()])
+        } else {
+            Default::default()
+        };
     let coordinator = DeliveryCoordinator::new(deps.delivery).with_custom_stream(deps.custom);
     let media_scheduler = if media_ready {
         let media = deps
@@ -173,7 +180,8 @@ pub(crate) async fn compose(
         )
         .with_admissions_enabled(config.routing.admission_enabled)
         .with_quoted_context(config.routing.quoted_context_enabled)
-        .with_sync_delivery(true),
+        .with_sync_delivery(true)
+        .with_custom_media_providers(state.custom_existing_agent_media_providers.clone()),
     );
     Ok(Some(Composition {
         ingress,

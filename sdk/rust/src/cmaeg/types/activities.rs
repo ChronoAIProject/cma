@@ -273,6 +273,9 @@ pub enum MediaVariant {
 /// CMAEG `Capabilities` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
+    /// Structured content kinds supported for this exact original event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_replies: Option<Vec<String>>,
     /// Resend this event's received native Lark sticker to its original conversation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_with_received_sticker: Option<bool>,
