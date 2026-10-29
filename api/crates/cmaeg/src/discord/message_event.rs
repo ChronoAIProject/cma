@@ -1,7 +1,7 @@
 //! Native message changes are notifications about an admitted original message.
 use super::{
     inbox_reader::Body,
-    normalize::{normalize_with_content, Normalized},
+    normalize::{normalize_with_projections, Normalized},
     GatewayError,
 };
 use cmaeg_core::{
@@ -138,8 +138,13 @@ pub(super) fn normalize_change(
             })
             .ok_or(GatewayError::Authority)?;
         // Admission facts are the original's; edited mentions cannot reroute it.
-        let Normalized::Activity(updated) =
-            normalize_with_content(&merged, bot, policy, body.content_projection.as_ref())?
+        let Normalized::Activity(updated) = normalize_with_projections(
+            &merged,
+            bot,
+            policy,
+            body.content_projection.as_ref(),
+            body.forward_projection.as_ref(),
+        )?
         else {
             return Ok(None);
         };

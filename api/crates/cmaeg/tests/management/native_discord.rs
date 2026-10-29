@@ -30,6 +30,7 @@ fn native_state(provider: &FakeProvider, cma: &FakeCma, nyxid: &FakeNyxid) -> Ma
         enabled: true,
         discovery_enabled: true,
         rich_content_enabled: false,
+        forwards_enabled: false,
         records: BTreeSet::new(),
     });
     state
@@ -174,6 +175,7 @@ async fn full_native_capacity_is_visible_in_saved_channel_and_source_check() {
         enabled: true,
         discovery_enabled: true,
         rich_content_enabled: false,
+        forwards_enabled: false,
         records: (0..64).map(|_| uuid::Uuid::new_v4().to_string()).collect(),
     });
     let (base, stop, task) = serve_app(state).await;
