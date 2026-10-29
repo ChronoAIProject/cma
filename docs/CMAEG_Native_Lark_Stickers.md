@@ -25,7 +25,9 @@ Both switches default to false:
 
 Deploy compatible gateway, SDK and retained-source readers before enabling either writer. Existing retained native source structs reject unknown fields, so do not roll readers back after admitting sticker facts. Disable issuance instead; exact retained duplicate admission and durable results continue to replay. The optional outbound field is omitted when false and the optional context capability is absent unless proved, preserving legacy serialized bodies and hashes. Generic `native_media` capabilities do not advertise Lark sticker uploads.
 
-Native connected verification is still required before activation. Tests use local native transports and record servers and send no real platform messages.
+Tests use local native transports and record servers and send no real platform
+messages. Activation after compatible readers deploy makes this available for
+owner testing; it does not establish connected Lark or Feishu delivery acceptance.
 
 ## Official contract evidence, reviewed 2026-10-29
 
