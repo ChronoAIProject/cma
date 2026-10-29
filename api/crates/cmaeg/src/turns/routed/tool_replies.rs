@@ -30,6 +30,21 @@ pub struct RoutedToolReplies {
     coordinator: DeliveryCoordinator,
 }
 impl RoutedToolReplies {
+    /// The sealed original reference is the sole capability. This read returns
+    /// no event content and does not acquire or mutate an execution lease.
+    pub async fn attest_event(
+        &self,
+        request: &super::EventAttestationRequest,
+    ) -> Result<bool, ExecutionError> {
+        super::event_attestation::attest(
+            &self.plans,
+            &self.journal,
+            self.authority.as_ref(),
+            request,
+        )
+        .await
+    }
+
     pub fn new(
         plans: PlanStore,
         journal: Journal,
