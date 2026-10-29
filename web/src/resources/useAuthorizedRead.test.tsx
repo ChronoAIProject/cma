@@ -65,7 +65,7 @@ it('removes old rows on a failed refresh and aborts a request when disabled', as
   expect(hook.result.current.state.status).toBe('loading');
 });
 
-it('clears cached facts on foreground before obtaining new authority', async () => {
+it('keeps a current value on foreground and coalesces focus and visibility into one refresh', async () => {
   let finish: ((value: AuthorizedValue<string>) => void) | undefined;
   const read = vi
     .fn()
@@ -78,10 +78,47 @@ it('clears cached facts on foreground before obtaining new authority', async () 
     );
   const hook = renderHook(() => useAuthorizedRead(read));
   await waitFor(() => expect(hook.result.current.state.status).toBe('ready'));
-  act(() => window.dispatchEvent(new Event('focus')));
-  expect(hook.result.current.state.status).toBe('loading');
+  act(() => {
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+  });
+  // Still inside its authority deadline: no loading flash while revalidating.
+  expect(hook.result.current.state).toEqual({ status: 'ready', value: 'previous fact' });
+  expect(read).toHaveBeenCalledTimes(2);
   await act(async () => finish?.({ value: 'current fact' }));
   expect(hook.result.current.state).toEqual({ status: 'ready', value: 'current fact' });
+});
+
+it('withdraws a value on foreground when its deadline passed while timers were throttled', async () => {
+  vi.useFakeTimers();
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce({
+      value: 'shared secret',
+      revalidateAt: new Date(Date.now() + 10_000).toISOString(),
+    })
+    .mockImplementation(() => new Promise(() => {}));
+  const hook = renderHook(() => useAuthorizedRead(read));
+  await act(async () => {});
+  expect(hook.result.current.state.status).toBe('ready');
+  // Move the wall clock past the deadline without running the expiration timer,
+  // as a throttled background tab would.
+  vi.setSystemTime(Date.now() + 11_000);
+  act(() => window.dispatchEvent(new Event('focus')));
+  expect(hook.result.current.state.status).toBe('loading');
+  expect(JSON.stringify(hook.result.current.state)).not.toContain('shared secret');
+});
+
+it('does not refresh or clear when the tab becomes hidden', async () => {
+  const read = vi.fn(async () => ({ value: 'fact' }));
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  const hook = renderHook(() => useAuthorizedRead(read));
+  await waitFor(() => expect(hook.result.current.state.status).toBe('ready'));
+  visibility.mockReturnValue('hidden');
+  act(() => document.dispatchEvent(new Event('visibilitychange')));
+  expect(hook.result.current.state).toEqual({ status: 'ready', value: 'fact' });
+  expect(read).toHaveBeenCalledTimes(1);
+  visibility.mockRestore();
 });
 
 it.each(['invalid timestamp', new Date(0).toISOString()])(
