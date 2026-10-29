@@ -57,8 +57,21 @@ pub(super) async fn apply(
         TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
         TransactionLogError::Driver(error) => ApplyError::Driver(error),
     })?;
+    let retry_current = if evidence.has_source_deferred() {
+        let current = store
+            .bindings
+            .continuation_retry_authority(&command.receipt.envelope, session)
+            .await?;
+        let fenced = store.agents.update_one(doc! {"_id":agent.id.as_str(),"revision":i64::try_from(agent.revision).map_err(|_|CommandLedgerError::Corrupt)?},doc! {"$inc":{"agent_command_admission_fence":1_i64}}).session(&mut *session).await?;
+        if fenced.matched_count != 1 {
+            return Err(CommandLedgerError::Conflict.into());
+        }
+        current
+    } else {
+        false
+    };
     let revision = command.revision;
-    if evidence.apply(&mut command, &mut lane, &agent)? {
+    if evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)? {
         worker_apply::write(store, &command, revision, &lane, session).await?;
     }
     Ok(command)

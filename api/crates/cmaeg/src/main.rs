@@ -7,7 +7,7 @@ use cmaeg::{
 };
 use std::{ffi::OsString, io::Write, path::Path};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -59,6 +59,9 @@ fn main() {
         | "--migrate-thread-fences"
         | "--print-thread-fences-runtime-role"
         | "--print-thread-fences-migration-role"
+        | "--migrate-media-continuations"
+        | "--print-media-continuations-runtime-role"
+        | "--print-media-continuations-migration-role"
         | "--migrate-whatsapp-forms"
         | "--print-whatsapp-forms-runtime-role"
         | "--print-whatsapp-forms-migration-role")] => run_database_command(command),
@@ -175,12 +178,20 @@ fn run_database_command(command: &str) {
             .map_err(|_| "CMAEG_MONGODB_DATABASE is missing or not valid UTF-8")?;
         if !matches!(
             command,
-            "--migrate" | "--migrate-thread-fences" | "--migrate-whatsapp-forms"
+            "--migrate"
+                | "--migrate-thread-fences"
+                | "--migrate-whatsapp-forms"
+                | "--migrate-media-continuations"
         ) {
             println!(
                 "{}",
                 if command.contains("thread-fences") {
                     cmaeg::records::mongo::thread_fences_role(
+                        &database,
+                        command.ends_with("migration-role"),
+                    )
+                } else if command.contains("media-continuations") {
+                    cmaeg::records::mongo::media_continuations_role(
                         &database,
                         command.ends_with("migration-role"),
                     )
@@ -202,6 +213,8 @@ fn run_database_command(command: &str) {
             .map_err(|_| "Gateway database client configuration failed; details withheld")?;
         if command == "--migrate-thread-fences" {
             cmaeg::records::mongo::migrate_thread_fences(&client.database(&database)).await
+        } else if command == "--migrate-media-continuations" {
+            cmaeg::records::mongo::migrate_media_continuations(&client.database(&database)).await
         } else if command == "--migrate-whatsapp-forms" {
             cmaeg::records::mongo::migrate_whatsapp_flows(&client.database(&database)).await
         } else {

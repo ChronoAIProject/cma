@@ -5,7 +5,8 @@ mod model;
 mod observer;
 mod store;
 pub use model::{
-    ActivityConsumer, ActivityDelivery, ActivityPage, ActivityRecipient, ChannelActivity,
+    ActivityConsumer, ActivityDelivery, ActivityMediaResponse, ActivityPage, ActivityRecipient,
+    ChannelActivity,
 };
 pub use model::{Change, ConsumerState};
 pub use observer::ObservedActivity;

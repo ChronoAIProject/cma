@@ -90,9 +90,15 @@ impl AdmittedAgentCommand {
         (priority, self.receipt.agent_order)
     }
 
-    /// An admitted Channel message retains its normal-message position while
-    /// awaiting execution authority. Controls may still address an active turn.
-    pub fn holds_message_order(&self) -> bool {
+    /// Deferred supplements and held Channel messages retain their original
+    /// message position. Controls may still address an active turn.
+    pub fn holds_message_order(&self, now: &str) -> bool {
+        if self.awaiting_claim(now)
+            && !self.queue_expired(now)
+            && !self.continuation_retry_delay(now).is_zero()
+        {
+            return true;
+        }
         self.status == AgentResponseStatus::WaitingAction
             && self.work.dispatch.is_none()
             && matches!(
@@ -126,6 +132,9 @@ pub fn command_ready_for_claim(
     let Some(agent) = agent else { return true };
     if expired || !agent.status.is_live() || agent.requested_stop_reason.is_some() {
         return true;
+    }
+    if !command.continuation_retry_delay(now).is_zero() {
+        return false;
     }
     if agent
         .conversation

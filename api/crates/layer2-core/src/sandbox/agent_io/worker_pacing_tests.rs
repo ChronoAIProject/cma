@@ -4,6 +4,7 @@ use crate::SubjectId;
 fn envelope() -> AgentCommandEnvelope {
     let command = AgentCommand::message("queued before runtime");
     AgentCommandEnvelope {
+        continuation: None,
         schema_version: AGENT_IO_SCHEMA_VERSION,
         command_id: AgentCommandId::generate(),
         agent_id: crate::AgentId::generate(),

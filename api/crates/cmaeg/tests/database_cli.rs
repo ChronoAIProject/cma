@@ -7,6 +7,7 @@ const LOCAL_URI: &str = "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=1";
 const COMMANDS: &[&[&str]] = &[
     &["--migrate"],
     &["--migrate-whatsapp-forms"],
+    &["--migrate-media-continuations"],
     &["--import-legacy-records", "SYNTHETIC_PRIVATE_EXPORT_PATH"],
 ];
 
@@ -175,5 +176,33 @@ fn optional_forms_roles_are_additive_and_never_grant_runtime_delete() {
             .unwrap()
         );
         assert!(!role.to_string().contains("remove"));
+    }
+}
+
+#[test]
+fn optional_media_continuation_roles_stay_inside_gateway_collections() {
+    for (command, migration) in [
+        ("--print-media-continuations-runtime-role", false),
+        ("--print-media-continuations-migration-role", true),
+    ] {
+        let output = run(&[command], &[(DATABASE, OsStr::new("fixture"))]);
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let role: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            role,
+            serde_json::to_value(cmaeg::records::mongo::media_continuations_role(
+                "fixture", migration
+            ))
+            .unwrap()
+        );
+        let grants = role["privileges"].as_array().unwrap();
+        assert_eq!(grants.len(), if migration { 2 } else { 1 });
+        for grant in grants {
+            assert_eq!(grant["resource"]["db"], "fixture");
+            assert!(["eg_media_continuation_records", "eg_schema_migrations"]
+                .contains(&grant["resource"]["collection"].as_str().unwrap()));
+        }
+        assert_eq!(role.to_string().contains("remove"), !migration);
     }
 }

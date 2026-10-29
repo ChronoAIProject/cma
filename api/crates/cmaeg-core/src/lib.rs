@@ -13,6 +13,8 @@ pub mod activity;
 
 /// Paginated reference-only native conversation history.
 pub mod conversation_history;
+/// Exact file and derived-text claims for parent-bound media continuations.
+pub mod media_continuation;
 /// Verified opt-in native thread contract.
 pub mod thread;
 /// Bounded native thread lifecycle wire contract.
