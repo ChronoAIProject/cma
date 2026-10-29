@@ -2,7 +2,12 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest';
 import { DesktopPanel } from './DesktopPanel';
 
-type Connection = EventTarget & { viewOnly: boolean; disconnect: () => void; url: string };
+type Connection = EventTarget & {
+  viewOnly: boolean;
+  resizeSession: boolean;
+  disconnect: () => void;
+  url: string;
+};
 const { connections } = vi.hoisted(() => ({ connections: [] as Connection[] }));
 vi.mock('@novnc/novnc', () => ({
   default: class extends EventTarget {
@@ -36,6 +41,7 @@ it('requires explicit user input control and pauses it during an Agent turn', as
   await waitFor(() => expect(connections).toHaveLength(1));
   const connection = connectionAt(0);
   expect(connection.viewOnly).toBe(true);
+  expect(connection.resizeSession).toBe(false);
   act(() => connection.dispatchEvent(new Event('connect')));
   fireEvent.click(screen.getByRole('button', { name: 'Control desktop' }));
   expect(connection.viewOnly).toBe(false);
@@ -68,4 +74,28 @@ it('reconnects with input disabled and releases the previous stream', async () =
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeEnabled();
   view.unmount();
   expect(current.disconnect).toHaveBeenCalledOnce();
+});
+
+it('keeps the live viewer and controls mounted when entering and leaving full screen', async () => {
+  const view = render(<DesktopPanel agentId="agt_demo" running={false} onClose={vi.fn()} />);
+  await waitFor(() => expect(connections).toHaveLength(1));
+  const panel = screen.getByRole('region', { name: 'Machine desktop' });
+  const request = vi.fn(async () => {
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: panel });
+    document.dispatchEvent(new Event('fullscreenchange'));
+  });
+  const exit = vi.fn(async () => {
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
+    document.dispatchEvent(new Event('fullscreenchange'));
+  });
+  Object.defineProperty(panel, 'requestFullscreen', { configurable: true, value: request });
+  Object.defineProperty(document, 'exitFullscreen', { configurable: true, value: exit });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Full screen' })));
+  expect(request).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Control desktop' })).toBeInTheDocument();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Exit full screen' })));
+  expect(exit).toHaveBeenCalledOnce();
+  expect(connections).toHaveLength(1);
+  expect(connectionAt(0).disconnect).not.toHaveBeenCalled();
+  view.unmount();
 });
