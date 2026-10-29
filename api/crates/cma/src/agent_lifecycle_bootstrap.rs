@@ -30,6 +30,14 @@ impl InlineAgentLifecycle {
                 "the recorded Sandbox does not match its lifecycle configuration".into(),
             ));
         }
+        if matches!(
+            sandbox.status,
+            SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
+        ) {
+            return Err(AgentLifecycleProvisioningError::Conflict(
+                "Sandbox provisioning failed".into(),
+            ));
+        }
         if let Some(id) = self
             .recorded_bootstrap_workspace(caller, sandbox_id, workspace_profile)
             .await?
