@@ -255,6 +255,7 @@ mod tests {
 
     fn transcript(pages: &[&str], truncated_at_seconds: Option<u32>) -> Derived {
         Derived::Transcript {
+            source_sha256: "0".repeat(64),
             document: TextDocument {
                 pages: pages.iter().map(|page| (*page).to_owned()).collect(),
                 truncated: false,

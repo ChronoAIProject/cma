@@ -483,10 +483,38 @@ access. Gateway reference verification and the `expires_at` deadline remain
 part of the gateway's provider-integration protocol; these operations add no
 native MCP tool names.
 
+The exact bound consumer Agent key may publish late media for an already admitted
+ExternalEvent under `.../events/{event_id}/media/{attachment_index}`. `POST
+/attachment` accepts raw bytes with required `Content-Type` and `Content-Length`,
+plus query fields `name`, `sha256`, `event_expires_at` and optional
+`gateway_binding_generation`. It returns 201 with the verified Agent attachment
+receipt. `GET /attachment` recovers that same successful receipt (200), or returns
+404 while it is absent/pending. Uploads are limited to 20 MiB, two concurrent body
+slots and a 45-second body deadline; authorization precedes body buffering.
+
+`POST /supplement` accepts `gateway_binding_generation`, `event_expires_at`, the
+exact artifact claim and `derived_text`. Its 202 response names a separate command
+and Responses v2 URL, queued status, queue deadline, and five server metadata
+fields binding the parent command/response/fingerprint, artifact slot and new
+command fingerprint. The original ExternalEvent is never resubmitted. Manager
+rechecks Gateway artifact authority before admission and runtime input; each
+parent/index/kind slot remains permanent across retries. Media responses use
+`Cache-Control: private, no-store`; refusals retain the JSON string `error`
+envelope, including 503 `media_continuation_unavailable` for transient source or
+storage failures. See [Event media continuations](CMA_Event_Media_Continuations.md)
+for the exact wire schema, lifetime, durable retry proof and delivery contract.
+
 Both DELETE operations return 204 after durable retirement admission. Conversation
 cleanup stops the Agent and removes its Worktree through the existing workers;
-binding cleanup also retires its Sandbox. Once retired, a binding or conversation
-id cannot be resurrected in the same generation. Supplied keys use encrypted
+binding cleanup first admits retirement of its exact owned Sandbox, fencing
+revival before waiting for conversation cleanup. This lets a paused Sandbox's
+existing retirement worker remove its retained provider object and prove process
+absence without starting a replacement Pod. Paused Agents with an earlier
+`binding_retired` stop then settle under the same parent/generation/home/provider
+absence checks; no runtime close receipt or completed turn is fabricated. A
+borrowed ExistingAgent target only loses its binding association and retains its
+Agent and resumable Sandbox. Once retired, a binding or conversation id cannot
+be resurrected in the same generation. Supplied keys use encrypted
 custody and are never minted, renewed, or revoked by the managed-key controller.
 
 Binding PUT with the same profile digest and a changed supplied key rotates the
@@ -1294,6 +1322,9 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` | - | - | 200 EventContext; 401/403/404/503 Responses error |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | raw binary; upload query | Content-Type, Content-Length | 201 AgentAttachment; 400/403/409/413/429/503 media error |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | - | - | 200 AgentAttachment; 403/404/503 media error |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement` | BindingMediaSupplement | - | 202 supplementary command; 400/403/409/503 media error |
 | `GET /api/v1/gateway/channel-records` | - | owner, after, limit | 200 GatewayRecordPageView |
 | `PUT /api/v1/gateway/channel-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
 | `GET /api/v1/gateway/channel-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
@@ -1381,11 +1412,20 @@ pools and retained homes keep their admitted templates.
 | `POST /api/v1/agents/{id}/skills` | InstallAgentSkillRequest; key | - | 202 AgentSkillsView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
+| `POST /api/v1/agents/{id}/recover-worktree` | -; required key | - | 202 AgentView |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/desktop` | - | - | 200 DesktopDescriptor; 404 ProblemDocument |
 | `GET /api/v1/agents/{id}/desktop/ws` | WebSocket upgrade; browser Origin | - | 101 RFB stream; 400/403 refusal; 404/409/503 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
 | `POST /api/v1/workspaces/{id}/agents` | CreateAgentRequest; key | - | 201 AgentView |
+
+`recover-worktree` admits another initial worktree preparation attempt for a
+failed Agent that has never become ready. The Agent ID and persistent volume are
+preserved; the failed worktree and its evidence remain retained while a fresh
+worktree is allocated. This bodyless operation requires the owner with CMA use
+authority or a CMA administrator. Reuse the original key after an uncertain
+response. HTTP 202 means recovery is admitted, not that preparation is complete.
+Ineligible states return HTTP 409 `agent_worktree_recovery_conflict`.
 
 ### Agent home files
 

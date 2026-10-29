@@ -199,6 +199,7 @@ applies with all media flags off.**
 | `CMAEG_BINDING_PREPARATION_ENABLED` | boolean | `false` | Enables generation preparation for new routed CMA profile targets. Requires durable recovery, exact provider preparation paths and management authentication. Keep enabled after migration even when new replacement enrollment is stopped. See [fresh-event preparation](CMAEG_Fresh_Event_Binding_Preparation.md). |
 | `CMAEG_BINDING_REPLACEMENT_BINDINGS` | comma-separated binding IDs | empty | Explicit replacement enrollment for new eligible admissions only; no wildcard, at most 256 IDs. Requires generation preparation. Clearing the list stops new replacement authority without changing retained admissions. |
 | `CMAEG_ROUTED_RECOVERY_ENABLED` | boolean | `false` | Installs the durable admission adapter, replay executor, tool receipts and supervised recovery scheduler. Required before selecting records or enabling admission. Keep enabled while retained routed work can execute or retry. A stopped recovery worker removes readiness; shutdown uses the existing turn drain deadline. See [durable routed execution](CMAEG_Routed_Execution.md). |
+| `CMAEG_MEDIA_CONTINUATIONS_ENABLED` | boolean | `false` | New routed events targeting an existing CMA Agent durably deliver original attachments and late transcripts through independent Append commands. Requires routed recovery, enabled media service and the optional Gateway-owned Mongo media index. Deploy compatible Agent Manager and Gateway readers before enabling this writer. A ready index keeps recovery active with the flag off. Original event commands are never replayed or interrupted. See [media continuations](CMAEG_Media_Continuations.md). |
 | `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED` | boolean | `false` | Writes versioned bounded native quoted/context data on new durable ordinary admissions; Discord fixes it at inbox capture. Deploy all serving, provider and rollback readers first. Gate-off replays preserve existing snapshots. See [native quoted context](CMAEG_Native_Quoted_Context.md). |
 | `CMAEG_ROUTED_ADMISSION_ENABLED` | boolean | `false` | Allows new routed plans only for explicitly selected records. Set false to pause new admissions with 503 while exact committed retries and recovery continue. This does not disable the channel's legacy path when no routing policy exists. |
 | `CMAEG_ROUTED_CHANNEL_RECORDS` | comma-separated explicit record IDs | empty | At most 64 IDs; no wildcard. Unselected ingress keeps its existing launcher without admission-store reads. Retain selected IDs while their durable identities can be retried; removing selection is not a safe rollback. Provider replay capability must be explicitly configured and proved before a new routed plan is accepted. |
@@ -331,9 +332,13 @@ its existing `paths` object:
 Both paths are required and use the CMA Responses v2 dialect. The same strict
 allowlisted origin, normalized templates and encoded opaque path segments apply.
 Redirects are never followed. Do not infer recovery from a provider's POST path
-or name. Leave Nyxbot recovery absent until its deployed API supplies a verified
-snapshot/replay contract. The deployment manifest includes the same opt-in
-example and deliberately leaves both provider entries unchanged.
+or name. The deployment manifest also explicitly configures NyxBot's native
+`/api/v1/nyxbot/responses/{response_id}` snapshot and
+`/api/v1/nyxbot/responses/{response_id}/events` replay paths. The source-derived
+NyxBot conformance tests verify exact response identity, native Agent identity,
+terminal output, exclusive durable cursors and recovery from observation errors
+without another turn POST. This is provider contract evidence, not verification
+that a native platform socket is connected or that a platform message arrived.
 
 The transport only reads an already accepted response using the fresh consumer
 agent key supplied by the dispatcher. CMA's response endpoints recheck current
@@ -1286,6 +1291,32 @@ kubectl logs -n chrono-bot deploy/cmaeg --since=24h \
 ```
 
 ### Speech-to-text endpoint
+
+The production manifest records the activation verified on 29 October 2026:
+`CMAEG_MEDIA_FFMPEG_DIR=/opt/ffmpeg/bin` and the existing NyxID `llm-openai`
+service's `/audio/transcriptions` endpoint, using `gpt-transcribe`. The dedicated
+operator-provisioned key is stored only in `chrono-bot/cmaeg-stt` as
+`CMAEG_STT_API_KEY`; its scope is `proxy` for that one service, with all-service
+and node access disabled. It is a static service-use key, with manual rotation;
+no human CLI/session token is deployed. A new environment must provision its
+own dedicated credential before enabling this URL. The runtime's empty defaults
+remain available for deployments that intentionally disable transcription.
+
+Production activation passed the media sandbox startup self-check, health and
+readiness, with `cmaeg_media_sandbox_ready 1`. An isolated owner Custom channel
+then delivered a five-second WAV through normalization, transcription and a real
+CMA Agent response. The answer was present only in the recording. The observed
+transcription took 1.016 seconds; the entire first-conversation request took
+20.501 seconds, including Agent startup and model response. Exactly one audio
+transform, one transcript and five metered seconds were recorded. These are
+individual measurements, not latency percentiles. The temporary channel, Agent,
+sandbox and key were retired through supported APIs.
+
+This acceptance covers short audio through a Gateway-owned profile consumer.
+It does not establish connected Telegram/WhatsApp/Lark/Discord source fetching,
+every codec, long audio, reliable late transcript delivery, or original-file
+transfer to existing-Agent consumers. Keep the WAV normalization path enabled;
+this activation does not add `ogg` to the upstream's direct format allowlist.
 
 With `CMAEG_STT_URL` set, the gateway transcribes audio through an
 OpenAI-compatible endpoint: one multipart `POST` per attempt carries `file`
@@ -3105,3 +3136,7 @@ interaction storage retains encrypted original credential proofs for three days;
 no new collection or readiness migration is required. Gate-off stops new changes
 and original-proof capture while retained recovery remains available subject to
 current consent and authority. See [the full contract](CMAEG_Native_WhatsApp_Message_Events.md).
+
+## Optional media continuation scheduling storage
+
+The continuation worker uses a separate expiring active-head collection, bounded keyset scans and a preserved original retention deadline. It never treats a scheduling head as admission authority. Base Gateway startup does not require the optional migration or role. Deploy compatible readers, then review the optional role/migration and readiness before enabling a worker; older isolated readers reject unrecognized optional grants. See [media continuation storage](CMAEG_Media_Continuation_Storage.md) for exact commands, retention, rollback and verification.

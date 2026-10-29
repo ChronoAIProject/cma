@@ -22,6 +22,8 @@ pub struct AgentReadService {
 
 #[path = "agent_reads/authorized.rs"]
 mod authorized;
+#[path = "agent_reads/recovery.rs"]
+mod recovery;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
 #[path = "agent_reads/configuration.rs"]
 mod configuration;

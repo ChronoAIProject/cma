@@ -13,7 +13,12 @@ use super::{
     QueuedMessageState, TypedFailure,
 };
 
+#[path = "agent_operation_prewrite.rs"]
+mod prewrite;
+use prewrite::append_pre_write_rollback;
+
 enum SendClassification {
+    SourceDeferred(String),
     Rejected(String),
     PreWrite(String),
     Confirmed,
@@ -105,6 +110,9 @@ impl AgentOperationService {
                         {
                             SendClassification::Rejected(detail)
                         }
+                        ConversationSendOutcome::PreWriteFailure(
+                            layer3_adapter::AdapterError::InputAuthorityUnavailable(detail),
+                        ) => SendClassification::SourceDeferred(detail),
                         ConversationSendOutcome::PreWriteFailure(error) => {
                             SendClassification::PreWrite(error.to_string())
                         }
@@ -131,6 +139,7 @@ impl AgentOperationService {
         let detail = match &classification {
             SendClassification::Rejected(detail)
             | SendClassification::PreWrite(detail)
+            | SendClassification::SourceDeferred(detail)
             | SendClassification::Ambiguous(detail) => Some(bounded_detail(detail)),
             SendClassification::Confirmed => None,
         };
@@ -208,11 +217,11 @@ impl AgentOperationService {
                             .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
                     }
                 }
-                SendClassification::Rejected(detail) | SendClassification::PreWrite(detail) => {
-                    next_record
-                        .mark_pre_write_failed(operation_failure("input_not_written", detail, &at)?)
-                        .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?
-                }
+                SendClassification::Rejected(detail)
+                | SendClassification::PreWrite(detail)
+                | SendClassification::SourceDeferred(detail) => next_record
+                    .mark_pre_write_failed(operation_failure("input_not_written", detail, &at)?)
+                    .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?,
                 SendClassification::Ambiguous(detail) => next_record
                     .require_recovery(operation_failure("input_write_ambiguous", detail, &at)?)
                     .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?,
@@ -221,9 +230,27 @@ impl AgentOperationService {
             let mut logs = vec![operation_log(&next, prepared.operation_sequence)?];
             if matches!(
                 &classification,
-                SendClassification::Rejected(_) | SendClassification::PreWrite(_)
+                SendClassification::Rejected(_)
+                    | SendClassification::PreWrite(_)
+                    | SendClassification::SourceDeferred(_)
             ) {
-                append_pre_write_rollback(&current, &mut next, &prepared, &at, &mut logs)?;
+                let deferred = if matches!(classification, SendClassification::SourceDeferred(_)) {
+                    self.execution_authority
+                        .as_ref()
+                        .and_then(|authority| authority.continuation_envelope())
+                        .map(|envelope| {
+                            super::agent_io::continuation_retry::deferred_detail(
+                                envelope,
+                                prepared.operation_sequence,
+                                prepared.turn_sequence,
+                            )
+                        })
+                } else {
+                    None
+                };
+                append_pre_write_rollback(
+                    &current, &mut next, &prepared, &at, &mut logs, deferred,
+                )?;
             }
             super::agent_io::trigger::project_delivery(
                 &mut next,
@@ -242,7 +269,7 @@ impl AgentOperationService {
                                 detail.clone().expect("failure detail exists"),
                             ))
                         }
-                        SendClassification::PreWrite(_) => {
+                        SendClassification::PreWrite(_) | SendClassification::SourceDeferred(_) => {
                             Err(AgentOperationError::RuntimeUnavailable(
                                 detail.clone().expect("failure detail exists"),
                             ))
@@ -372,79 +399,12 @@ fn settle_queued_message(
     }
     let result = match classification {
         SendClassification::Confirmed => message.mark_delivered(),
-        SendClassification::Rejected(_) | SendClassification::PreWrite(_) => {
-            message.retry_after_pre_write_failure()
-        }
+        SendClassification::Rejected(_)
+        | SendClassification::PreWrite(_)
+        | SendClassification::SourceDeferred(_) => message.retry_after_pre_write_failure(),
         SendClassification::Ambiguous(_) => message.require_recovery(),
     };
     result.map_err(|error| AgentOperationError::Corrupt(error.to_string()))
-}
-
-fn append_pre_write_rollback(
-    current: &Agent,
-    next: &mut Agent,
-    prepared: &PreparedAgentOperation,
-    at: &str,
-    logs: &mut Vec<AgentLogKind>,
-) -> Result<(), AgentOperationError> {
-    match &prepared.rollback {
-        PreWriteRollback::Settings(previous) => {
-            next.conversation.settings = previous.clone();
-        }
-        PreWriteRollback::NewTurn
-            if current.status == AgentStatus::Working
-                && current.conversation.active_turn == Some(prepared.turn_sequence) =>
-        {
-            next.conversation.active_turn = None;
-            next.transition(AgentStatus::Ready, at.to_owned(), None)
-                .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
-            logs.push(AgentLogKind::TurnFailed {
-                turn_sequence: prepared.turn_sequence,
-                failure: TypedFailure {
-                    class: "input_not_written".into(),
-                    detail: "the message did not reach the runtime writer".into(),
-                },
-            });
-            logs.push(AgentLogKind::StatusChanged {
-                from: AgentStatus::Working,
-                to: AgentStatus::Ready,
-            });
-        }
-        PreWriteRollback::Approval(snapshot)
-            if matches!(
-                current.status,
-                AgentStatus::Working | AgentStatus::WaitingApproval
-            ) && current.conversation.active_turn == Some(prepared.turn_sequence) =>
-        {
-            logs.push(AgentLogKind::ApprovalRequested {
-                approval_id: snapshot.approval_id.clone(),
-                action: snapshot.action.clone(),
-                detail: snapshot.detail.clone(),
-                runtime_locator: snapshot.runtime_locator.clone(),
-            });
-            if current.status == AgentStatus::Working {
-                next.transition(AgentStatus::WaitingApproval, at.to_owned(), None)
-                    .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
-                logs.push(AgentLogKind::StatusChanged {
-                    from: AgentStatus::Working,
-                    to: AgentStatus::WaitingApproval,
-                });
-            }
-        }
-        PreWriteRollback::WaitingApproval
-            if current.status == AgentStatus::Working
-                && current.conversation.active_turn == Some(prepared.turn_sequence) =>
-        {
-            next.transition(AgentStatus::WaitingApproval, at.to_owned(), None)
-                .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
-            logs.push(AgentLogKind::StatusChanged {
-                from: AgentStatus::Working,
-                to: AgentStatus::WaitingApproval,
-            });
-        }
-        _ => {}
-    }
-    Ok(())
 }
 
 fn receipt(agent: Agent, operation_sequence: u64) -> AgentOperationReceipt {

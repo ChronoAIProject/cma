@@ -180,6 +180,23 @@ impl Agents<'_> {
             )
             .await
     }
+    /// Retry failed initial worktree preparation for the same never-ready Agent.
+    /// Its PV and failed worktree are retained; recovery allocates a fresh worktree.
+    /// Preserve this key when retrying an uncertain response. Readiness is asynchronous.
+    pub async fn recover_worktree(&self, id: &str, key: &IdempotencyKey) -> Result<Agent> {
+        let value: Agent = self
+            .client
+            .command(
+                Method::POST,
+                &["agents", id, "recover-worktree"],
+                None::<&()>,
+                key,
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        identity(&value.id, id)?;
+        Ok(value)
+    }
     /// Submit an idempotent owner message and return its queue acknowledgement.
     pub async fn input(
         &self,

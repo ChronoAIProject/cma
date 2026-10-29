@@ -59,8 +59,17 @@ impl<'a> Request<'a> {
         media_type: &str,
         key: &'a IdempotencyKey,
     ) -> Result<Self> {
-        let mut request =
-            Self::command::<()>(Method::POST, segments, None, key, StatusCode::CREATED)?;
+        let mut request = Self::binary_operation(segments, content, media_type)?;
+        request.key = Some(key);
+        Ok(request)
+    }
+
+    pub(crate) fn binary_operation(
+        segments: &'a [&'a str],
+        content: Vec<u8>,
+        media_type: &str,
+    ) -> Result<Self> {
+        let mut request = Self::operation::<()>(Method::POST, segments, None, StatusCode::CREATED)?;
         request.body = Some(content);
         request.headers.insert(
             header::CONTENT_TYPE,
@@ -295,6 +304,31 @@ pub(crate) fn problem_error(
             .is_none_or(|value| value.trim().is_empty())
         && let Some(error) = problem.extensions.remove("error")
     {
+        if let Some(code) = error.as_str().filter(|code| {
+            matches!(
+                *code,
+                "invalid_media_continuation"
+                    | "media_continuation_refused"
+                    | "media_continuation_conflict"
+                    | "media_attachment_not_found"
+                    | "media_agent_not_ready"
+                    | "media_too_large"
+                    | "media_continuation_unavailable"
+                    | "media_upload_capacity"
+            )
+        }) && problem.extensions.is_empty()
+            && problem.code.is_none()
+            && problem.status.is_none()
+        {
+            return Error::Api {
+                status: status.as_u16(),
+                code: Some(code.into()),
+                message: code.into(),
+                request_id,
+                retry_after,
+                extensions: BTreeMap::new(),
+            };
+        }
         let Some(value) = error.as_object() else {
             return Error::protocol("Responses error envelope is invalid");
         };
