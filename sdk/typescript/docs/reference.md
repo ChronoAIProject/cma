@@ -991,9 +991,9 @@ export function closeOriginalTopic(client: Cmaeg, eventRef: string) {
 }
 ```
 
-Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the
-original Event target and issues no `thread_ref`. There is no list, create,
-or private-chat topic operation. General uses the same Event request only when
+Use `reopen` / `ThreadAction::Reopen` for reopening. Original-topic lifecycle uses
+the Event target. Independent topic-creation consent can also grant a scoped
+created-topic reference, described below. General uses the same Event request only when
 `relay_authoring.native_telegram_general_topic_lifecycle_enabled` is true and
 the retained native human message proves the original forum. It keeps the public
 thread absent; clients must never synthesize topic ID `1` from a missing thread.
@@ -1006,6 +1006,45 @@ fence across process restart, different keys and event expiry. Never retry an
 unknown result with a new key. Discovery describes scope; current Telegram bot
 administrator topic permissions are checked at execution. Source support and
 local tests do not establish connected-account native acceptance.
+
+### Native Telegram forum topic creation
+
+The independent source consent `topic_creation: true` and default-off operator
+capability `native_telegram_topic_creation_enabled` enable empty named topics in
+the original admitted human message's forum supergroup. Check ordinary context
+for `capabilities.topic_creation: true`. Existing topic-lifecycle consent is not
+required, and creation does not move the original conversation or send a message.
+
+```ts
+import { Cmaeg } from '@chronoai/cma-sdk';
+
+export async function createForumTopic(client: Cmaeg, eventRef: string) {
+  const receipt = await client.createEventThread(eventRef, 'stable-create', {
+    name: 'Release planning',
+  });
+  if (receipt.outcome.status === 'confirmed' && receipt.thread) {
+    await client.manageThread('stable-close-created', {
+      target: { type: 'thread', thread_ref: receipt.thread.thread_ref },
+      action: 'close',
+    });
+  }
+}
+```
+
+Omit `auto_archive_duration` for Telegram; Discord still requires its existing
+supported duration. Names use the neutral 1–100 printable-character bound.
+The confirmed receipt may contain a sealed `thread_ref` usable for rename,
+close and reopen, tied to the original consumer, custody and event expiry.
+A confirmed receipt can omit that reference if custody changed during creation.
+Current bot identity, forum state and administrator `can_manage_topics` permission
+are checked before the provider write.
+
+Keep the same request and idempotency key for replay. An unknown create holds a
+persistent bot/chat creation fence across new keys, process restart and event
+expiry; never retry it under a new key. CMA currently does not expose private
+chat creation, icon selection or topic listing. Telegram supports private-chat
+creation and icons, while the reviewed Bot API has no generic topic-list method.
+See [the topic-creation contract](../../../docs/CMAEG_Native_Telegram_Topic_Creation.md).
 
 ### Native WhatsApp incoming message changes
 

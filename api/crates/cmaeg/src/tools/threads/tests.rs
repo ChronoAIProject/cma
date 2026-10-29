@@ -587,7 +587,7 @@ async fn a_read_can_confirm_unknown_creation_only_with_exact_owner_name_duration
                 "77",
                 &CreateThreadRequest {
                     name: "Review".into(),
-                    auto_archive_duration: 1440
+                    auto_archive_duration: Some(1440)
                 }
             )
             .await

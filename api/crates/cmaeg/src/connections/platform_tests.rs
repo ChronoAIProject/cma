@@ -215,6 +215,7 @@ impl Native {
         let material = record.material.as_ref().unwrap();
         definition.sources = vec![Source::Telegram {
             topic_lifecycle: false,
+            topic_creation: false,
             message_events: false,
             channel_posts: false,
             bot_id: material.bot_id.clone(),

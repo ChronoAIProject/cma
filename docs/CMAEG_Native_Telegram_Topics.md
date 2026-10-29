@@ -55,8 +55,11 @@ continue decoding it. It is not exhaustive: rename uses the already-supported
 `ThreadAction::Rename` request and is advertised by the tool description and UI.
 No new action or field is emitted in topic capability responses.
 
-There is no Telegram list/create, caller-supplied chat/topic ID, `thread_ref`,
-private-chat topic, explicit General hide/unhide or topic deletion operation.
+This original-topic consent does not grant creation or created-topic references.
+The separate [topic creation](CMAEG_Native_Telegram_Topic_Creation.md) increment
+adds those operations with independent owner consent. Neither consent allows
+listing, caller-supplied chat/topic IDs, private-chat topics, explicit General
+hide/unhide or topic deletion.
 Channel posts, edits,
 callbacks, business/guest messages, anonymous `sender_chat` messages, bot actors
 and relay-normalized input do not provide authority. General uses dedicated
@@ -95,7 +98,8 @@ and open/closed state without issuing a close or reopen operation.
  MCP `manageThread` uses
 `{"request": <body>, "idempotency_key": "<stable-key>"}`. The existing TypeScript
 `manageThread` and Rust `manage_thread` methods use the same request. Telegram-only
-MCP installations advertise only `manageThread`, not Discord list/create tools.
+MCP installations advertise `manageThread`; the separate creation gate additionally
+advertises `createEventThread`. They never advertise Discord listing.
 Discord refuses the additive `close` action before any platform reads or writes.
 Telegram refuses `archive`, `join` and `leave` as unsupported.
 

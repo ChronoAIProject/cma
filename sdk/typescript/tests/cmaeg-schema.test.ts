@@ -578,3 +578,15 @@ it('keeps Telegram topic consent independent and discovers only close/reopen', (
   expect(ManageThreadRequestSchema(rename)).toEqual(rename);
   expect(() => TopicLifecycleCapabilitiesSchema({ ...caps, actions: ['rename'] })).toThrow();
 });
+
+it('retains independent Telegram creation consent and rejects a null archive duration', () => {
+  const legacy = { type: 'telegram', bot_id: '77', admission: { type: 'all' } };
+  expect(SourceSchema(legacy)).toEqual(legacy);
+  expect(SourceSchema({ ...legacy, topic_creation: true })).toEqual({
+    ...legacy,
+    topic_creation: true,
+  });
+  const request = { name: 'Release planning' };
+  expect(CreateThreadRequestSchema(request)).toEqual(request);
+  expect(() => CreateThreadRequestSchema({ ...request, auto_archive_duration: null })).toThrow();
+});
