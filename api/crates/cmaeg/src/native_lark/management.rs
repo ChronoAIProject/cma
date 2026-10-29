@@ -24,7 +24,13 @@ pub(crate) fn initialize(
     }
     if current.is_some_and(|old| {
         old.routing.is_some()
-            && old.sources == next.sources
+            && old.routing == next.routing
+            && old.sources.len() == next.sources.len()
+            && old
+                .sources
+                .iter()
+                .zip(&next.sources)
+                .all(|(old, next)| retained_or_reduced(old, next))
             && old.secrets.native_lark == next.secrets.native_lark
     }) {
         return Ok(());
@@ -73,7 +79,10 @@ pub(crate) async fn verify(
         .as_ref()
         .ok_or_else(|| invalid("native credentials required"))?;
     if old.is_some_and(|old| {
-        old.sources.contains(source) && old.secrets.native_lark.as_ref() == Some(credentials)
+        old.sources
+            .iter()
+            .any(|old| retained_or_reduced(old, source))
+            && old.secrets.native_lark.as_ref() == Some(credentials)
     }) {
         return Ok(());
     }
@@ -83,4 +92,11 @@ pub(crate) async fn verify(
             .map_err(|_| invalid("native custody verification unavailable"))?,
     };
     client.verify_custody(&native.identity, credentials).await.map_err(|_|invalid("native app/bot custody could not be proved; check the separate app, region and bot open_id"))
+}
+
+/// Revoking only history consent needs no new admission or external custody proof.
+fn retained_or_reduced(previous: &Source, next: &Source) -> bool {
+    previous == next
+        || matches!(next, Source::NativeLark(source) if !source.conversation_history)
+            && super::same_messaging_source(previous, next)
 }
