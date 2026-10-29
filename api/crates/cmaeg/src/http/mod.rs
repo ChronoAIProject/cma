@@ -9,6 +9,7 @@ pub mod connections;
 pub(crate) mod connections_ui;
 pub mod creation;
 pub(crate) mod docs;
+pub mod event_attestation;
 pub mod events;
 pub mod form_preparation;
 
