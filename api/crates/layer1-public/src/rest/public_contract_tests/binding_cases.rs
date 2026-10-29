@@ -7,6 +7,14 @@ use serde_json::json;
 use tower::ServiceExt;
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if let Some(mode) = name.strip_prefix("worker_classifier_") {
+        return Some(Scenario {
+            router: crate::rest::worker_credentials::tests::fixture(mode).await,
+            subject: None,
+            authorization: Authorization::none(),
+            symbols: Default::default(),
+        });
+    }
     if let Some(mode) = name.strip_prefix("binding_preparation_") {
         return Some(Scenario {
             router: management::preparation_contract::fixture(mode).await,
