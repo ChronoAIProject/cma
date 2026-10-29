@@ -111,7 +111,7 @@ pub fn retiring_sandbox_process_is_absent(agent: &Agent, sandbox: &Sandbox) -> b
         // originally requested this stop. Preserve that original attribution.
         && matches!(
             agent.requested_stop_reason,
-            Some(AgentStopReason::SandboxRetired | AgentStopReason::Owner)
+            Some(AgentStopReason::SandboxRetired | AgentStopReason::Owner | AgentStopReason::BindingRetired)
         )
         && agent.work.step == AgentWorkStep::CloseProcess
         && agent.work.cleanup_debt.is_empty()
