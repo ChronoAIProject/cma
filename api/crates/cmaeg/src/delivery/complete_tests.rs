@@ -9,6 +9,7 @@ mod destinations;
 mod durable;
 mod native_lark_control_tests;
 mod native_lark_document_tests;
+mod native_lark_image_replacement_tests;
 mod native_lark_media_fixture;
 mod native_lark_media_tests;
 mod native_lark_multi_image_tests;

@@ -94,6 +94,19 @@ pub trait BindingCredentialCustody: Send + Sync {
         ))
     }
 
+    /// Explicit fresh ordinary-event admission, never invoked by recovery/PUT.
+    /// Implementations atomically archive the original generation, retain the
+    /// receipt and custody, and fence terminal parent/child authority.
+    async fn prepare_retired_binding(
+        &self,
+        _intent: &super::BindingPreparationIntent,
+        _credential: &ProvidedCredential,
+    ) -> Result<super::BindingPreparationReceipt, CoreError> {
+        Err(CoreError::RuntimeUnavailable(
+            "binding preparation is unavailable".into(),
+        ))
+    }
+
     async fn forget_binding(
         &self,
         _binding: &super::ProviderBinding,
