@@ -76,6 +76,7 @@ impl CustomStreamEffect {
                         text: Some(text.clone()),
                         blocks: vec![],
                         reply_to: None,
+                        structured_content: None,
                         reply_with_received_sticker: false,
                         clear_native_attachments: false,
                         native_media_update: None,

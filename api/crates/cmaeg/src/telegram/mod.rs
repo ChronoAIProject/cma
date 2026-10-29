@@ -6,6 +6,9 @@ mod media;
 pub(crate) mod media_card_edit;
 pub(crate) mod media_edit;
 mod media_presentation;
+pub(crate) mod structured;
+#[cfg(test)]
+pub(crate) mod structured_tests;
 pub(crate) use media::{album_supported, media_token_matches, AlbumUpload, MediaUpload};
 #[cfg(test)]
 mod media_edit_tests;

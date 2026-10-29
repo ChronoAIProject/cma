@@ -22,6 +22,9 @@ pub use media_update::{NativeMediaReplacement, NativeMediaUpdate};
 #[path = "whatsapp_template.rs"]
 mod whatsapp_template;
 pub use whatsapp_template::*;
+#[path = "structured_content.rs"]
+mod structured_content;
+pub use structured_content::StructuredContent;
 
 pub const MAX_MESSAGE_TEXT_BYTES: usize = 32 * 1_024;
 pub const MAX_BLOCKS: usize = 16;
@@ -29,6 +32,14 @@ pub const MAX_BLOCKS: usize = 16;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutboundMessage {
+    /// Exclusive contact card, static location or venue; only when advertised for the original event.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "media_update::present"
+    )]
+    #[schema(nullable = false)]
+    pub structured_content: Option<StructuredContent>,
     /// Resend only the exact retained native Lark sticker received in this event.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reply_with_received_sticker: bool,
@@ -182,6 +193,24 @@ pub struct BlockRendering {
 impl OutboundMessage {
     /// Validate a provider response before handing it to a delivery adapter.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(content) = &self.structured_content {
+            if self.reply_with_received_sticker
+                || self.clear_native_attachments
+                || self.native_media_update.is_some()
+                || self.whatsapp_template.is_some()
+                || !self.native_attachments.is_empty()
+                || self.thread_reply
+                || self.text.is_some()
+                || !self.blocks.is_empty()
+                || self.reply_to.is_some()
+            {
+                return Err(ValidationError::new(
+                    "/structured_content",
+                    "structured content is exclusive of all other message fields",
+                ));
+            }
+            return content.validate();
+        }
         if self.reply_with_received_sticker {
             if self.clear_native_attachments
                 || self.native_media_update.is_some()

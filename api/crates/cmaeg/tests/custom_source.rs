@@ -1,5 +1,7 @@
 #[path = "custom/attachments.rs"]
 mod attachments;
+#[path = "custom/cold_binding.rs"]
+mod cold_binding;
 #[path = "fake_provider.rs"]
 pub mod fake_provider;
 #[path = "custom/ingress.rs"]

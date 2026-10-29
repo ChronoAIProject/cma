@@ -30,6 +30,9 @@ pub struct PublicChannelDefinition {
     /// without it. It carries consumers' public key hashes, never a key.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub routing: Option<RoutingPolicy>,
+    /// Immutable owner opt-in for this channel's authenticated Custom events.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub durable_custom_execution: bool,
     pub secrets: PublicSecrets,
     pub created_at: String,
     pub version: u64,
@@ -54,6 +57,7 @@ impl PublicChannelDefinition {
             partition: value.partition.clone(),
             reply: value.reply.clone(),
             routing: value.routing.clone(),
+            durable_custom_execution: value.durable_custom_execution,
             secrets: PublicSecrets {
                 agent_key_hash: value.secrets.agent_key_hash.clone(),
             },

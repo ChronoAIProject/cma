@@ -41,6 +41,8 @@ pub const DEFAULT_WOULD_WIDEN: &str = "default_would_widen";
 pub const UNBIND_FAILED: &str = "unbind_failed";
 /// The record changed again after one re-read.
 pub const CONFLICT: &str = "conflict";
+/// Execution-mode authority cannot be erased by a topology rollback.
+pub const CUSTOM_EXECUTION_NEEDS_READER: &str = "durable_custom_execution_requires_reader";
 
 /// Everything a clearing run reads besides the record itself.
 pub(super) struct Clearing<'a> {
@@ -117,6 +119,9 @@ async fn step(
 ) -> Result<Step<&'static str>, AuditError> {
     // Decided afresh for whatever is stored now, as every other outcome is.
     *widened = false;
+    if definition.durable_custom_execution {
+        return Ok(Step::Stop(CUSTOM_EXECUTION_NEEDS_READER));
+    }
     if Extensions::of(&definition).legacy_compatible() {
         // A concurrent update already returned it to the legacy shape.
         return Ok(Step::Done);
