@@ -45,7 +45,9 @@ pub(super) async fn websocket(
     request.headers_mut().insert("host", credential);
     let Ok(Ok((upstream, _))) = tokio::time::timeout(
         Duration::from_secs(5),
-        tokio_tungstenite::connect_async_with_config(request, Some(config), false),
+        // Pointer/key messages are small and interactive; do not hold them
+        // behind an unacknowledged frame on the loopback display connection.
+        tokio_tungstenite::connect_async_with_config(request, Some(config), true),
     )
     .await
     else {

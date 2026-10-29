@@ -125,6 +125,14 @@ async fn run() -> Result<(), String> {
             control_auth::authenticate,
         ));
     }
+    // Runtime WebSockets carry interactive desktop and conversation frames.
+    // Flush small frames immediately instead of waiting for TCP coalescing.
+    use axum::serve::ListenerExt as _;
+    let listener = listener.tap_io(|stream| {
+        if let Err(error) = stream.set_nodelay(true) {
+            tracing::warn!(%error, "could not disable runtime TCP coalescing");
+        }
+    });
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await
