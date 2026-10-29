@@ -68,6 +68,10 @@ pub(super) async fn configure(
     state.native_bot_mentions_writes_enabled = config.native_bot_mentions_writes_enabled;
     state.thread_contract_writes_enabled = config.thread_contract_writes_enabled;
     state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
+    state.custom_durable_execution_enabled = config.routing.custom_durable_execution_enabled
+        && config.routing.recovery_enabled
+        && config.routing.admission_enabled
+        && config.multi_consumer_writes_enabled;
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
