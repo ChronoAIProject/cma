@@ -1,6 +1,7 @@
 //! Native admitted events with retained wire evidence and entirely local transports.
 use super::*;
 use crate::{
+    channels::definition::fixture::{replace_default_binding, replace_default_credential},
     discord::rest::effects_tests::Fixture as Discord,
     ingress::launch::LaunchRequest,
     net::exchange::{HttpReply, TransportError},
@@ -282,10 +283,10 @@ impl Fixture {
         match change {
             0 => self.app.definition.owner.subject = "other-owner".into(),
             1 => self.app.definition.sources.clear(),
-            2 => {
-                self.app.definition.secrets.provider_credential =
-                    Some(Secret::new("rotated-channel-fixture"))
-            }
+            2 => replace_default_credential(
+                &mut self.app.definition,
+                Some("rotated-channel-fixture"),
+            ),
             3 => {
                 self.app
                     .definition
@@ -303,7 +304,10 @@ impl Fixture {
                 self.app.definition.secrets.agent_key_hash =
                     crate::channels::definition::hash_secret("changed-key")
             }
-            6 => self.app.definition.provider.binding_id = "binding-replaced".parse().unwrap(),
+            6 => replace_default_binding(
+                &mut self.app.definition,
+                "binding-replaced".parse().unwrap(),
+            ),
             _ => unreachable!(),
         }
         self.app.replace();
