@@ -23,7 +23,7 @@ request follows its stated `audio/*` and attachment-metadata contract. Actual
 Discord acceptance remains unverified and this gate stays off until verified.
 
 Discord describes mono 48kHz 32kbps Opus in Ogg as its clients' implementation
-detail, which may change. CMA's first profile accepts only **canonical mono
+detail, which may change. CMA preserves the original **canonical mono
 signed 16-bit little-endian PCM WAV at 16kHz, from 0.1 to 120 seconds**. This
 is exactly the WAV structure produced by CMA's existing sandboxed PCM helper.
 It has one 16-byte PCM `fmt ` chunk, one `data` chunk, a 44-byte header, and no
@@ -39,11 +39,29 @@ is zero. The base64 waveform therefore covers the whole clip, including the end;
 it is never derived from compressed byte size or caller-supplied estimates.
 Peak amplitude is CMA's preview convention, not a claimed Discord encoding rule.
 
-Other WAV layouts, stereo, other sample rates, compressed formats including
-Opus/Ogg, partial frames, malformed lengths and out-of-range duration are refused.
-No new decoder or arbitrary media subprocess is introduced. Clients can convert
-audio to the declared PCM profile before sending. This implementation has local
-fixtures; it does **not** claim connected Discord acceptance of the WAV profile.
+An additional profile accepts **one complete mono Opus Ogg stream**, at most
+8 MiB, from 0.1 to **less than 120 seconds**. It requires the existing configured
+media transformer (`CMAEG_MEDIA_ENABLED=true`, `CMAEG_MEDIA_FFMPEG_DIR` pointing
+to the packaged helper). The original encoded bytes are uploaded unchanged as
+`audio/ogg`; that MIME and `voice.ogg` are inferred only when omitted. Ogg pages,
+checksums, packet framing and the mono Opus headers are validated before decoding.
+Chained, multiplexed, stereo, malformed or incomplete containers are refused.
+
+CMA decodes the original through the same `MediaTransformer::audio` instance as
+inbound media, with the same process slot, watchdog, deadline and in-flight byte
+budget. The decoder is capped at 120 seconds. A truncated result or a result at
+that cap is refused, since it cannot prove that the whole recording was decoded.
+Duration and the complete waveform come from the decoded PCM samples using the
+same convention as WAV. The prepared upload owns the original bytes and derived
+metadata together; the REST layer cannot substitute a different file. No encoder,
+new codec build dependency or arbitrary subprocess is added. This path does not
+transcode the uploaded Ogg, enforce a particular bitrate, or promise Discord's
+current client profile for files supplied by callers.
+
+Other WAV layouts, stereo, unsupported formats, partial frames, malformed lengths
+and out-of-range duration are refused. A missing or failed shared decoder refuses
+Ogg before any platform send; WAV does not depend on that decoder. These paths
+have local fixtures; neither claims connected Discord acceptance or playback.
 
 ## Message and authority constraints
 
@@ -80,8 +98,10 @@ It changes neither NyxID relays nor Telegram, WhatsApp or Lark behavior.
 An authenticated, verified original Discord event advertises a `voice`
 `presentation_profiles` entry with `audio/wav`, the byte limit,
 `max_attachments: 1`, `text: false`, `caption: false`, and
-`message_operations: false`. The profile is absent when the writer gate is off
-or the destination does not match. General media/control capabilities retain
+`message_operations: false`. When the shared decoder is configured, a second
+`voice` profile advertises `audio/ogg`, the 8 MiB limit, and the strictly bounded
+Opus range. The original WAV profile and old request serialization stay unchanged.
+Both profiles are absent when the writer gate is off or the destination does not match. General media/control capabilities retain
 their existing meanings; their explicit kinds exclude voice.
 
 Deploy compatible readers before enabling the independent gate. Existing
@@ -89,4 +109,9 @@ operation receipts retain the same schema, and optional discovery fields are
 additive. Local regressions cover PCM amplitude/duration/bounds, gate independence,
 exact destination/thread, revoked sources, denied commit, mixed-message refusal,
 uncertain responses without resend, absent effect/control authority and unchanged
-ordinary Audio payloads. Live provider verification remains a separate step.
+ordinary Audio payloads. Opus regressions cover unchanged encoded bytes,
+PCM-derived duration/waveform, missing/failed/truncated decoder results, decoder
+budgets, invalid Ogg inputs, denied commit and unknown receipts without resend.
+The existing image self-test decodes the committed Opus fixture through the real
+sandbox; the new composed tests inject its decoder result. Live provider
+acceptance and client playback remain unverified; the writer gate stays off.

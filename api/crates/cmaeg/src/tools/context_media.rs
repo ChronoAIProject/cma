@@ -158,8 +158,16 @@ impl NativeMediaCapabilities {
                         && discord_voice_destination(channel, event, activity)
                     {
                         capabilities.kinds.push("voice".into());
-                        capabilities.presentation_profiles =
-                            Some(vec![NativePresentationProfile::discord_voice()]);
+                        let mut profiles = vec![NativePresentationProfile::discord_voice()];
+                        if state
+                            .media
+                            .as_ref()
+                            .and_then(|media| media.voice_decoder())
+                            .is_some()
+                        {
+                            profiles.push(NativePresentationProfile::discord_opus_voice());
+                        }
+                        capabilities.presentation_profiles = Some(profiles);
                     }
                     if verified
                         && state.native_media_presentations_enabled

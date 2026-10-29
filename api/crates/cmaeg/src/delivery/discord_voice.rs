@@ -70,15 +70,15 @@ impl Sender {
                 reason: "voice_preparation_failed".into(),
             });
         };
-        let file = &mut files[0];
-        // The profile is canonical; infer only omitted transport metadata.
-        if message.native_attachments[0].mime_type.is_none() {
-            file.mime = "audio/wav".into();
-        }
-        if message.native_attachments[0].filename.is_none() {
-            file.filename = "voice.wav".into();
-        }
-        let Some(metadata) = voice::metadata(file) else {
+        let Some(prepared) = voice::prepare(
+            files.remove(0),
+            message.native_attachments[0].mime_type.is_none(),
+            message.native_attachments[0].filename.is_none(),
+            &ctx.channel.id,
+            self.relay.discord_voice_decoder.as_ref(),
+        )
+        .await
+        else {
             return result(DeliveryOutcome::Rejected {
                 reason: "voice_profile_unsupported".into(),
             });
@@ -106,7 +106,7 @@ impl Sender {
         let sent = self
             .relay
             .discord
-            .send_voice(credential, bot_id, channel_id, message_id, file, &metadata)
+            .send_voice(credential, bot_id, channel_id, message_id, &prepared)
             .await;
         drop(permit);
         ctx.gate.progress();
