@@ -181,6 +181,7 @@ async fn native_reply_target_survives_restart_and_refuses_changed_bot_before_dis
     let mut app = App::new(vec![]).await;
     app.definition.sources = vec![Source::Telegram {
         topic_lifecycle: false,
+        topic_creation: false,
         message_events: false,
         channel_posts: false,
         bot_id: "77".into(),

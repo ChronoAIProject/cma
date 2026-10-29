@@ -275,10 +275,13 @@ pub(crate) fn messaging_source(
 ) -> cmaeg_core::channel::Source {
     let mut source = source.clone();
     if let cmaeg_core::channel::Source::Telegram {
-        topic_lifecycle, ..
+        topic_lifecycle,
+        topic_creation,
+        ..
     } = &mut source
     {
         *topic_lifecycle = false;
+        *topic_creation = false;
     }
     source
 }

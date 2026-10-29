@@ -279,6 +279,7 @@ fn config(media: MediaConfig) -> Config {
         native_telegram_message_events_writes_enabled: false,
         native_discord_thread_history_enabled: false,
         native_telegram_topic_lifecycle_enabled: false,
+        native_telegram_topic_creation_enabled: false,
         native_telegram_general_topic_lifecycle_enabled: false,
         native_discord_thread_lifecycle_enabled: false,
         native_lark_conversation_history_enabled: false,
