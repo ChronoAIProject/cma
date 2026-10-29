@@ -17,6 +17,9 @@ pub struct ChannelCreateRequest {
     /// optional for existing non-native creation contracts.
     #[serde(default)]
     pub record_id: Option<RecordId>,
+    /// Immutable opt-in to durable execution for this channel's Custom source.
+    #[serde(default)]
+    pub durable_custom_execution: bool,
     pub schema_version: u16,
     pub name: String,
     pub profile: EventWorkerProfile,
@@ -35,6 +38,9 @@ pub struct ChannelCreateRequest {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelUpdateRequest {
+    /// Optional echo for older clients; a supplied value must match the saved mode.
+    #[serde(default)]
+    pub durable_custom_execution: Option<bool>,
     pub schema_version: u16,
     pub name: String,
     pub profile: EventWorkerProfile,
