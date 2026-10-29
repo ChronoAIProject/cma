@@ -110,3 +110,14 @@ Gateway-owned Mongo index. A ready index keeps its reader active when the writer
 flag is later disabled. No new Manager record API or infra-side development is
 required. Production activation requires the complete release checks above;
 the attestation primitive alone does not enable media delivery.
+
+Once the first continuation is admitted, retain compatible Agent Manager and
+Gateway images as the rollback floor. Manager command envelopes may contain
+`continuation`, and command work state may retain `deferred_attempts`; older
+strict readers reject these fields. Disabling the Gateway writer flag prevents
+new scheduling heads but does not remove accepted work or make those older
+Manager readers safe. The optional index keeps recovery running while ready.
+Its seven-day retention is independent of Manager command/history retention and
+cannot establish when an older Manager becomes safe to restore. Preserve the
+records and use a compatible forward fix; see
+[Manager storage and rollout](CMA_Event_Media_Continuations.md#storage-and-rollout).
