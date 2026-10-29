@@ -313,3 +313,6 @@ mod media_tests;
 
 #[path = "native_lark_shared_fact_tests.rs"]
 mod shared_facts;
+
+#[path = "native_lark_sticker_tests.rs"]
+mod sticker_tests;

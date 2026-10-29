@@ -112,6 +112,27 @@ pub(crate) async fn serve(
     let native_typing = source_settings::native_typing(&config, &state)?;
     let (native_lark_controls, native_lark_thread_start) =
         source_settings::lark_issuance(&config, &state);
+    let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
+    // Installed before the media transformer's setup so its readiness gauge
+    // is recorded; the metrics listener still binds after the gateway's.
+    let metrics = telemetry::install()?;
+    // After the recorder, which registers its gauge. `None` while
+    // CMAEG_CONSOLE_ENABLED is off: then no /console route exists.
+    let console = console::compose(&config, &state, observers.queue.take())?;
+    // Before the listener binds: a configured transformer must pass its
+    // sandbox self-check, or the gateway does not start.
+    let transformer = media::transform::setup::start_configured(&config).await?;
+    // Inbound media and outbound voice share one transformer and its budgets.
+    let media = media::service::compose(
+        &config,
+        media::service::ComposeDeps {
+            resolver: state.resolver.clone(),
+            keys: state.master_keys.clone(),
+            tool_providers: tool_providers.clone(),
+            telegram: telegram.clone(),
+            transformer,
+        },
+    )?;
     let delivery_engine = delivery::engine::DeliveryEngine::start_observed(
         outcomes,
         state.master_keys.clone(),
@@ -138,6 +159,7 @@ pub(crate) async fn serve(
         )
         .with_native_lark_config(&config, native_lark_controls, native_lark_thread_start)
         .with_native_presentation_config(&config)
+        .with_discord_voice_decoder(media.as_ref().and_then(|service| service.voice_decoder()))
         .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
@@ -169,30 +191,6 @@ pub(crate) async fn serve(
         custom_delivery.clone(),
         observers.activity.clone(),
     );
-    let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
-    // Installed before the media transformer's setup so its readiness gauge
-    // is recorded; the metrics listener still binds after the gateway's.
-    let metrics = telemetry::install()?;
-    // After the recorder, which registers its gauge. `None` while
-    // CMAEG_CONSOLE_ENABLED is off: then no /console route exists.
-    let console = console::compose(&config, &state, observers.queue.take())?;
-    // Before the listener binds: a configured transformer must pass its
-    // sandbox self-check, or the gateway does not start.
-    let transformer = media::transform::setup::start_configured(&config).await?;
-    // The one media service of the process, or `None` while
-    // CMAEG_MEDIA_ENABLED=false so nothing is allocated. Turn preparation and
-    // the attachment tools share it, so they share its budgets, cache and
-    // transformer.
-    let media = media::service::compose(
-        &config,
-        media::service::ComposeDeps {
-            resolver: state.resolver.clone(),
-            keys: state.master_keys.clone(),
-            tool_providers: tool_providers.clone(),
-            telegram: telegram.clone(),
-            transformer,
-        },
-    )?;
     let routed = crate::serve_routed::compose(
         &config,
         &state,
@@ -226,7 +224,7 @@ pub(crate) async fn serve(
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),
         state.master_keys.clone(),
-        config.ingress,
+        config.ingress.clone(),
         std::sync::Arc::new(turns::observer::ObservedLauncher::new(
             runner.clone(),
             observers.activity.clone(),
@@ -236,12 +234,7 @@ pub(crate) async fn serve(
     .with_telegram(telegram.clone())
     .with_telegram_effects(telegram_effects || config.native_telegram_received_reactions_enabled)
     .with_interactions(interactions)
-    .with_media_enabled(config.media.enabled)
-    .with_native_lark_intake(config.native_lark_intake_enabled)
-    .with_native_lark_media(config.native_lark_media_enabled)
-    .with_whatsapp_message_events(config.native_whatsapp_message_events_enabled)
-    .with_whatsapp_media(config.native_whatsapp_media_enabled)
-    .with_whatsapp_groups(config.native_whatsapp_groups_enabled)
+    .with_native_intake_config(&config)
     .with_routed(
         routed
             .as_ref()
@@ -306,6 +299,7 @@ pub(crate) async fn serve(
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         native_lark_outbound_media_enabled: config.native_lark_outbound_media_enabled,
+        native_lark_sticker_replies_enabled: config.native_lark_sticker_replies_enabled,
         native_lark_thread_start_enabled: native_lark_thread_start,
         native_lark_media_controls_enabled: config.native_lark_media_controls_enabled
             && native_lark_controls,

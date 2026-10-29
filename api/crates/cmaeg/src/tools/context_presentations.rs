@@ -17,6 +17,15 @@ pub struct NativePresentationProfile {
 }
 
 impl NativePresentationProfile {
+    pub(super) fn discord_opus_voice() -> Self {
+        Self {
+            kind: "voice".into(), mime_types: vec!["audio/ogg".into()],
+            max_bytes: crate::media::outbound::MAX_OUTBOUND_BYTES,
+            caption: false, max_attachments: Some(1), text: Some(false),
+            profile: "One complete mono Opus Ogg stream, 0.1 to less than 120 seconds; uploaded unchanged; duration and waveform derived with the shared sandboxed decoder; no text or blocks".into(),
+            message_operations: false,
+        }
+    }
     pub(super) fn discord_voice() -> Self {
         Self {
             kind: "voice".into(), mime_types: vec!["audio/wav".into()],

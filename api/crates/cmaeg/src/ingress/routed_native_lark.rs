@@ -173,7 +173,10 @@ impl IngressState {
             *quoted_message = None;
         }
         // Issuance gates stop new media admissions, never duplicate retained work.
-        if message.has_resources() && !(self.media_enabled && self.native_lark_media_enabled) {
+        let sticker_disabled = message.has_sticker() && !self.native_lark_stickers_enabled;
+        if sticker_disabled
+            || (message.has_resources() && !(self.media_enabled && self.native_lark_media_enabled))
+        {
             match routing
                 .plans
                 .load(&record_identity(request.activity.event_id.clone()))
@@ -183,7 +186,16 @@ impl IngressState {
                     if serde_json::from_slice::<Message>(&existing.source_body)
                         .is_ok_and(|m| m == message) => {}
                 Ok(Some(_)) => return refused(409, "native_lark_message_identity_conflict"),
-                Ok(None) => return refused(422, "native_lark_media_disabled"),
+                Ok(None) => {
+                    return refused(
+                        422,
+                        if sticker_disabled {
+                            "native_lark_stickers_disabled"
+                        } else {
+                            "native_lark_media_disabled"
+                        },
+                    )
+                }
                 Err(_) => return refused(503, "native_lark_admission_unavailable"),
             }
         }
