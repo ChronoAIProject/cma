@@ -93,6 +93,7 @@ impl ProviderClient {
         artifact: &MediaArtifactClaim,
         credential: &Secret,
     ) -> Result<Option<MediaUploadReceipt>, ProviderError> {
+        self.record_worker_key(credential).await?;
         artifact
             .validate()
             .map_err(|_| ProviderError::InvalidRequest("invalid frozen original".into()))?;
@@ -137,6 +138,7 @@ impl ProviderClient {
         bytes: bytes::Bytes,
         credential: &Secret,
     ) -> Result<MediaUploadReceipt, ProviderError> {
+        self.record_worker_key(credential).await?;
         artifact
             .validate()
             .map_err(|_| ProviderError::InvalidRequest("invalid original artifact".into()))?;
@@ -204,6 +206,7 @@ impl ProviderClient {
         derived_text: &str,
         credential: &Secret,
     ) -> Result<MediaContinuationReceipt, ProviderError> {
+        self.record_worker_key(credential).await?;
         artifact
             .validate_derived_text(derived_text)
             .map_err(|_| ProviderError::InvalidRequest("invalid media supplement".into()))?;

@@ -157,6 +157,7 @@ of the public contract.
 | `POST /api/v1/agents/{id}/artifacts` |
 | `GET /api/v1/agents/{id}/artifacts/{artifact_id}` |
 | `GET /api/v1/agents/{id}/artifacts/{artifact_id}/download` |
+| `GET /api/v1/agents/{id}/provider-associations` |
 | `GET /api/v1/agents/{id}/channel-usage` |
 | `GET /api/v1/agents/{id}/channel-usage/history` |
 | `GET /api/v1/agents/{id}/events` |
@@ -498,3 +499,8 @@ strict readers reject. This prevents a rolled-back worker from silently executin
 original input. Drain or cancel edited pending inputs before rolling back to a
 release without queued input support. Forward recovery reads the retained revisions;
 active or completed dispatch records remain compatible after the marker is removed.
+
+Provider associations expose retained Manager membership under current Agent management
+authority. Reservation timestamps do not represent message usage. The legacy
+`channel-usage` projection does not cover provider admissions; its empty result
+does not prove that an Agent has no provider associations. See `API_REST.md`.

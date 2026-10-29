@@ -239,3 +239,50 @@ async fn mongo_binding_retirement_and_rejected_lineage_leave_no_partial_reservat
     ));
     client.database(&database).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_worker_classification_sees_other_clients_committed_key_history() {
+    let (writer, database, store) = fixture().await;
+    let reader = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let lookup = MongoSandboxStore::open(&reader, &database).await.unwrap();
+    assert!(!lookup
+        .classify_worker_key_hash(&"a".repeat(64))
+        .await
+        .unwrap());
+    let original = ready(&store).await;
+    assert!(lookup
+        .classify_worker_key_hash(&original.key_sha256)
+        .await
+        .unwrap());
+    let rotated = original
+        .rotate_credential("b".repeat(64), NOW.into())
+        .unwrap();
+    store
+        .save_binding(Some(original.revision), rotated.clone())
+        .await
+        .unwrap();
+    let mut retired = rotated.clone();
+    retired.state = BindingState::Retired;
+    retired.work = BindingWork::RetireCurrentConversations;
+    retired.advance_revision(NOW.into()).unwrap();
+    store
+        .save_binding(Some(rotated.revision), retired)
+        .await
+        .unwrap();
+    assert!(lookup
+        .classify_worker_key_hash(&original.key_sha256)
+        .await
+        .unwrap());
+    assert!(lookup
+        .classify_worker_key_hash(&rotated.key_sha256)
+        .await
+        .unwrap());
+    assert!(!lookup
+        .classify_worker_key_hash(&"c".repeat(64))
+        .await
+        .unwrap());
+    writer.database(&database).drop().await.unwrap();
+}

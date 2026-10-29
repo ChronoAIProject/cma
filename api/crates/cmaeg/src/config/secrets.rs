@@ -3,7 +3,7 @@ use std::{env, fs};
 
 /// Accept Kubernetes Secret environment injection, retaining optional file
 /// configuration for existing operators. Refuse ambiguous sources at startup.
-pub(super) fn read(name: &'static str, file_name: &'static str) -> Result<String, ConfigError> {
+pub(crate) fn read(name: &'static str, file_name: &'static str) -> Result<String, ConfigError> {
     let direct = env::var_os(name);
     let file = env::var_os(file_name);
     let content = match (direct, file) {
