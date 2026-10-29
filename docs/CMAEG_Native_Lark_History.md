@@ -16,6 +16,13 @@ Grant the app `im:message:readonly` for listing and original-message checks, and
 the relevant group. The legacy `im:message.history:readonly` permission alone is
 insufficient for the common Lark/Feishu original-message check.
 
+Owners can revoke only `conversation_history` on an existing routed channel even
+when native authoring, intake, admission, history or routing-authoring gates are
+disabled. This preserves the channel, provider binding, routing, source identity
+and credentials and does not contact Lark or Feishu. Enabling history again or
+changing another source field or its credentials still requires the relevant
+authoring gates and custody checks.
+
 ## One page and exact original cutoff
 
 Every call performs at most one history-list request with `page_size=25` and
