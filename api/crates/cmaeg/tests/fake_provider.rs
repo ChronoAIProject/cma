@@ -45,6 +45,8 @@ pub struct FakeProviderConfig {
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
     pub reject_binding: bool,
+    /// Exact binding PUT refusals by zero-based attempt; other attempts succeed.
+    pub binding_failures: std::collections::BTreeMap<usize, (u16, Value)>,
     pub text: String,
     pub unknown_event: bool,
     pub in_progress_first: bool,
@@ -77,6 +79,7 @@ impl Default for FakeProviderConfig {
             malformed_frame: false,
             disconnect_after: None,
             reject_binding: false,
+            binding_failures: std::collections::BTreeMap::new(),
             text: "hello".into(),
             unknown_event: false,
             in_progress_first: false,
@@ -110,6 +113,7 @@ struct StateData {
     conversation_missing_once: AtomicBool,
     missing_turn_once: AtomicBool,
     conversation_attempt: AtomicUsize,
+    binding_attempt: AtomicUsize,
 }
 
 pub struct FakeProvider {
@@ -133,6 +137,7 @@ impl FakeProvider {
             conversation_missing_once: AtomicBool::new(missing_once),
             missing_turn_once: AtomicBool::new(missing_turn_once),
             conversation_attempt: AtomicUsize::new(0),
+            binding_attempt: AtomicUsize::new(0),
         });
         let router = Router::new()
             .route("/.well-known/agent-card.json", get(agent_card))
@@ -215,6 +220,14 @@ async fn bind(
         headers,
         body,
     );
+    let attempt = state.binding_attempt.fetch_add(1, Ordering::SeqCst);
+    if let Some((status, response)) = state.config.binding_failures.get(&attempt) {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(response.clone()),
+        )
+            .into_response();
+    }
     if state.config.reject_binding {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
