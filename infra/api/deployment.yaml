@@ -115,6 +115,10 @@ spec:
             - secretRef:
                 name: cma-agent-manager
           env:
+            # Keep interactive IO schedulable when one async task performs CPU
+            # work. The one-CPU quota otherwise selects a single Tokio worker.
+            - name: TOKIO_WORKER_THREADS
+              value: "2"
             - name: CHRONO_AGENT_SANDBOX_API_SERVER
               valueFrom:
                 configMapKeyRef:
