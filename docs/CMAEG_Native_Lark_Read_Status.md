@@ -89,11 +89,17 @@ execution state and response ID remain unchanged. Activity contains no message
 body or raw provider envelope. Its existing bounded retention and recent-item
 limits apply; this is not a complete read-history archive.
 
-A recent unknown receipt has a two-minute retry opportunity, allowing a callback
-to race receipt persistence. Known messages in the same batch can record their
+An unknown receipt remains retryable until two minutes after the reported read
+time, subject to the accepted five-minute clock skew. This allows a callback to
+race receipt persistence. Known messages in the same batch can record their
 own observations while the callback returns HTTP 503 for pending receipt work.
-After that window, absent receipts are ignored. Persistence failure also returns
-503. Retried observations cannot trigger a send or a turn. An authenticated,
+After that window, absent receipts are ignored. Up to eight independent receipt
+and original-plan checks run concurrently. A fresh channel authority snapshot is
+then checked against every eligible receipt, and existing activity applies the
+bounded set in one compare-and-swap update per retained daily bucket. Each fact
+retains its own original event, consumer and message identity. This keeps a
+32-message callback from repeating all storage round trips serially inside the
+existing 2.5-second deadline. Persistence failure also returns 503. Retried observations cannot trigger a send or a turn. An authenticated,
 fully processed callback returns the existing `{"accepted":true}` response;
 that acknowledgement does not assert that every supplied ID was eligible.
 
@@ -118,5 +124,7 @@ Regression coverage includes both regions, default and named consumers,
 signature rejection, invalid reader/tenant/time/batch facts, duplicate and
 delayed replay after observer restart, pending receipt races, mixed batches,
 private-reader/channel/owner/chat/thread/provider/revision isolation, expired and
-corrupt receipts, unavailable persistence, and credential rotation. Tests use
-local fixtures with no usable turn launcher; no platform acceptance is implied.
+corrupt receipts, unavailable persistence, and credential rotation. A full
+32-message batch spans 16 retained original plans with simulated 100-millisecond
+record latency and checks one daily-bucket write plus no writes on restart
+replay. Tests use local fixtures with no usable turn launcher; no platform acceptance is implied.
