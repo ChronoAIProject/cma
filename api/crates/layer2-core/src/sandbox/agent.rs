@@ -317,11 +317,29 @@ impl Agent {
             skill.error = Some("agent_stopped_before_skill_confirmation".into());
         }
         self.updated_at = at.clone();
+        // A published process can be stopped through the runtime's serialized,
+        // durable CloseAgent fence. A stale connection/publication lease is not
+        // an outstanding filesystem writer and must not delay shutdown.
+        let process_is_published = self.conversation.conversation_id.is_some()
+            && self.conversation.runtime_generation.is_some()
+            && self.work.cleanup_debt.is_empty()
+            && self
+                .work
+                .receipts
+                .iter()
+                .any(|receipt| receipt.step == AgentWorkStep::OpenConversation)
+            && matches!(
+                self.work.step,
+                AgentWorkStep::PublishReady
+                    | AgentWorkStep::PublishConnection
+                    | AgentWorkStep::DispatchFirstMessage
+                    | AgentWorkStep::None
+            );
         let cleanup_not_before = self
             .work
             .lease
             .as_ref()
-            .filter(|lease| lease.expires_at > at)
+            .filter(|lease| !process_is_published && lease.expires_at > at)
             .map(|lease| lease.expires_at.clone());
         self.work
             .schedule(super::AgentWorkStep::FenceInteraction, at);
