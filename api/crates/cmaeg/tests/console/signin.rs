@@ -106,10 +106,10 @@ async fn the_session_subject_is_rests_creator_and_fills_its_cache() {
     harness.close().await;
 }
 
-/// The console adds no way around REST's cache: `auth/creator.rs` exposes
-/// only the existing identity paths and the independent service composition hook.
+/// The console adds no alternate identity path: the service and owner-key
+/// composition hooks still use the reviewed shared authentication entrypoints.
 #[test]
-fn creator_authentication_gains_no_public_function() {
+fn creator_authentication_keeps_the_reviewed_surface() {
     let source = include_str!("../../src/auth/creator.rs");
     let public: Vec<&str> = source
         .lines()
@@ -124,7 +124,13 @@ fn creator_authentication_gains_no_public_function() {
         .collect();
     assert_eq!(
         public,
-        ["new", "with_service", "authenticate", "authenticate_token"]
+        [
+            "new",
+            "with_service",
+            "with_owner_keys",
+            "authenticate",
+            "authenticate_token",
+        ]
     );
 }
 

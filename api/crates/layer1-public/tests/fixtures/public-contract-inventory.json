@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 236,
+  "openapi_operations": 238,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -3356,6 +3356,31 @@
         "409": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
         "503": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal."
       }
+    },
+    "POST /api/v1/cmaeg/worker-credentials/classify": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/worker_credentials.rs# Narrow service-only digest classification with fail-closed storage and bounded lookup.",
+      "required_problems": [
+        "worker_classifier_auth_required",
+        "worker_classifier_invalid_digest",
+        "worker_classifier_unavailable"
+      ],
+      "unreachable_problems": {
+        "worker_classifier_forbidden": "api/crates/cma/src/auth/worker_credentials/tests.rs# Composition verifies the exact machine bearer and both current service capabilities before Layer 1; rejected or revoked authority never installs its service marker."
+      }
+    },
+    "GET /api/v1/agents/{id}/provider-associations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_provider_associations.rs# Retained associations require current Agent management authority and never infer event-use history.",
+      "required_problems": [
+        "invalid_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
     }
   }
 }

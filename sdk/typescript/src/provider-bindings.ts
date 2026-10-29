@@ -24,6 +24,13 @@ import {
   type Output,
 } from './schema.js';
 
+export const WorkerCredentialDigestSchema = object({ sha256: text });
+export type WorkerCredentialDigest = Output<typeof WorkerCredentialDigestSchema>;
+export const WorkerCredentialClassificationSchema = object({
+  classification: enumeration('known_worker', 'unknown'),
+});
+export type WorkerCredentialClassification = Output<typeof WorkerCredentialClassificationSchema>;
+
 export const BindingTargetSchema = tagged(
   {
     profile: object({ type: enumeration('profile') }),
@@ -70,6 +77,19 @@ export class ProviderBindings {
   readonly media: BindingEventMedia;
   constructor(private readonly config: ResolvedConfig) {
     this.media = new BindingEventMedia(config);
+  }
+  /** Gateway service-account bearer only; errors never become an unknown result. */
+  classifyWorkerCredential(body: WorkerCredentialDigest, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      '/api/v1/cmaeg/worker-credentials/classify',
+      WorkerCredentialClassificationSchema,
+      {
+        ...options,
+        method: 'POST',
+        body: input(WorkerCredentialDigestSchema, body),
+      },
+    );
   }
   /** Inspect the current generation without allocating or mutating resources. */
   inspectPreparation(id: string, body: InspectBindingPreparation, options: OperationOptions = {}) {

@@ -607,3 +607,32 @@ These reads remain useful after the original event capability expires. They do
 not grant access to response text: every returned Manager `response_url` still
 requires existing Agent response authorization. The SDK never follows those URLs
 or replays an event automatically.
+
+## Retained provider associations
+
+**Coverage:** `channel-usage` and its history describe the legacy explicit Bridge
+usage projection only. Provider binding/conversation admission does not populate
+that projection. An empty result does not establish that the Agent was never
+associated with a provider, and must not be used as deletion eligibility. Use
+`provider-associations` for retained Manager membership; neither route invents
+missing event-use history.
+
+`client.agents.providerAssociations(id, { limit, cursor })` reads retained
+membership under current Agent management authority. This includes retired and
+borrowed relationships without changing Agent origin or runtime state. Parent
+state and generation describe the database snapshot for that page; subsequent
+pages use fresh snapshots. `association_created_at` and `association_updated_at`
+are reservation timestamps, not first/last message usage. Keep the cursor with
+its exact Agent; restart pagination when a fresh complete traversal is needed.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+const client = createClient({ baseUrl: 'https://bot.chrono-ai.fun', credential: () => 'token' });
+const first = await client.agents.providerAssociations('agt_example', { limit: 50 });
+for (const item of first.items) {
+  console.log(item.relationship, item.binding_id, item.conversation_state);
+}
+if (first.next) {
+  await client.agents.providerAssociations('agt_example', { limit: 50, cursor: first.next });
+}
+```

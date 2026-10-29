@@ -62,6 +62,11 @@ cargo test --locked -p cma-image-manager --test mongo_isolation --test browser_s
 
 cargo test --locked -p cmaeg --lib optional_forms_storage -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --lib optional_media_continuation_storage -- --ignored --test-threads=1
+# Owner-key custody needs both real authentication and a replica set. Reuse
+# this owned fixture; exact nextest selection fails if the contract disappears.
+cargo nextest run --workspace --locked \
+  -E 'package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)' \
+  --run-ignored only --test-threads 1
 cargo test --locked -p cmaeg --lib whatsapp_retention_on_real_mongo -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --test mongo_isolation -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --lib tools::threads::ledger::mongo_tests:: -- --ignored --test-threads=1

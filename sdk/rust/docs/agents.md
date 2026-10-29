@@ -562,3 +562,40 @@ These reads remain useful after the original event capability expires. They do
 not grant access to response text: every returned Manager `response_url` still
 requires existing Agent response authorization. The SDK never follows those URLs
 or replays an event automatically.
+
+## Retained provider associations
+
+
+**Coverage:** `channel-usage` and its history describe the legacy explicit Bridge
+usage projection only. Provider binding/conversation admission does not populate
+that projection. An empty result does not establish that the Agent was never
+associated with a provider, and must not be used as deletion eligibility. Use
+`provider-associations` for retained Manager membership; neither route invents
+missing event-use history.
+
+
+`agents().provider_associations(id, &page)` reads retained membership under
+current Agent management authority. Retired and borrowed associations remain
+visible without changing Agent creation origin. Parent binding state and
+generation describe the database snapshot for that page; subsequent pages use
+fresh snapshots. Reservation timestamps do not represent message usage. Keep
+continuations with their exact Agent incarnation and restart traversal when a
+fresh full view is needed.
+
+```rust
+use cma_sdk::{Client, PageOptions};
+async fn memberships(client: &Client, agent_id: &str) -> cma_sdk::Result<()> {
+    let mut options = PageOptions { limit: Some(50), cursor: None };
+    loop {
+        let page = client.agents().provider_associations(agent_id, &options).await?;
+        for item in page.items {
+            println!("{} {}", item.binding_id, item.binding_generation);
+        }
+        match page.next {
+            Some(next) => options.cursor = Some(next),
+            None => break,
+        }
+    }
+    Ok(())
+}
+```

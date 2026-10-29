@@ -245,6 +245,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .delete(c.param("record_id"), c.number("expected_version")?)
                 .await,
         ),
+        "GET /api/v1/agents/{id}/provider-associations" => c.check(
+            client
+                .agents()
+                .provider_associations(c.param("id"), &c.page()?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/channel-usage" => {
             c.check(client.agents().channel_usage(c.param("id")).await)
         }

@@ -24,6 +24,9 @@ impl ProviderClient {
         metadata: &BTreeMap<String, String>,
         credential: &Secret,
     ) -> FrozenSubmission {
+        if self.record_worker_key(credential).await.is_err() {
+            return FrozenSubmission::NotAccepted;
+        }
         let Ok(handle) = self.handle(provider) else {
             return FrozenSubmission::Rejected("provider_not_configured".into());
         };
@@ -63,7 +66,7 @@ impl ProviderClient {
                 Err(ProviderError::Busy { .. }) => return FrozenSubmission::Unknown,
                 // This precise CMA v2 refusal precedes durable admission.
                 Err(ProviderError::Rejected { status: 400, code }) if code == "invalid_json" => {
-                    return FrozenSubmission::Rejected(code)
+                    return FrozenSubmission::Rejected(code);
                 }
                 Err(_) => return FrozenSubmission::Unknown,
             };
