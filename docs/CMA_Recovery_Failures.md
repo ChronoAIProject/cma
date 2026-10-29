@@ -169,3 +169,54 @@ missing, changed, running or ambiguous records.
 Local fixtures do not establish that an existing production sandbox
 has recovered; production acceptance must additionally confirm its original
 home, conversation and admitted work after the corrected lifecycle completes.
+
+## Never-ready Agent worktree recovery
+
+A large Git worktree checkout previously shared the ordinary 120-second Git
+command deadline. It now shares the bounded 600-second checkout deadline with
+repository cloning. Git queries and cleanup retain their 120-second deadline.
+A timeout still fails closed if Git leaves a partial path or branch; CMA does
+not roll back an indeterminate runtime journal or overwrite the partial files.
+
+The owner or a CMA administrator can explicitly call
+`POST /api/v1/agents/{id}/recover-worktree` with an `Idempotency-Key`. The endpoint
+admits only a never-ready failed manual or Workspace-profile Agent with the exact
+indeterminate AddWorktree failure, matching cleanup debt, and no process, home,
+conversation, first-message dispatch, stop or deletion effects. The Sandbox must
+be active and idle, and its existing Workspace must be ready. The transaction
+reserves the next worktree name under the same Workspace and PV and restarts the
+same Agent ID. It preserves the pending first message, profile, creation
+provenance and every existing log entry.
+
+The failed worktree's path, branch, base commit and runtime mutation journal stay
+untouched. Its database assignment is detached from the Agent; its full original
+record, failure and exact cleanup debt are retained in an immutable recovery
+archive on that Agent. Ordinary Agent saves and worker publication cannot alter
+this archive or rebind the worktree. A matching retry returns the current Agent,
+including after deletion, and never allocates another worktree or resurrects it.
+Each new attempt after another qualifying terminal failure requires a new key;
+there are at most 64 archived attempts. Parent, quota, allocation and Agent
+fences are checked in the same transaction. Uncertain Mongo commits require
+exact durable attempt evidence before success can be reported.
+
+Deploy compatible API readers before admitting recovery, and retain compatible
+rollback readers after the first archive is written. If the failed checkout was
+caused by the old deadline, install the corrected managed runtime through the
+existing Sandbox lifecycle before recovering the Agent; preserve its existing
+home/PV. The recovery API itself does not replace the runtime or mutate
+agent-sandbox resources. Production verification must confirm the original PV,
+retained failed files and journal, same Agent ID, successful successor checkout,
+and a usable conversation before declaring the affected Agent recovered.
+
+## Stop scheduling after process publication
+
+A stop request fences the previous Agent worker and sends a serialized,
+durably fenced CloseAgent operation. Once an exact OpenConversation receipt and
+conversation identity are recorded, publication, connection, first-message and
+idle work without outstanding cleanup debt no longer inherit a future connection
+lease as a shutdown delay. This prevents an old 18-minute lease from delaying
+Channel retirement or an owner stop. In-flight filesystem startup and skill work
+retain their cleanup drain boundary. Runtime cleanup remains authoritative:
+terminal state is published only after the close operation succeeds, and the
+runtime rejects a late OpenAgent after its process has been retired. The change
+does not delete the user's home, worktree or conversation history.

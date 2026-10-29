@@ -66,6 +66,7 @@ mod startup_publication_tests;
 mod startup_scheduling_tests;
 mod warm_handoff_tests;
 mod workspace_removal_tests;
+mod worktree_recovery_tests;
 
 struct Harness<S = InMemorySandboxStore> {
     store: Arc<S>,

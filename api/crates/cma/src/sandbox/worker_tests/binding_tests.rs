@@ -78,7 +78,7 @@ impl BindingCredentialCustody for BindingCustody {
             .map_err(|error| CoreError::RuntimeUnavailable(error.to_string()))
     }
 }
-fn service(h: &Harness, profiles: Arc<InMemoryProfileStore>) -> Arc<BindingService> {
+pub(super) fn service(h: &Harness, profiles: Arc<InMemoryProfileStore>) -> Arc<BindingService> {
     let prerequisite = Arc::new(FixedSandboxCredentialPrerequisite::SetupRequired);
     BindingService::new(
         h.store.clone(),
