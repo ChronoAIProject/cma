@@ -4,6 +4,47 @@ use crate::{
 };
 
 #[tokio::test]
+async fn discord_voice_profile_requires_independent_gate_and_exact_verified_destination() {
+    let f = FixtureState::new().await;
+    let mut state = state(&f, false);
+    state.native_media_presentations_enabled = true;
+    for enabled in [false, true] {
+        for verified in [false, true] {
+            state.native_discord_voice_enabled = enabled;
+            let view = NativeMediaCapabilities::for_event(
+                &state,
+                &f.channel,
+                &f.original,
+                &f.context.activity,
+                verified,
+            )
+            .unwrap();
+            assert_eq!(view.presentation_profiles.is_some(), enabled && verified);
+            assert_eq!(
+                view.kinds.iter().any(|kind| kind == "voice"),
+                enabled && verified
+            );
+            if let Some(profiles) = view.presentation_profiles {
+                assert_eq!(profiles.len(), 1);
+                assert_eq!(profiles[0].mime_types, ["audio/wav"]);
+                assert_eq!(profiles[0].max_bytes, 3_840_044);
+                assert_eq!(profiles[0].max_attachments, Some(1));
+                assert_eq!(profiles[0].text, Some(false));
+                assert!(!profiles[0].caption && !profiles[0].message_operations);
+            }
+        }
+    }
+    let mut event = f.original.clone();
+    if let cmaeg_core::seal::ReplyAddress::Discord { channel_id, .. } = &mut event.reply {
+        *channel_id = "100".into();
+    }
+    let view =
+        NativeMediaCapabilities::for_event(&state, &f.channel, &event, &f.context.activity, true)
+            .unwrap();
+    assert!(view.presentation_profiles.is_none());
+}
+
+#[tokio::test]
 async fn discord_media_controls_discovery_requires_verified_source_and_each_issuance_gate() {
     for named in [false, true] {
         let f = if named {

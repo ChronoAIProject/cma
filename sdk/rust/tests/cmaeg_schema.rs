@@ -745,3 +745,11 @@ fn explicit_media_presentations_preserve_legacy_audio_and_optional_discovery() {
     assert!(!decoded.presentation_profiles.as_ref().unwrap()[0].message_operations);
     assert_eq!(serde_json::to_value(decoded).unwrap(), value);
 }
+
+#[test]
+fn discord_voice_constraints_round_trip_and_older_profile_omits_new_fields() {
+    for value in fixtures()["NativePresentationProfile"].as_array().unwrap() {
+        let decoded: NativePresentationProfile = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), *value);
+    }
+}

@@ -8590,6 +8590,18 @@
           "caption": true,
           "profile": "One complete mono Opus Ogg stream; no transcoding",
           "message_operations": false
+        },
+        {
+          "kind": "voice",
+          "mime_types": [
+            "audio/wav"
+          ],
+          "max_bytes": 3840044,
+          "caption": false,
+          "profile": "Canonical mono signed 16-bit little-endian PCM WAV at 16kHz, 0.1–120 seconds",
+          "message_operations": false,
+          "max_attachments": 1,
+          "text": false
         }
       ]
     },
@@ -10627,6 +10639,18 @@
       "caption": true,
       "profile": "One complete mono Opus Ogg stream; no transcoding",
       "message_operations": false
+    },
+    {
+      "kind": "voice",
+      "mime_types": [
+        "audio/wav"
+      ],
+      "max_bytes": 3840044,
+      "caption": false,
+      "profile": "Canonical mono signed 16-bit little-endian PCM WAV at 16kHz, 0.1–120 seconds",
+      "message_operations": false,
+      "max_attachments": 1,
+      "text": false
     }
   ]
 }

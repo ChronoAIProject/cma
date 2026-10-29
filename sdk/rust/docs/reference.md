@@ -905,3 +905,13 @@ stickers; WhatsApp private destinations can advertise mono Opus Ogg voice.
 These presentations do not grant message operation references or combine with
 controls/albums. Existing WhatsApp stickers keep their prior behavior. See
 [the exact profiles and rollout contract](../../../docs/CMAEG_Native_Media_Presentations.md).
+
+Native Discord has an independent voice gate and a narrower declared profile:
+canonical mono signed 16-bit little-endian PCM WAV at 16kHz, 0.1–120 seconds.
+Discover `presentation_profiles` before sending `kind: "voice"`; its optional
+`max_attachments: 1` and `text: false` require one file without text, blocks or
+caption. The server derives duration and the complete preview waveform from
+actual PCM samples. Generic `audio` is unchanged. No message-operation reference
+is issued, and an uncertain result must not be retried under a new operation ID.
+Other codecs, including Ogg/Opus, are refused for this Discord voice profile.
+[Discord voice limits and acceptance status](../../../docs/CMAEG_Native_Discord_Voice.md).

@@ -36,6 +36,7 @@ mod discord_reaction_tests;
 mod discord_receipts;
 #[cfg(test)]
 mod discord_tests;
+mod discord_voice;
 pub mod durable;
 mod edit;
 pub mod engine;
@@ -82,3 +83,6 @@ mod native_media_ref;
 
 #[cfg(test)]
 mod split_text_tests;
+
+#[cfg(test)]
+mod discord_voice_tests;
