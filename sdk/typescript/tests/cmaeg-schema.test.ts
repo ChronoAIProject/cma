@@ -33,7 +33,7 @@ import {
   SourceSchema,
 } from '../src/cmaeg/types.js';
 
-it('keeps omitted native WhatsApp capabilities unavailable on older servers', () => {
+it('preserves older discovery and optional provider recovery and WhatsApp capabilities', () => {
   const legacy = {
     dynamic_sources_writes_enabled: true,
     relay_raw_verification_writes_enabled: true,
@@ -43,6 +43,10 @@ it('keeps omitted native WhatsApp capabilities unavailable on older servers', ()
     platforms: [],
   };
   expect(RelayAuthoringCapabilitiesSchema(legacy)).toEqual(legacy);
+  for (const providers of [null, [], ['cma_codex', 'nyxbot']]) {
+    const value = { ...legacy, response_recovery_providers: providers };
+    expect(RelayAuthoringCapabilitiesSchema(value)).toEqual(value);
+  }
   for (const enabled of [false, true, null]) {
     const value = {
       ...legacy,

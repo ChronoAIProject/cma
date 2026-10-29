@@ -3423,6 +3423,15 @@ Discord/WhatsApp, and `trusted_normalized` for Slack. Each mode has
 `writes_enabled`; this describes new authoring, not upstream transport health,
 ordinary-message delivery, or bot provisioning.
 
+Optional `relay_authoring.response_recovery_providers` lists the registered
+provider slugs whose configuration includes both durable response recovery paths.
+It exposes no URLs or credentials and performs no provider requests. This is
+configuration eligibility, not proof of provider availability, a connected bot,
+or confirmed delivery. The portal explains an unsupported selected provider
+before new direct Discord authoring. Exact saved sources remain editable without
+being rewritten. Older gateways may omit this additive field; the server's
+admission checks remain authoritative.
+
 `relay_raw_verification_writes_enabled` is independent of
 `dynamic_sources_writes_enabled`, `multi_consumer_writes_enabled`,
 `native_bot_mentions_writes_enabled`, and `thread_contract_writes_enabled`.
