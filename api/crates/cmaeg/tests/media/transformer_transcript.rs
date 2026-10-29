@@ -39,6 +39,7 @@ async fn ogg_is_transcoded_and_metered_by_its_pcm_seconds() {
             .await,
     );
     let Derived::Transcript {
+        source_sha256,
         truncated_at_seconds,
         ..
     } = &*derived
@@ -46,6 +47,10 @@ async fn ogg_is_transcoded_and_metered_by_its_pcm_seconds() {
         panic!("not a transcript: {derived:?}");
     };
     assert_eq!(*truncated_at_seconds, None);
+    assert_eq!(
+        source_sha256,
+        &cmaeg_core::media_continuation::sha256(&ogg(4_096))
+    );
     assert_eq!(
         *built.transcriber.uploads.lock().unwrap(),
         [AudioContainer::Wav]

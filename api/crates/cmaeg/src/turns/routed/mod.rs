@@ -19,6 +19,16 @@ mod event_attestation;
 mod executor;
 mod generation_provenance;
 mod journal;
+mod media_delivery;
+mod media_delivery_gate;
+#[cfg(test)]
+mod media_delivery_tests;
+mod media_obligations;
+mod media_response_store;
+mod media_schedule;
+mod media_status;
+mod media_work;
+mod media_worker;
 mod model;
 mod preparation;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
@@ -53,6 +63,13 @@ pub use dispatcher::{Authority, DispatchOutcome, Dispatcher, ExecutionPort, Star
 pub use event_attestation::{EventAttestationRequest, EventAttestationResponse};
 pub use executor::RoutedTargetExecutor;
 pub use journal::Journal;
+pub(crate) use media_delivery::MediaDelivery;
+pub use media_obligations::{
+    MediaContinuationReceipt, MediaLease, MediaObligationStore, MediaUploadReceipt,
+};
+pub use media_status::{MediaResponsePage, RetainedMediaResponse};
+pub(crate) use media_work::MediaWorkIndex;
+pub(crate) use media_worker::MediaWorker;
 pub use model::{
     ExecutionError, FrozenDelivery, FrozenTurn, Lease, Phase, RecoverySupport, TargetState,
 };
@@ -93,7 +110,7 @@ mod recovery_tests;
 #[cfg(test)]
 mod scheduler_tests;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 
