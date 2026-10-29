@@ -56,6 +56,7 @@ pub struct ToolsState {
     pub native_media_enabled: bool,
     /// Bounded native Lark image/document/audio/video uploads, independently default-off.
     pub native_lark_outbound_media_enabled: bool,
+    pub native_lark_sticker_replies_enabled: bool,
     pub native_lark_media_controls_enabled: bool,
     pub native_lark_multi_image_controls_enabled: bool,
     pub native_lark_media_card_replacements_enabled: bool,
@@ -218,6 +219,9 @@ impl ToolsState {
                     return Ok(receipt);
                 }
             }
+            if message.reply_with_received_sticker {
+                return Err(invalid("received_sticker_requires_retained_routing"));
+            }
             let (receipt, received) = oneshot::channel();
             let result = self
                 .deliver(
@@ -333,8 +337,7 @@ impl ToolsState {
         observation.finish(if result.is_ok() { "success" } else { "error" });
         result
     }
-    /// Verify an ingress snapshot before any provider command exists. No local
-    /// cache or provider read participates in this cryptographic attestation.
+    /// Verify ingress cryptographically without a provider command, cache or read.
     pub async fn verify_context(
         &self,
         caller: AgentCaller,

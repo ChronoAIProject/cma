@@ -4660,3 +4660,7 @@ issues no message operation references, while single-upload behavior is unchange
 This optional capability is absent when its default-false
 `CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED` gate is disabled or the original native
 Telegram destination is not verified. See [album delivery](CMAEG_Native_Telegram_Albums.md).
+
+### Received native Lark stickers
+
+An authenticated native sticker is a descriptive message plus an `other` attachment with `variant: sticker`, without a resource source or thumbnail. When `capabilities.reply_with_received_sticker` is true, `replyToEvent` accepts the exclusive message `{"reply_with_received_sticker":true}` to resend only that original event's retained sticker. No caller key, URL, upload, arbitrary recipient, initiated send, update or thread creation is authorized. The field is omitted on legacy messages, preserving their serialized hashes. See [native Lark received stickers](CMAEG_Native_Lark_Stickers.md) for the official platform limits and default-off rollout.

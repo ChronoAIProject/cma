@@ -126,6 +126,7 @@ impl crate::delivery::relay_client::RelayClient {
         thread_start: bool,
     ) -> Self {
         self.with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
+            .with_native_lark_sticker_replies(config.native_lark_sticker_replies_enabled)
             .with_native_lark_effects(config.native_lark_message_effects_enabled)
             .with_native_lark_controls(controls, config.native_lark_forms_enabled)
             .with_native_lark_media_controls(config.native_lark_media_controls_enabled)
