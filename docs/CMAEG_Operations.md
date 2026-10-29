@@ -3130,3 +3130,7 @@ interaction storage retains encrypted original credential proofs for three days;
 no new collection or readiness migration is required. Gate-off stops new changes
 and original-proof capture while retained recovery remains available subject to
 current consent and authority. See [the full contract](CMAEG_Native_WhatsApp_Message_Events.md).
+
+## Optional media continuation scheduling storage
+
+The continuation worker uses a separate expiring active-head collection, bounded keyset scans and a preserved original retention deadline. It never treats a scheduling head as admission authority. Base Gateway startup does not require the optional migration or role. Deploy compatible readers, then review the optional role/migration and readiness before enabling a worker; older isolated readers reject unrecognized optional grants. See [media continuation storage](CMAEG_Media_Continuation_Storage.md) for exact commands, retention, rollback and verification.
