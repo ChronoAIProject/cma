@@ -19,6 +19,53 @@ fn expect_media(server: &WireServer, body: String) {
 }
 
 #[tokio::test]
+async fn persisted_gateway_statuses_and_last_supported_attachment_slot_are_retained() {
+    // media_response_store preserves these statuses; MediaArtifactClaim permits indices <32.
+    for status in ["completed", "failed", "incomplete", "cancelled"] {
+        let server = WireServer::new().await;
+        let mut response = media();
+        response["attachment_index"] = 31.into();
+        response["status"] = status.into();
+        if status != "completed" {
+            response["text"] = "".into();
+        }
+        let mut final_outcome = terminal();
+        if status != "completed" {
+            final_outcome["status"] = "incomplete".into();
+            final_outcome["media_complete"] = false.into();
+        }
+        expect_media(
+            &server,
+            frame("cmaeg.response.completed", original())
+                + &frame("cmaeg.media.response", response)
+                + &frame(
+                    if status == "completed" {
+                        "cmaeg.completed"
+                    } else {
+                        "cmaeg.failed"
+                    },
+                    final_outcome,
+                ),
+        );
+        let mut stream = client(&server)
+            .stream_event_with_media("channel", &event(), &EventOptions::default())
+            .await
+            .unwrap();
+        assert!(matches!(
+            stream.next().await,
+            Some(Ok(GatewayMediaEvent::ResponseCompleted(_)))
+        ));
+        assert!(
+            matches!(stream.next().await, Some(Ok(GatewayMediaEvent::MediaResponse(v))) if v.status == status && v.attachment_index == 31)
+        );
+        assert!(stream.next().await.unwrap().is_ok());
+        assert!(stream.next().await.is_none());
+        assert_eq!(server.request_count(), 1);
+        server.assert_drained();
+    }
+}
+
+#[tokio::test]
 async fn explicit_media_stream_continues_after_original_completion_without_following_urls() {
     let server = WireServer::new().await;
     expect_media(
@@ -110,7 +157,7 @@ async fn malformed_media_frames_fail_closed_without_replay() {
     for (field, value) in [
         ("event_id", json!("wrong")),
         ("conversation_id", json!("wrong")),
-        ("attachment_index", json!(16)),
+        ("attachment_index", json!(32)),
         ("kind", json!("caption")),
         ("status", json!("queued")),
     ] {

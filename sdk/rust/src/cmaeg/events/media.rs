@@ -29,11 +29,11 @@ pub struct MediaResponse {
     pub parent_response_id: String,
     /// Independent delivery receipt identity.
     pub delivery_id: String,
-    /// Original frozen attachment slot, between zero and fifteen.
+    /// Original frozen attachment slot, between zero and thirty-one.
     pub attachment_index: u64,
     /// Original file or derived artifact kind.
     pub kind: MediaContinuationKind,
-    /// Completed, failed, or incomplete response outcome.
+    /// Completed, failed, incomplete, or cancelled response outcome.
     pub status: String,
     /// Complete response text, possibly empty on failure.
     pub text: String,
@@ -75,7 +75,7 @@ pub struct GatewayMediaStream(GatewayStream);
 
 impl Cmaeg {
     /// Explicitly negotiate supplementary attachment responses. No replay or retry occurs.
-    /// Configure a request timeout exceeding 120 seconds to observe the server deadline.
+    /// Configure a timeout covering the original turn plus the 120-second supplementary wait.
     pub async fn stream_event_with_media(
         &self,
         channel_id: &str,
@@ -149,8 +149,11 @@ impl GatewayMediaStream {
             "cmaeg.media.response" => {
                 let value: MediaResponse = serde_json::from_value(data).map_err(|_| invalid())?;
                 self.0.identity(&value.event_id, &value.conversation_id)?;
-                if value.attachment_index >= 16
-                    || !matches!(value.status.as_str(), "completed" | "failed" | "incomplete")
+                if value.attachment_index >= 32
+                    || !matches!(
+                        value.status.as_str(),
+                        "completed" | "failed" | "incomplete" | "cancelled"
+                    )
                 {
                     return Err(invalid());
                 }
