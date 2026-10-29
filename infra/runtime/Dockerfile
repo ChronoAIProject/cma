@@ -180,7 +180,7 @@ RUN apt-get update \
         xz-utils \
         zlib1g \
         zstd \
-    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium dbus-x11 fonts-liberation novnc scrot wmctrl x11vnc x11-xserver-utils x11-utils xdotool xvfb websockify xfce4-session xfce4-panel xfdesktop4 xfwm4 xfce4-settings thunar xfce4-terminal adwaita-icon-theme; else test "${RUNTIME_DESKTOP}" = "0"; fi \
+    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium dbus-x11 fonts-liberation novnc scrot wmctrl x11vnc x11-xserver-utils x11-utils xdotool xvfb websockify xfce4-session xfce4-panel xfdesktop4 xfwm4 xfce4-settings xfce4-appfinder gvfs thunar xfce4-terminal adwaita-icon-theme; else test "${RUNTIME_DESKTOP}" = "0"; fi \
     && git --version \
     && rm -rf /var/lib/apt/lists/*
 

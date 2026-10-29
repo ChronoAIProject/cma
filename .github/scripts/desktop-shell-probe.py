@@ -67,16 +67,20 @@ run('thunar', str(folder))
 file_window = wait_window('Thunar')
 run('scrot', '/tmp/cma-desktop-file-manager.png')
 run('wmctrl', '-i', '-c', file_window)
-terminal = subprocess.Popen(['xfce4-terminal', '--disable-server', '--title=CMA desktop terminal'],
-                            env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-try:
-    terminal_window = wait_window('Xfce4-terminal')
-    run('wmctrl', '-i', '-c', terminal_window)
-    assert terminal.wait(timeout=10) == 0
-finally:
-    if terminal.poll() is None:
-        terminal.terminate()
-        terminal.wait(timeout=5)
+for command, window_class in [
+    (["xfce4-terminal", "--disable-server", "--title=CMA desktop terminal"], "Xfce4-terminal"),
+    (["xfce4-appfinder", "--disable-server", "--collapsed"], "Xfce4-appfinder"),
+]:
+    application = subprocess.Popen(command, env=environment,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        window = wait_window(window_class)
+        run('wmctrl', '-i', '-c', window)
+        assert application.wait(timeout=10) == 0
+    finally:
+        if application.poll() is None:
+            application.terminate()
+            application.wait(timeout=5)
 run('scrot', '/tmp/cma-desktop-shell.png')
 print(json.dumps({'checks': ['xfce-window-manager', 'visible-taskbar', 'desktop-icons-surface',
-                             'file-manager-window', 'terminal-window', 'retained-desktop-preferences']}))
+                             'file-manager-window', 'terminal-window', 'application-finder-window', 'retained-desktop-preferences']}))
