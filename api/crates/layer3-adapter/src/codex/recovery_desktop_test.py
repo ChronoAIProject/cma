@@ -80,6 +80,11 @@ class DesktopRecovery(unittest.TestCase):
         with self.assertRaisesRegex(m.Refused, "desktop_changed"):
             m.absent(plan, self.live)
 
+    def test_retained_openbox_launcher_keeps_recovery_authority(self):
+        self.source = "3127c5d454316efaf7e147665f871825aae2eda00cea250d2f89fd18f351263d"
+        self.assertEqual({p["pid"] for p in m.services(self.live)}, {20, 30, 40, 50})
+        self.assertTrue(m.absent(self.plan(), self.live))
+
     def test_changed_launcher_source_is_refused(self):
         self.source = "0" * 64
         with self.assertRaisesRegex(m.Refused, "desktop_identity"):
