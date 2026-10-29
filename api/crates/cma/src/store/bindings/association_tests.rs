@@ -200,9 +200,12 @@ async fn mongo_associations_read_one_snapshot_across_retirement_and_require_inde
     let mut session = client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
     // Pin the transaction snapshot before another connection retires both rows.
-    crate::store::agent_provenance::read_snapshot(&store, &agent.id, &mut session)
-        .await
-        .unwrap();
+    assert!(
+        crate::store::agent_provenance::read_snapshot(&store, &agent.id, &mut session)
+            .await
+            .is_ok(),
+        "the fixture must establish its provenance snapshot before retirement"
+    );
     retire(&store, conversation).await;
     let page = PageRequest::new(50, None).unwrap();
     let held = super::associations::read(&store, &agent.owner, &agent.id, &page, &mut session)
