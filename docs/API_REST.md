@@ -1381,11 +1381,20 @@ pools and retained homes keep their admitted templates.
 | `POST /api/v1/agents/{id}/skills` | InstallAgentSkillRequest; key | - | 202 AgentSkillsView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
+| `POST /api/v1/agents/{id}/recover-worktree` | -; required key | - | 202 AgentView |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/desktop` | - | - | 200 DesktopDescriptor; 404 ProblemDocument |
 | `GET /api/v1/agents/{id}/desktop/ws` | WebSocket upgrade; browser Origin | - | 101 RFB stream; 400/403 refusal; 404/409/503 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
 | `POST /api/v1/workspaces/{id}/agents` | CreateAgentRequest; key | - | 201 AgentView |
+
+`recover-worktree` admits another initial worktree preparation attempt for a
+failed Agent that has never become ready. The Agent ID and persistent volume are
+preserved; the failed worktree and its evidence remain retained while a fresh
+worktree is allocated. This bodyless operation requires the owner with CMA use
+authority or a CMA administrator. Reuse the original key after an uncertain
+response. HTTP 202 means recovery is admitted, not that preparation is complete.
+Ineligible states return HTTP 409 `agent_worktree_recovery_conflict`.
 
 ### Agent home files
 

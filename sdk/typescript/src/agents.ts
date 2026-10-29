@@ -194,6 +194,22 @@ export class Agents {
     });
   }
 
+  /** Retry a never-ready Agent's failed initial worktree preparation, preserving its PV and identity.
+   * The failed worktree is retained and a fresh one is allocated. Reuse the key after uncertain replies.
+   */
+  recoverWorktree(id: string, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(id)}/recover-worktree`,
+      identity(agent, id),
+      {
+        ...command(options),
+        method: 'POST',
+        expectedStatus: 202,
+      },
+    );
+  }
+
   /** Read owner-visible provisioning progress; succeeded means the Agent is ready. */
   readLifecycle(id: string, options: OperationOptions = {}) {
     return read(
