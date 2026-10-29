@@ -126,6 +126,10 @@ impl crate::delivery::relay_client::RelayClient {
         self.with_native_media_presentations(config.native_media_presentations_enabled)
             .with_native_discord_voice(config.native_discord_voice_enabled)
             .with_native_telegram_albums(config.native_telegram_albums_enabled)
+            .with_native_whatsapp_structured_replies(
+                config.native_whatsapp_structured_replies_enabled
+                    && config.native_whatsapp_writes_enabled,
+            )
             .with_native_telegram_structured_replies(
                 config.native_telegram_structured_replies_enabled,
             )

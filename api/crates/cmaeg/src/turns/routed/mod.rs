@@ -161,3 +161,6 @@ mod native_lark_sticker_tests;
 
 #[cfg(test)]
 mod telegram_structured_tests;
+
+#[cfg(test)]
+mod whatsapp_structured_tests;

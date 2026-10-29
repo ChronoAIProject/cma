@@ -44,6 +44,7 @@ data:
   # Ordered native albums; existing single uploads and their references are unchanged.
   CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED: "false"
+  CMAEG_NATIVE_WHATSAPP_STRUCTURED_REPLIES_ENABLED: "false"
   # Reader-first voice/animation kinds and native Telegram static stickers; existing audio is unchanged.
   CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED: "false"
   # Canonical PCM WAV voice-only Discord replies, independently enabled.

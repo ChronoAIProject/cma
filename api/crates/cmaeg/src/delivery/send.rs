@@ -136,7 +136,11 @@ impl Sender {
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
         if message.structured_content.is_some() {
-            return Box::pin(self.telegram_structured_reply(ctx, event, message)).await;
+            return if matches!(event.reply, ReplyAddress::Whatsapp { .. }) {
+                Box::pin(self.whatsapp_reply(ctx, event, message)).await
+            } else {
+                Box::pin(self.telegram_structured_reply(ctx, event, message)).await
+            };
         }
         let discord_voice = self.relay.native_discord_voice
             && matches!(event.reply, ReplyAddress::Discord { .. })
