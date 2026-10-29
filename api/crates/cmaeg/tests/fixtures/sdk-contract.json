@@ -8579,7 +8579,19 @@
         ],
         "controls": false,
         "message_operations": false
-      }
+      },
+      "presentation_profiles": [
+        {
+          "kind": "voice",
+          "mime_types": [
+            "audio/ogg"
+          ],
+          "max_bytes": 8388608,
+          "caption": true,
+          "profile": "One complete mono Opus Ogg stream; no transcoding",
+          "message_operations": false
+        }
+      ]
     },
     {
       "kinds": [
@@ -10603,6 +10615,18 @@
         }
       ],
       "next_cursor": 16
+    }
+  ],
+  "NativePresentationProfile": [
+    {
+      "kind": "voice",
+      "mime_types": [
+        "audio/ogg"
+      ],
+      "max_bytes": 8388608,
+      "caption": true,
+      "profile": "One complete mono Opus Ogg stream; no transcoding",
+      "message_operations": false
     }
   ]
 }
