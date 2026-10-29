@@ -1,5 +1,6 @@
 import {
   modeUnavailable,
+  nativeDiscordProviderUnavailable,
   nativeDiscordUnavailable,
   nativeLarkUnavailable,
   nativeWhatsappUnavailable,
@@ -233,7 +234,11 @@ export function validateRelayAuthoring(
           'New or changed conversation history access is disabled on this gateway. Your draft has been retained.',
         );
       const hasSavedNative = oldSources.some((old) => old.type === 'discord');
-      const reason = nativeDiscordUnavailable(discovery, !hasSavedNative);
+      const reason =
+        nativeDiscordUnavailable(discovery, !hasSavedNative) ??
+        (!hasSavedNative
+          ? nativeDiscordProviderUnavailable(discovery, text(object(next.provider).slug))
+          : undefined);
       if (
         reason &&
         (!unchanged || Boolean(credentialsPatch(credentials, false)?.discord_bot_token))
