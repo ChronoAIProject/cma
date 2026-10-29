@@ -10,9 +10,9 @@ use crate::failure::{Result, RuntimeError};
 use crate::writer_fence::ManagedSpawnPermit;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(120);
-// Clone also checks out the complete current tree. Large public repositories
-// can finish transfer but still be writing files after the ordinary Git budget.
-const CLONE_TIMEOUT: Duration = Duration::from_secs(600);
+// Clone and worktree addition both materialize the complete current tree.
+// Large checkouts can still be writing files after the ordinary Git budget.
+const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(600);
 const OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(crate) struct GitOutput {
@@ -55,7 +55,20 @@ impl GitRunner {
         I: IntoIterator<Item = S>,
         S: Into<OsString>,
     {
-        self.checked_with_timeout(cwd, args, "clone workspace", CLONE_TIMEOUT)
+        self.checked_checkout(cwd, args, "clone workspace").await
+    }
+
+    pub(crate) async fn checked_checkout<I, S>(
+        &self,
+        cwd: &std::path::Path,
+        args: I,
+        operation: &'static str,
+    ) -> Result<GitOutput>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.checked_with_timeout(cwd, args, operation, CHECKOUT_TIMEOUT)
             .await
     }
 

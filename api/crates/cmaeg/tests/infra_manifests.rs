@@ -285,19 +285,10 @@ fn transformer_rule(configmap: &str, deployment: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn with_ffmpeg_dir(configmap: &str) -> String {
-    let set = configmap.replace(
-        "CMAEG_MEDIA_FFMPEG_DIR: \"\"",
-        &format!("CMAEG_MEDIA_FFMPEG_DIR: \"{FFMPEG_DIR}\""),
-    );
-    assert_ne!(set, configmap, "the shipped directory line changed shape");
-    set
-}
-
-fn with_sleep_pre_stop(deployment: &str) -> String {
+fn with_exec_pre_stop(deployment: &str) -> String {
     let edited = deployment.replace(
-        "exec:\n                command: [\"/bin/sleep\", \"5\"]",
         "sleep:\n                seconds: 5",
+        "exec:\n                command: [\"/bin/sleep\", \"5\"]",
     );
     assert_ne!(edited, deployment, "the shipped preStop hook changed shape");
     edited
@@ -325,26 +316,25 @@ fn the_media_job_volume_is_a_32mi_memory_empty_dir_at_the_media_root() {
 fn the_ffmpeg_dir_requires_a_sleep_pre_stop_and_2gi_of_guaranteed_memory() {
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_MEDIA_FFMPEG_DIR"),
-        Some("")
+        Some(FFMPEG_DIR)
     );
     assert_eq!(transformer_rule(CONFIGMAP, DEPLOYMENT), Ok(()));
-    let set = with_ffmpeg_dir(CONFIGMAP);
-    let ready = with_sleep_pre_stop(&with_memory(DEPLOYMENT, "2Gi", "2Gi"));
-    assert_eq!(transformer_rule(&set, &ready), Ok(()));
-    let exec = with_memory(DEPLOYMENT, "2Gi", "2Gi");
-    assert!(transformer_rule(&set, &exec)
+    let ready = with_memory(DEPLOYMENT, "2Gi", "2Gi");
+    let exec = with_exec_pre_stop(&ready);
+    assert!(transformer_rule(CONFIGMAP, &exec)
         .unwrap_err()
         .contains("sleep action, not exec"));
-    let small = with_sleep_pre_stop(&with_memory(DEPLOYMENT, "1536Mi", "1536Mi"));
-    assert!(transformer_rule(&set, &small)
+    let disabled = set_config(CONFIGMAP, "CMAEG_MEDIA_FFMPEG_DIR", "");
+    assert_eq!(transformer_rule(&disabled, &exec), Ok(()));
+    let small = with_memory(DEPLOYMENT, "1536Mi", "1536Mi");
+    assert!(transformer_rule(CONFIGMAP, &small)
         .unwrap_err()
         .contains("at least 2Gi"));
-    let burstable = with_sleep_pre_stop(&with_memory(DEPLOYMENT, "1536Mi", "2Gi"));
-    assert!(transformer_rule(&set, &burstable)
+    let burstable = with_memory(DEPLOYMENT, "1536Mi", "2Gi");
+    assert!(transformer_rule(CONFIGMAP, &burstable)
         .unwrap_err()
         .contains("to equal its limit"));
-    // The enablement also needs the media rule, which 2Gi satisfies.
-    assert_eq!(media_memory_rule(&enabled(&set), &ready), Ok(()));
+    assert_eq!(media_memory_rule(&enabled(CONFIGMAP), &ready), Ok(()));
 }
 
 /// The instruction lines of the Dockerfile stage `name`: from its `FROM ...
@@ -460,9 +450,18 @@ fn staged_preview_enables_media_and_console_with_reserved_memory() {
     for key in ["CMAEG_MEDIA_ENABLED", "CMAEG_CONSOLE_ENABLED"] {
         assert_eq!(configmap_value(CONFIGMAP, key), Some("true"));
     }
-    for key in ["CMAEG_MEDIA_FFMPEG_DIR", "CMAEG_STT_URL"] {
-        assert_eq!(configmap_value(CONFIGMAP, key), Some(""));
-    }
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_MEDIA_FFMPEG_DIR"),
+        Some(FFMPEG_DIR)
+    );
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_STT_URL"),
+        Some("https://nyx-api.chrono-ai.fun/api/v1/proxy/s/llm-openai/audio/transcriptions")
+    );
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_STT_MODEL"),
+        Some("gpt-transcribe")
+    );
     assert!(configmap_value(CONFIGMAP, "CMAEG_CONSOLE_CLIENT_ID")
         .is_some_and(|value| !value.is_empty()));
     for section in ["requests", "limits"] {
