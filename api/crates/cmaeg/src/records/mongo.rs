@@ -16,6 +16,7 @@ pub const CONNECTIONS: &str = "eg_connection_records";
 pub const INTERACTIONS: &str = "eg_interaction_records";
 pub const THREAD_FENCES: &str = "eg_thread_fence_records";
 pub const WHATSAPP_FLOWS: &str = "eg_whatsapp_flow_records";
+pub const MEDIA_CONTINUATIONS: &str = "eg_media_continuation_records";
 pub const MIGRATIONS: &str = "eg_schema_migrations";
 pub const SESSIONS: &str = "eg_auth_sessions";
 pub const COLLECTIONS: &[&str] = &[RECORDS, CONNECTIONS, INTERACTIONS, MIGRATIONS, SESSIONS];
@@ -78,7 +79,10 @@ impl MongoRecords {
         }
     }
     fn live(&self, mut filter: Document) -> Document {
-        if self.kind == RecordKind::Interaction {
+        if matches!(
+            self.kind,
+            RecordKind::Interaction | RecordKind::MediaContinuation
+        ) {
             filter.insert("expires_at", doc! {"$gt":DateTime::now()});
         }
         filter
@@ -123,7 +127,7 @@ impl MongoRecords {
             ));
         }
         let expiry = match (self.kind, expires_at) {
-            (RecordKind::Interaction, Some(seconds))
+            (RecordKind::Interaction | RecordKind::MediaContinuation, Some(seconds))
                 if seconds > DateTime::now().timestamp_millis() / 1000
                     && seconds <= DateTime::now().timestamp_millis() / 1000 + retention.maximum_age() =>
             {
@@ -232,7 +236,12 @@ impl MongoRecords {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<RecordHead>, RecordError> {
-        if !(1..=1000).contains(&limit) {
+        let maximum = if self.kind == RecordKind::MediaContinuation {
+            32
+        } else {
+            1000
+        };
+        if !(1..=maximum).contains(&limit) {
             return Err(RecordError::Rejected("invalid page size".into()));
         }
         let mut filter = self.live(doc! {});
@@ -241,6 +250,11 @@ impl MongoRecords {
         }
         if let Some(after) = after {
             filter.insert("_id", doc! {"$gt":after});
+        }
+        if self.kind == RecordKind::MediaContinuation {
+            return self
+                .media_continuation_heads(filter, owner.is_some(), limit)
+                .await;
         }
         let rows: Vec<Record> = self
             .records
@@ -287,3 +301,8 @@ pub use thread_fences::{migrate as migrate_thread_fences, role as thread_fences_
 #[path = "mongo_whatsapp_flows.rs"]
 mod whatsapp_flows;
 pub use whatsapp_flows::{migrate as migrate_whatsapp_flows, role as whatsapp_flows_role};
+#[path = "mongo_media_continuations.rs"]
+mod media_continuations;
+pub use media_continuations::{
+    migrate as migrate_media_continuations, role as media_continuations_role,
+};
