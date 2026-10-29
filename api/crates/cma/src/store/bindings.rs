@@ -19,6 +19,7 @@ mod admission;
 mod commands;
 mod conversations;
 mod custody;
+mod key_classification;
 mod reprovision;
 mod retry;
 mod rotation;
@@ -154,6 +155,9 @@ impl BindingStore for MongoSandboxStore {
             .await
             .map_err(driver)?
             .is_some())
+    }
+    async fn classify_worker_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
+        key_classification::contains(self, hash).await
     }
     async fn find_by_key_hash(
         &self,

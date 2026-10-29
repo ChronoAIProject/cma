@@ -235,6 +235,7 @@ fn binding_request_paths_exclude_management_and_foreign_event_context() {
         "/api/v1/sandboxes",
         "/api/v1/profiles",
         "/auth/session",
+        "/api/v1/cmaeg/worker-credentials/classify",
         "/api/v1/cmaeg/bindings/binding-auth",
         "/api/v1/cmaeg/bindings/other/conversations/conversation/events/event",
     ] {
