@@ -1,0 +1,966 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "preparation-inspect-anonymous",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "admission_id": "event-contract",
+          "target_id": "consumer-contract",
+          "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner": "owner",
+          "admitted_at": "$recent_admission",
+          "expires_at": "$interaction_expiry",
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-inspect-forbidden",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "admission_id": "event-contract",
+          "target_id": "consumer-contract",
+          "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner": "owner",
+          "admitted_at": "$recent_admission",
+          "expires_at": "$interaction_expiry",
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "forbidden",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-inspect-invalid-json",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-inspect-invalid-version",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 2,
+          "admission_id": "event-contract",
+          "target_id": "consumer-contract",
+          "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner": "owner",
+          "admitted_at": "$recent_admission",
+          "expires_at": "$interaction_expiry",
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_binding",
+          "title": "invalid_binding",
+          "status": 400,
+          "detail": "invalid binding request: unsupported preparation version",
+          "code": "invalid_binding"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-inspect-foreign-owner",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "admission_id": "event-contract",
+          "target_id": "consumer-contract",
+          "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner": "foreign",
+          "admitted_at": "$recent_admission",
+          "expires_at": "$interaction_expiry",
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_found",
+          "title": "binding_not_found",
+          "status": 404,
+          "detail": "binding not found",
+          "code": "binding_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-inspect-terminal",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_terminal",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "admission_id": "event-contract",
+          "target_id": "consumer-contract",
+          "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner": "owner",
+          "admitted_at": "$recent_admission",
+          "expires_at": "$interaction_expiry",
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_ready",
+          "title": "binding_not_ready",
+          "status": 409,
+          "detail": "binding changed or is not ready",
+          "code": "binding_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-inspect-missing",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "admission_id": "event-contract",
+          "target_id": "consumer-contract",
+          "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner": "owner",
+          "admitted_at": "$recent_admission",
+          "expires_at": "$interaction_expiry",
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_resources_unavailable",
+          "title": "binding_resources_unavailable",
+          "status": 409,
+          "detail": "This binding's sandbox or workspace is missing or removed. Reconnect the channel to an available agent.",
+          "code": "binding_resources_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-inspect-corrupt",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "admission_id": "event-contract",
+          "target_id": "consumer-contract",
+          "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner": "owner",
+          "admitted_at": "$recent_admission",
+          "expires_at": "$interaction_expiry",
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_unavailable",
+          "title": "binding_unavailable",
+          "status": 503,
+          "detail": "Binding service is unavailable.",
+          "code": "binding_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-inspect-current",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "admission_id": "event-contract",
+          "target_id": "consumer-contract",
+          "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner": "owner",
+          "admitted_at": "$recent_admission",
+          "expires_at": "$interaction_expiry",
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "state": "pinned",
+          "version": 1,
+          "binding_id": "binding-contract",
+          "generation": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-anonymous",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": 3,
+            "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sandbox_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "workspace_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-forbidden",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": 3,
+            "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sandbox_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "workspace_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "forbidden",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-invalid-json",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-invalid-version",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "body": {
+          "schema_version": 2,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": 3,
+            "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sandbox_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "workspace_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_binding",
+          "title": "invalid_binding",
+          "status": 400,
+          "detail": "invalid binding request: preparation requires its exact operation key",
+          "code": "invalid_binding"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-foreign-owner",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "foreign",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": 3,
+            "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sandbox_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "workspace_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_found",
+          "title": "binding_not_found",
+          "status": 404,
+          "detail": "binding not found",
+          "code": "binding_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-disabled",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": 3,
+            "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sandbox_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "workspace_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_unavailable",
+          "title": "binding_unavailable",
+          "status": 503,
+          "detail": "Binding service is unavailable.",
+          "code": "binding_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-missing-key",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": 3,
+            "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sandbox_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "workspace_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_binding",
+          "title": "invalid_binding",
+          "status": 400,
+          "detail": "invalid binding request: preparation requires its exact operation key",
+          "code": "invalid_binding"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-wrong-key",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "wrong"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": 3,
+            "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sandbox_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "workspace_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_binding",
+          "title": "invalid_binding",
+          "status": 400,
+          "detail": "invalid binding request: preparation requires its exact operation key",
+          "code": "invalid_binding"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-digest-conflict",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_retired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": 3,
+            "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sandbox_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "workspace_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_ready",
+          "title": "binding_not_ready",
+          "status": 409,
+          "detail": "binding changed or is not ready",
+          "code": "binding_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-inspect-retired",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "scenario": "binding_preparation_retired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparation-inspections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "admission_id": "event-contract",
+          "target_id": "consumer-contract",
+          "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner": "owner",
+          "admitted_at": "$recent_admission",
+          "expires_at": "$interaction_expiry",
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "state": "pending",
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": 3,
+            "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sandbox_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "workspace_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "preparation_binding_digest": "/intent/binding_digest",
+        "preparation_revision": "/intent/binding_revision",
+        "preparation_sandbox_digest": "/intent/sandbox_digest",
+        "preparation_workspace_digest": "/intent/workspace_digest"
+      }
+    },
+    {
+      "id": "preparation-reserve-success",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_retired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": "$preparation_revision",
+            "binding_digest": "$preparation_binding_digest",
+            "sandbox_digest": "$preparation_sandbox_digest",
+            "workspace_digest": "$preparation_workspace_digest",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": 1,
+          "operation_id": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313",
+          "intent_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "generation": 2,
+          "sandbox_id": "sbx_preparation_contract",
+          "workspace_id": "wks_preparation_contract"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "preparation_fingerprint": "/intent_fingerprint",
+        "preparation_sandbox_id": "/sandbox_id",
+        "preparation_workspace_id": "/workspace_id"
+      }
+    },
+    {
+      "id": "preparation-reserve-exact-replay",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_retired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": "$preparation_revision",
+            "binding_digest": "$preparation_binding_digest",
+            "sandbox_digest": "$preparation_sandbox_digest",
+            "workspace_digest": "$preparation_workspace_digest",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": 1,
+          "operation_id": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313",
+          "intent_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "generation": 2,
+          "sandbox_id": "sbx_preparation_contract",
+          "workspace_id": "wks_preparation_contract"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "preparation-reserve-changed-intent",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/preparations",
+      "scenario": "binding_preparation_retired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/preparations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bprep_6b43f135ac2ffb120028d3d5b4a03a951202199d7a710e9bb591a10c74620313"
+        },
+        "body": {
+          "schema_version": 1,
+          "intent": {
+            "version": 1,
+            "admission_id": "event-contract",
+            "target_id": "consumer-contract",
+            "request_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "binding_id": "binding-contract",
+            "owner": "owner",
+            "manager": "manager",
+            "generation": 1,
+            "binding_revision": "$preparation_revision",
+            "binding_digest": "$preparation_binding_digest",
+            "sandbox_digest": "$preparation_sandbox_digest",
+            "workspace_digest": "$preparation_workspace_digest",
+            "admitted_at": "$recent_admission",
+            "expires_at": "$interaction_expiry"
+          },
+          "agent_key": "nyx_public_contract_preparation"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_ready",
+          "title": "binding_not_ready",
+          "status": 409,
+          "detail": "binding changed or is not ready",
+          "code": "binding_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
