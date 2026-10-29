@@ -40,12 +40,38 @@ Every active consumer's provider must configure the Responses v2 recovery
 source with an unsupported provider is rejected before provider binding or record
 reservation. The UI advertises direct creation only after authenticated capability
 discovery confirms authoring, routing authoring and automatic activation.
+Discovery also reports optional `response_recovery_providers`. The portal uses
+that list to explain provider incompatibility before saving a new native source;
+it does not probe upstream health or change existing relay sources.
 
 `CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` remains an explicit canary list of at most
 64 canonical UUID v4 records. Its entries take selection precedence and still need
 to appear in `CMAEG_ROUTED_CHANNEL_RECORDS`. Discovery does not add arbitrary HTTP,
 Custom or relay channels to that routed allowlist. Only a verified native inbox
 launch can use a dynamically discovered selection.
+
+### NyxBot creator authorization and recovery
+
+NyxID's [creator authorization contract](https://github.com/ChronoAIProject/NyxID/blob/main/docs/CHANNEL_EVENT_GATEWAY.md#nyxbot-gateway-creator-authorization-and-recovery)
+uses a dedicated, server-only creator bearer. CMA retains its normal introspection
+and owner checks. Register the gateway's actual active confidential OAuth client
+by its full ID in the `cmaeg` service's `introspection_client_ids`. NyxID grants
+only channel read/create/update/delete to this exact mint; channel testing and
+administration remain separate. Never grant permissions by trusting the actor
+string directly or substitute the channel's provider key for this creator bearer.
+
+The NyxBot provider recovery paths are
+`/api/v1/nyxbot/responses/{response_id}` and
+`/api/v1/nyxbot/responses/{response_id}/events`. Verify the deployed provider
+contract before registering them. Configuration alone is not end-to-end proof:
+acceptance also needs a genuine creator flow, the dedicated channel key, durable
+replay without a second turn submission, and a confirmed native return delivery.
+An anonymous 401 or a legacy Custom-channel test does not establish those facts.
+
+Existing NyxBot relay sources retain their selected transport. Move them only
+through NyxID's explicit release/drain/reconnect flow; do not rewrite a live
+source in place. NyxID's current native Discord response implementation rejects
+attachments, so CMA native media availability does not imply NyxBot media support.
 
 ## Creation and recovery
 

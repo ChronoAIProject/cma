@@ -172,7 +172,11 @@ describe('shared public contract', () => {
           }
           expect(headers.get(name), name).toBe(value);
         }
-        if (fixture.operation === 'POST /api/v1/agents/{id}/attachments') {
+        if (
+          fixture.operation === 'POST /api/v1/agents/{id}/attachments' ||
+          (fixture.request.method === 'POST' &&
+            fixture.operation.endsWith('/media/{attachment_index}/attachment'))
+        ) {
           expect(init?.body).toBeInstanceOf(Blob);
           expect(await (init?.body as Blob).text()).toBe(fixture.request.rawBody);
         } else {

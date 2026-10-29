@@ -30,6 +30,7 @@ fn response(kinds: &[AgentLogKind]) -> V2ResponseObject {
             .iter()
             .enumerate()
             .map(|(i, kind)| AgentVisibleLogEntry {
+                deferred_failure_detail: None,
                 seq: i as u64 + 1,
                 appended_at: at.into(),
                 kind: Some(kind.clone()),
@@ -37,6 +38,7 @@ fn response(kinds: &[AgentLogKind]) -> V2ResponseObject {
             .collect(),
     };
     let reading = AgentResponseReading {
+        deferred_failure_detail: None,
         command: CommandStatusView {
             receipt: CommandReceiptView {
                 command_id: AgentCommandId("cmd_tools".into()),

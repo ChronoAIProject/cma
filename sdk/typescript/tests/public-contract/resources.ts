@@ -3,6 +3,42 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment':
+    ({ client, param, fixture, query }) =>
+      client.providerBindings.media.upload(
+        param('binding_id'),
+        param('conversation_id'),
+        param('event_id'),
+        Number(param('attachment_index')),
+        new Blob([fixture.request.rawBody ?? ''], {
+          type: fixture.request.headers['content-type'],
+        }),
+        {
+          name: query.get('name')!,
+          sha256: query.get('sha256')!,
+          event_expires_at: Number(query.get('event_expires_at')),
+          gateway_binding_generation: query.has('gateway_binding_generation')
+            ? Number(query.get('gateway_binding_generation'))
+            : undefined,
+        },
+      ),
+  'GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment':
+    ({ client, param }) =>
+      client.providerBindings.media.get(
+        param('binding_id'),
+        param('conversation_id'),
+        param('event_id'),
+        Number(param('attachment_index')),
+      ),
+  'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement':
+    ({ client, param, body }) =>
+      client.providerBindings.media.supplement(
+        param('binding_id'),
+        param('conversation_id'),
+        param('event_id'),
+        Number(param('attachment_index')),
+        body,
+      ),
   'POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections': ({ client, param, body }) =>
     client.providerBindings.inspectPreparation(param('binding_id'), body),
   'POST /api/v1/cmaeg/bindings/{binding_id}/preparations': ({ client, param, body, command }) =>

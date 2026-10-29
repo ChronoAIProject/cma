@@ -42,6 +42,15 @@ fn snapshot(kinds: Vec<AgentLogKind>) -> AgentEventStreamSnapshot {
             .into_iter()
             .enumerate()
             .map(|(index, kind)| AgentVisibleLogEntry {
+                deferred_failure_detail: match &kind {
+                    AgentLogKind::TurnFailed { failure, .. }
+                        if failure.class
+                            == layer2_core::sandbox::agent_io::SOURCE_DEFERRED_FAILURE =>
+                    {
+                        Some(failure.detail.clone())
+                    }
+                    _ => None,
+                },
                 seq: index as u64 + 1,
                 appended_at: AT.into(),
                 kind: Some(kind),
@@ -52,6 +61,7 @@ fn snapshot(kinds: Vec<AgentLogKind>) -> AgentEventStreamSnapshot {
 
 fn reading(turn: Option<u64>) -> AgentResponseReading {
     AgentResponseReading {
+        deferred_failure_detail: None,
         command: CommandStatusView {
             receipt: CommandReceiptView {
                 command_id: AgentCommandId("cmd_models".into()),
@@ -178,4 +188,73 @@ fn explicit_runtime_default_is_not_confused_with_missing_legacy_evidence() {
         project(reading(Some(2)), &history).unwrap().model,
         "deployment-default"
     );
+}
+
+#[test]
+fn deferred_source_attempt_stays_queued_only_with_exact_paired_no_write_proof() {
+    use super::projection::V2ResponseStatus;
+    use layer2_core::sandbox::{agent_io::SOURCE_DEFERRED_FAILURE, TypedFailure};
+    for (paired, exact, terminal, same_commit) in [
+        (true, true, false, true),
+        (false, true, false, true),
+        (true, false, false, true),
+        (true, true, true, true),
+        (true, true, false, false),
+    ] {
+        let mut value = reading(Some(2));
+        value.command.status = if terminal {
+            AgentResponseStatus::Failed
+        } else {
+            AgentResponseStatus::InProgress
+        };
+        value.deferred_failure_detail = Some("verified-operation-and-fingerprint".into());
+        let mut history = snapshot(vec![
+            AgentLogKind::OperationDeliveryChanged {
+                operation_sequence: 1,
+                operation: AgentOperationKind::SendMessage,
+                state: AgentOperationDelivery::DispatchFenced,
+            },
+            start(2, Some("selected-model")),
+            AgentLogKind::OwnerMessage {
+                content: "late attachment".into(),
+            },
+            AgentLogKind::OperationDeliveryChanged {
+                operation_sequence: if paired { 1 } else { 9 },
+                operation: AgentOperationKind::SendMessage,
+                state: AgentOperationDelivery::PreWriteFailed,
+            },
+            AgentLogKind::TurnFailed {
+                turn_sequence: 2,
+                failure: TypedFailure {
+                    class: SOURCE_DEFERRED_FAILURE.into(),
+                    detail: if exact {
+                        "verified-operation-and-fingerprint"
+                    } else {
+                        "different-attempt"
+                    }
+                    .into(),
+                },
+            },
+        ]);
+        if !same_commit {
+            history.history.last_mut().unwrap().appended_at = "2026-10-15T00:00:01Z".into();
+        }
+        // Bound consumers receive redacted failure details. Internal exact proof
+        // remains available to the response projection without exposing it.
+        if let Some(AgentLogKind::TurnFailed { failure, .. }) =
+            &mut history.history.last_mut().unwrap().kind
+        {
+            failure.detail = "This Agent turn failed.".into();
+        }
+        let projected = project(value, &history).unwrap();
+        if paired && exact && !terminal && same_commit {
+            assert_eq!(projected.status, V2ResponseStatus::Queued);
+            assert!(projected.error.is_none());
+            assert!(!events(&projected, true)
+                .iter()
+                .any(|event| event["type"] == "response.failed"));
+        } else {
+            assert_eq!(projected.status, V2ResponseStatus::Failed);
+        }
+    }
 }

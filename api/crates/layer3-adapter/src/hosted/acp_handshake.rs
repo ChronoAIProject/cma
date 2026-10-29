@@ -368,6 +368,9 @@ impl Bridge {
 fn protected_setup_failure(error: AdapterError) -> AdapterError {
     let detail = "channel tool session setup did not complete".to_string();
     match error {
+        AdapterError::InputAuthorityUnavailable(_) => {
+            AdapterError::InputAuthorityUnavailable(detail)
+        }
         AdapterError::Unavailable(_) => AdapterError::Unavailable(detail),
         AdapterError::Rejected(_) => AdapterError::Rejected(detail),
         AdapterError::OperationIdentityConflict(_) => {

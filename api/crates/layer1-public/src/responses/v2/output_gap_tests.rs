@@ -95,6 +95,7 @@ fn project(kinds: &[AgentLogKind], turn: u64, active: bool) -> (ResponseObject, 
         history: entries
             .into_iter()
             .map(|entry| AgentVisibleLogEntry {
+                deferred_failure_detail: None,
                 seq: entry.seq,
                 appended_at: entry.appended_at,
                 kind: Some(entry.kind),
@@ -102,6 +103,7 @@ fn project(kinds: &[AgentLogKind], turn: u64, active: bool) -> (ResponseObject, 
             .collect(),
     };
     let reading = AgentResponseReading {
+        deferred_failure_detail: None,
         command: CommandStatusView {
             receipt: CommandReceiptView {
                 command_id: AgentCommandId(format!("cmd_gap_{turn}")),

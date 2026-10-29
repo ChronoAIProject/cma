@@ -148,6 +148,9 @@ pub struct CreateConnection {
 /// Deployment gates for new relay authoring; existing exact records remain readable.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayAuthoringCapabilities {
+    /// Configured response replay providers; does not attest provider or platform health.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_recovery_providers: Option<Vec<String>>,
     /// Separate native app authoring gate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_lark_writes_enabled: Option<bool>,

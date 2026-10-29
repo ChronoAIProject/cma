@@ -271,3 +271,6 @@ mod revival;
 
 #[path = "binding_event_tests.rs"]
 mod event_context_tests;
+
+#[path = "media_continuation_tests.rs"]
+mod media_continuation_tests;

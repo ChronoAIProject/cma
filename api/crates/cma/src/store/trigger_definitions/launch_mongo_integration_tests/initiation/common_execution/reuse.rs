@@ -149,6 +149,7 @@ pub(super) async fn reserve_human(f: &Fixture, agent: &Agent, key: &str) -> Admi
     let request = CommandReservation {
         binding: None,
         envelope: AgentCommandEnvelope {
+            continuation: None,
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: layer2_core::ids::AgentCommandId::generate(),
             agent_id: agent.id.clone(),
