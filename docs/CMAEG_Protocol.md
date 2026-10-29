@@ -4696,3 +4696,16 @@ issues no message operation references, while single-upload behavior is unchange
 This optional capability is absent when its default-false
 `CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED` gate is disabled or the original native
 Telegram destination is not verified. See [album delivery](CMAEG_Native_Telegram_Albums.md).
+
+### Native Discord forwarded snapshots
+
+`CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED=false` independently controls new
+`forward_projection` v1 issuance. The exact supplied FORWARD reference and one
+snapshot produce bounded descriptive text/media counts. Original authors are not
+provided by Discord; the outer forwarder and current channel/thread remain the
+only actor and conversation authority. Legacy inbox bodies and rich-content v1
+bytes retain their existing behavior. Gate-off/restart recovery reads the retained
+projection; changed snapshot/reference retries cannot replace custody. Optional
+`native_discord_forwards_enabled` reports configured issuance through authenticated
+capabilities and both SDKs. See [native Discord forwards](CMAEG_Native_Discord_Forwards.md)
+for reader-first rollout, bounds and explicit omissions.

@@ -116,6 +116,8 @@ data:
   CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED: "true"
   # Enable only after all readers support content_projection v1 and old pods drain.
   CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED: "false"
+  # Reader-first separate forward_projection v1; retain legacy rich-content bytes.
+  CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED: "false"
   CMAEG_DISCORD_FORMS_ENABLED: "true"
   # Upgrade all card-edit readers before starting native replacement chains.
   CMAEG_DISCORD_CARD_EDITS_ENABLED: "true"
