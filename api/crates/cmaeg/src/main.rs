@@ -286,27 +286,6 @@ fn import_failure(error: cmaeg::records::RecordError) -> &'static str {
     }
 }
 
-#[cfg(test)]
-mod database_diagnostics_tests {
-    use super::import_failure;
-    use cmaeg::records::RecordError;
-
-    #[test]
-    fn import_diagnostics_preserve_conflicts_but_withhold_unrecognized_text() {
-        let conflict = "import conflicts with an existing record; no row was overwritten";
-        assert_eq!(
-            import_failure(RecordError::Rejected(conflict.into())),
-            conflict
-        );
-        for error in [
-            RecordError::Rejected("SYNTHETIC_PRIVATE_RECORD".into()),
-            RecordError::Unavailable("SYNTHETIC_PRIVATE_DRIVER_ERROR".into()),
-        ] {
-            assert!(!import_failure(error).contains("SYNTHETIC_PRIVATE"));
-        }
-    }
-}
-
 /// Explicit operator statement, never a server startup side effect. Every
 /// historical untracked writer/importer must be drained before this command.
 fn run_owner_key_cutover(release: &str) {
@@ -329,5 +308,26 @@ fn run_owner_key_cutover(release: &str) {
         .is_err()
     {
         fail("owner-key cutover failed or uncertain; inspect durable attestation before retry")
+    }
+}
+
+#[cfg(test)]
+mod database_diagnostics_tests {
+    use super::import_failure;
+    use cmaeg::records::RecordError;
+
+    #[test]
+    fn import_diagnostics_preserve_conflicts_but_withhold_unrecognized_text() {
+        let conflict = "import conflicts with an existing record; no row was overwritten";
+        assert_eq!(
+            import_failure(RecordError::Rejected(conflict.into())),
+            conflict
+        );
+        for error in [
+            RecordError::Rejected("SYNTHETIC_PRIVATE_RECORD".into()),
+            RecordError::Unavailable("SYNTHETIC_PRIVATE_DRIVER_ERROR".into()),
+        ] {
+            assert!(!import_failure(error).contains("SYNTHETIC_PRIVATE"));
+        }
     }
 }
