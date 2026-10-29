@@ -98,6 +98,8 @@ pub(super) fn permits_request(method: &axum::http::Method, path: &str, binding: 
             &Method::GET,
             ["api", "v1", "cmaeg", "bindings", selected, "conversations", _, "events", _],
         ) => *selected == binding,
+        (&Method::POST, ["api", "v1", "cmaeg", "bindings", selected, "conversations", _, "events", _, "media", _, "attachment" | "supplement"])
+        | (&Method::GET, ["api", "v1", "cmaeg", "bindings", selected, "conversations", _, "events", _, "media", _, "attachment"]) => *selected == binding,
         _ => false,
     }
 }

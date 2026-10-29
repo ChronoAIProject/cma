@@ -318,7 +318,9 @@ impl WorkerFailure {
 pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     tracing::warn!(error = %error, "agent-sandbox runtime operation failed");
     match error {
-        AdapterError::Unavailable(_) => WorkerFailure::retryable("runtime dependency unavailable"),
+        AdapterError::InputAuthorityUnavailable(_) | AdapterError::Unavailable(_) => {
+            WorkerFailure::retryable("runtime dependency unavailable")
+        }
         AdapterError::AtCapacity(_) => {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }

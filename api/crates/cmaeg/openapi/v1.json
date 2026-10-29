@@ -120,6 +120,13 @@
               "null"
             ]
           },
+          "media_responses": {
+            "description": "Independent appended responses. URLs still require Agent Manager's\nnormal response authorization; this feed grants no conversation access.",
+            "items": {
+              "$ref": "#/components/schemas/ActivityMediaResponse"
+            },
+            "type": "array"
+          },
           "produced_at": {
             "type": [
               "string",
@@ -352,6 +359,43 @@
           "event"
         ],
         "type": "string"
+      },
+      "ActivityMediaResponse": {
+        "properties": {
+          "attachment_index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "delivery": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string"
+          },
+          "response_id": {
+            "type": "string"
+          },
+          "response_url": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_index",
+          "kind",
+          "response_id",
+          "response_url",
+          "status",
+          "delivery",
+          "observed_at"
+        ],
+        "type": "object"
       },
       "ActivityPage": {
         "properties": {
@@ -3351,6 +3395,77 @@
         ],
         "type": "object"
       },
+      "EventAttestationRequest": {
+        "additionalProperties": false,
+        "description": "All identifiers are comparisons against the capability's original target.\nThis cannot select another target, attachment or filesystem path.",
+        "properties": {
+          "activity_sha256": {
+            "type": "string"
+          },
+          "artifact": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaArtifactClaim",
+                "description": "Required by attachment and supplement admission. An event-only result\ndoes not attest file bytes or derived text."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "binding_generation": {
+            "description": "The generation actually present in the frozen Gateway request. None is\nnot a claim about Manager generation; Manager must check its own parent.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "channel_id": {
+            "$ref": "#/components/schemas/ChannelId"
+          },
+          "conversation_id": {
+            "$ref": "#/components/schemas/ConversationId"
+          },
+          "event_expires_at": {
+            "description": "Exact sealed capability expiry, as Unix seconds. This comparison lets\nManager bound a deferred continuation without trusting caller expiry.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "event_ref": {
+            "$ref": "#/components/schemas/EventRef"
+          },
+          "provider_binding_id": {
+            "$ref": "#/components/schemas/BindingId"
+          }
+        },
+        "required": [
+          "event_ref",
+          "provider_binding_id",
+          "channel_id",
+          "conversation_id",
+          "event_id",
+          "activity_sha256",
+          "event_expires_at"
+        ],
+        "type": "object"
+      },
+      "EventAttestationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "current"
+        ],
+        "type": "object"
+      },
       "EventContextSnapshot": {
         "additionalProperties": false,
         "properties": {
@@ -4158,6 +4273,62 @@
         ],
         "type": "object"
       },
+      "MediaArtifactClaim": {
+        "additionalProperties": false,
+        "description": "The descriptor always names the original uploaded file. For a derived kind,\ncontent_sha256 hashes exact UTF-8 derived text; source_sha256 hashes the bytes\nconsumed by derivation. For Original both hashes name the original bytes.",
+        "properties": {
+          "attachment_index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "content_sha256": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MediaContinuationKind"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_sha256": {
+            "type": "string"
+          },
+          "text_sha256": {
+            "description": "None for an upload; required for a queued supplement. Hashes the complete\ncanonical input, including the Manager-verified persisted file path.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "attachment_index",
+          "kind",
+          "content_sha256",
+          "source_sha256",
+          "name",
+          "media_type",
+          "size_bytes"
+        ],
+        "type": "object"
+      },
+      "MediaContinuationKind": {
+        "enum": [
+          "original",
+          "transcript",
+          "text_excerpt"
+        ],
+        "type": "string"
+      },
       "MediaControlsCapabilities": {
         "description": "Exact media/control combination supported for this event's verified destination.",
         "properties": {
@@ -4240,6 +4411,27 @@
           "url",
           "expires_at",
           "curl"
+        ],
+        "type": "object"
+      },
+      "MediaResponsePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RetainedMediaResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -5975,6 +6167,16 @@
           "relay_raw_verification_writes_enabled": {
             "type": "boolean"
           },
+          "response_recovery_providers": {
+            "description": "Registered provider slugs with response replay. Configuration, not connection health.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "thread_contract_writes_enabled": {
             "type": "boolean"
           }
@@ -6242,6 +6444,53 @@
           "feishu"
         ],
         "type": "string"
+      },
+      "RetainedMediaResponse": {
+        "properties": {
+          "attachment_index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "consumer_id": {
+            "type": "string"
+          },
+          "delivery": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "refusal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "attachment_index",
+          "kind",
+          "status",
+          "delivery"
+        ],
+        "type": "object"
       },
       "RouteResolution": {
         "description": "How an event's targets were resolved.",
@@ -9172,6 +9421,15 @@
             }
           },
           {
+            "description": "Requires mode=stream. Explicitly opt into response-scoped media events and a bounded wait for supplementary responses. Omitted or false preserves the legacy stream terminal contract.",
+            "in": "query",
+            "name": "media_responses",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "description": "Required for HMAC authentication",
             "in": "header",
             "name": "webhook-id",
@@ -9356,6 +9614,80 @@
         },
         "tags": [
           "ingress"
+        ]
+      }
+    },
+    "/channels/{channel_id}/events/{event_id}/media-responses": {
+      "get": {
+        "description": "Owner-authorized retained media continuation metadata. Returns at most 16 attachment slots per page with independent response identities and terminal delivery statuses. No response text, attachment paths, credentials or wider Agent conversation visibility are returned. Each Agent Manager response URL still requires its normal authorization.",
+        "operationId": "getEventMediaResponses",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaResponsePage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
         ]
       }
     },
@@ -9809,6 +10141,47 @@
         ],
         "tags": [
           "channels"
+        ]
+      }
+    },
+    "/event-attestations": {
+      "post": {
+        "description": "Read-only exact-event capability. The sealed event_ref in the request body authorizes only a boolean current-source/current-target check. No event content, credentials or workspace paths are returned. Agent Manager must separately validate the original admitted command and its actual binding generation. This endpoint never starts a response or changes the original execution lease.",
+        "operationId": "attestRetainedEvent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventAttestationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAttestationResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "provider integration"
         ]
       }
     },

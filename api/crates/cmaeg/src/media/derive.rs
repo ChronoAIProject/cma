@@ -68,6 +68,10 @@ pub enum Derived {
     },
     Transcript {
         document: TextDocument,
+        /// Digest of the exact original bytes consumed by this derivation.
+        /// Continuations compare it with the durably uploaded original, so a
+        /// mutable source cannot attach a transcript to different bytes.
+        source_sha256: String,
         usage_seconds: Option<u32>,
         /// Where the audio was cut before transcription, in seconds; `None`
         /// when the whole recording was transcribed. Only a transcoder that
@@ -86,7 +90,12 @@ impl Weighted for Derived {
     fn weight(&self) -> u64 {
         match self {
             Self::Image(image) => image.weight(),
-            Self::Text(document) | Self::Transcript { document, .. } => document.weight(),
+            Self::Text(document) => document.weight(),
+            Self::Transcript {
+                document,
+                source_sha256,
+                ..
+            } => document.weight() + source_sha256.len() as u64,
             Self::Excerpt { text, .. } => text.len() as u64,
             Self::Visuals(frames) => frames.iter().map(Weighted::weight).sum(),
             Self::Metadata { .. } => METADATA_WEIGHT,
@@ -109,6 +118,7 @@ impl fmt::Debug for Derived {
                 document,
                 usage_seconds,
                 truncated_at_seconds,
+                ..
             } => formatter
                 .debug_struct("Transcript")
                 .field("document", document)

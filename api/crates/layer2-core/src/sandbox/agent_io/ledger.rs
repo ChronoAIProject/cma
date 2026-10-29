@@ -63,6 +63,17 @@ impl AdmittedAgentCommand {
         {
             return Err(CommandLedgerError::Corrupt);
         }
+        if let Some(proof) = &self.receipt.envelope.continuation {
+            let admitted = crate::seconds_from_rfc3339(&self.receipt.admitted_at)
+                .ok_or(CommandLedgerError::Corrupt)?;
+            let deadline = crate::seconds_from_rfc3339(&self.queue_deadline)
+                .ok_or(CommandLedgerError::Corrupt)?;
+            if deadline > proof.source_expires_at as u64
+                || deadline > admitted.saturating_add(86_400)
+            {
+                return Err(CommandLedgerError::Corrupt);
+            }
+        }
         if let Some(revision) = &self.queued_input {
             revision.validate(self)?;
         }
@@ -324,7 +335,9 @@ impl CommandReservation {
         if current.receipt.envelope.owner != self.envelope.owner {
             return Err(CommandLedgerError::NotFound);
         }
-        if current.receipt.envelope.request_fingerprint != self.envelope.request_fingerprint {
+        if current.receipt.envelope.request_fingerprint != self.envelope.request_fingerprint
+            || current.receipt.envelope.continuation != self.envelope.continuation
+        {
             return Err(CommandLedgerError::IdempotencyConflict);
         }
         Ok(CommandReservationResult::Existing(Box::new(current)))
