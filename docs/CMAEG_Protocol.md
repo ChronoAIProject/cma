@@ -4713,3 +4713,7 @@ for reader-first rollout, bounds and explicit omissions.
 ### Received native Lark stickers
 
 An authenticated native sticker is a descriptive message plus an `other` attachment with `variant: sticker`, without a resource source or thumbnail. When `capabilities.reply_with_received_sticker` is true, `replyToEvent` accepts the exclusive message `{"reply_with_received_sticker":true}` to resend only that original event's retained sticker. No caller key, URL, upload, arbitrary recipient, initiated send, update or thread creation is authorized. The field is omitted on legacy messages, preserving their serialized hashes. See [native Lark received stickers](CMAEG_Native_Lark_Stickers.md) for the official platform limits and default-off rollout.
+
+### Native static structured replies
+
+An optional `structured_content` is exclusive contact, static location or venue data. `capabilities.structured_replies` lists the kinds supported for an exact retained native Telegram event. `replyToEvent` requires a stable idempotency key; the existing durable result prevents resends after confirmed or unknown delivery. The independent `CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED` gate defaults to false. No payload chooses a recipient, performs live tracking or fetches a URL. See [native Telegram structured replies](CMAEG_Native_Telegram_Structured_Replies.md) for fields, bounds and reader-first rollout.

@@ -189,6 +189,7 @@ pub struct Config {
     pub native_lark_media_card_replacements_enabled: bool,
     pub native_media_presentations_enabled: bool,
     pub native_discord_voice_enabled: bool,
+    pub native_telegram_structured_replies_enabled: bool,
     pub native_telegram_albums_enabled: bool,
     /// Start an exact admitted root thread with one explicit text reply.
     pub native_lark_thread_start_enabled: bool,
@@ -402,6 +403,9 @@ impl Config {
             )?,
             native_media_presentations_enabled: routing::write_flag(
                 "CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED",
+            )?,
+            native_telegram_structured_replies_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED",
             )?,
             native_telegram_albums_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED",
