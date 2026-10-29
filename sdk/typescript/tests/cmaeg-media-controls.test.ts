@@ -108,6 +108,31 @@ describe('native media/control discovery', () => {
       expect(OutboundMessageSchema(request)).toEqual(request);
     }
   });
+  it('discovers complete Discord sets and explicit clearing without changing legacy empties', () => {
+    const value = {
+      ...legacy,
+      controls: {
+        max_attachments: 4,
+        buttons: true,
+        choices: true,
+        caption_max_chars: 1024,
+        update: true,
+        replace_media: true,
+        clear_media: true,
+      },
+    };
+    expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
+    for (const message of [
+      { text: 'Keep files', native_attachments: [] },
+      { text: 'Keep files', clear_native_attachments: false },
+      { text: 'Clear files', clear_native_attachments: true },
+    ]) {
+      expect(OutboundMessageSchema(message)).toEqual(message);
+    }
+    expect(() => OutboundMessageSchema({ text: 'Clear', clear_native_attachments: null })).toThrow(
+      'clear_native_attachments',
+    );
+  });
   it('keeps legacy capability bytes without inventing combined delivery', () => {
     expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);
   });

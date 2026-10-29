@@ -81,7 +81,15 @@ impl DiscordRest {
         payload: Value,
         file: Option<PreparedFile>,
     ) -> Result<PreparedEdit, RestError> {
-        let Some(file) = file else {
+        self.prepare_media_payload_set(payload, file.into_iter().collect())
+            .await
+    }
+    pub(super) async fn prepare_media_payload_set(
+        &self,
+        payload: Value,
+        files: Vec<PreparedFile>,
+    ) -> Result<PreparedEdit, RestError> {
+        if files.is_empty() {
             return Ok(PreparedEdit {
                 headers: HeaderMap::from_iter([(
                     CONTENT_TYPE,
@@ -89,14 +97,18 @@ impl DiscordRest {
                 )]),
                 body: serde_json::to_vec(&payload).map_err(|_| RestError::Rejected)?,
             });
-        };
-        let part = Part::bytes(file.bytes)
-            .file_name(file.filename)
-            .mime_str(&file.mime)
-            .map_err(|_| RestError::Rejected)?;
-        let form = Form::new()
-            .text("payload_json", payload.to_string())
-            .part("files[0]", part);
+        }
+        if files.len() > cmaeg_core::message::MAX_NATIVE_ATTACHMENTS {
+            return Err(RestError::Rejected);
+        }
+        let mut form = Form::new().text("payload_json", payload.to_string());
+        for (index, file) in files.into_iter().enumerate() {
+            let part = Part::bytes(file.bytes)
+                .file_name(file.filename)
+                .mime_str(&file.mime)
+                .map_err(|_| RestError::Rejected)?;
+            form = form.part(format!("files[{index}]"), part);
+        }
         let mut request = self
             .client
             .patch(self.origin.clone())

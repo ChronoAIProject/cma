@@ -31,6 +31,40 @@ impl Candidate {
     }
 }
 impl InteractionStore {
+    pub(crate) async fn refreshed_discord_channel(
+        &self,
+        card: &Card,
+        reference: &MessageRefPayload,
+        admitted: &ResolvedChannel,
+    ) -> Result<std::sync::Arc<ResolvedChannel>, Error> {
+        let channel = crate::channels::resolver::ChannelResolver::new(
+            std::sync::Arc::new(self.channels.clone()),
+            self.keys.clone(),
+            Default::default(),
+        )
+        .resolve_current(card.channel_id.as_str())
+        .await
+        .map_err(|_| Error::Unavailable)?;
+        self.discord_card_candidate(&channel, reference).await?;
+        let current = channel
+            .consumer(card.consumer.as_ref())
+            .ok_or(Error::Denied)?;
+        let original = admitted
+            .consumer(card.consumer.as_ref())
+            .ok_or(Error::Denied)?;
+        if current.agent_key_hash != original.agent_key_hash
+            || current
+                .credential
+                .map(|key| crate::channels::definition::hash_secret(key.as_str()))
+                != original
+                    .credential
+                    .map(|key| crate::channels::definition::hash_secret(key.as_str()))
+        {
+            return Err(Error::Denied);
+        }
+        Ok(channel)
+    }
+
     pub(crate) fn mutation_store(&self) -> mutation::Store {
         mutation::Store::discord(self.records.clone(), self.keys.clone())
     }

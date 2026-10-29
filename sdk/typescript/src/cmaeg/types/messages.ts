@@ -182,6 +182,7 @@ export const MediaControlsCapabilitiesSchema = object({
   caption_max_chars: integer,
   update: boolean,
   replace_media: optional(nullable(boolean)),
+  clear_media: optional(nullable(boolean)),
 });
 export type MediaControlsCapabilities = Output<typeof MediaControlsCapabilitiesSchema>;
 export const NativeAlbumCapabilitiesSchema = object({
@@ -234,6 +235,7 @@ export const NativeMediaEditCapabilitiesSchema = object({
 export type NativeMediaEditCapabilities = Output<typeof NativeMediaEditCapabilitiesSchema>;
 
 export const OutboundMessageSchema = object({
+  clear_native_attachments: optional(boolean),
   native_media_update: optional(NativeMediaUpdateSchema),
   whatsapp_template: optional(nullable(WhatsappTemplateSchema)),
   native_attachments: optional(array(NativeAttachmentSchema)),

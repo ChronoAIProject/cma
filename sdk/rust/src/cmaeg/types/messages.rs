@@ -226,6 +226,13 @@ pub struct IntentReceipt {
 /// CMAEG `OutboundMessage` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutboundMessage {
+    /// Update-only explicit removal; supported only when clear_media is advertised.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub clear_native_attachments: Option<bool>,
     /// Update-only patch: omitted preserves; an empty caption/text clears; null refuses.
     #[serde(
         default,
@@ -391,6 +398,9 @@ pub struct MediaControlsCapabilities {
     /// Replace the supported upload set on the same durable card through a confirmed PATCH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replace_media: Option<bool>,
+    /// Whether explicit clear_native_attachments may remove every upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clear_media: Option<bool>,
 }
 
 /// Exact dimensions, size and animation limits for native sticker delivery.
