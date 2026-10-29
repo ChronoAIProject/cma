@@ -439,7 +439,10 @@ prove live NyxID/IM delivery or reconstruction.
 
 Read `delivery.outcome` and rendering receipts. `unknown` means a reply might
 already have been delivered; blind resend can duplicate messages. Current Telegram
-and custom transports report editing and typing as unsupported. Telegram accepts
+relay and custom transports report typing as unsupported. Native Discord and
+private WhatsApp can use the separately gated existing `sendTyping` operation;
+WhatsApp also marks the original message read. See [Native typing](CMAEG_Native_Typing.md)
+for exact scope, lifetime, and refusal behavior. Telegram relay accepts
 human text, renders rich output as text/link fallbacks, and does not support
 interactive callbacks or attachment transfer in this version. Discord, Slack and
 WhatsApp relay sources are text-only in both directions. Lark and Feishu replies
