@@ -58,6 +58,7 @@ impl ProviderClient {
         event: &EventId,
         agent_key: &Secret,
     ) -> Result<Option<EventContextSnapshot>, ProviderError> {
+        self.record_worker_key(agent_key).await?;
         if matches!(event.as_str(), "." | "..") {
             return Err(ProviderError::InvalidRequest(
                 "invalid event identifier".into(),

@@ -159,6 +159,22 @@ fn empty_export_preserves_successful_count_output_without_a_database() {
 }
 
 #[test]
+fn valid_export_checks_writer_authority_even_when_every_record_is_expired() {
+    let record = serde_json::json!({
+        "kind": "interaction",
+        "record_id": "00000000-0000-0000-0000-000000000001",
+        "owner": "fixture",
+        "version": "1",
+        "blob": "AQ==",
+        "expires_at": 1,
+    });
+    failed(
+        Export::new(record.to_string().as_bytes()).run(),
+        "Gateway record import unavailable; details withheld",
+    );
+}
+
+#[test]
 fn optional_forms_roles_are_additive_and_never_grant_runtime_delete() {
     for (command, migration) in [
         ("--print-whatsapp-forms-runtime-role", false),

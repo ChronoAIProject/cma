@@ -36,6 +36,7 @@ impl ProviderClient {
         target: &StoredTarget,
         credential: &Secret,
     ) -> Result<BindingPreparation, ProviderError> {
+        self.record_worker_key(credential).await?;
         if !plan.prepares_binding(target) {
             return Err(ProviderError::InvalidRequest(
                 "admission is not eligible for binding preparation".into(),
@@ -66,6 +67,7 @@ impl ProviderClient {
         intent: &PreparationIntent,
         credential: &Secret,
     ) -> Result<PreparationReceipt, ProviderError> {
+        self.record_worker_key(credential).await?;
         if intent.binding_id != binding.as_str() {
             return Err(ProviderError::InvalidRequest(
                 "binding preparation identity differs".into(),

@@ -309,6 +309,8 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "channel-inventory-invalid-history",
         Classification::TypedShape,
     ),
+    ("provider-associations-zero-limit", Classification::Local),
+    ("provider-associations-large-limit", Classification::Local),
     ("channel-usage-zero-limit", Classification::Local),
     ("channel-usage-large-limit", Classification::Local),
     ("channel-usage-invalid-cursor", Classification::Local),

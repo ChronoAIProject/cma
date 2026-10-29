@@ -3,6 +3,8 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/cmaeg/worker-credentials/classify': ({ client, body }) =>
+    client.providerBindings.classifyWorkerCredential(body),
   'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment':
     ({ client, param, fixture, query }) =>
       client.providerBindings.media.upload(
@@ -194,6 +196,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
       param('record_id'),
       query.has('expected_version') ? Number(query.get('expected_version')) : undefined,
     ),
+  'GET /api/v1/agents/{id}/provider-associations': ({ client, param, options }) =>
+    client.agents.providerAssociations(param('id'), options),
   'GET /api/v1/agents/{id}/channel-usage': ({ client, param }) =>
     client.agents.channelUsage(param('id')),
   'GET /api/v1/agents/{id}/channel-usage/history': ({ client, param, options }) =>

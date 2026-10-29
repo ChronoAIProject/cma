@@ -415,7 +415,8 @@ Limits are byte lengths unless another unit is stated. Deployment-specific
 bounds and deadlines are listed in [operations](CMAEG_Operations.md).
 
 Every operation names its bearer scheme in the OpenAPI document:
-`creatorBearer` is a NyxID creator token for management, `serviceBearer` the
+`creatorBearer` is a NyxID creator token for management (or an explicitly
+enabled [fresh personal owner service key](CMAEG_Owner_Service_Keys.md)), `serviceBearer` the
 CMA service token for rekey only, and `agentBearer` the channel's NyxID agent
 key for the tools. `mediaBearer` is a single-use media link; it is accepted
 only in the `Authorization` header of `GET /v1/media/content`
@@ -495,6 +496,10 @@ on every management request. CMAEG verifies that exact organization and current
 admin authority with NyxID; cache entries are isolated by bearer and selected
 owner. Omitting the header preserves the token's personal/native organization
 subject. The header is not accepted as authority without that verification.
+The optional [personal owner service-key lane](CMAEG_Owner_Service_Keys.md) uses
+the same Bearer routes and method permissions, requires a verified tracking
+cutover and fresh key, and refuses `X-CMAEG-Owner`. Current and retired worker
+credentials can never acquire owner authority through that lane.
 `schema_version` for both channel requests and profiles is `1`.
 
 Create: `POST /v1/channels` returns 201 `ChannelResponse`. The following complete
