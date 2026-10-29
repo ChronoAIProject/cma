@@ -39,6 +39,7 @@ impl InboxDispatcher {
                 enabled: true,
                 discovery_enabled: false,
                 rich_content_enabled: false,
+                forwards_enabled: false,
                 records: selected,
             }),
         )
@@ -218,7 +219,7 @@ impl InboxDispatcher {
                         }
                         LaunchOutcome::Refused(_) => return Ok(false),
                         LaunchOutcome::Accepted { .. } | LaunchOutcome::Deferred => {
-                            return Err(GatewayError::Protocol)
+                            return Err(GatewayError::Protocol);
                         }
                     }
                 }

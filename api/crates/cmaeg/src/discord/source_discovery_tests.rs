@@ -76,6 +76,7 @@ fn selection() -> Selection {
         enabled: true,
         discovery_enabled: true,
         rich_content_enabled: false,
+        forwards_enabled: false,
         records: BTreeSet::new(),
     })
 }

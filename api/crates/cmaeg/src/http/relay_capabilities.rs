@@ -39,6 +39,9 @@ pub struct RelayAuthoringCapabilities {
     /// Descriptive sticker/embed/poll intake, not media download or poll actions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_rich_content_enabled: Option<bool>,
+    /// Bounded descriptions of received Discord forwards, without origin access.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_forwards_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_writes_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,6 +169,7 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
         ),
         native_discord_reactions_enabled: Some(state.native_discord_reactions_enabled),
         native_discord_rich_content_enabled: Some(state.native_discord_rich_content_enabled),
+        native_discord_forwards_enabled: Some(state.native_discord_forwards_enabled),
         native_discord_writes_enabled: Some(state.native_discord_writes_enabled),
         native_discord_auto_activation_enabled: Some(
             state.native_discord.discovery_enabled() && state.native_discord_admission_enabled,
