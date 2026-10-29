@@ -43,6 +43,8 @@ data:
   CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED: "false"
   # Reader-first voice/animation kinds and native Telegram static stickers; existing audio is unchanged.
   CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED: "false"
+  # Canonical PCM WAV voice-only Discord replies, independently enabled.
+  CMAEG_NATIVE_DISCORD_VOICE_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED: "false"
   CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED: "false"

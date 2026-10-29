@@ -202,6 +202,8 @@ export const NativeAlbumCapabilitiesSchema = object({
 });
 export type NativeAlbumCapabilities = Output<typeof NativeAlbumCapabilitiesSchema>;
 export const NativePresentationProfileSchema = object({
+  max_attachments: optional(nullable(integer)),
+  text: optional(nullable(boolean)),
   kind: text,
   mime_types: array(text),
   max_bytes: integer,

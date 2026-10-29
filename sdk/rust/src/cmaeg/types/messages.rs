@@ -374,6 +374,12 @@ pub struct NativeMediaCapabilities {
 /// Explicit native presentation profile advertised by the exact destination.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativePresentationProfile {
+    /// Per-presentation attachment limit, when narrower than ordinary media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_attachments: Option<usize>,
+    /// Whether ordinary message text may accompany this presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<bool>,
     /// Native presentation kind.
     pub kind: String,
     /// Accepted MIME types.

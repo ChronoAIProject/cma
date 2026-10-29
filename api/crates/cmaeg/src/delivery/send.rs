@@ -135,11 +135,16 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
-        if !crate::media::presentations::allowed(
-            self.relay.native_media_presentations,
-            &event.reply,
-            message,
-        ) || message.native_media_update.is_some()
+        let discord_voice = self.relay.native_discord_voice
+            && matches!(event.reply, ReplyAddress::Discord { .. })
+            && crate::discord::voice::eligible(message);
+        if (!discord_voice
+            && !crate::media::presentations::allowed(
+                self.relay.native_media_presentations,
+                &event.reply,
+                message,
+            ))
+            || message.native_media_update.is_some()
             || message.clear_native_attachments
         {
             return (unsupported(), SendEffects::default());
