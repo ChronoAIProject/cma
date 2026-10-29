@@ -12,6 +12,7 @@ fn caller() -> Caller {
 fn envelope(authorization: AgentAuthorizationRevision) -> AgentCommandEnvelope {
     let command = AgentCommand::message("fixture");
     AgentCommandEnvelope {
+        continuation: None,
         schema_version: AGENT_IO_SCHEMA_VERSION,
         command_id: layer2_core::ids::AgentCommandId("cmd-fixture".into()),
         agent_id: layer2_core::AgentId("agent-fixture".into()),

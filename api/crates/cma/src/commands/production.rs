@@ -12,6 +12,7 @@ use layer2_core::{
 use super::ResourceCommandExecution;
 
 pub(crate) struct ProductionCommandDependencies {
+    pub source_guard: Option<Arc<dyn layer2_core::sandbox::agent_io::CommandSourceGuard>>,
     pub authority: Arc<dyn AgentCommandAuthorizer>,
     pub access: Arc<ResourceAccessService>,
     pub store: Arc<dyn AgentCommandWorkerStore>,
@@ -24,6 +25,7 @@ impl ResourceCommandExecution {
     /// and platform gates apply only when a held control is released.
     pub(crate) fn production(dependencies: ProductionCommandDependencies) -> Arc<Self> {
         Arc::new(Self {
+            source_guard: dependencies.source_guard,
             authority: dependencies.authority,
             access: dependencies.access,
             store: dependencies.store,

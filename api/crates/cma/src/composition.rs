@@ -8,21 +8,11 @@ mod credentials;
 mod desktop;
 mod documents;
 mod event_routing;
+mod media;
 mod profiles;
 mod routes;
 mod runtime;
 use crate::auth::service_portal;
-use axum::Router;
-use layer1_public::rest::{self, HierarchyState, ProfilesState};
-use layer2_core::{
-    profiles::authoring::ProfileAuthoringService,
-    sandbox::{
-        AgentContextService, HierarchyReadService, SandboxOperatorService, SandboxService,
-        StoredSandboxRetirement, WorkspaceService,
-    },
-    ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
-};
-
 use crate::{
     activity::ActivityRecorder,
     auth::{AuthMode, AuthState},
@@ -38,6 +28,16 @@ use crate::{
     },
     store::{DefaultProfileSpec, MongoStores},
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
+};
+use axum::Router;
+use layer1_public::rest::{self, HierarchyState, ProfilesState};
+use layer2_core::{
+    profiles::authoring::ProfileAuthoringService,
+    sandbox::{
+        AgentContextService, HierarchyReadService, SandboxOperatorService, SandboxService,
+        StoredSandboxRetirement, WorkspaceService,
+    },
+    ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
@@ -315,21 +315,24 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             settings.clone(),
         );
-        let command_worker = layer2_core::sandbox::agent_io::AgentCommandWorker::new(
-            stores.sandbox_model.clone(),
-            crate::commands::ResourceCommandExecution::production(
-                crate::commands::ProductionCommandDependencies {
-                    authority: auth.clone(),
-                    access: resource_access.clone(),
-                    store: stores.sandbox_model.clone(),
-                    operations: projections.operations(),
-                    context: context.clone(),
-                },
-            ),
+        let media = media::compose(
+            config,
+            &stores,
+            resource_access.clone(),
+            auth.clone(),
+            adapter.clone(),
+        )?;
+        let command_scheduler = media::commands(
+            crate::commands::ProductionCommandDependencies {
+                source_guard: media::guard(&media),
+                authority: auth.clone(),
+                access: resource_access.clone(),
+                store: stores.sandbox_model.clone(),
+                operations: projections.operations(),
+                context: context.clone(),
+            },
             worker_holder.clone(),
-        )
-        .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
-        let command_scheduler = crate::commands::CommandScheduler::new(command_worker);
+        )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
                 stores.sandbox_model.clone(),
@@ -379,6 +382,7 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
+            .merge(media::router(media))
             .merge(rest::documents_router(documents.clone()))
             .merge(model_routes)
             .merge(agent_access.owner_routes)
