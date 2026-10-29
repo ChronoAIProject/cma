@@ -96,10 +96,7 @@ fn client(endpoint: &Endpoint, tokens: Arc<MetadataTokens>) -> kube::Client {
         target: config.cluster_url.clone(),
         tokens,
     };
-    ClientBuilder::try_from(config)
-        .unwrap()
-        .with_layer(&layer)
-        .build()
+    transport::client(config, &layer).unwrap()
 }
 async fn expire(tokens: &MetadataTokens) {
     tokens.cache.lock().await.as_mut().unwrap().refresh_at =
@@ -258,4 +255,117 @@ async fn kubernetes_redirect_cannot_forward_metadata_authorization_to_another_ho
     assert_eq!(metadata.finish().await.len(), 1);
     assert!(cluster.finish().await[0].contains("authorization: bearer secret"));
     assert!(redirected.requests.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn metadata_transport_preserves_authenticated_interactive_exec_and_status() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::{
+        accept_hdr_async,
+        tungstenite::{
+            handshake::server::{Request as UpgradeRequest, Response as UpgradeResponse},
+            Message,
+        },
+    };
+    let mut metadata = Endpoint::new(vec![token("stream-fixture")]).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let config = kube::Config::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    );
+    let layer = MetadataLayer {
+        target: config.cluster_url.clone(),
+        tokens: metadata.tokens(),
+    };
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        // The upstream handshake callback fixes its unboxed error type.
+        #[allow(clippy::result_large_err)]
+        let mut socket = accept_hdr_async(
+            socket,
+            |request: &UpgradeRequest, mut response: UpgradeResponse| {
+                assert_eq!(request.headers()["authorization"], "Bearer stream-fixture");
+                assert_eq!(
+                    request.uri().path(),
+                    "/api/v1/namespaces/chrono-pod/pods/fixture/exec"
+                );
+                response.headers_mut().insert(
+                    "sec-websocket-protocol",
+                    "v5.channel.k8s.io".parse().unwrap(),
+                );
+                Ok(response)
+            },
+        )
+        .await
+        .unwrap();
+        for expected in 0..32_u8 {
+            let Message::Binary(bytes) = socket.next().await.unwrap().unwrap() else {
+                panic!("binary input required")
+            };
+            assert_eq!(bytes, [0, expected]);
+            socket
+                .send(Message::Binary(vec![1, expected]))
+                .await
+                .unwrap();
+        }
+        socket
+            .send(Message::Binary(
+                [vec![3], br#"{"status":"Success"}"#.to_vec()].concat(),
+            ))
+            .await
+            .unwrap();
+        socket.close(None).await.unwrap();
+    });
+    let api: Api<Pod> = Api::namespaced(transport::client(config, &layer).unwrap(), "chrono-pod");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let mut process = api
+            .exec(
+                "fixture",
+                ["cat"],
+                &kube::api::AttachParams::default()
+                    .stdin(true)
+                    .stdout(true)
+                    .stderr(false),
+            )
+            .await
+            .unwrap();
+        let mut input = process.stdin().unwrap();
+        let mut output = process.stdout().unwrap();
+        let status = process.take_status().unwrap();
+        for expected in 0..32_u8 {
+            input.write_all(&[expected]).await.unwrap();
+            let mut actual = [0];
+            output.read_exact(&mut actual).await.unwrap();
+            assert_eq!(actual, [expected]);
+        }
+        assert_eq!(status.await.unwrap().status.as_deref(), Some("Success"));
+        server.await.unwrap();
+    })
+    .await
+    .unwrap();
+    assert_eq!(metadata.finish().await.len(), 1);
+}
+
+#[tokio::test]
+async fn metadata_transport_keeps_cluster_read_timeout() {
+    let mut metadata = Endpoint::new(vec![token("timeout-fixture")]).await;
+    let mut slow = pods();
+    slow.delay = Duration::from_millis(350);
+    let mut cluster = Endpoint::new(vec![slow]).await;
+    let mut config = kube::Config::new(cluster.origin.parse().unwrap());
+    config.read_timeout = Some(Duration::from_millis(100));
+    let layer = MetadataLayer {
+        target: config.cluster_url.clone(),
+        tokens: metadata.tokens(),
+    };
+    let api: Api<Pod> = Api::namespaced(transport::client(config, &layer).unwrap(), "chrono-pod");
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), api.list(&ListParams::default()))
+            .await
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(metadata.finish().await.len(), 1);
+    assert_eq!(cluster.finish().await.len(), 1);
 }
