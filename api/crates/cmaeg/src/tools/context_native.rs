@@ -29,9 +29,13 @@ impl super::ToolsState {
         channel: &crate::channels::resolver::ResolvedChannel,
         event: &cmaeg_core::seal::EventRefPayload,
     ) -> Option<Vec<String>> {
-        if !self.native_telegram_structured_replies_enabled
-            || !matches!(event.reply, cmaeg_core::seal::ReplyAddress::Telegram { .. })
-        {
+        use cmaeg_core::seal::ReplyAddress;
+        let enabled = match event.reply {
+            ReplyAddress::Telegram { .. } => self.native_telegram_structured_replies_enabled,
+            ReplyAddress::Whatsapp { .. } => self.native_whatsapp_structured_replies_enabled,
+            _ => false,
+        };
+        if !enabled {
             return None;
         }
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -47,14 +51,28 @@ impl super::ToolsState {
             if caller.consumer(&current).ok()? != selected {
                 return None;
             }
-            crate::telegram::structured::authorized(
-                self.resolver.record_client(),
-                self.keys.clone(),
-                &current,
-                event,
-            )
-            .await
-            .then(|| ["contact", "location", "venue"].map(String::from).into())
+            let authorized = match event.reply {
+                ReplyAddress::Telegram { .. } => {
+                    crate::telegram::structured::authorized(
+                        self.resolver.record_client(),
+                        self.keys.clone(),
+                        &current,
+                        event,
+                    )
+                    .await
+                }
+                ReplyAddress::Whatsapp { .. } => {
+                    crate::whatsapp::structured::authorized(
+                        self.resolver.record_client(),
+                        self.keys.clone(),
+                        &current,
+                        event,
+                    )
+                    .await
+                }
+                _ => false,
+            };
+            authorized.then(|| ["contact", "location", "venue"].map(String::from).into())
         })
         .await
         .ok()
