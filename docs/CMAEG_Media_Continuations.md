@@ -72,14 +72,37 @@ delivery outcomes before sending to the original authorized destination. Native
 sends use their own fenced delivery identity. Lost/ambiguous local or webhook
 intents remain explicitly unknown and are not automatically resent.
 
-Custom streams preserve the existing `cmaeg.completed` contract for ordinary
-events. Only newly frozen media-enabled events use `cmaeg.response.completed`
-for the original response, carrying its response ID. Supplementary terminal
-results use `cmaeg.media.response` with response ID, parent response ID, artifact,
-delivery ID, status and text. One final `cmaeg.completed` closes a fully settled
-stream; failures use `cmaeg.failed`. Such streams have a 120-second local bound;
-`cmaeg.media.pending` closes a still-pending stream without claiming delivery.
-Recovery continues durably after that local deadline or client disconnect.
+Custom streams preserve the existing terminal event, payload and completion
+timing by default, including when media-continuation writers are enabled. A
+client must explicitly request `?mode=stream&media_responses=true` to negotiate
+response-scoped media streaming; `media_responses` requires `mode=stream`, and
+false retains the legacy behavior. This preference belongs to the process-local
+waiter and does not change admission identity, source authority or the immutable
+original command. A replay cannot attach a new waiter to the original event.
+
+For an opted-in stream whose original event has media continuations,
+`cmaeg.response.completed` or `cmaeg.response.failed` identifies the original
+response. Supplementary terminal results use `cmaeg.media.response` with response
+ID, parent response ID, artifact, delivery ID, status and text. One final
+`cmaeg.completed` closes a fully settled stream; failures use `cmaeg.failed`.
+That final payload preserves the original `text`, `message` and `error` fields
+and adds `media_complete` and `status`. An original failure cannot become a
+successful completion merely because its media finished. Restoring that final
+payload requires a fresh source, consumer, Sync-sink and expiry check after the
+close intent. A failed check emits a content-free terminal refusal: confirmed
+revocation is 403, expiry is 410, and lookup unavailability is 503. No original
+text, message or provider error detail is repeated after such a refusal.
+
+Such opted-in streams have a 120-second local media bound beginning after the
+original terminal response; an ongoing original turn keeps its existing time
+budget. `cmaeg.media.pending` closes a still-pending stream without claiming
+delivery. Events without media continuations retain the legacy stream even
+when the client requests media streaming.
+
+Durable media processing, ordinary configured webhook delivery and retained
+metadata remain independent of this local stream preference. Clients using the
+legacy stream can discover later media responses through the owner-authorized
+metadata route below. Recovery continues after the local deadline or disconnect.
 
 Owner-authorized channel activity retains separate media response IDs/statuses
 and their ordinary Agent Manager response URLs. Following a URL still requires

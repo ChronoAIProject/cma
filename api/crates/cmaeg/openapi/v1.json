@@ -9421,6 +9421,15 @@
             }
           },
           {
+            "description": "Requires mode=stream. Explicitly opt into response-scoped media events and a bounded wait for supplementary responses. Omitted or false preserves the legacy stream terminal contract.",
+            "in": "query",
+            "name": "media_responses",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "description": "Required for HMAC authentication",
             "in": "header",
             "name": "webhook-id",

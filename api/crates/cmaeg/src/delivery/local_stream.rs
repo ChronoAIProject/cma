@@ -16,6 +16,10 @@ use cmaeg_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+#[cfg(test)]
+#[path = "local_stream_tests.rs"]
+mod tests;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalStreamOutcome {
@@ -102,8 +106,8 @@ impl CustomStreamEffect {
     }
 }
 impl CustomDelivery {
-    /// A new media-enabled event distinguishes response completion from final
-    /// stream completion. Existing events continue using local() unchanged.
+    /// Only an explicitly negotiated waiter distinguishes response completion
+    /// from final media completion. Existing clients keep their terminal frame.
     pub(crate) fn local_response(
         &self,
         event: &EventRefPayload,
@@ -113,7 +117,13 @@ impl CustomDelivery {
         let ReplyAddress::Sync { waiter } = &event.reply else {
             return LocalStreamOutcome::Unavailable;
         };
+        if !self.waiters.media_responses(waiter) {
+            return self.local(event, effect);
+        }
         let (legacy, mut data) = effect.frame(event);
+        if effect.terminal() && !self.waiters.retain_terminal(waiter, legacy, &data) {
+            return LocalStreamOutcome::Unavailable;
+        }
         data["response_id"] = response_id.into();
         data["media_pending"] = true.into();
         data["media_responses_url"] = media_responses_url(event).into();
@@ -122,8 +132,10 @@ impl CustomDelivery {
             CustomStreamEffect::Failed => "cmaeg.response.failed",
             _ => legacy,
         };
-        self.waiters
-            .bound(waiter, std::time::Duration::from_secs(120));
+        if effect.terminal() {
+            self.waiters
+                .bound(waiter, std::time::Duration::from_secs(120));
+        }
         if self.waiters.emit(waiter, name, &data, false) {
             LocalStreamOutcome::Buffered
         } else {
@@ -138,6 +150,9 @@ impl CustomDelivery {
         let ReplyAddress::Sync { waiter } = &event.reply else {
             return LocalStreamOutcome::Unavailable;
         };
+        if !self.waiters.media_responses(waiter) {
+            return LocalStreamOutcome::Unavailable;
+        }
         if self
             .waiters
             .emit(waiter, "cmaeg.media.response", data, false)
@@ -151,7 +166,40 @@ impl CustomDelivery {
         let ReplyAddress::Sync { waiter } = &event.reply else {
             return LocalStreamOutcome::Unavailable;
         };
-        let data = json!({"event_id":event.event_id,"conversation_id":event.conversation_id,"media_complete":!failed,"status":if failed{"incomplete"}else{"completed"}});
+        if !self.waiters.media_responses(waiter) {
+            return LocalStreamOutcome::Unavailable;
+        }
+        let (original, mut data) = self
+            .waiters
+            .original_terminal(waiter)
+            .unwrap_or_else(|| ("cmaeg.completed", custom::data(event, None, None, None)));
+        let failed = failed || original == "cmaeg.failed";
+        self.close_media(event, &mut data, failed)
+    }
+    /// An authority refusal may close a waiter, but must not re-emit content
+    /// that was retained under its formerly valid authorization.
+    pub(crate) fn refuse_media(
+        &self,
+        event: &EventRefPayload,
+        refusal: Problem,
+    ) -> LocalStreamOutcome {
+        let mut data = custom::data(event, None, None, Some(refusal));
+        self.close_media(event, &mut data, true)
+    }
+    fn close_media(
+        &self,
+        event: &EventRefPayload,
+        data: &mut Value,
+        failed: bool,
+    ) -> LocalStreamOutcome {
+        let ReplyAddress::Sync { waiter } = &event.reply else {
+            return LocalStreamOutcome::Unavailable;
+        };
+        if !self.waiters.media_responses(waiter) {
+            return LocalStreamOutcome::Unavailable;
+        }
+        data["media_complete"] = (!failed).into();
+        data["status"] = if failed { "incomplete" } else { "completed" }.into();
         if self.waiters.emit(
             waiter,
             if failed {
@@ -159,7 +207,7 @@ impl CustomDelivery {
             } else {
                 "cmaeg.completed"
             },
-            &data,
+            data,
             true,
         ) {
             LocalStreamOutcome::Buffered
