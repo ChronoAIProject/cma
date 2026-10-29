@@ -108,7 +108,10 @@ async fn rotation_between_unique_barrier_and_history_keeps_all_retired_hashes() 
         );
         assert_eq!(commands[0].get("lsid"), commands[1].get("lsid"));
         for command in commands.iter() {
-            assert_eq!(command.get_i64("maxTimeMS").unwrap(), 750);
+            // The driver encodes this small timeout as BSON Int32. Keep the
+            // assertion about the exact 750 ms budget without requiring an
+            // implementation-specific BSON integer width.
+            assert_eq!(command.get_i32("maxTimeMS").unwrap(), 750);
             assert!(!command.contains_key("txnNumber"));
         }
     }
