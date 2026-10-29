@@ -279,9 +279,18 @@ class Quiesce(Fixture):
 
     def test_timeout_is_retryable_and_never_escalates(self):
         self.finish = False
-        with patch.dict(m.__dict__, DEADLINE=time.monotonic() + 0.08):
+        elapsed = [0.0]
+        def advance(seconds):
+            self.assertEqual(self.signals, [signal.SIGTERM])
+            elapsed[0] += seconds
+        clock = types.SimpleNamespace(monotonic=lambda: elapsed[0], sleep=advance,
+                                      time=time.time)
+        # Journal fsync and runner scheduling must not consume the drain budget
+        # before this test reaches its deliberately surviving native process.
+        with patch.dict(m.__dict__, time=clock, DEADLINE=0.08):
             with self.assertRaisesRegex(m.Refused, "deadline"):
                 m.quiesce(self.request)
+        self.assertGreaterEqual(elapsed[0], 0.08)
         self.assertEqual(self.signals, [signal.SIGTERM])
         self.live = {10: self.supervisor}
         self.terminal()
