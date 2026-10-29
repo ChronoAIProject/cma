@@ -31,10 +31,14 @@ pub use agent_artifacts::agent_artifacts_router;
 #[cfg(test)]
 mod agent_artifacts_tests;
 mod agent_channel_usage;
+mod agent_provider_associations;
+pub use agent_provider_associations::agent_provider_associations_router;
 mod agent_command_admission;
 mod agent_models;
 mod agent_operate;
 mod agent_preferences;
+#[cfg(test)]
+mod agent_provider_associations_tests;
 mod agent_settings;
 mod agent_skills;
 mod agent_worktree_recovery;

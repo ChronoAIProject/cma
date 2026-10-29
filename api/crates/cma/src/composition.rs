@@ -407,6 +407,12 @@ impl ControlPlaneComposition {
                     resource_access.clone(),
                 ),
             ))
+            .merge(layer1_public::rest::agent_provider_associations_router(
+                layer2_core::sandbox::provider_associations::AgentProviderAssociationService::new(
+                    stores.sandbox_model.clone(),
+                    resource_access.clone(),
+                ),
+            ))
             .merge(layer1_public::rest::agent_provenance_router(provenance))
             .merge(layer1_public::rest::resource_access_router(resource_access))
             .merge(rest::profile_authoring_router(profile_authoring))
