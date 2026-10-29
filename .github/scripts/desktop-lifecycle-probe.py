@@ -83,5 +83,9 @@ time.sleep(0.3)
 with socket.create_connection(("127.0.0.1", 5900), timeout=3) as stream:
     assert stream.recv(12).startswith(b"RFB ")
 assert m.validate_services(plan, m.inventory())
+for shell in ["xfce4-panel", "xfdesktop"]:
+    subprocess.run(["xdotool", "search", "--onlyvisible", "--class", shell],
+                   check=True, stdout=subprocess.DEVNULL)
+subprocess.run(["scrot", "/tmp/cma-desktop-browser-closed.png"], check=True)
 print(json.dumps({"checks": ["desktop-recovery-ownership", "unrelated-process-refused",
-                             "chromium-sandbox-active", "loopback-page-refused", "browser-close-keeps-desktop"]}))
+                             "chromium-sandbox-active", "loopback-page-refused", "browser-close-keeps-desktop", "browser-close-keeps-panel-and-icons"]}))

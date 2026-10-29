@@ -22,7 +22,7 @@ async function waitReady() {
     if (check === '0') return;
     if (i % 5 === 0) {
       startupDiagnostics = docker(['exec', name, 'sh', '-c',
-        'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-openbox.log /tmp/cma-websockify.log /tmp/cma-x11vnc.log 2>/dev/null || true']);
+        'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-xfce.log /tmp/cma-websockify.log /tmp/cma-x11vnc.log 2>/dev/null || true']);
     }
     await delay(1000);
   }
@@ -40,6 +40,7 @@ try {
     ['.github/scripts/desktop-native-probe.cjs', '/opt/desktop-native-probe.cjs'],
     ['.github/scripts/desktop-vnc-probe.py', '/opt/desktop-vnc-probe.py'],
     ['.github/scripts/desktop-lifecycle-probe.py', '/opt/desktop-lifecycle-probe.py'],
+    ['.github/scripts/desktop-shell-probe.py', '/opt/desktop-shell-probe.py'],
     ['api/crates/layer3-adapter/src/codex', '/opt/codex-fixtures'],
   ].flatMap(([source, target]) => ['--mount', `type=bind,source=${resolve(source)},target=${target},readonly`]);
   docker(['volume', 'create', '--label', `dev.chrono.cma.desktop-test=${name}`, name]);
@@ -58,14 +59,26 @@ try {
   // No direct desktop listener may accept traffic from the Pod interface.
   docker(['exec', name, 'python3', '-c',
     'from pathlib import Path\nfor row in Path("/proc/net/tcp").read_text().splitlines()[1:]:\n a=row.split()[1]; port=int(a.split(":")[1],16)\n if port in (5900,6080): assert a.split(":")[0]=="0100007F", a']);
+  result.shell = JSON.parse(docker(['exec', '--env', 'DISPLAY=:99',
+    name, 'python3', '/opt/desktop-shell-probe.py']).trim());
   result.proof = JSON.parse(docker(['exec', '--env', 'DISPLAY=:99', '--env', `CMA_DESKTOP_TEST_TOKEN=${token}`,
     name, 'node', '/opt/desktop-native-probe.cjs']).trim());
   result.lifecycle = JSON.parse(docker(['exec', '--env', 'DISPLAY=:99',
     name, 'python3', '/opt/desktop-lifecycle-probe.py']).trim());
+  writeFileSync(destination + '.browser-closed.png', execFileSync('docker',
+    ['exec', name, 'cat', '/tmp/cma-desktop-browser-closed.png'],
+    { timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
   docker(['restart', '--time', '10', name]);
   await waitReady();
+  result.retainedShell = JSON.parse(docker(['exec', '--env', 'DISPLAY=:99',
+    '--env', 'CMA_DESKTOP_EXPECT_RETAINED=1', name, 'python3', '/opt/desktop-shell-probe.py']).trim());
   result.retained = JSON.parse(docker(['exec', '--env', 'DISPLAY=:99', '--env', `CMA_DESKTOP_TEST_TOKEN=${token}`,
     '--env', 'CMA_DESKTOP_EXPECT_RETAINED=1', name, 'node', '/opt/desktop-native-probe.cjs']).trim());
+  for (const screen of ['shell', 'file-manager']) {
+    writeFileSync(destination + '.' + screen + '.png', execFileSync('docker',
+      ['exec', name, 'cat', '/tmp/cma-desktop-' + screen + '.png'],
+      { timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
+  }
   result.result = 'pass';
 } catch (error) {
   result.error = error.message.slice(0, 1000).replaceAll(token, '[fixture-token]');
@@ -74,7 +87,7 @@ try {
   try { process.stderr.write(docker(['logs', '--tail', '40', name]).replaceAll(token, '[fixture-token]')); }
   catch { /* The container may not have been created. */ }
   try {
-    const diagnostics = docker(['exec', name, 'sh', '-c', 'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-openbox.log /tmp/cma-websockify.log /tmp/cma-x11vnc.log 2>/dev/null']);
+    const diagnostics = docker(['exec', name, 'sh', '-c', 'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-xfce.log /tmp/cma-websockify.log /tmp/cma-x11vnc.log 2>/dev/null']);
     process.stderr.write(diagnostics.replaceAll(token, '[fixture-token]'));
   } catch { /* The container may already have stopped. */ }
   try {
