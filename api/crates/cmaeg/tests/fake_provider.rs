@@ -41,6 +41,7 @@ pub struct FakeProviderConfig {
     pub conversation_missing_once: bool,
     /// Ordered conversation PUT refusals, before the default successful creation.
     pub conversation_statuses: Vec<(u16, String)>,
+    pub conversation_delete_status: Option<(u16, String)>,
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
     pub reject_binding: bool,
@@ -72,6 +73,7 @@ impl Default for FakeProviderConfig {
             busy_retry_after: None,
             conversation_missing_once: false,
             conversation_statuses: Vec::new(),
+            conversation_delete_status: None,
             malformed_frame: false,
             disconnect_after: None,
             reject_binding: false,
@@ -290,6 +292,13 @@ async fn delete_conversation(
         headers,
         body,
     );
+    if let Some((status, code)) = &state.config.conversation_delete_status {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(json!({"code":code})),
+        )
+            .into_response();
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 
