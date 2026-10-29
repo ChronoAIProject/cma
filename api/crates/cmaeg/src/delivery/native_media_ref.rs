@@ -34,10 +34,12 @@ impl Sender {
             || !whole
             || message.native_attachments.len() != 1
             || self.relay.native_media_receipts.is_none()
-            || message
-                .native_attachments
-                .iter()
-                .any(|a| a.kind == NativeMediaKind::Sticker)
+            || message.native_attachments.iter().any(|a| {
+                matches!(
+                    a.kind,
+                    NativeMediaKind::Sticker | NativeMediaKind::Voice | NativeMediaKind::Animation
+                )
+            })
             || event.lineage.is_some()
             || message.whatsapp_template.is_some()
             || message.reply_to.is_some()
