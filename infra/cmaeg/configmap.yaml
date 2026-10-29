@@ -35,6 +35,8 @@ data:
   CMAEG_NATIVE_LARK_INTAKE_ENABLED: "true"
   # Compatible retained readers support native resource locators; owner app setup remains explicit.
   CMAEG_NATIVE_LARK_MEDIA_ENABLED: "true"
+  CMAEG_NATIVE_LARK_STICKERS_ENABLED: "false"
+  CMAEG_NATIVE_LARK_STICKER_REPLIES_ENABLED: "false"
   # Compatible #1158 readers and shared Custom acceptance verified; native owner testing is enabled.
   CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED: "true"
   # Native single-attachment Telegram edits are enabled after compatible reader rollout.

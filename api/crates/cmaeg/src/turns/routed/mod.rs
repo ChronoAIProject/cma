@@ -42,6 +42,8 @@ mod preparation_dispatch_tests;
 mod preparation_tests;
 mod projection_store;
 mod received_message;
+mod received_source;
+pub(crate) use received_source::retained_received_source;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
@@ -150,3 +152,6 @@ mod whatsapp_template_tests;
 mod native_lark_outbound_tests;
 #[cfg(test)]
 mod native_lark_thread_start_tests;
+
+#[cfg(test)]
+mod native_lark_sticker_tests;

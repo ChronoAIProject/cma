@@ -135,7 +135,11 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
-        if message.native_media_update.is_some() || message.clear_native_attachments {
+        if message.native_media_update.is_some()
+            || message.clear_native_attachments
+            || (message.reply_with_received_sticker
+                && !matches!(event.reply, ReplyAddress::NativeLark(_)))
+        {
             return (unsupported(), SendEffects::default());
         }
         // Each transport owns a large send future. Keep those futures off the

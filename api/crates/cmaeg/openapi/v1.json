@@ -1795,6 +1795,13 @@
               "null"
             ]
           },
+          "reply_with_received_sticker": {
+            "description": "Resend this event's received native Lark sticker to its original conversation.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "thread_history": {
             "description": "A fixed 20-message prior window is available on explicit request.",
             "type": [
@@ -5177,6 +5184,10 @@
                 "type": "null"
               }
             ]
+          },
+          "reply_with_received_sticker": {
+            "description": "Resend only the exact retained native Lark sticker received in this event.",
+            "type": "boolean"
           },
           "text": {
             "type": [

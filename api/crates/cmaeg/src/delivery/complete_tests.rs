@@ -13,6 +13,7 @@ mod native_lark_image_replacement_tests;
 mod native_lark_media_fixture;
 mod native_lark_media_tests;
 mod native_lark_multi_image_tests;
+mod native_lark_sticker_tests;
 mod native_lark_tests;
 pub(crate) mod native_lark_thread_start_fixture;
 mod native_lark_thread_start_tests;
@@ -132,6 +133,7 @@ fn setup() -> (
 fn message(text: String) -> OutboundMessage {
     OutboundMessage {
         whatsapp_template: None,
+        reply_with_received_sticker: false,
         clear_native_attachments: false,
         native_media_update: None,
         native_attachments: Vec::new(),
