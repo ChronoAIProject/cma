@@ -113,6 +113,7 @@ pub(super) async fn configure(
     state.native_discord_conversation_history_enabled =
         config.native_discord_conversation_history_enabled;
     state.native_discord_reactions_enabled = config.native_discord_reactions_enabled;
+    state.native_discord_rich_content_enabled = config.native_discord.rich_content_enabled;
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
     Ok(whatsapp_forms_ready)

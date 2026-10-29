@@ -6108,6 +6108,13 @@
               "null"
             ]
           },
+          "native_discord_rich_content_enabled": {
+            "description": "Descriptive sticker/embed/poll intake, not media download or poll actions.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_discord_thread_history_enabled": {
             "type": [
               "boolean",
