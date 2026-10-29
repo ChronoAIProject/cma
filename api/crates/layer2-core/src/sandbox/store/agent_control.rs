@@ -66,6 +66,10 @@ pub enum AgentControlStoreError {
     StopReasonConflict,
     #[error("agent changed while the control operation was requested")]
     Conflict,
+    #[error("agent worktree recovery is not eligible")]
+    WorktreeRecoveryConflict,
+    #[error("agent limit reached: {live} of {limit}")]
+    LimitReached { limit: u8, live: u8 },
     #[error("stored agent data is not usable: {0}")]
     Corrupt(String),
     #[error("agent control store unavailable: {0}")]
@@ -89,6 +93,19 @@ impl AgentControlResult {
 /// Atomic owner authorization, aggregate CAS, lineage validation, and work scheduling.
 #[async_trait]
 pub trait AgentControlStore: Send + Sync {
+    /// Recover only a never-ready failed checkout. Stores must atomically fence all
+    /// parents, reserve a new worktree, and retain the original failed worktree.
+    async fn begin_agent_worktree_recovery(
+        &self,
+        _id: &AgentId,
+        _caller: &crate::Caller,
+        _operation_id: &str,
+        _successor_id: &WorktreeId,
+        _now: String,
+    ) -> Result<Agent, AgentControlStoreError> {
+        Err(AgentControlStoreError::WorktreeRecoveryConflict)
+    }
+
     /// Schedule stop once; matching active stop work is an idempotent replay.
     async fn schedule_agent_stop(
         &self,
