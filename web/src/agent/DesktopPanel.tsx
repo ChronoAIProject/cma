@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type RFB from '@novnc/novnc';
 import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
+import { StateDot } from '../ui/StateDot';
+import { DesktopFeedback, useDesktopNotice } from './DesktopFeedback';
+import { useDesktopConnection } from './useDesktopConnection';
 import './DesktopPanel.css';
 
 export function DesktopPanel({
@@ -16,50 +18,22 @@ export function DesktopPanel({
   const panel = useRef<HTMLElement>(null);
   const [fullScreen, setFullScreen] = useState(false);
   const [fullScreenError, setFullScreenError] = useState<string>();
-  const screen = useRef<HTMLDivElement>(null);
-  const connection = useRef<RFB>(undefined);
-  const [status, setStatus] = useState('Connecting…');
   const [attempt, setAttempt] = useState(0);
   const [control, setControl] = useState(false);
-  useEffect(() => {
-    let disposed = false;
-    let rfb: RFB | undefined;
-    void import('@novnc/novnc')
-      .then(({ default: Client }) => {
-        if (disposed || !screen.current) return;
-        const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-        rfb = new Client(
-          screen.current,
-          `${scheme}://${location.host}/api/v1/agents/${encodeURIComponent(agentId)}/desktop/ws`,
-        );
-        rfb.scaleViewport = true;
-        // Keep the shared desktop resolution stable while an Agent acts on screenshots.
-        rfb.resizeSession = false;
-        rfb.viewOnly = true;
-        connection.current = rfb;
-        rfb.addEventListener('connect', () => {
-          if (!disposed) setStatus('Connected');
-        });
-        rfb.addEventListener('disconnect', () => {
-          if (!disposed)
-            setStatus('Disconnected. Close any other desktop connection and reconnect.');
-        });
-        rfb.addEventListener('securityfailure', () => {
-          if (!disposed) setStatus('Desktop connection refused.');
-        });
-      })
-      .catch(() => {
-        if (!disposed) setStatus('Could not load the desktop viewer.');
-      });
-    return () => {
-      disposed = true;
-      connection.current = undefined;
-      rfb?.disconnect();
-    };
-  }, [agentId, attempt]);
-  useEffect(() => {
-    if (connection.current) connection.current.viewOnly = !control || running;
-  }, [control, running]);
+  const { screen, phase, error, focus } = useDesktopConnection(
+    agentId,
+    attempt,
+    control && !running,
+  );
+  const ready = phase === 'ready';
+  const [previousGate, setPreviousGate] = useState({ running, ready });
+  if (running !== previousGate.running || ready !== previousGate.ready) {
+    setPreviousGate({ running, ready });
+    // A completed turn or reconnected stream never silently restores input.
+    if (running || !ready) setControl(false);
+  }
+  const controller = running ? 'agent' : control ? 'user' : 'view';
+  const notice = useDesktopNotice(phase, controller);
   useEffect(() => {
     const changed = () => setFullScreen(document.fullscreenElement === panel.current);
     document.addEventListener('fullscreenchange', changed);
@@ -71,25 +45,53 @@ export function DesktopPanel({
       id="machine-desktop"
       className="agent-desktop"
       aria-label="Machine desktop"
+      data-controller={ready ? controller : undefined}
     >
       <header className="agent-desktop__header">
         <div>
-          <h2>Machine desktop</h2>
+          <div className="agent-desktop__title">
+            <h2>Machine desktop</h2>
+            <span className="agent-desktop__control-label">
+              <StateDot
+                state={phase === 'error' ? 'error' : !ready || running ? 'ongoing' : 'neutral'}
+              />
+              {ready
+                ? running
+                  ? 'Agent working'
+                  : control
+                    ? 'You control'
+                    : 'Watching'
+                : phase === 'error'
+                  ? 'Unavailable'
+                  : 'Connecting'}
+            </span>
+          </div>
           <p role="status">
-            {status}
-            {running
-              ? ' · Agent is working. Watch its actions here.'
-              : control
-                ? ' · You are controlling the desktop.'
-                : ' · Ask the Agent to use this desktop, or take control.'}
+            {phase === 'connecting'
+              ? 'Connecting to your machine…'
+              : phase === 'loading'
+                ? 'Loading the desktop screen…'
+                : phase === 'error'
+                  ? error
+                  : 'Connected'}
+            {ready &&
+              (running
+                ? ' · Agent is working. Watch its actions here.'
+                : control
+                  ? ' · You are controlling the desktop.'
+                  : ' · Ask the Agent to use this desktop, or take control.')}
           </p>
           {fullScreenError ? <p role="status">{fullScreenError}</p> : null}
         </div>
         <div className="agent-desktop__actions">
           <Button
             size="sm"
-            disabled={running || status !== 'Connected'}
-            onClick={() => setControl(!control)}
+            disabled={running || !ready}
+            onClick={() => {
+              const next = !control;
+              setControl(next);
+              if (next) focus();
+            }}
           >
             {control && !running ? 'Stop controlling' : 'Control desktop'}
           </Button>
@@ -97,7 +99,6 @@ export function DesktopPanel({
             size="sm"
             onClick={() => {
               setControl(false);
-              setStatus('Connecting…');
               setAttempt(attempt + 1);
             }}
           >
@@ -125,7 +126,15 @@ export function DesktopPanel({
           />
         </div>
       </header>
-      <div ref={screen} className="agent-desktop__frame" aria-label="Linux desktop screen" />
+      <div className="agent-desktop__viewport" aria-busy={!ready && phase !== 'error'}>
+        <div
+          ref={screen}
+          className="agent-desktop__frame"
+          data-ready={ready || undefined}
+          aria-label="Linux desktop screen"
+        />
+        <DesktopFeedback phase={phase} error={error} notice={notice} />
+      </div>
     </section>
   );
 }
