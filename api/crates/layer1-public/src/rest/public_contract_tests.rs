@@ -17,6 +17,7 @@ mod artifact_cases;
 mod attachment_cases;
 mod authoring_cases;
 mod binding_cases;
+mod binding_media_cases;
 mod bot_cases;
 mod bot_setup_cases;
 mod channel_usage_cases;
@@ -154,6 +155,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = binding_media_cases::scenario(name) {
+        return scenario;
+    }
     if let Some(scenario) = agent_worktree_recovery_cases::scenario(name).await {
         return scenario;
     }

@@ -1,5 +1,6 @@
 import type { Denied } from '../client';
 import {
+  nativeDiscordProviderUnavailable,
   nativeDiscordUnavailable,
   nativeLarkUnavailable,
   nativeWhatsappUnavailable,
@@ -47,6 +48,10 @@ export function NodeFields({
   if (!create && section.kind === 'producer' && section.index === sources.length)
     sources.push(defaultSource('nyxid_relay'));
   const producer = section.kind === 'producer' ? section.index : -1;
+  const providerUnavailable = nativeDiscordProviderUnavailable(
+    discovery,
+    String(object(draft.provider).slug ?? ''),
+  );
   const set = (key: string, next: unknown) => onChange({ ...draft, [key]: next });
   return (
     <>
@@ -84,7 +89,7 @@ export function NodeFields({
                       {
                         value: 'discord',
                         label: 'Direct Discord bot',
-                        unavailable: nativeDiscordUnavailable(discovery),
+                        unavailable: nativeDiscordUnavailable(discovery) ?? providerUnavailable,
                       },
                       { value: 'custom', label: 'Custom event' },
                     ]}
@@ -152,6 +157,11 @@ export function NodeFields({
       ) : null}
       {create || (section.kind === 'consumer' && section.id === 'default') ? (
         <>
+          {create && sources.some((source) => source.type === 'discord') && providerUnavailable ? (
+            <p className="channel-field-hint" role="status">
+              {providerUnavailable}
+            </p>
+          ) : null}
           <ProviderFields
             immutable={!create}
             value={object(draft.provider)}

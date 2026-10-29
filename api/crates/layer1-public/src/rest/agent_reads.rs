@@ -80,6 +80,7 @@ pub(crate) async fn events(
             .await?
             .into_iter()
             .map(|entry| AgentVisibleLogEntry {
+                deferred_failure_detail: None,
                 seq: entry.seq,
                 appended_at: entry.appended_at,
                 kind: Some(entry.kind),

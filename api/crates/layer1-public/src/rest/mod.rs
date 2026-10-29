@@ -23,6 +23,7 @@ mod agent_artifacts;
 mod agent_attachments;
 pub use agent_attachments::agent_attachments_router;
 mod agent_filesystem;
+pub mod binding_media;
 pub use agent_filesystem::agent_filesystem_router;
 mod agent_observation_shapes;
 mod agent_openapi_shapes;

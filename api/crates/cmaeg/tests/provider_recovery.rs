@@ -1,3 +1,5 @@
+#[path = "provider_recovery/nyxbot.rs"]
+mod nyxbot;
 #[path = "provider_recovery/support.rs"]
 mod support;
 use cmaeg::providers::{ProviderError, ResponsesEvent};
@@ -10,6 +12,7 @@ async fn default_none_never_probes_or_reposts() {
     let server = Server::new(Config::default()).await;
     let client = server.client(false, Duration::from_secs(1));
     assert!(!client.supports_response_replay(&provider()).unwrap());
+    assert!(client.response_recovery_providers().is_empty());
     assert!(matches!(
         client
             .response_snapshot(&provider(), &identity(), &key())
@@ -29,6 +32,11 @@ async fn default_none_never_probes_or_reposts() {
 async fn snapshot_pins_native_agent_and_checks_journal_identity_and_exact_metadata() {
     let server = Server::new(Config::default()).await;
     let client = server.client(true, Duration::from_secs(1));
+    assert_eq!(
+        client.response_recovery_providers(),
+        vec![provider().as_str()]
+    );
+    assert!(server.seen.lock().unwrap().is_empty());
     let response = client
         .response_snapshot(&provider(), &identity(), &key())
         .await

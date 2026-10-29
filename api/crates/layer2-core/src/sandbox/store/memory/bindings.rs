@@ -185,3 +185,28 @@ pub(super) fn require_conversation_authority(
         .ok_or(SandboxStoreError::Conflict)?;
     proof.require_current(binding, conversation)
 }
+
+pub(super) fn continuation_retry_authority(
+    state: &super::State,
+    envelope: &crate::sandbox::agent_io::AgentCommandEnvelope,
+) -> bool {
+    let Some(id) = envelope.authorization.authority_id.strip_prefix("binding:") else {
+        return false;
+    };
+    let Some(binding) = state.bindings.get(id) else {
+        return false;
+    };
+    let Some(conversation) = state.binding_conversations.values().find(|conversation| {
+        conversation.binding_id == id
+            && conversation.generation == binding.generation
+            && conversation.agent_id == envelope.agent_id
+    }) else {
+        return false;
+    };
+    crate::sandbox::binding::BindingConversationAuthority {
+        binding: binding.clone(),
+        conversation: conversation.clone(),
+    }
+    .require_command(envelope)
+    .is_ok()
+}

@@ -58,6 +58,8 @@ pub struct CommandFailure {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandWorkState {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred_attempts: Vec<super::DeferredCommandAttempt>,
     pub lease: Option<CommandLease>,
     pub dispatch: Option<CommandDispatch>,
     pub failure: Option<CommandFailure>,
@@ -134,6 +136,8 @@ impl AdmittedAgentCommand {
     ) -> Result<CommandClaim, CommandLedgerError> {
         request.validate()?;
         if self.status != AgentResponseStatus::Queued
+            || (!self.queue_expired(&request.now)
+                && !self.continuation_retry_delay(&request.now).is_zero())
             || self.work.dispatch.is_some()
             || self.receipt.envelope.agent_id != request.agent_id
             || fence == 0
@@ -225,6 +229,7 @@ impl AdmittedAgentCommand {
 }
 
 pub(super) fn validate_work(record: &AdmittedAgentCommand) -> Result<(), CommandLedgerError> {
+    super::continuation_retry::validate_attempts(record)?;
     let work = &record.work;
     if work.observation.as_ref().is_some_and(|observation| {
         work.dispatch

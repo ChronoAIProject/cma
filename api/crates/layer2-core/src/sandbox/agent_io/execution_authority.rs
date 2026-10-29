@@ -17,6 +17,7 @@ pub struct CommandExecutionAuthorization {
     caller: Caller,
     access: ResourceAccessService,
     fence: Arc<CommandExecutionFence>,
+    source_guard: Option<Arc<dyn super::CommandSourceGuard>>,
 }
 
 /// Consumed inside the same store transaction as the dispatch claim and parent
@@ -137,11 +138,30 @@ impl ResourceAccessService {
             caller,
             access: self.clone(),
             fence,
+            source_guard: None,
         })
     }
 }
 
 impl CommandExecutionAuthorization {
+    pub(in crate::sandbox) fn continuation_envelope(&self) -> Option<&AgentCommandEnvelope> {
+        self.fence
+            .envelope
+            .continuation
+            .as_ref()
+            .map(|_| &self.fence.envelope)
+    }
+    pub fn with_source_guard(mut self, guard: Arc<dyn super::CommandSourceGuard>) -> Self {
+        self.source_guard = Some(guard);
+        self
+    }
+
+    pub fn require_source_guard(&self) -> Result<(), ResourceAccessError> {
+        if self.fence.envelope.continuation.is_some() && self.source_guard.is_none() {
+            return Err(AccessError::NotFound.into());
+        }
+        Ok(())
+    }
     pub fn caller(&self) -> &Caller {
         &self.caller
     }
@@ -152,6 +172,20 @@ impl CommandExecutionAuthorization {
 
     pub async fn current_snapshot(&self) -> Result<ResourceAccessSnapshot, ResourceAccessError> {
         self.fence.require_current()?;
+        self.require_source_guard()?;
+        if let Some(guard) = &self.source_guard {
+            tokio::time::timeout_at(self.fence.deadline, guard.check(&self.fence.envelope))
+                .await
+                .map_err(|_| ResourceAccessStoreError::Unavailable)?
+                .map_err(|error| match error {
+                    super::CommandAuthorizationError::Revoked => {
+                        ResourceAccessError::from(AccessError::NotFound)
+                    }
+                    super::CommandAuthorizationError::Unavailable => {
+                        ResourceAccessError::from(ResourceAccessStoreError::Unavailable)
+                    }
+                })?;
+        }
         let snapshot = tokio::time::timeout_at(
             self.fence.deadline,
             self.access.current_read_snapshot(

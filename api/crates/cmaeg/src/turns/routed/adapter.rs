@@ -43,6 +43,7 @@ pub struct HttpExecutionPort {
     plans: PlanStore,
     journal: Journal,
     authority: Arc<dyn Authority>,
+    media_work: Option<super::media_work::MediaWorkIndex>,
 }
 pub struct ReattachedResponse {
     pub snapshot: RecoverySnapshot,
@@ -78,7 +79,17 @@ impl HttpExecutionPort {
             plans,
             journal,
             authority,
+            media_work: None,
         }
+    }
+    pub fn with_media_continuations(mut self, enabled: bool) -> Self {
+        if enabled {
+            self.media_work = Some(super::media_work::MediaWorkIndex::new(
+                self.journal.clone(),
+                self.plans.clone(),
+            ));
+        }
+        self
     }
     /// The dispatcher shares this adapter's exact authority and storage handles.
     pub fn dispatcher(self: Arc<Self>) -> Dispatcher {
@@ -159,7 +170,7 @@ impl HttpExecutionPort {
         Ok(ReattachedResponse { snapshot, stream })
     }
 }
-fn credential<'a>(
+pub(super) fn credential<'a>(
     current: &'a ResolvedChannel,
     target: &StoredTarget,
 ) -> Result<&'a Secret, ExecutionError> {
@@ -170,6 +181,22 @@ fn credential<'a>(
         .ok_or(ExecutionError::AuthorityChanged)
 }
 impl ExecutionPort for HttpExecutionPort {
+    fn prepare_continuations<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        body: &'a FrozenTurn,
+    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
+        Box::pin(async move {
+            match &self.media_work {
+                Some(index) => index.prepare(plan, target, body).await,
+                None if body.metadata.contains_key(super::media_schedule::KEY) => {
+                    Err(ExecutionError::Unsupported)
+                }
+                None => Ok(()),
+            }
+        })
+    }
     fn support(&self, binding: &ProviderBinding) -> RecoverySupport {
         RecoverySupport {
             exact_body_idempotency: false,

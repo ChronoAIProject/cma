@@ -10,6 +10,7 @@ use layer2_core::sandbox::{
 };
 
 pub(crate) struct ResourceCommandExecution {
+    pub source_guard: Option<Arc<dyn CommandSourceGuard>>,
     pub authority: Arc<dyn AgentCommandAuthorizer>,
     pub access: Arc<ResourceAccessService>,
     pub store: Arc<dyn AgentCommandWorkerStore>,
@@ -23,11 +24,17 @@ impl ResourceCommandExecution {
         command: &AdmittedAgentCommand,
     ) -> Result<CommandExecutionAuthorization, CommandReadiness> {
         command.validate().map_err(|_| CommandReadiness::Retry)?;
-        let authority = self
+        let mut authority = self
             .authority
             .authorize_resource_command(&self.access, &command.receipt.envelope)
             .await
             .map_err(authority_readiness)?;
+        if command.receipt.envelope.continuation.is_some() {
+            let source = self.source_guard.clone().ok_or(CommandReadiness::Reject(
+                CommandFailureCode::AuthorityRevoked,
+            ))?;
+            authority = authority.with_source_guard(source);
+        }
         self.inspect_target(&authority, command).await?;
         Ok(authority)
     }
