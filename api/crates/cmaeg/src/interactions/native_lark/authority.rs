@@ -19,6 +19,9 @@ pub struct Authority {
     pub(crate) form: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) image: Option<super::Image>,
+    /// Ordered multiple-image authority; never emitted for historical scalar cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) images: Option<Vec<super::Image>>,
     pub(crate) custody: String,
     pub(crate) destination: Option<Receipt>,
     pub(crate) replacement: Option<super::replacement::Patch>,
@@ -115,6 +118,7 @@ impl Authority {
             conversation: activity.conversation.kind,
             form,
             image: None,
+            images: None,
             custody: String::new(),
             destination: None,
             replacement: None,
@@ -125,6 +129,18 @@ impl Authority {
         match &self.original.reply {
             ReplyAddress::NativeLark(reply) => reply,
             _ => unreachable!("validated native card"),
+        }
+    }
+    pub(crate) fn images(&self) -> Result<&[super::Image], Error> {
+        match (&self.image, &self.images) {
+            (None, None) => Ok(&[]),
+            (Some(image), None) => Ok(std::slice::from_ref(image)),
+            (None, Some(images))
+                if (2..=cmaeg_core::message::MAX_NATIVE_ATTACHMENTS).contains(&images.len()) =>
+            {
+                Ok(images)
+            }
+            _ => Err(Error::Denied),
         }
     }
     pub(super) fn digest(&self, card: &Card, channel: &ResolvedChannel) -> Option<String> {
@@ -140,6 +156,9 @@ impl Authority {
         // Omit the field entirely for historical cards, preserving their custody digest.
         if let Some(image) = &self.image {
             facts["image"] = serde_json::to_value(image).ok()?;
+        }
+        if let Some(images) = &self.images {
+            facts["images"] = serde_json::to_value(images).ok()?;
         }
         Some(hash(&facts))
     }
