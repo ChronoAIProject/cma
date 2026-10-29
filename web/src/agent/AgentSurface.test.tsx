@@ -10,6 +10,12 @@ import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
 
+vi.mock('@novnc/novnc', () => ({
+  default: class extends EventTarget {
+    disconnect() {}
+  },
+}));
+
 it('places settings inside the composer box and preserves draft and busy-turn apply rules', async () => {
   const defaults = {
     model: 'gpt-6',
@@ -526,3 +532,45 @@ it('removes completed preparation while preserving active and failed preparation
   );
 });
 import '../test/connectedAccounts';
+
+it('keeps the composer and history mounted beside the Machine and across viewer toggles', async () => {
+  const client = agentClient();
+  const draw = (desktop = true, accessUncertain = false) => (
+    <CmaClientProvider client={client}>
+      <AgentSurface
+        agentId="agt_1"
+        accessUncertain={accessUncertain}
+        controller={controller({
+          status: 'ready',
+          detail: { ...AGENT_DETAIL, desktop },
+          workspace: workspaceFixture(),
+          conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+        })}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    </CmaClientProvider>
+  );
+  const view = render(draw());
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  const history = screen.getByText('The repository is ready.');
+  fireEvent.change(input, { target: { value: 'Open a terminal on the desktop' } });
+  expect(screen.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Hide machine desktop' })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Close machine desktop' }));
+  expect(screen.queryByRole('region', { name: 'Machine desktop' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Open machine desktop' }));
+  expect(screen.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
+  expect(input).toHaveValue('Open a terminal on the desktop');
+  expect(screen.getByText('The repository is ready.')).toBe(history);
+  view.rerender(draw(true, true));
+  expect(screen.queryByRole('region', { name: 'Machine desktop' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /machine desktop/ })).not.toBeInTheDocument();
+  view.rerender(draw(false));
+  expect(screen.queryByRole('region', { name: 'Machine desktop' })).not.toBeInTheDocument();
+});
