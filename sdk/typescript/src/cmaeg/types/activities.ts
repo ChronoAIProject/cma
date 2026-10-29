@@ -335,6 +335,7 @@ export const ThreadHistorySchema = object({
 export type ThreadHistory = Output<typeof ThreadHistorySchema>;
 
 export const CapabilitiesSchema = object({
+  reply_with_received_sticker: optional(nullable(boolean)),
   native_thread_start: optional(nullable(boolean)),
   topic_creation: optional(nullable(boolean)),
   native_media_edits: optional(nullable(NativeMediaEditCapabilitiesSchema)),

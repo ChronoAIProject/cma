@@ -273,6 +273,9 @@ pub enum MediaVariant {
 /// CMAEG `Capabilities` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
+    /// Resend this event's received native Lark sticker to its original conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_with_received_sticker: Option<bool>,
     /// One text reply can start the exact admitted native Lark group root thread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_thread_start: Option<bool>,
