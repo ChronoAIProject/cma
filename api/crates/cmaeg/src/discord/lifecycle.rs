@@ -140,6 +140,7 @@ impl Worker {
             resolver: ingress.resolver.clone(),
             api: DiscordApi::new()?
                 .with_rich_content(config.rich_content_enabled)
+                .with_forwards(config.forwards_enabled)
                 .with_quoted_context(routing.quoted_context_enabled)
                 .with_thread_metadata(thread_metadata)
                 .with_reactions(
@@ -270,12 +271,14 @@ mod tests {
                 enabled: false,
                 discovery_enabled: false,
                 rich_content_enabled: false,
+                forwards_enabled: false,
                 records: BTreeSet::from([f.fixture.record.clone()]),
             },
             NativeDiscordConfig {
                 enabled: true,
                 discovery_enabled: false,
                 rich_content_enabled: false,
+                forwards_enabled: false,
                 records: BTreeSet::new(),
             },
         ] {

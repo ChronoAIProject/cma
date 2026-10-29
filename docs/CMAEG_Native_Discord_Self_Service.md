@@ -34,6 +34,7 @@ records with automatic discovery disabled.
 | `CMAEG_NATIVE_DISCORD_ENABLED` | Run native connections and durable inbox recovery. |
 | `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED` | Discover eligible explicit native Discord sources from the current persisted channel index. Requires native runtime and routed recovery. |
 | `CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED` | Capture versioned descriptive sticker/embed/poll facts for new human messages. Default off; requires compatible inbox readers and predecessor drain before activation. |
+| `CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED` | Capture bounded immutable forwarded-message descriptions. Default off; independent of rich content. Deploy compatible readers first. |
 | `CMAEG_ROUTED_RECOVERY_ENABLED` | Install the durable routing scheduler, provider replay and delivery recovery. |
 | `CMAEG_ROUTED_ADMISSION_ENABLED` | Accept new durable routed admissions. Keeping this off pauses new messages while retained work recovers. |
 | `CMAEG_MULTI_CONSUMER_WRITES_ENABLED` | Permit creation of the default routing policy required by self-service native channels. |

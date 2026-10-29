@@ -6102,6 +6102,13 @@
               "null"
             ]
           },
+          "native_discord_forwards_enabled": {
+            "description": "Bounded descriptions of received Discord forwards, without origin access.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_discord_reactions_enabled": {
             "type": [
               "boolean",
