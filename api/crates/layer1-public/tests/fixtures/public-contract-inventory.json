@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 230,
+  "openapi_operations": 232,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
