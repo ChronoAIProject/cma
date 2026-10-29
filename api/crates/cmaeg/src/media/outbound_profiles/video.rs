@@ -35,6 +35,15 @@ impl Format {
     }
 }
 pub(crate) fn inspect(bytes: &[u8]) -> Option<Format> {
+    inspect_profile(bytes, true)
+}
+
+/// Telegram animations require an MP4 without an audio track.
+pub(crate) fn silent_mp4(bytes: &[u8]) -> bool {
+    inspect_profile(bytes, false) == Some(Format::Mp4)
+}
+
+fn inspect_profile(bytes: &[u8], allow_audio: bool) -> Option<Format> {
     if bytes.len() as u64 > crate::media::outbound::MAX_OUTBOUND_BYTES {
         return None;
     }
@@ -94,7 +103,7 @@ pub(crate) fn inspect(bytes: &[u8]) -> Option<Format> {
             }
             container::sync_samples(&track.table, &idr)?;
         } else {
-            if audio || track.width != 0 || track.height != 0 {
+            if !allow_audio || audio || track.width != 0 || track.height != 0 {
                 return None;
             }
             audio = true;

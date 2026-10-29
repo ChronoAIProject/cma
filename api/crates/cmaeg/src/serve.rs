@@ -137,7 +137,7 @@ pub(crate) async fn serve(
             )),
         )
         .with_native_lark_config(&config, native_lark_controls, native_lark_thread_start)
-        .with_native_telegram_albums(config.native_telegram_albums_enabled)
+        .with_native_presentation_config(&config)
         .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
@@ -312,6 +312,8 @@ pub(crate) async fn serve(
         native_lark_multi_image_controls_enabled: config.native_lark_multi_image_controls_enabled,
         native_lark_media_card_replacements_enabled: config
             .native_lark_media_card_replacements_enabled,
+        native_media_presentations_enabled: config.native_media_presentations_enabled,
+        native_discord_voice_enabled: config.native_discord_voice_enabled,
         native_telegram_albums_enabled: config.native_telegram_albums_enabled,
         native_whatsapp_outbound_media_enabled: config.native_whatsapp_outbound_media_enabled,
         whatsapp_reactions: Some(std::sync::Arc::new(tools::WhatsappReactionsClient::new(

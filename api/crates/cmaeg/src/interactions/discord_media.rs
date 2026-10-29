@@ -90,7 +90,10 @@ impl Media {
                         .bytes()
                         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             })
-            && self.kind != NativeMediaKind::Sticker
+            && !matches!(
+                self.kind,
+                NativeMediaKind::Sticker | NativeMediaKind::Voice | NativeMediaKind::Animation
+            )
             && self.bytes > 0
             && self.bytes <= MAX_OUTBOUND_BYTES
             && self.sha256.len() == 64

@@ -133,6 +133,16 @@ pub trait ActivityObserver: Send + Sync {
     ) -> BoxFuture<'a, Result<(), ()>> {
         Box::pin(async { Err(()) })
     }
+    /// Persist independently verified facts for one channel as a bounded batch.
+    /// Missing batch persistence stays retryable, like a single receipt.
+    fn platform_receipts<'a>(
+        &'a self,
+        _owner: &'a str,
+        _record: &'a RecordId,
+        _changes: Vec<(EventId, crate::activity::Change)>,
+    ) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async { Err(()) })
+    }
     /// An authenticated event is about to launch.
     fn admitted(&self, _record: &RecordId, _activity: &Activity) {}
 

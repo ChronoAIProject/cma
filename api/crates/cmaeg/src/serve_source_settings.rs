@@ -113,12 +113,20 @@ pub(super) async fn configure(
     state.native_discord_conversation_history_enabled =
         config.native_discord_conversation_history_enabled;
     state.native_discord_reactions_enabled = config.native_discord_reactions_enabled;
+    state.native_discord_rich_content_enabled = config.native_discord.rich_content_enabled;
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
     Ok(whatsapp_forms_ready)
 }
 
 impl crate::delivery::relay_client::RelayClient {
+    /// Compose native media presentations while preserving each independent issuance gate.
+    pub(super) fn with_native_presentation_config(self, config: &Config) -> Self {
+        self.with_native_media_presentations(config.native_media_presentations_enabled)
+            .with_native_discord_voice(config.native_discord_voice_enabled)
+            .with_native_telegram_albums(config.native_telegram_albums_enabled)
+    }
+
     pub(super) fn with_native_lark_config(
         self,
         config: &Config,

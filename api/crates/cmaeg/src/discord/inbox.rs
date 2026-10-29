@@ -48,13 +48,33 @@ impl DurableJournal {
             return self.observe_inbox(&existing, authority, &bytes).await;
         }
         let mut body = json!({"dispatch":event.data,"channel":authority.public_definition});
+        let projection = (component.is_none() && self.api.rich_content)
+            .then(|| super::content::Snapshot::capture(&event.data))
+            .flatten();
+        let normalized = component.is_none().then(|| {
+            super::normalize::normalize_with_content(
+                &event.data,
+                &authority.bot_id,
+                &authority.admission,
+                projection.as_ref(),
+            )
+        });
+        // Pin only an admitted human message's facts. Missing snapshots always
+        // retain the old normalization, even if the writer gate changes later.
+        if matches!(
+            &normalized,
+            Some(Ok(super::normalize::Normalized::Activity(_)))
+        ) {
+            if let Some(projection) = &projection {
+                body["content_projection"] =
+                    serde_json::to_value(projection).map_err(|_| GatewayError::Protocol)?;
+            }
+        }
         if component.is_none() && self.api.quoted_context {
-            if let Ok(super::normalize::Normalized::Activity(activity)) =
-                super::normalize::normalize(&event.data, &authority.bot_id, &authority.admission)
-            {
+            if let Some(Ok(super::normalize::Normalized::Activity(activity))) = &normalized {
                 let snapshot = crate::ingress::quoted_context::Snapshot {
                     version: 1,
-                    quoted_message: crate::ingress::quoted_context::discord(&event.data, &activity),
+                    quoted_message: crate::ingress::quoted_context::discord(&event.data, activity),
                 };
                 body["quote_projection"] =
                     serde_json::to_value(snapshot).map_err(|_| GatewayError::Protocol)?;
@@ -62,10 +82,9 @@ impl DurableJournal {
         }
         if component.is_none()
             && self.api.thread_metadata
-            && super::thread_context::candidate(
-                &event.data,
-                &authority.admission,
-                &authority.bot_id,
+            && matches!(
+                &normalized,
+                Some(Ok(super::normalize::Normalized::Activity(_)))
             )
         {
             body["native_channel"] = serde_json::to_value(
