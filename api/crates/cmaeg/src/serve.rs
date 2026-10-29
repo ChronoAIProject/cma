@@ -193,7 +193,7 @@ pub(crate) async fn serve(
     );
     let routed = crate::serve_routed::compose(
         &config,
-        &state,
+        &mut state,
         crate::serve_routed::Deps {
             media: media.clone(),
             tool_providers: tool_providers.clone(),

@@ -258,7 +258,7 @@ impl App {
             store.clone(),
             schedule,
             keys.clone(),
-            if native_telegram {
+            if native_telegram || definition.durable_custom_execution {
                 BTreeSet::new()
             } else {
                 BTreeSet::from([record])
