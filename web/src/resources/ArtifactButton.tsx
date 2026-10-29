@@ -37,12 +37,16 @@ function ArtifactEntry({ client, id, publicationScope }: Props) {
   const [lastAccess, setLastAccess] = useState({ view: false, publish: false });
   if (access !== undefined && (lastAccess.view !== allowed || lastAccess.publish !== canPublish))
     setLastAccess({ view: allowed, publish: canPublish });
-  const checking = current.state.status === 'loading';
+  const checking = current.state.status === 'loading' || current.refreshing;
   const retainView = allowed || (checking && lastAccess.view);
   const retainPublication = canPublish || (checking && lastAccess.publish);
   return (
     <>
-      {allowed ? <Button onClick={() => setOpenedFor(client)}>Artifacts</Button> : null}
+      {allowed ? (
+        <Button disabled={checking} onClick={() => setOpenedFor(client)}>
+          Artifacts
+        </Button>
+      ) : null}
       <Modal
         open={openedFor === client}
         title="Agent artifacts"
@@ -55,7 +59,7 @@ function ArtifactEntry({ client, id, publicationScope }: Props) {
               client={client}
               id={id}
               onAccessChanged={current.reload}
-              enabled={allowed}
+              enabled={allowed && !checking}
             />
             {retainPublication ? (
               <PublishArtifact
@@ -65,7 +69,7 @@ function ArtifactEntry({ client, id, publicationScope }: Props) {
                 id={id}
                 onPublished={() => setRevision((value) => value + 1)}
                 onAccessChanged={current.reload}
-                enabled={allowed && canPublish}
+                enabled={allowed && canPublish && !checking}
               />
             ) : null}
           </>
