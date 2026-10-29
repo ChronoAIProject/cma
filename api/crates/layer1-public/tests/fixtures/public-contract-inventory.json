@@ -3273,6 +3273,33 @@
         "request_too_large": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
         "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
       }
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/preparation.rs# Authenticated fresh-event inspection and exact-key reservation retain named refusals and never expose supplied credentials.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding",
+        "invalid_json",
+        "binding_not_ready",
+        "binding_unavailable",
+        "binding_resources_unavailable"
+      ]
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/preparations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/preparation.rs# Authenticated fresh-event inspection and exact-key reservation retain named refusals and never expose supplied credentials.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding",
+        "invalid_json",
+        "binding_not_ready",
+        "binding_unavailable"
+      ]
     }
   }
 }
