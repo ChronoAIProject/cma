@@ -68,6 +68,15 @@ export async function inspectAgent(agentId: string) {
 include a first message. The HTTP 201 result does not imply that message has
 finished; inspect its recorded delivery state.
 
+`agents.recoverWorktree(agentId, { idempotencyKey })` retries failed initial
+worktree preparation only for an Agent that has never become ready. The owner or
+a CMA administrator can request recovery. It preserves the Agent identity and
+persistent volume, retains the failed worktree and its recovery evidence, and
+allocates a fresh worktree for the same Agent. HTTP 202 acknowledges admission;
+use `read` to observe readiness. Reuse the exact key after an uncertain response.
+Already-ready or otherwise ineligible Agents return HTTP 409
+`agent_worktree_recovery_conflict`.
+
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
 

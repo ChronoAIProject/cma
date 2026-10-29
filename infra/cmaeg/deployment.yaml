@@ -166,8 +166,8 @@ spec:
             timeoutSeconds: 2
           lifecycle:
             preStop:
-              exec:
-                command: ["/bin/sleep", "5"]
+              sleep:
+                seconds: 5
       volumes:
         - name: media-jobs
           emptyDir:

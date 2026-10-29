@@ -25,6 +25,7 @@ const OPERATIONS: &[(&str, &[&str])] = &[
     ("/api/v1/documents/{id}/comments/{comment_id}", &["delete"]),
     ("/api/v1/agents", &["get", "post"]),
     ("/api/v1/agents/{id}", &["get", "delete"]),
+    ("/api/v1/agents/{id}/recover-worktree", &["post"]),
     ("/api/v1/agents/{id}/desktop", &["get"]),
     ("/api/v1/agents/{id}/desktop/ws", &["get"]),
     ("/api/v1/agent-lifecycle/{id}", &["get"]),

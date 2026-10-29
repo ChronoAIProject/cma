@@ -75,6 +75,14 @@ the exact server-issued approval identifier with `Allow`, `Deny`, or `Abort`.
 `stop` and `delete` are distinct explicit lifecycle operations. Do not substitute
 either for cancellation of local observation.
 
+`agents().recover_worktree(id, &key)` retries failed initial worktree preparation
+only for an Agent that has never become ready. The owner or a CMA administrator
+can request recovery. It preserves the Agent identity and persistent volume,
+retains the failed worktree and its recovery evidence, and allocates a fresh
+worktree for the same Agent. HTTP 202 acknowledges admission; use `read` to
+observe readiness. Reuse the exact key after an uncertain response. Already-ready
+or otherwise ineligible Agents return HTTP 409 `agent_worktree_recovery_conflict`.
+
 While a Sandbox checkpoint is active, input is refused before admission with
 HTTP 409 `sandbox_checkpoint_in_progress`. No prompt is queued for later execution.
 Refresh the Sandbox and submit again after `lifecycle.checkpoint` clears. This

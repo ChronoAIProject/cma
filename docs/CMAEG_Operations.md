@@ -1286,6 +1286,32 @@ kubectl logs -n chrono-bot deploy/cmaeg --since=24h \
 
 ### Speech-to-text endpoint
 
+The production manifest records the activation verified on 29 October 2026:
+`CMAEG_MEDIA_FFMPEG_DIR=/opt/ffmpeg/bin` and the existing NyxID `llm-openai`
+service's `/audio/transcriptions` endpoint, using `gpt-transcribe`. The dedicated
+operator-provisioned key is stored only in `chrono-bot/cmaeg-stt` as
+`CMAEG_STT_API_KEY`; its scope is `proxy` for that one service, with all-service
+and node access disabled. It is a static service-use key, with manual rotation;
+no human CLI/session token is deployed. A new environment must provision its
+own dedicated credential before enabling this URL. The runtime's empty defaults
+remain available for deployments that intentionally disable transcription.
+
+Production activation passed the media sandbox startup self-check, health and
+readiness, with `cmaeg_media_sandbox_ready 1`. An isolated owner Custom channel
+then delivered a five-second WAV through normalization, transcription and a real
+CMA Agent response. The answer was present only in the recording. The observed
+transcription took 1.016 seconds; the entire first-conversation request took
+20.501 seconds, including Agent startup and model response. Exactly one audio
+transform, one transcript and five metered seconds were recorded. These are
+individual measurements, not latency percentiles. The temporary channel, Agent,
+sandbox and key were retired through supported APIs.
+
+This acceptance covers short audio through a Gateway-owned profile consumer.
+It does not establish connected Telegram/WhatsApp/Lark/Discord source fetching,
+every codec, long audio, reliable late transcript delivery, or original-file
+transfer to existing-Agent consumers. Keep the WAV normalization path enabled;
+this activation does not add `ogg` to the upstream's direct format allowlist.
+
 With `CMAEG_STT_URL` set, the gateway transcribes audio through an
 OpenAI-compatible endpoint: one multipart `POST` per attempt carries `file`
 (named `audio.<format>`, streamed from the fetched bytes without a copy),
