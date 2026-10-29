@@ -207,6 +207,7 @@ use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
     let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
     let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        reply_with_received_sticker: None,
         clear_native_attachments: None,
         native_media_update: None,
         whatsapp_template: None,

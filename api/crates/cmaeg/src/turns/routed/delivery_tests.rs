@@ -25,6 +25,7 @@ pub(super) fn effect() -> ReplayEffect {
         text: Some("private replay answer".into()),
         blocks: vec![],
         reply_to: None,
+        reply_with_received_sticker: false,
         clear_native_attachments: false,
         native_media_update: None,
         native_attachments: vec![],

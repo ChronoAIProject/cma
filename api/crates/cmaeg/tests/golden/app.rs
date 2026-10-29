@@ -161,6 +161,7 @@ impl GoldenApp {
             telegram_effects: None,
             native_media_enabled: false,
             native_lark_outbound_media_enabled: false,
+            native_lark_sticker_replies_enabled: false,
             native_lark_media_controls_enabled: false,
             native_lark_multi_image_controls_enabled: false,
             native_lark_media_card_replacements_enabled: false,

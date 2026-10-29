@@ -4709,3 +4709,7 @@ projection; changed snapshot/reference retries cannot replace custody. Optional
 `native_discord_forwards_enabled` reports configured issuance through authenticated
 capabilities and both SDKs. See [native Discord forwards](CMAEG_Native_Discord_Forwards.md)
 for reader-first rollout, bounds and explicit omissions.
+
+### Received native Lark stickers
+
+An authenticated native sticker is a descriptive message plus an `other` attachment with `variant: sticker`, without a resource source or thumbnail. When `capabilities.reply_with_received_sticker` is true, `replyToEvent` accepts the exclusive message `{"reply_with_received_sticker":true}` to resend only that original event's retained sticker. No caller key, URL, upload, arbitrary recipient, initiated send, update or thread creation is authorized. The field is omitted on legacy messages, preserving their serialized hashes. See [native Lark received stickers](CMAEG_Native_Lark_Stickers.md) for the official platform limits and default-off rollout.

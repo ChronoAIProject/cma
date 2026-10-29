@@ -35,6 +35,13 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
+            if message.reply_with_received_sticker {
+                return Err(Problem::new(
+                    ProblemCode::InvalidRequest,
+                    400,
+                    "received_sticker_requires_replyToEvent",
+                ));
+            }
             if message
                 .native_attachments
                 .iter()

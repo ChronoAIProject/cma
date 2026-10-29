@@ -160,6 +160,7 @@ pub struct Config {
     pub native_lark_writes_enabled: bool,
     pub native_lark_intake_enabled: bool,
     pub native_lark_media_enabled: bool,
+    pub native_lark_stickers_enabled: bool,
     pub native_whatsapp_groups_writes_enabled: bool,
     pub native_whatsapp_groups_enabled: bool,
     pub native_split_text_refs_enabled: bool,
@@ -182,6 +183,7 @@ pub struct Config {
     pub native_whatsapp_writes_enabled: bool,
     pub native_whatsapp_media_enabled: bool,
     pub native_lark_outbound_media_enabled: bool,
+    pub native_lark_sticker_replies_enabled: bool,
     pub native_lark_media_controls_enabled: bool,
     pub native_lark_multi_image_controls_enabled: bool,
     pub native_lark_media_card_replacements_enabled: bool,
@@ -330,6 +332,9 @@ impl Config {
             native_lark_writes_enabled: routing::write_flag("CMAEG_NATIVE_LARK_WRITES_ENABLED")?,
             native_lark_intake_enabled: routing::write_flag("CMAEG_NATIVE_LARK_INTAKE_ENABLED")?,
             native_lark_media_enabled: routing::write_flag("CMAEG_NATIVE_LARK_MEDIA_ENABLED")?,
+            native_lark_stickers_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_STICKERS_ENABLED",
+            )?,
             native_whatsapp_groups_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED",
             )?,
@@ -409,6 +414,9 @@ impl Config {
             )?,
             native_lark_outbound_media_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED",
+            )?,
+            native_lark_sticker_replies_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_STICKER_REPLIES_ENABLED",
             )?,
             native_whatsapp_outbound_media_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED",

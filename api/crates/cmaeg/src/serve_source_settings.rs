@@ -135,6 +135,7 @@ impl crate::delivery::relay_client::RelayClient {
         thread_start: bool,
     ) -> Self {
         self.with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
+            .with_native_lark_sticker_replies(config.native_lark_sticker_replies_enabled)
             .with_native_lark_effects(config.native_lark_message_effects_enabled)
             .with_native_lark_controls(controls, config.native_lark_forms_enabled)
             .with_native_lark_media_controls(config.native_lark_media_controls_enabled)
@@ -187,4 +188,17 @@ pub(super) fn native_typing(
             && config.native_discord.enabled
             && config.routing.recovery_enabled,
     ))))
+}
+
+impl crate::ingress::IngressState {
+    /// Preserve independent intake gates while composing all native source settings.
+    pub(super) fn with_native_intake_config(self, config: &Config) -> Self {
+        self.with_media_enabled(config.media.enabled)
+            .with_native_lark_intake(config.native_lark_intake_enabled)
+            .with_native_lark_media(config.native_lark_media_enabled)
+            .with_native_lark_stickers(config.native_lark_stickers_enabled)
+            .with_whatsapp_message_events(config.native_whatsapp_message_events_enabled)
+            .with_whatsapp_media(config.native_whatsapp_media_enabled)
+            .with_whatsapp_groups(config.native_whatsapp_groups_enabled)
+    }
 }

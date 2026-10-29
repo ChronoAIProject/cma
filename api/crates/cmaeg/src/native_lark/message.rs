@@ -32,6 +32,8 @@ pub(crate) enum Message {
         text: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         resources: Vec<super::content::Resource>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        received_sticker: Option<super::stickers::ReceivedSticker>,
         group: bool,
         thread_id: Option<String>,
         mentioned: bool,
@@ -116,10 +118,19 @@ pub(crate) fn extract(
                     .ok_or(())?,
             )
             .map_err(|_| ())?;
-            let Some((text, resources)) =
-                super::content::parse(m["message_type"].as_str().ok_or(())?, &content)?
-            else {
-                return Ok(None);
+            let message_type = m["message_type"].as_str().ok_or(())?;
+            let received_sticker = if message_type == "sticker" {
+                Some(super::stickers::ReceivedSticker::parse(&content)?)
+            } else {
+                None
+            };
+            let (text, resources) = if received_sticker.is_some() {
+                (super::stickers::DESCRIPTION.into(), Vec::new())
+            } else {
+                let Some(parsed) = super::content::parse(message_type, &content)? else {
+                    return Ok(None);
+                };
+                parsed
             };
             let mentions = match m.get("mentions") {
                 Some(v) => v
@@ -143,6 +154,7 @@ pub(crate) fn extract(
                 sender,
                 text,
                 resources,
+                received_sticker,
                 group,
                 thread_id,
                 mentioned,
@@ -203,6 +215,15 @@ impl Message {
             Self::Text { created_ms, .. } => *created_ms,
             Self::Recall { occurred_ms, .. } | Self::Reaction { occurred_ms, .. } => *occurred_ms,
         }
+    }
+    pub(crate) fn has_sticker(&self) -> bool {
+        matches!(
+            self,
+            Self::Text {
+                received_sticker: Some(_),
+                ..
+            }
+        )
     }
     pub(crate) fn has_resources(&self) -> bool {
         matches!(self, Self::Text { resources, .. } if !resources.is_empty())
@@ -276,6 +297,7 @@ pub(crate) fn launch(
             sender,
             text,
             resources,
+            received_sticker,
             group,
             thread_id,
             mentioned,
@@ -294,7 +316,10 @@ pub(crate) fn launch(
             (
                 ActivityKind::Message {
                     text: text.clone(),
-                    attachments: super::content::attachments(resources, message_id, &revision),
+                    attachments: received_sticker.as_ref().map_or_else(
+                        || super::content::attachments(resources, message_id, &revision),
+                        |sticker| vec![sticker.attachment(message_id)],
+                    ),
                     mentions_bot: *mentioned,
                     reply_to: None,
                     quoted_message: None,

@@ -146,6 +146,8 @@ impl Sender {
             ))
             || message.native_media_update.is_some()
             || message.clear_native_attachments
+            || (message.reply_with_received_sticker
+                && !matches!(event.reply, ReplyAddress::NativeLark(_)))
         {
             return (unsupported(), SendEffects::default());
         }
