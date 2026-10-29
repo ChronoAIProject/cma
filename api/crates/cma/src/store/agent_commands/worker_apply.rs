@@ -127,7 +127,7 @@ async fn claim_next(
     ordered.sort_by_key(AdmittedAgentCommand::queue_priority);
     let mut message_held = false;
     for mut command in ordered {
-        message_held |= command.holds_message_order();
+        message_held |= command.holds_message_order(&request.now);
         if message_held
             && matches!(
                 command.receipt.envelope.command,

@@ -30,6 +30,9 @@ impl QueuedInputRevision {
     }
 }
 pub fn queued_input_editable_actor(record: &AdmittedAgentCommand) -> bool {
+    if record.receipt.envelope.continuation.is_some() {
+        return false;
+    }
     matches!(
         record.receipt.envelope.actor,
         AgentActor::Human { .. } | AgentActor::Api { .. }
