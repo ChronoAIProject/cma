@@ -32,6 +32,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 pub fn router(state: ToolsState) -> Router {
     crate::telemetry::http::instrument(
         Router::new()
+            .merge(super::event_attestation::routes())
             .merge(super::form_preparation::routes())
             .merge(super::reply_targets::routes())
             .merge(super::message_effects::routes())

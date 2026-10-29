@@ -3351,6 +3351,66 @@
         ],
         "type": "object"
       },
+      "EventAttestationRequest": {
+        "additionalProperties": false,
+        "description": "All identifiers are comparisons against the capability's original target.\nThis cannot select another target, attachment or filesystem path.",
+        "properties": {
+          "activity_sha256": {
+            "type": "string"
+          },
+          "binding_generation": {
+            "description": "The generation actually present in the frozen Gateway request. None is\nnot a claim about Manager generation; Manager must check its own parent.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "channel_id": {
+            "$ref": "#/components/schemas/ChannelId"
+          },
+          "conversation_id": {
+            "$ref": "#/components/schemas/ConversationId"
+          },
+          "event_expires_at": {
+            "description": "Exact sealed capability expiry, as Unix seconds. This comparison lets\nManager bound a deferred continuation without trusting caller expiry.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "event_ref": {
+            "$ref": "#/components/schemas/EventRef"
+          },
+          "provider_binding_id": {
+            "$ref": "#/components/schemas/BindingId"
+          }
+        },
+        "required": [
+          "event_ref",
+          "provider_binding_id",
+          "channel_id",
+          "conversation_id",
+          "event_id",
+          "activity_sha256",
+          "event_expires_at"
+        ],
+        "type": "object"
+      },
+      "EventAttestationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "current"
+        ],
+        "type": "object"
+      },
       "EventContextSnapshot": {
         "additionalProperties": false,
         "properties": {
@@ -9809,6 +9869,47 @@
         ],
         "tags": [
           "channels"
+        ]
+      }
+    },
+    "/event-attestations": {
+      "post": {
+        "description": "Read-only exact-event capability. The sealed event_ref in the request body authorizes only a boolean current-source/current-target check. No event content, credentials or workspace paths are returned. Agent Manager must separately validate the original admitted command and its actual binding generation. This endpoint never starts a response or changes the original execution lease.",
+        "operationId": "attestRetainedEvent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventAttestationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAttestationResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "provider integration"
         ]
       }
     },

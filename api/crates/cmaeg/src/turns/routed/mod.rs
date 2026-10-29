@@ -15,6 +15,7 @@ mod delivery_state;
 mod destinations;
 mod dispatcher;
 mod dispatcher_authority;
+mod event_attestation;
 mod executor;
 mod generation_provenance;
 mod journal;
@@ -49,6 +50,7 @@ pub use destinations::{
     validate_routed_delivery, validate_routed_delivery_with_sync, DefaultDestination,
 };
 pub use dispatcher::{Authority, DispatchOutcome, Dispatcher, ExecutionPort, StartResult};
+pub use event_attestation::{EventAttestationRequest, EventAttestationResponse};
 pub use executor::RoutedTargetExecutor;
 pub use journal::Journal;
 pub use model::{
