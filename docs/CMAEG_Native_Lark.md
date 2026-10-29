@@ -33,6 +33,7 @@ Configure the required Encrypt Key and Verification Token on the app, then subsc
 - `im.message.receive_v1` for text and enabled media intake.
 - `im.message.recalled_v1` for recall notifications.
 - `im.message.reaction.created_v1` and `im.message.reaction.deleted_v1` for human reaction deltas.
+- Optionally, `im.message.message_read_v1` for [confirmed private-message read status](CMAEG_Native_Lark_Read_Status.md). These observations annotate the original sending consumer and never launch a turn or resend a message.
 
 Grant the documented receive/recall and reaction-read permissions for the conversations the bot needs, plus the send-message permission for native replies. The audit in [incoming message events](CMAEG_Lark_Incoming_Message_Events.md) records the official permissions and evidence. The bot receives reactions only in conversations it belongs to. App publication, installation, membership, effective permission approval and actual event delivery require platform acceptance with the separately provisioned app.
 
