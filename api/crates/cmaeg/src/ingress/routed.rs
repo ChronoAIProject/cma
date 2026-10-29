@@ -1,5 +1,10 @@
 //! Durable admission for explicitly selected channel records. Legacy traffic
 //! never performs a routing-store read or retains its raw body here.
+#[path = "routed_custom.rs"]
+mod custom;
+#[path = "routed_problem.rs"]
+mod problem;
+use problem::admission_problem;
 #[path = "routed_native_lark.rs"]
 mod native_lark;
 #[path = "routed_native_lark_control.rs"]
@@ -59,6 +64,7 @@ pub struct RoutedIngress {
     binding_replacement_bindings: BTreeSet<String>,
     pub(crate) quoted_context_enabled: bool,
     sync_delivery_enabled: bool,
+    custom_media_providers: BTreeSet<String>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
@@ -84,6 +90,7 @@ impl RoutedIngress {
             binding_replacement_bindings: BTreeSet::new(),
             quoted_context_enabled: false,
             sync_delivery_enabled: false,
+            custom_media_providers: BTreeSet::new(),
             clock: Arc::new(|| time::OffsetDateTime::now_utc().unix_timestamp()),
         }
     }
@@ -145,6 +152,11 @@ impl RoutedIngress {
     /// DeliveryCoordinator::with_custom_stream.
     pub fn with_sync_delivery(mut self, enabled: bool) -> Self {
         self.sync_delivery_enabled = enabled;
+        self
+    }
+
+    pub fn with_custom_media_providers(mut self, providers: BTreeSet<String>) -> Self {
+        self.custom_media_providers = providers;
         self
     }
 
@@ -218,6 +230,7 @@ impl RoutedIngress {
                         "routed_provider_replay_unavailable",
                     ));
                 }
+                custom::validate_media(request, &plan, &self.custom_media_providers)?;
                 validate_routed_delivery_with_sync(
                     &request.channel,
                     &plan,
@@ -467,6 +480,9 @@ impl IngressState {
                 "telegram_message_events_durable_admission_unavailable",
             ));
         }
+        if let Some(refusal) = custom::refusal(&request) {
+            return refusal;
+        }
         self.launcher.launch_holding(request, hold).await
     }
 }
@@ -475,21 +491,6 @@ fn ordinary(request: &LaunchRequest) -> bool {
     request.consumer.is_none()
         && request.activity.routing.is_none()
         && !matches!(request.activity.kind, ActivityKind::Interaction(_))
-}
-
-fn admission_problem(error: AdmissionError) -> Problem {
-    let (code, status, detail) = match error {
-        AdmissionError::Conflict => (ProblemCode::Conflict, 409, "routed_event_conflict"),
-        AdmissionError::TooLarge => (ProblemCode::PayloadTooLarge, 413, "routed_event_too_large"),
-        AdmissionError::Invalid => (ProblemCode::InvalidRequest, 400, "routed_event_invalid"),
-        AdmissionError::Expired => (ProblemCode::EventRefExpired, 410, "routed_event_expired"),
-        _ => (
-            ProblemCode::ProviderUnavailable,
-            503,
-            "routed_admission_unavailable",
-        ),
-    };
-    Problem::new(code, status, detail)
 }
 
 #[cfg(test)]

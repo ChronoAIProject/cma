@@ -25,6 +25,7 @@ impl Capabilities {
             topic_creation: None,
             thread_lifecycle: None,
             native_thread_start: None,
+            structured_replies: None,
             reply_with_received_sticker: None,
             conversation_history: None,
         }
@@ -55,6 +56,7 @@ impl Capabilities {
             topic_creation: None,
             thread_lifecycle: None,
             native_thread_start: None,
+            structured_replies: None,
             reply_with_received_sticker: None,
             conversation_history: None,
         }
@@ -81,6 +83,7 @@ impl Capabilities {
             topic_creation: None,
             thread_lifecycle: None,
             native_thread_start: None,
+            structured_replies: None,
             reply_with_received_sticker: None,
             conversation_history: None,
         }
@@ -117,6 +120,9 @@ impl ToolsState {
         channel: &ResolvedChannel,
         capabilities: &mut Capabilities,
     ) {
+        capabilities.structured_replies = self
+            .structured_reply_capability(caller, channel, event)
+            .await;
         capabilities.reply_with_received_sticker = self
             .received_sticker_capability(caller, channel, event, true)
             .await;

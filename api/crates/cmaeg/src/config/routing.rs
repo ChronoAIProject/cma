@@ -29,6 +29,8 @@ const MAX_NON_HUMAN_PROVIDERS: usize = 8;
 pub struct RoutingConfig {
     /// Keep enabled while any durably admitted target still needs recovery.
     pub recovery_enabled: bool,
+    /// Reader-first writer gate for immutable self-service Custom selection.
+    pub custom_durable_execution_enabled: bool,
     /// Keep the generation reader active after any binding migrates.
     pub binding_preparation_enabled: bool,
     /// Only newly admitted ordinary events can capture replacement opt-in.
@@ -60,6 +62,7 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
         }
     };
     let config = RoutingConfig {
+        custom_durable_execution_enabled: write_flag("CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED")?,
         binding_preparation_enabled: write_flag("CMAEG_BINDING_PREPARATION_ENABLED")?,
         binding_replacement_bindings: binding_replacements(
             env::var("CMAEG_BINDING_REPLACEMENT_BINDINGS")
@@ -105,7 +108,8 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
 impl RoutingConfig {
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if !self.recovery_enabled
-            && (self.admission_enabled
+            && (self.custom_durable_execution_enabled
+                || self.admission_enabled
                 || self.quoted_context_enabled
                 || self.media_continuations_enabled
                 || self.binding_preparation_enabled
@@ -254,6 +258,18 @@ pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn self_service_custom_writer_defaults_off_and_requires_durable_reader() {
+        let mut config = RoutingConfig::default();
+        assert!(!config.custom_durable_execution_enabled);
+        config.custom_durable_execution_enabled = true;
+        assert!(config.validate().is_err());
+        config.recovery_enabled = true;
+        assert!(config.validate().is_ok());
+        config.custom_durable_execution_enabled = false;
+        assert!(config.validate().is_ok());
+    }
 
     #[test]
     fn replacement_selection_is_explicit_and_can_stop_without_disabling_generation_readers() {

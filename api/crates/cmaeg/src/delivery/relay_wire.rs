@@ -1,6 +1,11 @@
 //! Bounded serialization and receipt checks for the NyxID relay exchange.
 use super::{Credential, DeliveryOutcome, Secret};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+pub(in crate::delivery) fn unknown(reason: &str) -> DeliveryOutcome {
+    DeliveryOutcome::Unknown {
+        reason: reason.into(),
+    }
+}
 pub(super) fn credential_secret(credential: Credential<'_>) -> Result<&Secret, DeliveryOutcome> {
     let (Credential::ReplyToken(secret) | Credential::ChannelKey(secret)) = credential;
     if secret.as_str().is_empty() || !secret.as_str().bytes().all(|b| (33..=126).contains(&b)) {

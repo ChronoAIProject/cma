@@ -1030,7 +1030,12 @@
           "reopen"
         ],
         "expires_at": 1800000600
-      }
+      },
+      "structured_replies": [
+        "contact",
+        "location",
+        "venue"
+      ]
     },
     {
       "attachments": "fixture",
@@ -1718,7 +1723,8 @@
       "connection_admission": {
         "type": "all"
       },
-      "connection_ref": "fixture"
+      "connection_ref": "fixture",
+      "durable_custom_execution": false
     }
   ],
   "ChannelCreation": [
@@ -3905,7 +3911,8 @@
       "connection_admission": {
         "type": "all"
       },
-      "connection_ref": "fixture"
+      "connection_ref": "fixture",
+      "durable_custom_execution": false
     }
   ],
   "ChoiceOption": [
@@ -6236,6 +6243,35 @@
     {
       "reply_with_received_sticker": true,
       "blocks": []
+    },
+    {
+      "structured_content": {
+        "type": "contact",
+        "phone_number": "+6512345678",
+        "first_name": "Alice",
+        "last_name": "Example",
+        "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Alice Example\r\nEND:VCARD"
+      },
+      "blocks": []
+    },
+    {
+      "structured_content": {
+        "type": "location",
+        "latitude": 1.3521,
+        "longitude": 103.8198,
+        "horizontal_accuracy": 10.0
+      },
+      "blocks": []
+    },
+    {
+      "structured_content": {
+        "type": "venue",
+        "latitude": 1.3521,
+        "longitude": 103.8198,
+        "title": "Meeting point",
+        "address": "Singapore"
+      },
+      "blocks": []
     }
   ],
   "PartitionKey": [
@@ -6759,7 +6795,8 @@
           "per_consumer_per_minute": 5,
           "per_channel_per_minute": 20
         }
-      }
+      },
+      "durable_custom_execution": false
     }
   ],
   "PublicSecrets": [
@@ -9535,7 +9572,8 @@
       "response_recovery_providers": [
         "cma",
         "nyxbot"
-      ]
+      ],
+      "custom_durable_execution_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
@@ -10673,13 +10711,37 @@
     },
     {
       "kind": "voice",
-      "mime_types": ["audio/ogg"],
+      "mime_types": [
+        "audio/ogg"
+      ],
       "max_bytes": 8388608,
       "caption": false,
       "profile": "One complete mono Opus Ogg stream, 0.1 to less than 120 seconds; uploaded unchanged; metadata derived with the shared sandboxed decoder",
       "message_operations": false,
       "max_attachments": 1,
       "text": false
+    }
+  ],
+  "StructuredContent": [
+    {
+      "type": "contact",
+      "phone_number": "+6512345678",
+      "first_name": "Alice",
+      "last_name": "Example",
+      "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Alice Example\r\nEND:VCARD"
+    },
+    {
+      "type": "location",
+      "latitude": 1.3521,
+      "longitude": 103.8198,
+      "horizontal_accuracy": 10.0
+    },
+    {
+      "type": "venue",
+      "latitude": 1.3521,
+      "longitude": 103.8198,
+      "title": "Meeting point",
+      "address": "Singapore"
     }
   ]
 }

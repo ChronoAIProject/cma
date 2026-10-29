@@ -337,3 +337,25 @@ async fn verified_relay_sources_block_rollback_without_downgrading_trust_or_unbi
         }
     }
 }
+
+#[tokio::test]
+async fn durable_custom_marker_blocks_routing_clear_before_unbind_or_write_even_with_override() {
+    let cma = FakeCma::start(false).await;
+    let provider = provider(&[]).await;
+    let mut value = routed_to_default();
+    value["durable_custom_execution"] = true.into();
+    let (original, _) = seed(&cma, &key_ring(), value, true);
+    let before = stored(&cma, &key_ring(), &original.record_id);
+    for allow in [false, true] {
+        let report = clear(&cma, &provider, allow).await;
+        assert_eq!(report.blocked(), 1);
+        assert_eq!(
+            report.findings[0].reason,
+            Some("durable_custom_execution_requires_reader")
+        );
+        assert_eq!(stored(&cma, &key_ring(), &original.record_id), before);
+        assert!(provider.requests().is_empty());
+    }
+    provider.close().await;
+    cma.close().await;
+}
