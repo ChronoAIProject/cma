@@ -240,6 +240,7 @@ async fn reservation(
     CommandReservation {
         binding: None,
         envelope: AgentCommandEnvelope {
+            continuation: None,
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: crate::ids::AgentCommandId::generate(),
             agent_id: agent.id.clone(),

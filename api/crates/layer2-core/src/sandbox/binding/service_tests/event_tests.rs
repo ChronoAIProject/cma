@@ -6,7 +6,7 @@ use super::{
 use crate::{resource_access::ResourceAccessService, sandbox::agent_io::*};
 use serde_json::json;
 
-fn attach(request: &mut CommandReservation) {
+pub(super) fn attach(request: &mut CommandReservation) {
     let AgentCommand::Message { input, .. } = &mut request.envelope.command else {
         unreachable!()
     };
