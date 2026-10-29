@@ -60,7 +60,7 @@ pub struct MediaControlsCapabilities {
     pub choices: bool,
     pub caption_max_chars: u32,
     pub update: bool,
-    /// Replace one upload on the same durable card through a confirmed native PATCH.
+    /// Replace the supported upload set on the same durable card through a confirmed PATCH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replace_media: Option<bool>,
 }
@@ -107,6 +107,9 @@ impl NativeMediaCapabilities {
                         controls.max_attachments = cmaeg_core::message::MAX_NATIVE_ATTACHMENTS;
                     }
                     controls.update = true;
+                    controls.replace_media = state
+                        .native_lark_media_card_replacements_enabled
+                        .then_some(true);
                     capabilities.controls = Some(controls);
                 }
                 capabilities

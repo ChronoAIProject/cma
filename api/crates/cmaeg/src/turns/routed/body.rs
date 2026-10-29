@@ -33,6 +33,13 @@ impl Journal {
             return Err(ExecutionError::Invalid);
         }
         body.validate(plan, target, &self.keys, (self.clock)())?;
+        match &lease.state.binding_preparation {
+            Some(preparation) => preparation.require_body_generation(body.binding_generation)?,
+            None if body.binding_generation.is_some() || plan.prepares_binding(target) => {
+                return Err(ExecutionError::Invalid)
+            }
+            None => {}
+        }
         let encoded = bytes(body)?;
         if encoded.len() > MAX_BODY {
             return Err(ExecutionError::Invalid);
@@ -117,7 +124,13 @@ impl Journal {
         if hash(&result) != reference.hash {
             return Err(ExecutionError::Corrupt);
         }
-        let body = serde_json::from_slice(&result).map_err(|_| ExecutionError::Corrupt)?;
+        let body: FrozenTurn =
+            serde_json::from_slice(&result).map_err(|_| ExecutionError::Corrupt)?;
+        match &state.binding_preparation {
+            Some(preparation) => preparation.require_body_generation(body.binding_generation)?,
+            None if body.binding_generation.is_some() => return Err(ExecutionError::Corrupt),
+            None => {}
+        }
         self.guard(lease).await?;
         Ok(body)
     }

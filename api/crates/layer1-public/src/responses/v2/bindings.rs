@@ -4,10 +4,34 @@ use axum::{http::StatusCode, response::Response};
 use layer2_core::{resource_access::CredentialSource, sandbox::binding::BindingError, AgentId};
 
 impl ResponsesV2State {
+    pub(super) async fn submission_generation(
+        &self,
+        auth: &AuthenticatedResourceCaller,
+        expected: Option<u64>,
+    ) -> Result<u64, Box<Response>> {
+        let bindings = self
+            .bindings
+            .as_ref()
+            .ok_or_else(|| Box::new(error::unavailable()))?;
+        bindings
+            .submission_generation(&auth.context.credential.credential_id, expected)
+            .await
+            .map_err(|value| match value {
+                layer2_core::sandbox::binding::BindingError::Conflict => Box::new(error::error(
+                    StatusCode::CONFLICT,
+                    "binding_generation_changed",
+                    "This event belongs to an unavailable binding generation. Send a new message.",
+                    Some("binding_generation"),
+                )),
+                other => binding_error(other),
+            })
+    }
+
     pub(super) async fn resolve_conversation(
         &self,
         auth: &AuthenticatedResourceCaller,
         id: &AgentId,
+        generation: Option<u64>,
     ) -> Result<AgentId, Box<Response>> {
         if auth.context.credential_source != CredentialSource::Binding {
             return Ok(id.clone());
@@ -21,7 +45,9 @@ impl ResponsesV2State {
             .await
             .map_err(binding_error)?
             .ok_or_else(not_found)?;
-        if principal.caller() != auth.context.caller {
+        if principal.caller() != auth.context.caller
+            || generation.is_some_and(|expected| principal.generation() != expected)
+        {
             return Err(not_found());
         }
         let proof = bindings

@@ -77,6 +77,28 @@ impl BindingAccessService {
         Ok(Some(principal(&binding)))
     }
 
+    /// Pin the generation before resolving transport aliases or source-user
+    /// affinity. A migrated binding refuses markerless old provider requests.
+    pub async fn submission_generation(
+        &self,
+        hash: &str,
+        expected: Option<u64>,
+    ) -> Result<u64, BindingError> {
+        let binding = self
+            .store
+            .find_by_key_hash(hash)
+            .await?
+            .ok_or(BindingError::NotFound)?;
+        binding.validate().map_err(BindingError::Corrupt)?;
+        if binding.key_sha256 != hash || binding.state == BindingState::Retired {
+            return Err(BindingError::NotFound);
+        }
+        binding
+            .require_generation(expected)
+            .map_err(|_| BindingError::Conflict)?;
+        Ok(binding.generation)
+    }
+
     /// Deferred commands retain the binding generation, so replacement of an
     /// externally owned key never abandons already admitted work.
     pub async fn retained_principal(
