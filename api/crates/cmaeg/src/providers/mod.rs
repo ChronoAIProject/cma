@@ -3,6 +3,7 @@
 mod client;
 mod client_types;
 mod context;
+mod conversation;
 mod frozen;
 mod management_auth;
 mod media_continuations;

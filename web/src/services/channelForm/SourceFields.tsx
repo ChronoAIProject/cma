@@ -15,10 +15,12 @@ export function SourceFields({
   value,
   onChange,
   managedIdentity = false,
+  attachmentDescription,
 }: {
   value: Fields;
   onChange: (v: Fields) => void;
   managedIdentity?: boolean;
+  attachmentDescription?: string;
 }) {
   const discovery = useRelayCapabilities();
   const rawUnavailable = modeUnavailable(discovery, String(value.platform), 'raw_event');
@@ -32,7 +34,14 @@ export function SourceFields({
     return <NativeLarkSourceFields value={value} onChange={onChange} />;
   if (value.type === 'discord') return <DiscordSourceFields value={value} onChange={onChange} />;
   if (value.type === 'whatsapp') return <WhatsappSourceFields value={value} onChange={onChange} />;
-  if (value.type === 'custom') return <CustomSource value={value} onChange={onChange} />;
+  if (value.type === 'custom')
+    return (
+      <CustomSource
+        value={value}
+        onChange={onChange}
+        attachmentDescription={attachmentDescription}
+      />
+    );
   if (value.type !== 'telegram' && value.type !== 'nyxid_relay')
     return (
       <p>
@@ -282,7 +291,15 @@ export function SourceFields({
     </>
   );
 }
-function CustomSource({ value, onChange }: { value: Fields; onChange: (v: Fields) => void }) {
+function CustomSource({
+  value,
+  onChange,
+  attachmentDescription,
+}: {
+  value: Fields;
+  onChange: (v: Fields) => void;
+  attachmentDescription?: string;
+}) {
   const auth = object(value.auth),
     attachments = object(value.attachments);
   const set = (key: string, next: unknown) => onChange(optional(value, key, next));
@@ -326,7 +343,10 @@ function CustomSource({ value, onChange }: { value: Fields; onChange: (v: Fields
       </Section>
       <Section
         title="Event attachments"
-        description="Allow the agent to receive files from specific HTTPS origins in your event payload."
+        description={
+          attachmentDescription ??
+          'Allow attachments from approved HTTPS origins. What the agent can open depends on its connection and attachment support.'
+        }
       >
         <Toggle
           label="Accept event attachments"

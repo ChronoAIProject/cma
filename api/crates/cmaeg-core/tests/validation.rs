@@ -64,6 +64,7 @@ fn rejects_structured_cloud_event_too_large() {
 fn rejects_empty_outbound_message() {
     assert!(OutboundMessage {
         whatsapp_template: None,
+        structured_content: None,
         reply_with_received_sticker: false,
         clear_native_attachments: false,
         native_media_update: None,

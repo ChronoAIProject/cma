@@ -11,6 +11,8 @@ data:
   # wait for predecessor Pods to drain, then apply these native messaging gates.
   CMAEG_MULTI_CONSUMER_WRITES_ENABLED: "true"
   # Explicit record IDs only. Empty preserves all existing ingress paths.
+  # Enable only after every serving and rollback reader supports durable_custom_execution.
+  CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED: "false"
   CMAEG_ROUTED_CHANNEL_RECORDS: ""
   # Keep recovery and selected records after stopping admission, until retained work expires.
   CMAEG_ROUTED_RECOVERY_ENABLED: "true"
@@ -43,6 +45,8 @@ data:
   # Requires every reader to support durable media-card custody before enabling.
   # Ordered native albums; existing single uploads and their references are unchanged.
   CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED: "false"
+  CMAEG_NATIVE_WHATSAPP_STRUCTURED_REPLIES_ENABLED: "false"
   # Reader-first voice/animation kinds and native Telegram static stickers; existing audio is unchanged.
   CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED: "false"
   # Canonical PCM WAV voice-only Discord replies, independently enabled.

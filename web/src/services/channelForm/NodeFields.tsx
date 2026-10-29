@@ -16,6 +16,11 @@ import { Choice, Section } from './Fields';
 import { ProfileFields, ProviderFields } from './ProfileFields';
 import { SourceFields } from './SourceFields';
 import {
+  customAttachmentDescription,
+  customExecutionSelected,
+  hasCustomSource,
+} from './customExecution';
+import {
   defaultSource,
   object,
   records,
@@ -32,6 +37,7 @@ export function NodeFields({
   section,
   create,
   sourceCount,
+  savedCustomExecution,
   denied,
 }: {
   draft: Fields;
@@ -41,6 +47,7 @@ export function NodeFields({
   section: EditorSection;
   create: boolean;
   sourceCount: number;
+  savedCustomExecution?: boolean;
   denied: Denied;
 }) {
   const discovery = useRelayCapabilities();
@@ -60,6 +67,12 @@ export function NodeFields({
       ) : null}
       {create ? (
         <ManagedConnectionFields value={draft} onChange={onChange} denied={denied} />
+      ) : null}
+      {create && hasCustomSource(draft) && discovery.status === 'failed' ? (
+        <p className="channel-field-hint" role="status">
+          Could not check channel support. Your draft is retained.
+          {discovery.retry ? <Button onClick={discovery.retry}>Retry support check</Button> : null}
+        </p>
       ) : null}
       {create || section.kind === 'producer'
         ? sources.map((source, index) =>
@@ -103,6 +116,12 @@ export function NodeFields({
                 ) : null}
                 <SourceFields
                   value={source}
+                  attachmentDescription={customAttachmentDescription(
+                    draft,
+                    create
+                      ? customExecutionSelected(discovery, draft)
+                      : savedCustomExecution === true,
+                  )}
                   managedIdentity={Boolean(draft.connection_ref)}
                   onChange={(next) =>
                     set(

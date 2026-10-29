@@ -29,6 +29,9 @@ impl RoutedIngress {
         opted_in(request) && self.native_eligible(&request.channel.definition)
     }
     pub(crate) fn selected_request(&self, request: &LaunchRequest) -> bool {
-        self.selected(&request.channel.definition.record_id) || self.telegram_selected(request)
+        self.selected(&request.channel.definition.record_id)
+            || self.telegram_selected(request)
+            || (super::custom::opted_in(request)
+                && self.native_eligible(&request.channel.definition))
     }
 }

@@ -65,6 +65,8 @@ pub struct ToolsState {
     pub native_lark_media_card_replacements_enabled: bool,
     pub native_media_presentations_enabled: bool,
     pub native_discord_voice_enabled: bool,
+    pub native_telegram_structured_replies_enabled: bool,
+    pub native_whatsapp_structured_replies_enabled: bool,
     pub native_telegram_albums_enabled: bool,
     pub native_lark_thread_start_enabled: bool,
     /// Bounded native WhatsApp image/document/audio/sticker/video uploads, independently gated.
@@ -184,6 +186,9 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
+            if message.structured_content.is_some() && idempotency_key.is_none() {
+                return Err(invalid("structured_content_requires_idempotency_key"));
+            }
             if message.native_media_update.is_some() || message.clear_native_attachments {
                 return Err(Problem::new(
                     ProblemCode::InvalidRequest,
@@ -223,6 +228,9 @@ impl ToolsState {
                 {
                     return Ok(receipt);
                 }
+            }
+            if message.structured_content.is_some() {
+                return Err(invalid("structured_content_requires_retained_routing"));
             }
             if message.reply_with_received_sticker {
                 return Err(invalid("received_sticker_requires_retained_routing"));
