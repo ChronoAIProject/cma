@@ -132,11 +132,18 @@ impl Setup {
         .await
     }
     pub async fn with_request(support: RecoverySupport, request: LaunchRequest) -> Self {
+        Self::with_source(support, request, b"raw-event").await
+    }
+    pub async fn with_source(
+        support: RecoverySupport,
+        request: LaunchRequest,
+        source: &[u8],
+    ) -> Self {
         let server = Server::start().await;
         let candidate = Candidate::prepare(
             &request,
             &fixture::routed(&request),
-            b"raw-event",
+            source,
             &fixture::keys(),
             fixture::NOW,
         )

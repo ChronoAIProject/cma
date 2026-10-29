@@ -148,6 +148,7 @@ mod tests {
             event,
             message: OutboundMessage {
                 whatsapp_template: None,
+                reply_with_received_sticker: false,
                 clear_native_attachments: false,
                 native_media_update: None,
                 native_attachments: Vec::new(),

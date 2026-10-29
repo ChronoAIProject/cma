@@ -172,6 +172,7 @@ impl Fixture {
             sender: "ou_human".into(),
             text: "original".into(),
             resources: vec![],
+            received_sticker: None,
             group: threaded,
             thread_id: threaded.then(|| "omt_thread".into()),
             mentioned: false,
