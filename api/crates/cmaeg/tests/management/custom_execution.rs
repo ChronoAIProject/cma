@@ -225,23 +225,19 @@ async fn unmarked_custom_creates_keep_legacy_wire_shape_and_false_replays_absenc
     assert_eq!(replay["channel_id"], saved["channel_id"]);
     input["durable_custom_execution"] = true.into();
     assert_eq!(post(&base, &input).await.status(), 409);
-    let permissions: Value = Client::new()
+    let response = Client::new()
         .get(format!("{base}/v1/permissions"))
         .bearer_auth("token-alice")
         .send()
         .await
-        .unwrap()
-        .json()
-        .await
         .unwrap();
-    assert_eq!(
-        permissions["relay_authoring"]["custom_durable_execution_enabled"],
-        true
-    );
-    assert_eq!(
-        permissions["relay_authoring"]["response_recovery_providers"],
-        json!(["cma_codex"])
-    );
+    assert_eq!(response.status(), 200);
+    let permissions: Value = response.json().await.unwrap();
+    assert_eq!(permissions["subject"], "alice");
+    // Authoring discovery belongs to /v1/channel-capabilities; the identity
+    // endpoint keeps its existing role catalog even for durable Custom channels.
+    assert!(permissions["roles"].is_array());
+    assert!(permissions.get("relay_authoring").is_none());
     stop.send(()).unwrap();
     task.await.unwrap();
 }
