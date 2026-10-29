@@ -104,6 +104,7 @@ async fn deferred_authority(owner_kind: &str) {
     assert_eq!(authority.grant_revision, Some(binding.generation));
     let command = AgentCommand::message("binding message");
     let envelope = AgentCommandEnvelope {
+        continuation: None,
         schema_version: AGENT_IO_SCHEMA_VERSION,
         command_id: layer2_core::ids::AgentCommandId::generate(),
         agent_id: conversation.agent_id,
@@ -165,4 +166,30 @@ async fn deferred_authority(owner_kind: &str) {
         .await
         .unwrap();
     assert!(auth.authorize_command(&envelope).await.is_err());
+}
+
+#[test]
+fn media_continuation_routes_are_scoped_to_the_exact_bound_consumer() {
+    use axum::http::Method;
+    let base = "/api/v1/cmaeg/bindings/binding-a/conversations/transport/events/original/media/0";
+    for (method, suffix) in [
+        (Method::POST, "attachment"),
+        (Method::GET, "attachment"),
+        (Method::POST, "supplement"),
+    ] {
+        let path = format!("{base}/{suffix}");
+        assert!(super::permits_request(&method, &path, "binding-a"));
+        assert!(!super::permits_request(&method, &path, "binding-b"));
+        assert!(!super::permits_request(&Method::DELETE, &path, "binding-a"));
+    }
+    assert!(!super::permits_request(
+        &Method::GET,
+        &format!("{base}/supplement"),
+        "binding-a"
+    ));
+    assert!(!super::permits_request(
+        &Method::POST,
+        "/api/v1/agents/agt_foreign/attachments",
+        "binding-a"
+    ));
 }

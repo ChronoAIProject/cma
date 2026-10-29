@@ -16,11 +16,25 @@ impl ConversationInputGuard for CommandDispatchGuard {
     async fn check(&self) -> layer3_adapter::Result<()> {
         let refused =
             || AdapterError::Rejected("command execution authority is no longer current".into());
-        let snapshot = self
-            .authority
-            .current_snapshot()
-            .await
-            .map_err(|_| refused())?;
+        let snapshot = self.authority.current_snapshot().await.map_err(|error| {
+            use crate::resource_access::{
+                AccessError, MembershipError, ResourceAccessError, ResourceAccessStoreError,
+            };
+            if self.authority.continuation_envelope().is_some()
+                && matches!(
+                    error,
+                    ResourceAccessError::Store(ResourceAccessStoreError::Unavailable)
+                        | ResourceAccessError::Membership(MembershipError::Unavailable)
+                        | ResourceAccessError::Access(AccessError::RevalidationRequired)
+                )
+            {
+                AdapterError::InputAuthorityUnavailable(
+                    "fresh input authority could not be verified".into(),
+                )
+            } else {
+                refused()
+            }
+        })?;
         let agent = snapshot.lineage.agent.as_ref().ok_or_else(refused)?;
         let parent = &snapshot.lineage.sandbox;
         if agent.id != self.target.agent_id
