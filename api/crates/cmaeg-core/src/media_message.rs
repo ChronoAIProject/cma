@@ -15,6 +15,10 @@ pub enum NativeMediaKind {
     File,
     Audio,
     Video,
+    /// Native voice presentation; never inferred from an ordinary audio attachment.
+    Voice,
+    /// Native animation presentation; never inferred from an ordinary video attachment.
+    Animation,
     /// Sticker presentation; only destinations advertising it may issue one.
     Sticker,
 }
