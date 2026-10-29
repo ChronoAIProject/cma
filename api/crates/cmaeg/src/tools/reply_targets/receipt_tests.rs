@@ -6,6 +6,61 @@ use crate::{
 use cmaeg_core::{ids::MessageRef, seal::MessageRefPayload};
 use serde_json::json;
 
+#[tokio::test]
+async fn discord_voice_confirmed_and_unknown_operation_results_never_reauthorize_after_restart() {
+    for confirmed in [false, true] {
+        let server = Server::start().await;
+        let store = Store::new(server.records.clone(), Arc::new(fixture::keys()));
+        let message: OutboundMessage = serde_json::from_value(json!({"native_attachments":[{
+            "kind":"voice","mime_type":"audio/wav","source":{"type":"base64","data":"AQIDBA=="}
+        }]}))
+        .unwrap();
+        let content = hash(&message);
+        let Admission::Claimed(claim) = store
+            .claim_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                "discord:77:99:700:consumer".into(),
+                "voice-request",
+                content.clone(),
+                "user-1",
+                fixture::NOW + 600,
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("first claim")
+        };
+        let mut receipt = uncertain("native_delivery_unconfirmed");
+        if confirmed {
+            receipt.delivery = DeliveryOutcome::Confirmed {
+                platform_message_id: Some("800".into()),
+            };
+        }
+        store.finish(claim, &receipt).await.unwrap();
+        let restarted = Store::new(server.records.clone(), Arc::new(fixture::keys()));
+        let Admission::Replay(replayed) = restarted
+            .claim_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                "discord:77:99:700:consumer".into(),
+                "voice-request",
+                content,
+                "user-1",
+                fixture::NOW + 600,
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("a retained outcome must not authorize another POST")
+        };
+        assert_eq!(
+            serde_json::to_value(replayed).unwrap(),
+            serde_json::to_value(receipt).unwrap()
+        );
+    }
+}
+
 fn receipt() -> IntentReceipt {
     let mut receipt = uncertain("partial_delivery");
     receipt.message_parts = (0..80)
@@ -97,4 +152,87 @@ async fn split_text_pages_without_root_pointer_never_allow_resend_or_imply_compl
     };
     assert!(matches!(replay.delivery, DeliveryOutcome::Unknown { .. }));
     assert!(replay.message_parts.is_empty());
+}
+
+#[tokio::test]
+async fn native_presentation_receipt_replays_after_issuance_stops_and_kind_changes_conflict() {
+    let server = Server::start().await;
+    let store = Store::new(server.records.clone(), Arc::new(fixture::keys()));
+    let message: OutboundMessage = serde_json::from_value(json!({"native_attachments":[{
+        "kind":"voice","source":{"type":"base64","data":"AQIDBA=="}
+    }]}))
+    .unwrap();
+    let request_hash = hash(&message);
+    let claim = store
+        .claim_scoped(
+            "reply_delivery_v1",
+            "cmaeg.reply-delivery.v1",
+            "same-native-event-consumer".into(),
+            "voice-request",
+            request_hash.clone(),
+            "user-1",
+            fixture::NOW + 600,
+        )
+        .await
+        .unwrap();
+    let Admission::Claimed(claim) = claim else {
+        panic!("first admission");
+    };
+    let confirmed = IntentReceipt {
+        message_parts: vec![],
+        message_ref: None,
+        delivery: DeliveryOutcome::Confirmed {
+            platform_message_id: Some("800".into()),
+        },
+        rendering: RenderingReport {
+            outcome: RenderingOutcome::Rendered,
+            blocks: vec![],
+        },
+    };
+    store.finish(claim, &confirmed).await.unwrap();
+    let restarted = Store::new(server.records.clone(), Arc::new(fixture::keys()));
+    let destination = cmaeg_core::seal::ReplyAddress::Telegram {
+        bot_id: "77".into(),
+        chat_id: "42".into(),
+        message_id: "700".into(),
+        thread_id: None,
+    };
+    assert!(!crate::media::presentations::allowed(
+        false,
+        &destination,
+        &message
+    ));
+    let replay = restarted
+        .claim_scoped(
+            "reply_delivery_v1",
+            "cmaeg.reply-delivery.v1",
+            "same-native-event-consumer".into(),
+            "voice-request",
+            request_hash,
+            "user-1",
+            fixture::NOW + 600,
+        )
+        .await
+        .unwrap();
+    let Admission::Replay(replay) = replay else {
+        panic!("must not authorize a resend");
+    };
+    assert_eq!(
+        serde_json::to_value(replay).unwrap(),
+        serde_json::to_value(confirmed).unwrap()
+    );
+    let mut changed = message;
+    changed.native_attachments[0].kind = cmaeg_core::message::NativeMediaKind::Audio;
+    assert!(restarted
+        .claim_scoped(
+            "reply_delivery_v1",
+            "cmaeg.reply-delivery.v1",
+            "same-native-event-consumer".into(),
+            "voice-request",
+            hash(&changed),
+            "user-1",
+            fixture::NOW + 600
+        )
+        .await
+        .is_err());
 }

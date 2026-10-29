@@ -16,6 +16,110 @@ use serde_json::json;
 use std::sync::Arc;
 
 #[tokio::test]
+async fn expired_terminal_repairs_failed_activity_after_restart_and_queued_replay() {
+    use std::sync::atomic::Ordering;
+    let record = uuid::Uuid::new_v4().to_string();
+    let request_for_record = || {
+        fixture::request(
+            |value| {
+                fixture::targets(value);
+                value["record_id"] = record.clone().into();
+            },
+            fixture::message("hello"),
+        )
+    };
+    let request = request_for_record();
+    let owner = request.channel.definition.owner.subject.clone();
+    let mut setup = Setup::with_request(supported(), request_for_record()).await;
+    let consumer_id = setup.target().launch.consumer.to_string();
+    let activity_records = Server::start_realtime().await;
+    activity_records.memory.channels.lock().unwrap().insert(
+        record.clone(),
+        Row {
+            owner: owner.clone(),
+            blob: seal_blob(
+                &fixture::keys(),
+                &serde_json::to_vec(&request.channel.definition.to_blob_json()).unwrap(),
+            )
+            .unwrap(),
+            expiry: time::OffsetDateTime::now_utc().unix_timestamp() + 3600,
+            version: 1,
+        },
+    );
+    let activity = Arc::new(ActivityStore::new(
+        activity_records.records.clone(),
+        Arc::new(fixture::keys()),
+    ));
+    activity.received(&request).await.unwrap();
+    activity
+        .change(
+            &record,
+            request.activity.event_id.as_str(),
+            &Change::state(&consumer_id, ConsumerState::Queued, None),
+        )
+        .await
+        .unwrap();
+    setup
+        .server
+        .memory
+        .clock
+        .store(fixture::NOW + 900, Ordering::SeqCst);
+    // Simulate a crash after the durable refusal, before either reporting effect.
+    assert!(matches!(
+        setup.dispatch().await.unwrap(),
+        DispatchOutcome::Terminal(Phase::Refused { .. })
+    ));
+    let before = activity.latest(&owner, &record).await.unwrap();
+    assert_eq!(
+        before.items[0]
+            .consumers
+            .iter()
+            .find(|consumer| consumer.consumer_id == consumer_id)
+            .unwrap()
+            .state,
+        ConsumerState::Queued
+    );
+    drop(activity);
+    let restored = Arc::new(ActivityStore::new(
+        activity_records.records.clone(),
+        Arc::new(fixture::keys()),
+    ));
+    setup.dispatcher = Dispatcher::new(
+        setup.server.store(),
+        setup.journal().clone().with_activity(restored.clone()),
+        setup.current.clone(),
+        setup.port.clone(),
+    );
+    let http = HttpServer::start().await;
+    let (runner, mut rx, work) = executor(&setup, &http);
+    for _ in 0..2 {
+        assert!(matches!(runner.execute(&work).await, Disposition::Settled));
+        restored
+            .change(
+                &record,
+                request.activity.event_id.as_str(),
+                &Change::state(&consumer_id, ConsumerState::Queued, None),
+            )
+            .await
+            .unwrap();
+    }
+    let after = restored.latest(&owner, &record).await.unwrap();
+    let consumer = after.items[0]
+        .consumers
+        .iter()
+        .find(|consumer| consumer.consumer_id == consumer_id)
+        .unwrap();
+    assert_eq!(consumer.state, ConsumerState::Failed);
+    assert!(consumer.completed_at.is_some());
+    assert!(
+        matches!(stored(&setup).await.phase, Phase::Refused { code } if code == super::expiry::EXPIRED_BEFORE_START)
+    );
+    assert!(http.seen().is_empty());
+    assert!(rx.try_recv().is_err());
+    assert_eq!(setup.port.prepares.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn activity_terminal_outcome_survives_checkpoint_recovery_and_queued_replay() {
     for status in ["completed", "failed", "incomplete"] {
         for observe_live in [true, false] {

@@ -62,10 +62,13 @@ impl NativeMediaUpdate {
         }
         if let Some(item) = &self.replacement {
             super::validate_native_attachments(&[item.attachment()])?;
-            if item.kind == NativeMediaKind::Sticker {
+            if matches!(
+                item.kind,
+                NativeMediaKind::Sticker | NativeMediaKind::Voice | NativeMediaKind::Animation
+            ) {
                 return Err(ValidationError::new(
                     "/native_media_update/replacement",
-                    "sticker edits are unsupported",
+                    "voice, animation and sticker edits are unsupported",
                 ));
             }
         }

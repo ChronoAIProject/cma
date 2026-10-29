@@ -158,6 +158,97 @@ async fn deliver(
 }
 
 #[tokio::test]
+async fn expired_executor_closes_only_original_primary_stream_without_content_or_external_sends() {
+    use super::{
+        adapter_test_server::HttpServer,
+        scheduler::{Disposition, TargetExecutor, WorkItem},
+    };
+    use crate::{http::readiness::Readiness, turns::tracker::TurnTracker, DeliveryConfig};
+    use std::time::Duration;
+
+    let waiters = Arc::new(SyncRegistry::default());
+    let (id, waiter) = waiters.register().unwrap();
+    let setup = setup(&id, 1, true).await;
+    let receiver = Arc::new(Receiver::default());
+    let http = HttpServer::start().await;
+    setup
+        .server
+        .memory
+        .clock
+        .store(fixture::NOW + 900, Ordering::SeqCst);
+    setup.current.revoke_at.store(0, Ordering::SeqCst);
+    let make_executor = || {
+        let port = Arc::new(HttpExecutionPort::new(
+            http.client(true, Duration::from_secs(60)),
+            setup.port.clone(),
+            setup.server.store(),
+            setup.journal().clone(),
+            setup.current.clone(),
+        ));
+        let (delivery, rx) = lane(&setup, waiters.clone(), receiver.clone());
+        (
+            RoutedTargetExecutor::new(
+                port,
+                delivery,
+                TurnTracker::new(Readiness::initialized()),
+                &DeliveryConfig::default(),
+            ),
+            rx,
+        )
+    };
+    let (runner, mut rx) = make_executor();
+    assert!(setup.plan.targets.len() > 1);
+    let secondary = WorkItem {
+        identity: setup.plan.identity.clone(),
+        target_id: setup.plan.targets[1].id.clone(),
+    };
+    assert!(matches!(
+        runner.execute(&secondary).await,
+        Disposition::Settled
+    ));
+    assert_eq!(waiters.len(), 1);
+    let primary = WorkItem {
+        identity: setup.plan.identity.clone(),
+        target_id: setup.target().id.clone(),
+    };
+    assert!(matches!(
+        runner.execute(&primary).await,
+        Disposition::Settled
+    ));
+    assert!(waiters.is_empty());
+    let (restarted, mut restarted_rx) = make_executor();
+    assert!(matches!(
+        restarted.execute(&primary).await,
+        Disposition::Settled
+    ));
+    let stream = stream(waiter).await;
+    assert_eq!(stream.matches("event: cmaeg.failed").count(), 1);
+    let data: Value = serde_json::from_str(
+        stream
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(data["event_id"], json!(setup.plan.identity.event_id));
+    assert_eq!(
+        data["conversation_id"],
+        json!(setup.target().launch.event.conversation_id)
+    );
+    assert!(data["text"].is_null());
+    assert!(data["message"].is_null());
+    assert_eq!(data["error"]["code"], "event_ref_expired");
+    assert_eq!(data["error"]["status"], 410);
+    assert_eq!(data["error"]["detail"], super::expiry::EXPIRED_BEFORE_START);
+    assert!(http.seen().is_empty());
+    assert!(receiver.events.lock().unwrap().is_empty());
+    assert!(rx.try_recv().is_err());
+    assert!(restarted_rx.try_recv().is_err());
+    assert_eq!(setup.port.prepares.load(Ordering::SeqCst), 0);
+    assert_eq!(setup.current.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn local_terminal_is_independent_of_auto_final_and_tool_suppression() {
     for (auto_final, tool_replied) in [(false, false), (true, true)] {
         let waiters = Arc::new(SyncRegistry::default());

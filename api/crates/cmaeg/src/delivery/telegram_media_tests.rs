@@ -349,3 +349,6 @@ async fn native_telegram_media_rechecks_authority_before_every_effect_and_stops_
     );
     assert_eq!(f.calls().len(), 1);
 }
+
+#[path = "telegram_media_presentation_tests.rs"]
+mod presentations;

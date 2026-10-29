@@ -40,6 +40,18 @@ fn historical_activity_receipts_roundtrip_without_inventing_event_facts() {
 }
 
 #[test]
+fn historical_media_capabilities_do_not_advertise_native_presentations() {
+    let mut legacy = fixtures()["NativeMediaCapabilities"][0].clone();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("presentation_profiles");
+    let decoded: NativeMediaCapabilities = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(decoded.presentation_profiles.is_none());
+    assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
+}
+
+#[test]
 fn legacy_relay_sources_never_gain_a_resource_binding_on_roundtrip() {
     for platform in ["telegram", "lark", "feishu", "discord", "whatsapp", "slack"] {
         let request = json!({"type":"nyxid_relay","platform":platform,"issuer":"https://nyx.example","key_id":"key-fixture","route_ids":["route-fixture"],"admission":{"type":"all"}});
@@ -302,6 +314,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         NativeMediaKind,
         NativeMediaSource,
         NativeMediaCapabilities,
+        NativePresentationProfile,
         NativeAlbumCapabilities,
         MediaControlsCapabilities,
         NativeMediaUpdate,
@@ -715,4 +728,28 @@ fn native_album_capabilities_preserve_exact_groups_without_operation_authority()
     assert!(!albums.controls && !albums.message_operations);
     assert_eq!(albums.kind_groups[0], ["image", "video"]);
     assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
+fn explicit_media_presentations_preserve_legacy_audio_and_optional_discovery() {
+    for kind in ["audio", "video", "voice", "animation", "sticker"] {
+        let wire = json!({"native_attachments":[{"kind":kind,"source":{"type":"base64","data":"AQIDBA=="}}]});
+        let decoded: OutboundMessage = serde_json::from_value(wire.clone()).unwrap();
+        let encoded = serde_json::to_value(decoded).unwrap();
+        assert_eq!(encoded["native_attachments"], wire["native_attachments"]);
+    }
+    let value = json!({"kinds":["audio","voice"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "presentation_profiles":[{"kind":"voice","mime_types":["audio/ogg"],"max_bytes":8388608,"caption":false,
+        "profile":"One complete mono Opus Ogg stream; no transcoding","message_operations":false}]});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert!(!decoded.presentation_profiles.as_ref().unwrap()[0].message_operations);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
+fn discord_voice_constraints_round_trip_and_older_profile_omits_new_fields() {
+    for value in fixtures()["NativePresentationProfile"].as_array().unwrap() {
+        let decoded: NativePresentationProfile = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), *value);
+    }
 }

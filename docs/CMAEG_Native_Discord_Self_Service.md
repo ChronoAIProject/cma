@@ -10,7 +10,9 @@ new secret; public channel definitions and activation status never expose it.
 The bot must already exist, be installed in the intended server, have access to
 its channels and have Message Content Intent enabled in the Discord Developer
 Portal. Native intake supports ordinary human messages and the existing text and
-attachment paths. Bot messages are unsupported. Native buttons and single-select
+attachment paths. With the separate [rich-content writer gate](CMAEG_Native_Discord_Rich_Content.md),
+new messages can also include descriptive sticker, embed and poll facts, including
+messages without a plain-text caption. Bot messages are unsupported. Native buttons and single-select
 callbacks require separate [operator enablement](CMAEG_Native_Discord_Interactions.md).
 They support ordinary channels and verified existing threads with retained thread
 proof and authenticated channel checks. Only single-shard bots are supported.
@@ -31,6 +33,7 @@ records with automatic discovery disabled.
 | `CMAEG_NATIVE_DISCORD_WRITES_ENABLED` | Accept new or changed native Discord source metadata and bot credentials. |
 | `CMAEG_NATIVE_DISCORD_ENABLED` | Run native connections and durable inbox recovery. |
 | `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED` | Discover eligible explicit native Discord sources from the current persisted channel index. Requires native runtime and routed recovery. |
+| `CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED` | Capture versioned descriptive sticker/embed/poll facts for new human messages. Default off; requires compatible inbox readers and predecessor drain before activation. |
 | `CMAEG_ROUTED_RECOVERY_ENABLED` | Install the durable routing scheduler, provider replay and delivery recovery. |
 | `CMAEG_ROUTED_ADMISSION_ENABLED` | Accept new durable routed admissions. Keeping this off pauses new messages while retained work recovers. |
 | `CMAEG_MULTI_CONSUMER_WRITES_ENABLED` | Permit creation of the default routing policy required by self-service native channels. |

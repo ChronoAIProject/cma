@@ -81,7 +81,12 @@ impl Authority {
         kind: NativeMediaKind,
         file: &PreparedFile,
     ) -> Result<Self, Error> {
-        if !eligible(channel, event, activity) || matches!(kind, NativeMediaKind::Sticker) {
+        if !eligible(channel, event, activity)
+            || matches!(
+                kind,
+                NativeMediaKind::Sticker | NativeMediaKind::Voice | NativeMediaKind::Animation
+            )
+        {
             return Err(Error::Denied);
         }
         let consumer = channel
@@ -223,7 +228,10 @@ pub(super) fn valid(card: &Card) -> bool {
         && !a.mime.is_empty()
         && a.mime.len() <= 255
         && a.caption.encode_utf16().count() <= 1024
-        && !matches!(a.kind, NativeMediaKind::Sticker)
+        && !matches!(
+            a.kind,
+            NativeMediaKind::Sticker | NativeMediaKind::Voice | NativeMediaKind::Animation
+        )
         && routing.resolution == RouteResolution::Interaction
         && routing.targets.len() == 1
         && routing.targets[0].id == target

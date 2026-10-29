@@ -3,8 +3,11 @@
 This increment creates one empty named topic in the exact forum supergroup of
 an admitted native human message. It uses the existing neutral REST/MCP
 `createEventThread` operation and returns a scoped reference usable by
-`manageThread`. It defaults off; local transport tests do not establish native
-connected-account acceptance or production activation.
+`manageThread`. The binary defaults off. The production manifest enables the
+operator gate after the compatible #1203 reader release and persistent-fence
+readiness checks. Owner consent still defaults off. Local transport tests and
+Custom-channel recovery acceptance do not establish native connected-account
+acceptance.
 
 The operator enables `CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED` only after
 compatible source and sealed-reference readers are deployed. The owner separately

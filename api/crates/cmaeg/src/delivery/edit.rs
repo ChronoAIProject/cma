@@ -52,6 +52,13 @@ impl Sender {
         reference: &MessageRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if message
+            .native_attachments
+            .iter()
+            .any(|a| crate::media::presentations::special(a.kind))
+        {
+            return (unsupported(), SendEffects::default());
+        }
         if message.clear_native_attachments
             && !(reference.interaction_record_id.is_some()
                 && reference.route_id.starts_with("discord:"))
