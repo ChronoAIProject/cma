@@ -142,6 +142,29 @@ fn preparation_preserves_archive_and_requires_exact_generation_for_new_submissio
 }
 
 #[test]
+fn preparation_accepts_ready_idle_only_after_the_original_home_is_fully_retired() {
+    let mut data = Data::new();
+    data.binding.state = BindingState::Ready;
+    data.sandbox.work.execution = Some(Default::default());
+    data.workspace.work.execution = Some(Default::default());
+    data.refresh();
+    let receipt = data.reserve().unwrap();
+    assert_eq!(receipt.previous.state, BindingState::Ready);
+    assert_eq!(receipt.reserved.generation, data.binding.generation + 1);
+    for work in [
+        BindingWork::DeliverCredential,
+        BindingWork::ProvisionSandbox,
+    ] {
+        let mut busy = data.binding.clone();
+        busy.state = BindingState::Provisioning;
+        busy.work = work;
+        data.binding = busy;
+        data.refresh();
+        assert!(data.reserve().is_err());
+    }
+}
+
+#[test]
 fn preparation_refuses_every_recoverable_status_and_unreleased_home() {
     for status in [
         SandboxStatus::Provisioning,
@@ -678,3 +701,6 @@ async fn mongo_preparation_and_binding_retirement_have_one_exact_revision_winner
 
 #[path = "http_tests.rs"]
 mod http_tests;
+
+#[path = "lifecycle_http_tests.rs"]
+mod lifecycle_http_tests;
