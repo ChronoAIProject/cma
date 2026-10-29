@@ -180,7 +180,7 @@ RUN apt-get update \
         xz-utils \
         zlib1g \
         zstd \
-    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation novnc openbox scrot wmctrl x11vnc xdotool xvfb websockify; else test "${RUNTIME_DESKTOP}" = "0"; fi \
+    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium dbus-x11 fonts-liberation novnc scrot wmctrl x11vnc x11-xserver-utils x11-utils xdotool xvfb websockify xfce4-session xfce4-panel xfdesktop4 xfwm4 xfce4-settings xfce4-appfinder gvfs thunar xfce4-terminal adwaita-icon-theme librsvg2-common; else test "${RUNTIME_DESKTOP}" = "0"; fi \
     && git --version \
     && rm -rf /var/lib/apt/lists/*
 
@@ -336,7 +336,8 @@ COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 # supervisor.  noVNC is bound to loopback; CMA must relay it through the
 # authenticated control plane before a browser can reach the screen.
 COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /usr/local/bin/cma-desktop-session
-COPY api/crates/layer4-runtime/src/desktop-menu.xml /etc/xdg/openbox/menu.xml
+COPY api/crates/layer4-runtime/src/desktop/ /usr/share/cma-desktop/
+COPY api/crates/layer4-runtime/src/desktop/chromium.desktop /usr/share/applications/chromium.desktop
 
 # Native SandboxTemplates use this same image as a non-root init container:
 # --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
