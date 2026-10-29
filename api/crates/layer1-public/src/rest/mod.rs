@@ -36,6 +36,7 @@ mod agent_operate;
 mod agent_preferences;
 mod agent_settings;
 mod agent_skills;
+mod agent_worktree_recovery;
 mod message_feedback;
 pub use agent_channel_usage::agent_channel_usage_router;
 pub use agent_skills::AgentSkillRuntimeSupport;

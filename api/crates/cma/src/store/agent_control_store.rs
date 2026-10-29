@@ -11,6 +11,18 @@ use super::sandbox_mongo::MongoSandboxStore;
 
 #[async_trait::async_trait]
 impl AgentControlStore for MongoSandboxStore {
+    async fn begin_agent_worktree_recovery(
+        &self,
+        id: &layer2_core::AgentId,
+        caller: &layer2_core::Caller,
+        operation_id: &str,
+        successor_id: &layer2_core::WorktreeId,
+        now: String,
+    ) -> Result<Agent, AgentControlStoreError> {
+        super::agent_worktree_recovery::begin(self, id, caller, operation_id, successor_id, now)
+            .await
+    }
+
     async fn schedule_agent_stop(
         &self,
         request: AgentStopRequest,
