@@ -12,6 +12,16 @@ pub enum BindingRouteError {
 
 #[async_trait::async_trait]
 pub trait BindingEventRouter: Send + Sync {
+    /// The interface captured this generation before resolving any alias.
+    async fn route_at_generation(
+        &self,
+        caller: &AuthenticatedResourceCaller,
+        event: &mut ExternalEventContext,
+        _generation: u64,
+    ) -> Result<Option<AgentId>, BindingRouteError> {
+        self.route(caller, event).await
+    }
+
     /// Implementations must authenticate the original event before choosing an
     /// instance. The transport payload and reply reference remain unchanged.
     async fn route(

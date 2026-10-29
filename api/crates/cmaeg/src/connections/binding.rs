@@ -8,8 +8,8 @@ use crate::{
     },
 };
 use cmaeg_core::{
-    channel::{AdmissionPolicy, ChannelDefinition, Secret},
-    ids::{ChannelId, RecordId},
+    channel::{AdmissionPolicy, ChannelDefinition, Secret, Source},
+    ids::ChannelId,
     ValidationError,
 };
 use webhook::store;
@@ -115,19 +115,15 @@ pub async fn expand_create(
 pub async fn expand_update(
     state: &ManagementState,
     creator: &Creator,
-    record_id: &RecordId,
-    current_ref: Option<&str>,
+    current: &ChannelDefinition,
     request: &mut ChannelUpdateRequest,
 ) -> Result<(), ManagementError> {
-    if request.connection_ref.as_deref() != current_ref {
+    if request.connection_ref != current.connection_ref {
         return Err(invalid("channel connection is immutable"));
     }
     let Some(id) = request.connection_ref.as_deref() else {
         return Ok(());
     };
-    if !request.sources.is_empty() {
-        return Err(invalid("connection_ref replaces platform sources"));
-    }
     if request.credentials.as_ref().is_some_and(|patch| {
         patch.telegram_bot_token.is_some()
             || patch.discord_bot_token.is_some()
@@ -136,14 +132,80 @@ pub async fn expand_update(
         return Err(invalid("connection credentials are managed by the gateway"));
     }
     let (record, _) = owned(state, creator, id).await?;
-    if record.channel_record.as_deref() != Some(record_id.as_str()) {
+    if record.channel_record.as_deref() != Some(current.record_id.as_str()) {
         return Err(ManagementError::NotFound);
     }
-    request.sources = vec![source(
+    request.sources = vec![updated_source(
         record.material.as_ref().ok_or_else(failed)?,
-        request.connection_admission.clone(),
+        current,
+        request,
     )?];
     Ok(())
+}
+
+/// A connection owns bot identity and credentials; the owner controls consent.
+fn updated_source(
+    material: &Material,
+    current: &ChannelDefinition,
+    request: &ChannelUpdateRequest,
+) -> Result<SourceRequest, ManagementError> {
+    let [Source::Telegram {
+        bot_id,
+        topic_lifecycle,
+        message_events,
+        channel_posts,
+        admission,
+        ..
+    }] = current.sources.as_slice()
+    else {
+        return Err(invalid(
+            "managed connection requires its original Telegram source",
+        ));
+    };
+    if bot_id != &material.bot_id {
+        return Err(invalid("managed connection bot identity changed"));
+    }
+    let (topic_lifecycle, message_events, channel_posts, admission) =
+        match request.sources.as_slice() {
+            [] => (
+                *topic_lifecycle,
+                *message_events,
+                *channel_posts,
+                admission.clone(),
+            ),
+            [SourceRequest::Telegram {
+                bot_id,
+                bot_username,
+                topic_lifecycle,
+                message_events,
+                channel_posts,
+                admission,
+            }] if bot_id == &material.bot_id
+                && bot_username
+                    .as_ref()
+                    .is_none_or(|name| name == &material.username) =>
+            {
+                (
+                    *topic_lifecycle,
+                    *message_events,
+                    *channel_posts,
+                    admission.clone(),
+                )
+            }
+            _ => {
+                return Err(invalid(
+                    "managed connection accepts only its original Telegram source",
+                ))
+            }
+        };
+    Ok(SourceRequest::Telegram {
+        topic_lifecycle,
+        message_events,
+        channel_posts,
+        bot_id: material.bot_id.clone(),
+        bot_username: Some(material.username.clone()),
+        admission: request.connection_admission.clone().unwrap_or(admission),
+    })
 }
 /// Called before the durable channel's creation.ready flag can become true.
 pub async fn activate(

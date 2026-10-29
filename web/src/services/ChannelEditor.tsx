@@ -123,7 +123,14 @@ export function ChannelEditor({
       if (hasChannelAddress(value)) {
         setBaseline(value);
         if (request.kind === 'channel') {
-          setDraft((current) => confirmedDraft(current, channelDraft(value), request.section));
+          setDraft((current) =>
+            confirmedDraft(
+              current,
+              channelDraft(value),
+              request.section,
+              object(JSON.parse(request.body)),
+            ),
+          );
           setCredentials((current) =>
             Object.fromEntries(
               Object.entries(current).filter(([key]) => !request.credentialKeys.includes(key)),

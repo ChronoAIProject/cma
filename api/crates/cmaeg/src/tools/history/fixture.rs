@@ -275,6 +275,7 @@ impl App {
         let (sender, _) = mpsc::channel(1);
         let state = ToolsState {
             native_whatsapp_forms: None,
+            native_typing: None,
             native_media_edits: None,
             telegram_topics: None,
             discord_threads: None,
@@ -297,6 +298,7 @@ impl App {
             native_discord_media_controls_enabled: false,
             native_discord_media_card_edits_enabled: false,
             native_discord_media_card_replacements_enabled: false,
+            native_discord_media_card_sets_enabled: false,
             whatsapp_interactions_enabled: false,
             native_whatsapp_interactions_enabled: false,
             native_whatsapp_media_controls_enabled: false,
@@ -304,6 +306,9 @@ impl App {
             native_media_enabled: false,
             native_lark_outbound_media_enabled: false,
             native_lark_media_controls_enabled: false,
+            native_lark_multi_image_controls_enabled: false,
+            native_lark_media_card_replacements_enabled: false,
+            native_telegram_albums_enabled: false,
             native_lark_thread_start_enabled: false,
             native_whatsapp_outbound_media_enabled: false,
             native_whatsapp_templates_enabled: false,

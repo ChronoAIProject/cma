@@ -85,7 +85,7 @@ impl InteractionStore {
         )
         .await
     }
-    /// One prepared upload and its controls share the same card/destination.
+    /// Prepared uploads and their controls share the same card/destination.
     /// Store only its bounded hash/metadata; callback recovery never fetches media.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn prepare_discord_media(
@@ -95,9 +95,9 @@ impl InteractionStore {
         message: &OutboundMessage,
         context: EventContextSnapshot,
         thread: Option<crate::discord::component_thread::ThreadIdentity>,
-        file: &crate::media::outbound::PreparedFile,
+        files: &[crate::media::outbound::PreparedFile],
     ) -> Result<PreparedCard, Error> {
-        let media = super::discord_media::Media::prepare(message, file)?;
+        let media = super::discord_media::Media::prepare_set(message, files, false)?;
         let mut retained = message.clone();
         retained.native_attachments.clear();
         self.prepare_card(
@@ -166,7 +166,7 @@ impl InteractionStore {
         context: EventContextSnapshot,
         thread: Option<crate::discord::component_thread::ThreadIdentity>,
         form_mode: FormMode,
-        media: Option<super::discord_media::Media>,
+        media: Option<Vec<super::discord_media::Media>>,
     ) -> Result<PreparedCard, Error> {
         if (matches!(event.reply, ReplyAddress::Discord { .. })
             && !message.native_attachments.is_empty())
@@ -291,7 +291,10 @@ impl InteractionStore {
             consumer: event.consumer.clone(),
         };
         if let Some(media) = media {
-            card.discord.as_mut().ok_or(Error::Denied)?.media = Some(media);
+            card.discord
+                .as_mut()
+                .ok_or(Error::Denied)?
+                .set_media(media)?;
         }
         if form_mode == FormMode::Discord {
             card.discord.as_mut().ok_or(Error::Denied)?.form =

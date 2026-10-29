@@ -51,12 +51,30 @@ impl Sender {
         {
             return unsupported();
         }
-        let Ok((_, rendering)) = interactions::native_lark::render_with_image(
-            message,
+        let Ok(images) = a.images() else {
+            return unsupported();
+        };
+        let replacement = !message.native_attachments.is_empty();
+        let retained = if replacement {
+            if !self.relay.native_lark_media_card_replacements
+                || !self.relay.native_lark_outbound_media_enabled()
+                || images.is_empty()
+            {
+                return unsupported();
+            }
+            match interactions::native_lark::preflight_media(message, true) {
+                Ok(retained) => retained,
+                Err(_) => return unsupported(),
+            }
+        } else {
+            message.clone()
+        };
+        let Ok((_, rendering)) = interactions::native_lark::render_with_images(
+            &retained,
             &old.id,
             old.revision.saturating_add(1),
             a.form,
-            a.image.as_ref(),
+            if replacement { &[] } else { images },
         ) else {
             return unsupported();
         };
@@ -67,6 +85,18 @@ impl Sender {
         if !ctx.gate.commit() {
             return refused(rendering, super::gate::expired());
         }
+        let replacement_images = if replacement {
+            match Box::pin(
+                self.upload_native_lark_card_images(ctx, cards, &old, reference, message),
+            )
+            .await
+            {
+                Ok(images) => Some(images),
+                Err(outcome) => return refused(rendering, outcome),
+            }
+        } else {
+            None
+        };
         let records = cards.channel_records();
         let store = receipts::Store::new(records.clone(), self.keys.clone());
         let destination_key = lark_ledger::native_destination(&destination.reply);
@@ -108,7 +138,14 @@ impl Sender {
             }
         };
         let result = self
-            .native_lark_patch_locked(ctx, reference, message, cards, &destination)
+            .native_lark_patch_locked(
+                ctx,
+                reference,
+                &retained,
+                cards,
+                &destination,
+                replacement_images,
+            )
             .await;
         if store.finish(claim, &result).await.is_err() {
             return refused(rendering, unknown());
@@ -118,6 +155,7 @@ impl Sender {
         }
         result
     }
+    #[allow(clippy::too_many_arguments)]
     async fn native_lark_patch_locked(
         &self,
         ctx: &SendContext<'_>,
@@ -125,11 +163,12 @@ impl Sender {
         message: &OutboundMessage,
         cards: &interactions::InteractionStore,
         destination: &crate::native_lark::receipts::Receipt,
+        replacement_images: Option<Vec<interactions::native_lark::Image>>,
     ) -> IntentReceipt {
         // Superseding the old revision precedes every external write, including an
         // ambiguous PATCH. No failure path restores old clickable authority.
         let mut prepared = match cards
-            .replace_native_lark(ctx.channel, reference, message)
+            .replace_native_lark_images(ctx.channel, reference, message, replacement_images)
             .await
         {
             Ok(p) => p,

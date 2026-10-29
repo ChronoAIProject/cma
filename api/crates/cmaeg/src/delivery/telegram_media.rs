@@ -18,6 +18,7 @@ use tokio::time::{timeout_at, Instant};
 enum NativePart<'a> {
     Text(&'a str),
     Media(crate::telegram::MediaUpload),
+    Album(crate::telegram::AlbumUpload),
 }
 
 impl Sender {
@@ -88,6 +89,20 @@ impl Sender {
         let mut expected_file = None;
         let prepared = async {
             let files = outbound::prepare(&message.native_attachments).await.ok()?;
+            let kinds: Vec<_> = message
+                .native_attachments
+                .iter()
+                .map(|item| item.kind)
+                .collect();
+            if self.relay.native_telegram_albums && crate::telegram::album_supported(&kinds) {
+                let album = self
+                    .relay
+                    .telegram
+                    .prepare_album(chat_id, thread_id.as_deref(), kinds, files)
+                    .await
+                    .ok()?;
+                return Some(vec![NativePart::Album(album)]);
+            }
             let mut uploads = Vec::with_capacity(files.len());
             for (item, file) in message.native_attachments.iter().zip(files) {
                 if seed.is_some() {
@@ -97,13 +112,13 @@ impl Sender {
                         file.bytes.len() as u64,
                     ));
                 }
-                uploads.push(
+                uploads.push(NativePart::Media(
                     self.relay
                         .telegram
                         .prepare_media(chat_id, thread_id.as_deref(), item.kind, file)
                         .await
                         .ok()?,
-                );
+                ));
             }
             Some(uploads)
         };
@@ -122,12 +137,12 @@ impl Sender {
             }
         };
         let total = parts.len() + uploads.len();
-        // Text remains text; attachment captions remain per attachment. Each native
-        // method is a separately authorized effect, with no automatic replay.
+        // Text remains text and captions remain per attachment. An eligible opted-in
+        // album is one separately authorized write; no native method is replayed.
         let operations = parts
             .iter()
             .map(|part| NativePart::Text(part.text.as_str()))
-            .chain(uploads.into_iter().map(NativePart::Media));
+            .chain(uploads);
         let mut confirmed = 0;
         let mut first = None;
         for operation in operations {
@@ -168,6 +183,12 @@ impl Sender {
                                 thread_id.as_deref(),
                                 text,
                             )
+                            .await
+                    }
+                    NativePart::Album(album) => {
+                        self.relay
+                            .telegram
+                            .send_album(credential, bot_id, album)
                             .await
                     }
                     NativePart::Media(upload) => {

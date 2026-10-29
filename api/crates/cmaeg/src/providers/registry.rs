@@ -28,6 +28,8 @@ pub struct ProviderPaths {
     pub responses: String,
     /// Explicit opt-in to CMA Responses v2 snapshot/replay semantics.
     pub recovery: Option<RecoveryPaths>,
+    /// Explicit opt-in to management-authenticated generation preparation.
+    pub preparation: Option<PreparationPaths>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -35,6 +37,13 @@ pub struct ProviderPaths {
 pub struct RecoveryPaths {
     pub response: String,
     pub events: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparationPaths {
+    pub inspection: String,
+    pub reservation: String,
 }
 
 /// An operator-approved provider and its bounded concurrency.
@@ -56,6 +65,8 @@ pub enum ProviderPath {
     Responses,
     RecoveryResponse,
     RecoveryEvents,
+    PreparationInspection,
+    PreparationReservation,
 }
 
 impl ProviderPath {
@@ -67,6 +78,8 @@ impl ProviderPath {
             Self::Responses => "responses",
             Self::RecoveryResponse => "recovery_response",
             Self::RecoveryEvents => "recovery_events",
+            Self::PreparationInspection => "preparation_inspection",
+            Self::PreparationReservation => "preparation_reservation",
         }
     }
 }
@@ -103,6 +116,16 @@ impl ProviderEntry {
                     &recovery.response
                 } else {
                     &recovery.events
+                }
+            }
+            "preparation_inspection" | "preparation_reservation" => {
+                let preparation = self.paths.preparation.as_ref().ok_or_else(|| {
+                    ProviderUrlError("provider binding preparation is not configured".into())
+                })?;
+                if path_key == "preparation_inspection" {
+                    &preparation.inspection
+                } else {
+                    &preparation.reservation
                 }
             }
             other => return Err(ProviderUrlError(format!("unknown provider path {other:?}"))),
@@ -247,6 +270,8 @@ struct RawProviderPaths {
     responses: String,
     #[serde(default)]
     recovery: Option<RecoveryPaths>,
+    #[serde(default)]
+    preparation: Option<PreparationPaths>,
 }
 
 impl TryFrom<RawProviderPaths> for ProviderPaths {
@@ -269,12 +294,33 @@ impl TryFrom<RawProviderPaths> for ProviderPaths {
             )?;
             validate_path("recovery.events", &recovery.events, &[REQUIRED_RESPONSE])?;
         }
+        if let Some(preparation) = &value.preparation {
+            validate_path(
+                "preparation.inspection",
+                &preparation.inspection,
+                &[REQUIRED_BINDING],
+            )?;
+            validate_path(
+                "preparation.reservation",
+                &preparation.reservation,
+                &[REQUIRED_BINDING],
+            )?;
+            // These operations carry management authority and have one exact
+            // CMA path. Generic providers cannot opt in a sibling endpoint.
+            if preparation.inspection
+                != "/api/v1/cmaeg/bindings/{binding_id}/preparation-inspections"
+                || preparation.reservation != "/api/v1/cmaeg/bindings/{binding_id}/preparations"
+            {
+                return Err("binding preparation requires the exact CMA management paths".into());
+            }
+        }
         Ok(Self {
             agent_card: value.agent_card,
             binding: value.binding,
             conversation: value.conversation,
             responses: value.responses,
             recovery: value.recovery,
+            preparation: value.preparation,
         })
     }
 }
@@ -403,7 +449,7 @@ fn is_non_public_ip(ip: &IpAddr) -> bool {
 
 fn required_parameters(path_key: &str) -> &'static [&'static str] {
     match path_key {
-        "binding" => &["binding_id"],
+        "binding" | "preparation_inspection" | "preparation_reservation" => &["binding_id"],
         "conversation" => &["binding_id", "conversation_id"],
         "recovery_response" | "recovery_events" => &["response_id"],
         _ => &[],
