@@ -245,6 +245,7 @@ impl TurnRunner {
         };
         let retry_deadline = Instant::now() + self.config.busy_retry_max;
         let mut ensured = false;
+        let mut ensure_pending = false;
         let mut change = crate::activity::Change::state(
             consumer.id.as_str(),
             crate::activity::ConsumerState::Dispatching,
@@ -261,21 +262,43 @@ impl TurnRunner {
             )
             .await;
         loop {
-            match self
-                .providers
-                .start_turn_immediate(&consumer.provider.slug, request.clone())
-                .await
-            {
+            let result = if ensure_pending {
+                match self
+                    .providers
+                    .ensure_conversation(
+                        &consumer.provider.slug,
+                        &consumer.provider.binding_id,
+                        &turn.conversation_id,
+                        credential,
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        ensure_pending = false;
+                        continue;
+                    }
+                    // Binding creation acknowledges its durable reservation
+                    // before its sandbox is ready. This exact CMA refusal
+                    // precedes conversation admission; keep the original event
+                    // pending rather than losing its first message. Unknown
+                    // outcomes and other conflicts must never enter this retry.
+                    Err(ProviderError::Rejected { status: 409, code })
+                        if consumer.provider.slug.as_str() == "cma_codex"
+                            && code == "binding_not_ready" =>
+                    {
+                        Err(ProviderError::Busy { retry_after: None })
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else {
+                self.providers
+                    .start_turn_immediate(&consumer.provider.slug, request.clone())
+                    .await
+            };
+            match result {
                 Err(ProviderError::ConversationMissing) if !ensured => {
                     ensured = true;
-                    self.providers
-                        .ensure_conversation(
-                            &consumer.provider.slug,
-                            &consumer.provider.binding_id,
-                            &turn.conversation_id,
-                            credential,
-                        )
-                        .await?;
+                    ensure_pending = true;
                 }
                 Err(ProviderError::Busy { retry_after }) => {
                     let remaining = retry_deadline.saturating_duration_since(Instant::now());
