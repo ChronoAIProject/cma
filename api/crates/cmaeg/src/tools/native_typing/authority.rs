@@ -154,12 +154,12 @@ pub(super) async fn load(
     let consumer = current
         .consumer(event.consumer.as_ref())
         .ok_or_else(denied)?;
-    let provider_credential = consumer.credential.ok_or_else(denied)?;
+    let consumer_credential = consumer.credential.ok_or_else(denied)?;
     let custody = hash_secret(&cmaeg_core::profile::canonical_json(serde_json::json!({
         "domain":"cmaeg.native-typing.v1", "channel": current.id, "record": event.record_id,
         "owner": current.definition.owner, "source": source, "event": event,
         "consumer": event.consumer, "provider": consumer.provider,
-        "agent_key": consumer.agent_key_hash, "credential": hash_secret(provider_credential.as_str()),
+        "agent_key": consumer.agent_key_hash, "credential": hash_secret(consumer_credential.as_str()),
         "native_credentials": credential,
     })));
     Ok(Authorized {
