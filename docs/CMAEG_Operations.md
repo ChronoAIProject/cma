@@ -327,6 +327,23 @@ combined with RUST_LOG enforces this, so even
 with every media flag off. The latency harness has a separate test-only delay setting
 documented below; it is not a deployment key.
 
+## Updating profile-managed channels
+
+An existing CMA profile-managed binding keeps its service scope, skills, prompt,
+model, environment and conversation affinity pinned to preserve its sandbox and
+conversation history. A channel `PUT` that changes those settings returns HTTP
+409 with a structured `provider_rejected` problem explaining the unsupported
+reconfiguration. The channel record, provider binding, credentials and retained
+work remain unchanged. This applies to private custom connections and catalog
+services alike; adding a connection to the bootstrap key's NyxID allowlist does
+not make the binding profile mutable, and retrying with the same key cannot
+resolve this conflict. Keep the current profile when saving other channel
+settings. Rotate credentials separately with that unchanged profile.
+
+The Gateway recognizes the Manager's exact
+`409 binding_reconfiguration_unsupported` response. Unrecognized provider errors
+remain generic and never expose upstream response details or credentials.
+
 ## Provider response recovery transport
 
 Recovery is an explicit per-provider opt-in. Existing provider definitions omit

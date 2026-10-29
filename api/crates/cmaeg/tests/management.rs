@@ -201,6 +201,9 @@ mod creation;
 #[path = "management/reconciliation.rs"]
 mod reconciliation;
 
+#[path = "management/reconfiguration.rs"]
+mod reconfiguration;
+
 #[path = "management/targets.rs"]
 mod targets;
 
