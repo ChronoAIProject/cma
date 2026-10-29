@@ -7,6 +7,7 @@ use crate::{
     auth::AgentCaller,
     delivery::{custom::CustomDelivery, engine::DeliveryEngine, relay_client::RelayClient},
     http::readiness::Readiness,
+    ingress::routing_store::test_server::Server,
     interactions::InteractionStore,
     native_lark::{
         self, message,
@@ -93,6 +94,11 @@ async fn received_sticker_default_named_confirmed_unknown_replays_never_send_twi
             };
             let provider = super::adapter_test_server::HttpServer::start().await;
             let keys = Arc::new(fixture::keys());
+            // Native delivery receipts use wall time; the routed journal keeps
+            // its deterministic admission clock. Match the receipt store's TTL
+            // clock to the real sender, as in the native media delivery tests.
+            let receipt_records = Server::start_realtime().await;
+            let receipts = Arc::new(Store::new(receipt_records.records.clone(), keys.clone()));
             let relay = RelayClient::new("https://nyx.example", Duration::from_secs(5))
                 .unwrap()
                 .with_native_lark_sticker_replies(true)
@@ -100,7 +106,7 @@ async fn received_sticker_default_named_confirmed_unknown_replays_never_send_twi
                     native_lark::Client::production()
                         .unwrap()
                         .with_transport(transport),
-                    Arc::new(Store::new(s.server.records.clone(), keys.clone())),
+                    receipts.clone(),
                 )
                 .with_interactions(Arc::new(InteractionStore::new(
                     s.server.records.clone(),
@@ -136,8 +142,27 @@ async fn received_sticker_default_named_confirmed_unknown_replays_never_send_twi
             }
             assert_eq!(
                 first.delivery.kind(),
-                if unknown { "unknown" } else { "confirmed" }
+                if unknown { "unknown" } else { "confirmed" },
+                "{named} {outcome}: {:?}",
+                first.delivery
             );
+            let stored = receipts
+                .load(
+                    &event.channel_id,
+                    &s.plan.activity.source,
+                    "om_sticker_sent",
+                    time::OffsetDateTime::now_utc().unix_timestamp(),
+                )
+                .await
+                .unwrap();
+            if unknown {
+                assert!(stored.is_none());
+            } else {
+                let stored = stored.expect("confirmed native sticker receipt");
+                assert_eq!(stored.original, s.plan.identity);
+                assert_eq!(stored.consumer, s.target().launch.consumer);
+                assert_eq!(stored.provider, s.target().launch.provider);
+            }
             s.journal().release(&mut lease).await.unwrap();
             let _resumed = accepted(&s).await;
             let replay = delivery
