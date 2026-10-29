@@ -10,6 +10,9 @@ impl BindingStore for InMemorySandboxStore {
     async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
         Ok(self.lock().binding_key_history.contains(hash))
     }
+    async fn classify_worker_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
+        self.contains_key_hash(hash).await
+    }
     async fn find_by_key_hash(
         &self,
         hash: &str,
@@ -125,6 +128,9 @@ impl BindingStore for InMemorySandboxStore {
         }) {
             return Err(SandboxStoreError::Conflict);
         }
+        state
+            .binding_association_index
+            .insert((next.owner.clone(), next.agent_id.clone(), key.clone()), ());
         state.binding_conversations.insert(key, next);
         Ok(())
     }

@@ -368,10 +368,6 @@ impl ControlPlaneComposition {
             &bindings,
             config.gateway.as_ref(),
         )?;
-        let provenance = layer2_core::sandbox::AgentProvenanceService::new(
-            stores.sandbox_model.clone(),
-            resource_access.clone(),
-        );
         let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
             stores.event_workers.clone(),
             layer2_core::bots::PublishedBotProfiles::new(
@@ -395,19 +391,7 @@ impl ControlPlaneComposition {
             .merge(layer1_public::rest::sandbox_commands_router(
                 sandbox_control_service,
             ))
-            .merge(layer1_public::rest::agent_provenance_inventory_router(
-                layer2_core::sandbox::AgentProvenanceInventoryService::new(
-                    stores.sandbox_model.clone(),
-                    resource_access.clone(),
-                ),
-            ))
-            .merge(layer1_public::rest::agent_channel_usage_router(
-                layer2_core::sandbox::channel_usage::AgentChannelUsageService::new(
-                    stores.sandbox_model.clone(),
-                    resource_access.clone(),
-                ),
-            ))
-            .merge(layer1_public::rest::agent_provenance_router(provenance))
+            .merge(routes::agent_metadata(&stores, resource_access.clone()))
             .merge(layer1_public::rest::resource_access_router(resource_access))
             .merge(rest::profile_authoring_router(profile_authoring))
             .merge(rest::hierarchy_router(hierarchy))
