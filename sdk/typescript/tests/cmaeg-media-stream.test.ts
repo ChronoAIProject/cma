@@ -68,6 +68,29 @@ async function collect(client: Cmaeg, mediaResponses?: boolean) {
 }
 
 describe('explicit attachment response streaming', () => {
+  it.each(['completed', 'failed', 'incomplete', 'cancelled'] as const)(
+    'retains Gateway-persisted status %s for the last supported attachment slot',
+    async (status) => {
+      // media_response_store preserves these four statuses; MediaArtifactClaim permits indices <32.
+      const response = {
+        ...media,
+        attachment_index: 31,
+        status,
+        text: status === 'completed' ? media.text : '',
+      };
+      const final =
+        status === 'completed'
+          ? terminal
+          : { ...terminal, status: 'incomplete', media_complete: false };
+      const { client, fetch } = setup(
+        frame('cmaeg.response.completed', original) +
+          frame('cmaeg.media.response', response) +
+          frame(status === 'completed' ? 'cmaeg.completed' : 'cmaeg.failed', final),
+      );
+      expect((await collect(client, true))[1]?.data).toEqual(response);
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
   it('keeps legacy stream return types and negotiates the documented optional boolean query', () => {
     const { client, fetch } = setup('');
     expectTypeOf(client.streamEvent('channel', event)).toEqualTypeOf<
@@ -171,7 +194,7 @@ describe('explicit attachment response streaming', () => {
   it.each([
     frame('cmaeg.media.response', { ...media, event_id: 'another' }),
     frame('cmaeg.media.response', { ...media, conversation_id: 'another' }),
-    frame('cmaeg.media.response', { ...media, attachment_index: 16 }),
+    frame('cmaeg.media.response', { ...media, attachment_index: 32 }),
     frame('cmaeg.media.response', { ...media, status: 'queued' }),
     frame('cmaeg.media.response', { ...media, kind: 'caption' }),
     frame('cmaeg.response.completed', { ...original, media_pending: false }),

@@ -329,9 +329,12 @@ unchanged. The new stream's `GatewayMediaEvent::ResponseCompleted` /
 `ResponseFailed` describes the original response and does not close observation;
 `MediaResponse` contains each separate supplementary response. Final `Completed`
 or `Failed` retains original turn text/error plus `status` and `media_complete`.
-`MediaPending` ends bounded observation after 120 seconds; inspect channel Activity
+Attachment slots range from 0 through 31; supplementary status preserves
+`completed`, `failed`, `incomplete` or `cancelled` exactly as recorded by the Gateway.
+`MediaPending` ends bounded observation 120 seconds after original-response
+completion; inspect channel Activity
 or `get_event_media_responses`, without resubmitting the admitted event. Configure
-a request timeout exceeding 120 seconds to observe the server deadline. Response
+a request timeout covering the original turn plus the 120-second supplementary wait. Response
 URLs require their existing independent authority and are never followed automatically.
 
 

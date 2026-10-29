@@ -20,7 +20,7 @@ const response = object({
   delivery_id: text,
   attachment_index: integer,
   kind: MediaContinuationKindSchema,
-  status: enumeration('completed', 'failed', 'incomplete'),
+  status: enumeration('completed', 'failed', 'incomplete', 'cancelled'),
   text,
 });
 const pending = object({
@@ -41,7 +41,7 @@ export function mediaFrame(name: string, raw: unknown): GatewayMediaControlEvent
   if (name === 'cmaeg.media.pending') return { event: name, data: pending(raw) };
   if (name === 'cmaeg.media.response') {
     const data = response(raw);
-    if (data.attachment_index >= 16) throw new ProtocolError('invalid media attachment slot');
+    if (data.attachment_index >= 32) throw new ProtocolError('invalid media attachment slot');
     return { event: name, data };
   }
   if (name === 'cmaeg.response.completed' || name === 'cmaeg.response.failed') {
