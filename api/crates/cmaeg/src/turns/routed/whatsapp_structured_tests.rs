@@ -158,15 +158,11 @@ async fn private_structured_replies_replay_after_gate_off_restart_and_keep_recei
                     .await
                     .unwrap()
                     .unwrap();
+                // Explicit keys replay the complete retained receipt, including
+                // the original uncertain outcome, without another platform call.
                 assert_eq!(
-                    replay.delivery,
-                    if uncertain {
-                        DeliveryOutcome::Unknown {
-                            reason: "routed_reply_uncertain".into(),
-                        }
-                    } else {
-                        first.delivery.clone()
-                    }
+                    super::storage::bytes(&replay).unwrap(),
+                    super::storage::bytes(&first).unwrap()
                 );
                 assert_eq!(graph.calls.lock().unwrap().len(), 1);
                 let changed = serde_json::from_value(
