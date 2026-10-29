@@ -199,6 +199,9 @@ pub struct RelayAuthoringCapabilities {
     /// Whether native Discord incoming reaction events are enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_reactions_enabled: Option<bool>,
+    /// Bounded incoming Discord sticker, embed and poll descriptions are enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_rich_content_enabled: Option<bool>,
     /// New direct Discord source and token writes are available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_writes_enabled: Option<bool>,

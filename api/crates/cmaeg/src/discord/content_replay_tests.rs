@@ -230,7 +230,7 @@ async fn rich_metadata_updates_do_not_start_turns_and_edits_keep_original_consum
     f.sweep(f.now()).await;
     assert_eq!(
         f.plans.recover_all_page(None, 32).await.unwrap().plans,
-        [original.clone()]
+        std::slice::from_ref(&original)
     );
     let edit = super::message_event_tests::edit(&f);
     super::message_event_tests::persist(&f, &edit).await;
