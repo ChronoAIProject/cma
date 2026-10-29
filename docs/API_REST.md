@@ -28,8 +28,11 @@ is required. A `202` receipt contains an **operation** ID; read
 operation. Workspace/runtime readiness is reported only after Agent preparation.
 
 For a new Sandbox, `machine_included: true` selects the deployment's immutable
-Linux desktop image. Omission defaults to false. This option cannot be combined
-with `image`, `sandbox_id`, or `workspace_id`; existing environments retain their
+Linux desktop image. The Machine contains an XFCE desktop with an applications
+menu, taskbar, desktop icons, Thunar file manager, terminal and Chromium launcher.
+Closing Chromium leaves the desktop and launchers available. Desktop preferences,
+files and the Chromium profile live in the retained home. Omission defaults to
+false. This option cannot be combined with `image`, `sandbox_id`, or `workspace_id`; existing environments retain their
 original desktop capability. A deployment without a configured desktop image
 refuses the request before provisioning. The returned Agent detail has `desktop`
 set when its retained Sandbox supports desktop access and the Agent is not isolated.
