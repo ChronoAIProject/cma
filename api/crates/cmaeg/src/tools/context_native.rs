@@ -21,3 +21,45 @@ impl Capabilities {
         }
     }
 }
+
+impl super::ToolsState {
+    pub(crate) async fn received_sticker_capability(
+        &self,
+        caller: crate::auth::AgentCaller,
+        channel: &crate::channels::resolver::ResolvedChannel,
+        event: &cmaeg_core::seal::EventRefPayload,
+        verified: bool,
+    ) -> Option<bool> {
+        if !verified
+            || !self.native_lark_sticker_replies_enabled
+            || !matches!(event.reply, cmaeg_core::seal::ReplyAddress::NativeLark(_))
+        {
+            return None;
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let current = self
+                .resolver
+                .resolve_current(channel.id.as_str())
+                .await
+                .ok()?;
+            let selected = event
+                .consumer
+                .clone()
+                .unwrap_or_else(cmaeg_core::ids::ConsumerId::default_consumer);
+            if caller.consumer(&current).ok()? != selected {
+                return None;
+            }
+            crate::native_lark::stickers::load(
+                self.resolver.record_client(),
+                self.keys.clone(),
+                &current,
+                event,
+            )
+            .await
+            .map(|_| true)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+}
