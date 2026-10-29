@@ -50,6 +50,33 @@ describe('native media/control discovery', () => {
     };
     expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
   });
+  it('preserves a four-image Lark control limit without replacement authority', () => {
+    const value = {
+      ...legacy,
+      controls: {
+        kinds: ['image'],
+        max_attachments: 4,
+        buttons: true,
+        choices: true,
+        caption_max_chars: 0,
+        update: true,
+      },
+    };
+    expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
+  });
+  it('preserves album kind groups and explicit operation refusal', () => {
+    const value = {
+      ...legacy,
+      albums: {
+        min_attachments: 2,
+        max_attachments: 4,
+        kind_groups: [['image', 'video'], ['file'], ['audio']],
+        controls: false,
+        message_operations: false,
+      },
+    };
+    expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
+  });
   it('keeps legacy capability bytes without inventing combined delivery', () => {
     expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);
   });

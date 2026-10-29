@@ -295,6 +295,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         NativeMediaKind,
         NativeMediaSource,
         NativeMediaCapabilities,
+        NativeAlbumCapabilities,
         MediaControlsCapabilities,
         NativeMediaUpdate,
         NativeMediaReplacement,
@@ -670,5 +671,30 @@ fn native_media_control_capabilities_round_trip_without_changing_legacy_shape() 
         "controls":{"max_attachments":1,"buttons":true,"choices":true,"caption_max_chars":1024,"update":false}});
     let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
     assert!(!decoded.controls.as_ref().unwrap().update);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
+fn lark_multi_image_controls_preserve_bound_without_inventing_replacement_authority() {
+    let value = json!({"kinds":["image"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "controls":{"kinds":["image"],"max_attachments":4,"buttons":true,"choices":true,"caption_max_chars":0,"update":true}});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(decoded.controls.as_ref().unwrap().max_attachments, 4);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
+fn native_album_capabilities_preserve_exact_groups_without_operation_authority() {
+    let value = serde_json::json!({
+        "kinds":["image","file","audio","video"], "sources":["base64"],
+        "max_attachments":4, "max_inline_bytes":65536,
+        "albums":{"min_attachments":2,"max_attachments":4,
+            "kind_groups":[["image","video"],["file"],["audio"]],
+            "controls":false,"message_operations":false}
+    });
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    let albums = decoded.albums.as_ref().unwrap();
+    assert!(!albums.controls && !albums.message_operations);
+    assert_eq!(albums.kind_groups[0], ["image", "video"]);
     assert_eq!(serde_json::to_value(decoded).unwrap(), value);
 }
