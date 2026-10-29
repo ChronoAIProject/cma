@@ -144,3 +144,74 @@ async fn telegram_album_discovery_is_gated_and_matches_original_native_destinati
     .albums
     .is_none());
 }
+
+#[tokio::test]
+async fn native_presentation_capabilities_are_opt_in_exact_destination_and_exclude_controls() {
+    let tools_fixture = FixtureState::new().await;
+    let mut state = state(&tools_fixture, false);
+    let request = fixture::request(
+        |value| {
+            fixture::targets(value);
+            value["sources"] =
+                json!([{"type":"telegram","bot_id":"77","admission":{"type":"all"}}]);
+        },
+        fixture::message("Original human event"),
+    );
+    let mut event = request
+        .event_ref
+        .open(&fixture::keys(), fixture::NOW)
+        .unwrap()
+        .payload;
+    state.native_telegram_media_controls_enabled = true;
+    for enabled in [false, true] {
+        state.native_media_presentations_enabled = enabled;
+        for verified in [false, true] {
+            let caps = NativeMediaCapabilities::for_event(
+                &state,
+                &request.channel,
+                &event,
+                &request.activity,
+                verified,
+            )
+            .unwrap();
+            assert_eq!(caps.presentation_profiles.is_some(), enabled && verified);
+            assert_eq!(
+                caps.kinds.iter().any(|kind| kind == "voice"),
+                enabled && verified
+            );
+            if enabled && verified {
+                assert_eq!(caps.presentation_profiles.as_ref().unwrap().len(), 3);
+                assert!(caps
+                    .presentation_profiles
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .all(|profile| !profile.message_operations));
+                if let Some(controls) = caps.controls {
+                    assert_eq!(
+                        controls.kinds.unwrap(),
+                        vec!["image", "file", "audio", "video"]
+                    );
+                }
+            } else {
+                assert!(serde_json::to_value(caps)
+                    .unwrap()
+                    .get("presentation_profiles")
+                    .is_none());
+            }
+        }
+    }
+    if let cmaeg_core::seal::ReplyAddress::Telegram { chat_id, .. } = &mut event.reply {
+        *chat_id = "999".into();
+    }
+    assert!(NativeMediaCapabilities::for_event(
+        &state,
+        &request.channel,
+        &event,
+        &request.activity,
+        true
+    )
+    .unwrap()
+    .presentation_profiles
+    .is_none());
+}

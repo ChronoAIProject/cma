@@ -49,9 +49,12 @@ impl RelayClient {
             return Err(rejected("native_media_unsupported"));
         };
         if !supported(*platform)
-            || attachments
-                .iter()
-                .any(|item| item.kind == NativeMediaKind::Sticker)
+            || attachments.iter().any(|item| {
+                matches!(
+                    item.kind,
+                    NativeMediaKind::Sticker | NativeMediaKind::Voice | NativeMediaKind::Animation
+                )
+            })
         {
             return Err(rejected("native_media_unsupported"));
         }

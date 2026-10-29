@@ -24,6 +24,9 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if crate::discord::voice::requested(message) {
+            return self.discord_voice_reply(ctx, event, message).await;
+        }
         if self.relay.discord_media_controls_enabled()
             && !message.native_attachments.is_empty()
             && message
