@@ -358,3 +358,31 @@ async fn recovery_chain_retains_all_failures_and_old_replay_never_allocates_agai
     assert!(corrupt.validate_worktree_recoveries().is_err());
     assert_eq!(store.lock().worktrees.len(), 3);
 }
+
+#[tokio::test]
+async fn ordinary_agent_save_cannot_rebind_or_modify_recovery_archive() {
+    use crate::sandbox::store::AgentStore;
+    let (store, original) = failed_store(2).await;
+    let recovered = recover(&store, &original, "first").await.unwrap();
+    for case in 0..3 {
+        let mut changed = recovered.clone();
+        changed.revision += 1;
+        match case {
+            0 => changed.worktree_id = original.worktree_id.clone(),
+            1 => changed.work.worktree_recoveries.clear(),
+            2 => changed.work.worktree_recoveries[0].original_failure.detail = "rewritten".into(),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            store
+                .save_agent(recovered.revision, changed)
+                .await
+                .unwrap_err(),
+            SandboxStoreError::Conflict
+        );
+    }
+    assert_eq!(
+        store.get_agent(&recovered.id).await.unwrap().unwrap(),
+        recovered
+    );
+}
