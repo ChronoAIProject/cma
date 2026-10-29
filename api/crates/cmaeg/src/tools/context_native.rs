@@ -23,6 +23,44 @@ impl Capabilities {
 }
 
 impl super::ToolsState {
+    pub(crate) async fn structured_reply_capability(
+        &self,
+        caller: crate::auth::AgentCaller,
+        channel: &crate::channels::resolver::ResolvedChannel,
+        event: &cmaeg_core::seal::EventRefPayload,
+    ) -> Option<Vec<String>> {
+        if !self.native_telegram_structured_replies_enabled
+            || !matches!(event.reply, cmaeg_core::seal::ReplyAddress::Telegram { .. })
+        {
+            return None;
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let current = self
+                .resolver
+                .resolve_current(channel.id.as_str())
+                .await
+                .ok()?;
+            let selected = event
+                .consumer
+                .clone()
+                .unwrap_or_else(cmaeg_core::ids::ConsumerId::default_consumer);
+            if caller.consumer(&current).ok()? != selected {
+                return None;
+            }
+            crate::telegram::structured::authorized(
+                self.resolver.record_client(),
+                self.keys.clone(),
+                &current,
+                event,
+            )
+            .await
+            .then(|| ["contact", "location", "venue"].map(String::from).into())
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     pub(crate) async fn received_sticker_capability(
         &self,
         caller: crate::auth::AgentCaller,
