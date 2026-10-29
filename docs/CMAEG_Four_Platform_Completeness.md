@@ -542,3 +542,13 @@ image cards also require compatible retained-card readers. Connected native
 acceptance remains outstanding. See [image cards](CMAEG_Native_Lark_Image_Controls.md),
 [document profiles](CMAEG_Native_Lark_Outbound_Media.md) and
 [thread starts](CMAEG_Native_Lark_Thread_Start.md).
+
+## Explicit native presentation profiles
+
+The default-off [native presentation gate](CMAEG_Native_Media_Presentations.md)
+adds Telegram mono Opus Ogg voice, GIF/silent bounded H.264 MP4 animation and
+static 512×512 WebP stickers, plus native WhatsApp private mono Opus Ogg voice.
+Generic audio/video semantics and existing WhatsApp stickers are unchanged.
+No new operation references, controls or album combinations are issued.
+Discord native voice and Telegram animated sticker formats remain separate
+implementation gaps; local contract tests do not establish provider acceptance.

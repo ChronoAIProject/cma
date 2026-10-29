@@ -39,6 +39,7 @@ mod source_discovery;
 mod source_worker;
 pub(crate) mod thread_authority;
 mod thread_context;
+pub(crate) mod voice;
 pub use inbox_reader::{InboxLaunch, InboxReader, VerifiedInboxLaunch};
 pub(crate) mod outbound_media;
 pub(crate) mod rest;
