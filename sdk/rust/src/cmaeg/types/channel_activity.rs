@@ -121,6 +121,9 @@ pub struct ActivityConsumer {
     pub response_id: Option<String>,
     /// Actual transport outcomes, independent of processing state.
     pub deliveries: Vec<ActivityDelivery>,
+    /// Separate appended response metadata; response URLs retain Manager authorization.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media_responses: Vec<ActivityMediaResponse>,
 }
 
 /// One observed transport outcome.
@@ -154,4 +157,55 @@ pub struct ActivityRecipient {
     /// Native thread identity when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
+}
+
+/// Separate appended response observation; no response content or attachment path.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ActivityMediaResponse {
+    /// Original attachment slot.
+    pub attachment_index: u8,
+    /// Original, transcript or text excerpt.
+    pub kind: String,
+    /// Separate response identity.
+    pub response_id: String,
+    /// Response resource requiring independent Manager authorization.
+    pub response_url: String,
+    /// Provider response status.
+    pub status: String,
+    /// Actual delivery observation.
+    pub delivery: String,
+    /// Observation timestamp.
+    pub observed_at: String,
+}
+/// Retained metadata remains readable after the original event capability expires.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RetainedMediaResponse {
+    /// Bound consumer identity.
+    pub consumer_id: String,
+    /// Original attachment slot.
+    pub attachment_index: u8,
+    /// Original, transcript or text excerpt.
+    pub kind: String,
+    /// Separate response identity, when admission is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_id: Option<String>,
+    /// Independently authorized Manager response resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_url: Option<String>,
+    /// Provider response status.
+    pub status: String,
+    /// Actual delivery observation.
+    pub delivery: String,
+    /// Stable refusal when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
+}
+/// At most sixteen attachment slots per page; never conversation content.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MediaResponsePage {
+    /// Metadata for each retained response in this page.
+    pub items: Vec<RetainedMediaResponse>,
+    /// Next attachment-slot offset; absent or null finishes pagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<usize>,
 }

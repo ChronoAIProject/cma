@@ -80,6 +80,7 @@ async fn claim(store: &InMemorySandboxStore, agent: &Agent, actor: &str) -> Admi
         .reserve_command(CommandReservation {
             binding: None,
             envelope: AgentCommandEnvelope {
+                continuation: None,
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: AgentCommandId::generate(),
                 agent_id: agent.id.clone(),

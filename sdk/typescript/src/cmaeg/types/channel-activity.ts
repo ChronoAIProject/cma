@@ -48,6 +48,34 @@ export const ActivityDeliverySchema = object({
 });
 export type ActivityDelivery = Output<typeof ActivityDeliverySchema>;
 
+/** Separate appended response metadata; URLs require independent Manager authority. */
+export const ActivityMediaResponseSchema = object({
+  attachment_index: integer,
+  kind: text,
+  response_id: text,
+  response_url: text,
+  status: text,
+  delivery: text,
+  observed_at: text,
+});
+export type ActivityMediaResponse = Output<typeof ActivityMediaResponseSchema>;
+export const RetainedMediaResponseSchema = object({
+  consumer_id: text,
+  attachment_index: integer,
+  kind: text,
+  response_id: optional(nullable(text)),
+  response_url: optional(nullable(text)),
+  status: text,
+  delivery: text,
+  refusal: optional(nullable(text)),
+});
+export type RetainedMediaResponse = Output<typeof RetainedMediaResponseSchema>;
+export const MediaResponsePageSchema = object({
+  items: array(RetainedMediaResponseSchema),
+  next_cursor: optional(nullable(integer)),
+});
+export type MediaResponsePage = Output<typeof MediaResponsePageSchema>;
+
 export const ActivityConsumerSchema = object({
   consumer_id: text,
   display_name: optional(nullable(text)),
@@ -61,6 +89,7 @@ export const ActivityConsumerSchema = object({
   completed_at: optional(nullable(text)),
   response_id: optional(nullable(text)),
   deliveries: array(ActivityDeliverySchema),
+  media_responses: optional(array(ActivityMediaResponseSchema)),
 });
 export type ActivityConsumer = Output<typeof ActivityConsumerSchema>;
 

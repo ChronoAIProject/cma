@@ -35,6 +35,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         .reserve_command(CommandReservation {
             binding: None,
             envelope: AgentCommandEnvelope {
+                continuation: None,
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: AgentCommandId("cmd_contract".into()),
                 agent_id: agent.id.clone(),

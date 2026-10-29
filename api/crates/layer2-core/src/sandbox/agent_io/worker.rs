@@ -116,6 +116,10 @@ impl AgentCommandWorker {
                 .await
                 .map(|_| Duration::ZERO);
         }
+        let delay = candidate.continuation_retry_delay(&now_rfc3339());
+        if !delay.is_zero() && !candidate.queue_expired(&now_rfc3339()) {
+            return Ok(delay);
+        }
         if !candidate.awaiting_claim(&now_rfc3339()) {
             return Ok(Duration::ZERO);
         }

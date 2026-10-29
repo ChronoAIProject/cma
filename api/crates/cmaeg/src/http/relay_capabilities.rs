@@ -5,6 +5,9 @@ use utoipa::ToSchema;
 
 #[derive(Serialize, ToSchema)]
 pub struct RelayAuthoringCapabilities {
+    /// Registered provider slugs with response replay. Configuration, not connection health.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_recovery_providers: Option<Vec<String>>,
     /// Separate native custom app only; never replaces a NyxID webhook.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_lark_writes_enabled: Option<bool>,
@@ -105,6 +108,7 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
     })
     .collect();
     RelayAuthoringCapabilities {
+        response_recovery_providers: Some(state.providers.response_recovery_providers()),
         native_lark_writes_enabled: Some(
             state.native_lark_writes_enabled
                 && state.native_lark_admission_enabled

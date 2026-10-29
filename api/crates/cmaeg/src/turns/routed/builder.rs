@@ -35,6 +35,7 @@ pub struct ProductionFrozenTurnBuilder {
     media: Option<Arc<MediaService>>,
     prepare: PrepareConfig,
     media_tool_providers: Arc<MediaToolProviders>,
+    media_continuations: bool,
 }
 impl ProductionFrozenTurnBuilder {
     pub fn new(providers: Arc<ProviderClient>, keys: Arc<MasterKeyRing>) -> Self {
@@ -44,6 +45,7 @@ impl ProductionFrozenTurnBuilder {
             media: None,
             prepare: PrepareConfig::default(),
             media_tool_providers: Arc::default(),
+            media_continuations: false,
         }
     }
     pub fn with_media(mut self, media: Option<Arc<MediaService>>, prepare: PrepareConfig) -> Self {
@@ -53,6 +55,11 @@ impl ProductionFrozenTurnBuilder {
     }
     pub fn with_media_tool_providers(mut self, providers: Arc<MediaToolProviders>) -> Self {
         self.media_tool_providers = providers;
+        self
+    }
+    /// Enabled only after both the continuation reader and dedicated index are ready.
+    pub fn with_media_continuations(mut self, enabled: bool) -> Self {
+        self.media_continuations = enabled;
         self
     }
     async fn build(
@@ -142,7 +149,7 @@ impl ProductionFrozenTurnBuilder {
                 audience,
                 Some(&target.launch.event.partition_key),
             );
-            let body = FrozenTurn {
+            let mut body = FrozenTurn {
                 conversation_id: turn.conversation_id,
                 binding_generation: generation,
                 idempotency_key: turn.idempotency_key,
@@ -158,6 +165,18 @@ impl ProductionFrozenTurnBuilder {
                     policy: current.definition.reply.clone(),
                 },
             };
+            if self.media_continuations
+                && target.launch.provider.slug.as_str() == "cma_codex"
+                && !target.launch.provider.target.is_profile()
+                && render_media::attachments(&plan.activity)
+                    .iter()
+                    .any(|item| item.source.is_some())
+            {
+                let schedule =
+                    super::media_schedule::MediaSchedule::capture(&plan.activity, &media.media)?;
+                body.metadata
+                    .insert(super::media_schedule::KEY.into(), schedule.encode()?);
+            }
             body.validate(
                 plan,
                 target,

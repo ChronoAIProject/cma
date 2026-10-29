@@ -582,6 +582,21 @@ stable event/conversation identity, and treats EOF before completion as uncertai
 cancellation nor early iterator return cancels the admitted provider turn. Streams
 have no Last-Event-ID replay and are never automatically retried or reconnected.
 
+Attachment response streaming is explicit: `streamEvent(channelId, event,
+{ mediaResponses: true, timeoutMs: 180_000 })` adds `media_responses=true`. Omitted
+or false preserves the existing URL and original-turn completion behavior.
+Opted-in streams continue through `cmaeg.response.completed` / `.failed` and
+separate `cmaeg.media.response` frames until final `cmaeg.completed` / `.failed`.
+The final frame retains the original text/error, with `status` and `media_complete`;
+attachment responses retain their own response, parent, delivery and slot identities.
+Slots range from 0 through 31; response status preserves `completed`, `failed`,
+`incomplete` or `cancelled` exactly as recorded by the Gateway.
+`cmaeg.media.pending` closes observation after the server's 120-second deadline
+following original-response completion;
+inspect channel Activity or `getEventMediaResponses` instead of resubmitting the
+event. Response URLs are never followed automatically. Select a caller timeout
+covering the expected original turn duration plus the 120-second supplementary wait.
+
 Replies and updates return delivery/rendering receipts; inspect `delivery.outcome`
 and `rendering` before claiming delivery or native UI support. Typing can return
 `unsupported`. Event context contains the full persisted activity. Channel, event

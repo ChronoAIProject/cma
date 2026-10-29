@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 mod preparation;
 pub use preparation::*;
+mod media;
+pub use media::*;
 
 /// Provider target selection. Omission preserves profile provisioning.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
