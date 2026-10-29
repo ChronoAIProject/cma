@@ -2,7 +2,9 @@
 mod component_channel;
 mod component_edit;
 mod component_media_edit;
+mod component_media_set;
 pub(crate) use component_edit::media_card_snapshot;
+pub(crate) use component_media_set::{clear_card_confirmed, media_card_snapshots};
 mod effects;
 #[cfg(test)]
 pub(crate) mod effects_tests;

@@ -28,6 +28,10 @@ mod discord_media_card_edit_tests;
 #[cfg(test)]
 mod discord_media_controls_tests;
 #[cfg(test)]
+mod discord_media_set_fixture;
+#[cfg(test)]
+mod discord_media_set_tests;
+#[cfg(test)]
 mod discord_reaction_tests;
 mod discord_receipts;
 #[cfg(test)]
