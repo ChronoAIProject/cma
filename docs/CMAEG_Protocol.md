@@ -539,6 +539,30 @@ stored only once every replica can read it. An update that omits it removes it
 and is always accepted. A request without the setting keeps exactly the shape,
 and the retained creation fingerprint, it had before the setting existed.
 
+A create request may set the optional boolean `durable_custom_execution` to
+`true` to select durable execution for authenticated Custom events. Absent or
+`false` MUST retain the legacy wire shape and creation fingerprint. The write
+requires `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED`, routed recovery/admission,
+routing authoring, a Custom source and providers configured for response replay.
+Discovery exposes `relay_authoring.custom_durable_execution_enabled` plus
+`response_recovery_providers`; these advertise configuration, not live health.
+The saved definition carries the immutable marker and default-only routing in
+one definition write. The new default consumer explicitly accepts non-human
+events without changing its binding, credential or reply destinations.
+
+A full channel PUT MUST retain the saved marker when it is absent from the
+request. An optional matching marker echo is accepted for existing clients; a
+changed value MUST be refused. Existing records MUST NOT be enrolled merely
+because they have a routing policy. Only the actual authenticated Custom source
+uses this selection; native/relay source selection and legacy replay remain
+unchanged. New existing-Agent attachment contracts require the ready concrete
+media-continuation adapter, writer, index and media service or are refused with
+400 `invalid_request` and detail
+`/sources/custom/attachments: custom_existing_agent_media_unavailable` before
+side effects. Unchanged retained media configuration may survive writer pause.
+See [self-service durable Custom execution](CMAEG_Custom_Durable_Execution.md)
+for reader-first activation, rollback and acceptance.
+
 Profile fields not illustrated above: optional `environment` is provider-specific
 JSON; metadata `description` defaults to empty. Identity `kind` is `human`,
 `service_account`, `agent_key` or `organization`. The owner subject must equal
@@ -636,7 +660,7 @@ or delivery receipt. Original channel, source, recipient, message and consumer
 bindings remain mandatory; failure grants no resend authority. See
 [native WhatsApp status reconciliation](CMAEG_Native_WhatsApp_Status.md).
 
-### Multi-consumer routing (read-only)
+### Multi-consumer routing
 
 A channel can be read with several consumers: agents that each receive the
 events routed to them. `definition.routing` in a channel response describes
@@ -644,10 +668,11 @@ them and how events select them. It is present only on a channel that has a
 routing policy; every other channel response is unchanged and carries no
 `routing` key.
 
-Routing is read-only in this release. No management request can create,
-change or remove it: its management operations arrive in a later release,
-behind the operator flag `CMAEG_MULTI_CONSUMER_ENABLED`. Until then, a `PUT` on
-a routed channel keeps its routing and its consumers' keys exactly as stored.
+A full channel PUT keeps its routing and its consumers' keys exactly as stored.
+Dedicated policy changes use the gated routing endpoint described under
+[Node diagnostics and routing policy](#node-diagnostics-and-routing-policy).
+Owner-authored durable Custom creation initializes the default-only policy with
+its immutable execution marker; it does not migrate existing channel records.
 
 ```json
 {"version":1,"default_consumer":{"name":"lead","label":"Lead"},"consumers":[{"id":"csm_00000000000a","name":"reviewer","profile":{},"profile_digest":"sha256:<digest>","provider":{"slug":"cma_codex","binding_id":"<binding>","level":"l1"},"agent_key_hash":"sha256:<digest>","mentionable":false,"reply":{"auto_final":true,"destination":"default"},"created_at":"2026-10-01T00:00:00Z"}],"rules":[{"id":"lark-ops","when":{"sources":["relay_lark"],"kinds":["message"]},"targets":["default","csm_00000000000a"]}],"default_targets":["default"],"addressing":{"mentions":true,"command":true,"event_field":true,"unknown_target_notice":true},"max_targets":4,"reply_label":"auto","default_reply":{"type":"relay_conversation","source_id":"relay_lark","route_id":"<route-uuid>"}}
@@ -1345,6 +1370,15 @@ single `Authorization: Bearer <agent-key>`, locally hashes it and compares in
 constant time. Custom ingress keys contain 1–4096 printable non-space ASCII bytes. No remote
 NyxID request occurs on this path. Tools additionally require the NyxID agent-key
 syntax: `nyxid_ag_` or `nyx_` followed by 16–128 URL-safe characters.
+
+For a channel carrying `durable_custom_execution: true`, ordinary authenticated
+Custom ingress MUST use durable admission and MUST NOT fall back to the legacy
+launcher when its routing reader, replay capability or admission dependencies
+are unavailable. Exact committed retries restore the original admission before
+new-admission gate checks. Fresh existing-Agent attachment events without the
+required media-continuation dependency return 503
+`custom_existing_agent_media_unavailable`; they do not admit a text-only
+substitute. Other unmarked channels retain their previous execution selection.
 
 POST to `/v1/channels/{channel_id}/events`. Structured mode uses
 `application/cloudevents+json` with required `specversion:"1.0",id,source,type`,
