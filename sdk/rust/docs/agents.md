@@ -527,3 +527,38 @@ is automatically retried. Retain local edits after a conflict and reread before
 an explicit retry. View links may browse/download; only owners and current
 view-write links may change files. Older runtimes return
 `file_runtime_unsupported` until updated while idle.
+
+## Binding event media continuations
+
+A bound consumer Agent Key can publish an original event attachment, read its
+completed receipt, and admit a separate supplementary response. It cannot select
+another Agent or an arbitrary filesystem path. The current binding and Gateway
+artifact authority are revalidated by the server on every operation.
+
+Use `client.provider_bindings().upload_event_attachment(&target, &upload,
+bytes)`, where `BindingMediaTarget` fixes the binding, conversation, event and
+attachment index and `BindingMediaUpload` carries the frozen filename, original
+SHA-256, MIME type, expiry and optional Gateway generation. The SDK enforces the
+20 MiB limit. `event_attachment(&target)` reads its completed receipt without
+republishing bytes. `supplement_event_media(&target, &body)` accepts a
+`BindingMediaSupplement` containing the exact artifact and derived UTF-8 text
+(at most 64 KiB), returning a separate command/response receipt.
+
+These routes need no caller-generated idempotency key: the original parent event
+and artifact slot identify the operation. Preserve the same slot, hashes, bytes
+and text after an uncertain result. The SDK does not automatically retry or
+create replacement events. A supplement uses Append ordering and leaves the
+original response intact. A 202 receipt acknowledges admission, not completion;
+follow its `response_url` through the Responses API. Typed media refusals retain
+the stable server code and Retry-After metadata, including temporary source
+unavailability and current authority revocation.
+
+Gateway channel owners can read retained supplementary response metadata with
+`gateway.get_event_media_responses(channel_id, event_id, &options)`.
+Follow `next_cursor` until absent or null. Each page covers up to sixteen original
+attachment slots and contains only consumer/response identities and status.
+Activity snapshots also retain each consumer's optional `media_responses`.
+These reads remain useful after the original event capability expires. They do
+not grant access to response text: every returned Manager `response_url` still
+requires existing Agent response authorization. The SDK never follows those URLs
+or replays an event automatically.

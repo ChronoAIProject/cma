@@ -2,7 +2,7 @@
 mod activity;
 mod channels;
 pub use activity::{
-    ChannelActivityEvent, ChannelActivityOptions, ChannelActivityStream,
+    ChannelActivityEvent, ChannelActivityOptions, ChannelActivityStream, EventMediaResponseOptions,
     StreamChannelActivityOptions,
 };
 mod outbound;

@@ -304,6 +304,27 @@ export function errorFromBody(
     nonEmptyText(body.title) === undefined
   ) {
     const error = body.error;
+    if (
+      typeof error === 'string' &&
+      Object.keys(body).length === 1 &&
+      [
+        'invalid_media_continuation',
+        'media_continuation_refused',
+        'media_continuation_conflict',
+        'media_attachment_not_found',
+        'media_agent_not_ready',
+        'media_too_large',
+        'media_continuation_unavailable',
+        'media_upload_capacity',
+      ].includes(error)
+    )
+      return new ApiError(
+        response.status,
+        error,
+        error,
+        requestId,
+        retryAfterMilliseconds(response),
+      );
     if (typeof error !== 'object' || error === null || Array.isArray(error))
       return new ProtocolError('Responses error envelope is invalid');
     const value = error as Record<string, unknown>;

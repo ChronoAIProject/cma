@@ -1,4 +1,7 @@
-use super::{Cmaeg, types::ActivityPage};
+use super::{
+    Cmaeg,
+    types::{ActivityPage, MediaResponsePage},
+};
 use crate::{Error, Result, http::Request, stream::EventStream};
 use reqwest::header::HeaderValue;
 
@@ -7,6 +10,15 @@ use reqwest::header::HeaderValue;
 pub struct ChannelActivityOptions<'a> {
     /// Organization subject; omitted selects the authenticated creator.
     pub owner: Option<&'a str>,
+}
+
+/// Owner and explicit attachment-slot page cursor for retained media metadata.
+#[derive(Default)]
+pub struct EventMediaResponseOptions<'a> {
+    /// Organization subject; omitted selects the authenticated creator.
+    pub owner: Option<&'a str>,
+    /// Next attachment-slot offset returned by the preceding page.
+    pub cursor: Option<usize>,
 }
 
 /// Explicit resume options for one Activity stream connection.
@@ -46,6 +58,32 @@ impl Cmaeg {
         let segments = ["v1", "channels", id, "activity"];
         let mut request = Request::get(&segments);
         owner(&mut request, options.owner)?;
+        self.client.request(request).await
+    }
+
+    /// Metadata only; never follows response URLs or resends the original event.
+    pub async fn get_event_media_responses(
+        &self,
+        channel_id: &str,
+        event_id: &str,
+        options: &EventMediaResponseOptions<'_>,
+    ) -> Result<MediaResponsePage> {
+        let segments = [
+            "v1",
+            "channels",
+            channel_id,
+            "events",
+            event_id,
+            "media-responses",
+        ];
+        let query: Vec<_> = options
+            .cursor
+            .map(|cursor| ("cursor", cursor.to_string()))
+            .into_iter()
+            .collect();
+        let mut request = Request::get(&segments);
+        owner(&mut request, options.owner)?;
+        request.query = &query;
         self.client.request(request).await
     }
 

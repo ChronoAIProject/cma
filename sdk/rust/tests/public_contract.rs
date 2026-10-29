@@ -95,6 +95,11 @@ fn check_error(case: &Case, error: Error) {
         panic!("{} expected API refusal, got {error:?}", case.id)
     };
     assert_eq!(status, case.response.status, "{} status", case.id);
+    if let Some(expected) = expected.as_str() {
+        assert_eq!(code.as_deref(), Some(expected), "{} code", case.id);
+        assert!(extensions.is_empty(), "{} string error extensions", case.id);
+        return;
+    }
     assert_eq!(
         code.as_deref(),
         expected["code"].as_str(),

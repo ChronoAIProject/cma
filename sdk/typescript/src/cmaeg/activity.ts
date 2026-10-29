@@ -4,11 +4,16 @@ import { ProtocolError, ValidationError } from '../errors.js';
 import { raceWithAbortSignal, type OperationOptions } from '../http.js';
 import { query, read, segment } from '../resources.js';
 import { eventStream } from '../streaming.js';
-import { ActivityPageSchema, type ActivityPage } from './types.js';
+import { ActivityPageSchema, MediaResponsePageSchema, type ActivityPage } from './types.js';
 
 export interface ChannelActivityOptions extends OperationOptions {
   /** Organization subject; omitted selects the authenticated creator. */
   readonly owner?: string;
+}
+
+export interface EventMediaResponseOptions extends ChannelActivityOptions {
+  /** Next attachment-slot offset returned by the previous page. */
+  readonly cursor?: number;
 }
 
 export interface StreamChannelActivityOptions extends ChannelActivityOptions {
@@ -40,6 +45,27 @@ export class CmaegActivity {
       ...options,
       headers: ownerHeaders(options.owner),
     });
+  }
+
+  /** Metadata only; never follows a Manager response URL or resends the event. */
+  getEventMediaResponses(
+    channelId: string,
+    eventId: string,
+    options: EventMediaResponseOptions = {},
+  ) {
+    if (
+      options.cursor !== undefined &&
+      (!Number.isSafeInteger(options.cursor) || options.cursor < 0)
+    )
+      throw new ValidationError('media response cursor must be a nonnegative safe integer');
+    return read(
+      this.config,
+      query(`/v1/channels/${segment(channelId)}/events/${segment(eventId)}/media-responses`, {
+        cursor: options.cursor,
+      }),
+      MediaResponsePageSchema,
+      { ...options, headers: ownerHeaders(options.owner) },
+    );
   }
 
   /** Observe snapshots once; reconnect explicitly with the last atomically applied cursor. */

@@ -1,4 +1,6 @@
 import type { ResolvedConfig } from './config.js';
+import { BindingEventMedia } from './provider-binding-media.js';
+export * from './provider-binding-media.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { command, input, read, segment, type CommandOptions } from './resources.js';
 import {
@@ -63,9 +65,12 @@ const putBinding = object({
 export type ProviderBinding = Output<typeof binding>;
 export type BindingConversation = Output<typeof conversation>;
 export type PutProviderBinding = Output<typeof putBinding>;
-/** Gateway management authority only; binding keys use Responses and context reads. */
+/** Binding management requires Gateway authority; media operations use the bound consumer key. */
 export class ProviderBindings {
-  constructor(private readonly config: ResolvedConfig) {}
+  readonly media: BindingEventMedia;
+  constructor(private readonly config: ResolvedConfig) {
+    this.media = new BindingEventMedia(config);
+  }
   /** Inspect the current generation without allocating or mutating resources. */
   inspectPreparation(id: string, body: InspectBindingPreparation, options: OperationOptions = {}) {
     return read(
