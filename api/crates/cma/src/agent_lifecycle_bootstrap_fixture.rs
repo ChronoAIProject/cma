@@ -62,7 +62,10 @@ impl Fixture {
         let (_, workspace_profile, sandbox_profile) = profiles::create_profiles(
             service.profiles.as_ref(),
             &owner.caller,
-            &record.input.request,
+            &guidance::provisioning_request(
+                &record.input.request,
+                record.input.managed_agent_instructions.as_deref(),
+            ),
             None,
             &record.key,
             record.input.captured_capacity(service.bounds),
@@ -183,7 +186,10 @@ pub(super) fn work(record: &crate::store::LifecycleRecord) -> ProvisionInput {
     ProvisionInput {
         behavior: record.input.behavior,
         first_message: validation::admitted_first_message(&record.input),
-        request: record.input.request.clone(),
+        request: guidance::provisioning_request(
+            &record.input.request,
+            record.input.managed_agent_instructions.as_deref(),
+        ),
         runtime_image: record.input.resolved_image.clone(),
         capacity: record.input.capacity.unwrap(),
         limits: record.input.captured_limits(),
