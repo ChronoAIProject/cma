@@ -337,6 +337,9 @@ COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 # authenticated control plane before a browser can reach the screen.
 COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /usr/local/bin/cma-desktop-session
 COPY api/crates/layer4-runtime/src/desktop/ /usr/share/cma-desktop/
+# Keep the original asset available to retained homes whose XFCE preferences
+# still reference it; new homes select the bundled owner-provided PNG.
+RUN test -s /usr/share/cma-desktop/wallpaper.png
 COPY api/crates/layer4-runtime/src/desktop/chromium.desktop /usr/share/applications/chromium.desktop
 
 # Native SandboxTemplates use this same image as a non-root init container:
