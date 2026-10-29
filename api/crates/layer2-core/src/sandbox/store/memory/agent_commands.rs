@@ -190,6 +190,13 @@ pub(super) fn reserve(
     request.require_current_authority()?;
     super::bindings::require_conversation_authority(state, request.binding.as_ref())
         .map_err(|_| CommandLedgerError::Conflict)?;
+    if let Some(proof) = &request.envelope.continuation {
+        let parent = state
+            .agent_commands
+            .get(&proof.parent_command_id)
+            .ok_or(CommandLedgerError::NotFound)?;
+        proof.require_parent(&request.envelope, &parent.receipt)?;
+    }
     let key = (request.scope(), request.key_sha256.clone());
     if let Some(id) = state.agent_command_keys.get(&key) {
         let current = state
