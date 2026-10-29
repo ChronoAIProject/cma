@@ -485,6 +485,7 @@ export const ChannelPageSchema = object({
 export type ChannelPage = Output<typeof ChannelPageSchema>;
 
 export const ChannelUpdateRequestSchema = object({
+  durable_custom_execution: optional(nullable(boolean)),
   connection_ref: optional(nullable(text)),
   connection_admission: optional(nullable(AdmissionPolicySchema)),
   credentials: optional(nullable(CredentialPatchSchema)),

@@ -33,9 +33,15 @@ it('preserves absent legacy fields and validates an additive create choice, save
   }
 });
 
-it('keeps the execution choice out of ordinary update serialization', () => {
-  const update = examples.ChannelUpdateRequest![0]!;
-  expect(ChannelUpdateRequestSchema({ ...update, durable_custom_execution: true })).toEqual(
-    ChannelUpdateRequestSchema(update),
-  );
+it('omits an absent update echo and validates the optional immutable echo', () => {
+  const update = { ...examples.ChannelUpdateRequest![0]! };
+  delete update.durable_custom_execution;
+  expect(ChannelUpdateRequestSchema(update)).not.toHaveProperty('durable_custom_execution');
+  for (const echo of [true, false, null])
+    expect(
+      ChannelUpdateRequestSchema({ ...update, durable_custom_execution: echo }),
+    ).toHaveProperty('durable_custom_execution', echo);
+  expect(() =>
+    ChannelUpdateRequestSchema({ ...update, durable_custom_execution: 'true' }),
+  ).toThrow();
 });
