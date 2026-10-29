@@ -32,6 +32,7 @@ pub(super) fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPaylo
     .unwrap();
     definition.sources = vec![Source::Telegram {
         topic_lifecycle: false,
+        topic_creation: false,
         message_events: false,
         channel_posts: false,
         bot_id: "77".into(),

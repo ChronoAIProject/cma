@@ -59,6 +59,9 @@ pub struct Capabilities {
     /// One text reply can start the exact original native Lark group message thread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_thread_start: Option<bool>,
+    /// Original forum-supergroup scope; current platform permissions are checked per creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_creation: Option<bool>,
     /// Exact admitted Telegram forum topic; no creation or enumeration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topic_lifecycle: Option<cmaeg_core::thread_lifecycle::TopicLifecycleCapabilities>,

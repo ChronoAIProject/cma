@@ -338,6 +338,7 @@ async fn telegram_app() -> (App, MessageRef, crate::telegram::media_fixture::Fix
     let platform = crate::telegram::media_fixture::Fixture::new().await;
     app.definition.sources = vec![Source::Telegram {
         topic_lifecycle: false,
+        topic_creation: false,
         message_events: false,
         channel_posts: false,
         bot_username: None,

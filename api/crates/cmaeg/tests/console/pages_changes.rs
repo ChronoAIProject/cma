@@ -141,6 +141,7 @@ impl SourceChanges for RecordingSources {
                 }
                 SourceRequest::Telegram {
                     topic_lifecycle,
+                    topic_creation,
                     message_events,
                     channel_posts,
                     bot_id,
@@ -148,6 +149,7 @@ impl SourceChanges for RecordingSources {
                     admission,
                 } => Source::Telegram {
                     topic_lifecycle,
+                    topic_creation,
                     message_events,
                     channel_posts,
                     bot_id,

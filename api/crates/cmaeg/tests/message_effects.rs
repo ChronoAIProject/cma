@@ -91,6 +91,7 @@ async fn setup() -> (App, Arc<Platform>, MessageRef) {
     let mut app = App::new(vec![]).await;
     app.definition.sources = vec![Source::Telegram {
         topic_lifecycle: false,
+        topic_creation: false,
         message_events: false,
         channel_posts: false,
         bot_id: "77".into(),
