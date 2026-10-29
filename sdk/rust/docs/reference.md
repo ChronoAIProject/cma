@@ -128,6 +128,15 @@ Legacy encrypted Gateway storage methods remain for older installations and migr
 
 Provider binding management uses `client.provider_bindings().put/get/delete/ensure_conversation/delete_conversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
 
+`client.provider_bindings().inspect_preparation(binding_id, &request)` inspects
+the generation for an authenticated, durably admitted event without mutating
+resources. A `BindingPreparationInspection::Pending` returns an immutable intent;
+retain it and call `prepare(binding_id, &request, &operation_key)` with that exact
+intent and operation key. Preparation requires enabled server support and
+management authority. Reuse both after an uncertain response; never create a new
+key to retry. This reserves a new home after original retirement and does not
+recover the released home. Request Debug formatting omits the agent credential.
+
 ## CMA Event Gateway
 
 `cma_sdk::cmaeg::Cmaeg` is an independent client configured with the gateway origin,

@@ -1,6 +1,15 @@
 import type { ResolvedConfig } from './config.js';
 import { requestVoid, type OperationOptions } from './http.js';
-import { input, read, segment } from './resources.js';
+import { command, input, read, segment, type CommandOptions } from './resources.js';
+import {
+  BindingPreparationInspectionSchema,
+  BindingPreparationReceiptSchema,
+  InspectBindingPreparationSchema,
+  PrepareBindingSchema,
+  type InspectBindingPreparation,
+  type PrepareBinding,
+} from './provider-binding-preparation.js';
+export * from './provider-binding-preparation.js';
 import {
   array,
   enumeration,
@@ -57,6 +66,27 @@ export type PutProviderBinding = Output<typeof putBinding>;
 /** Gateway management authority only; binding keys use Responses and context reads. */
 export class ProviderBindings {
   constructor(private readonly config: ResolvedConfig) {}
+  /** Inspect the current generation without allocating or mutating resources. */
+  inspectPreparation(id: string, body: InspectBindingPreparation, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `${path(id)}/preparation-inspections`,
+      BindingPreparationInspectionSchema,
+      {
+        ...options,
+        method: 'POST',
+        body: input(InspectBindingPreparationSchema, body),
+      },
+    );
+  }
+  /** Reserve with the exact retained intent and operation key; never invent a key on retry. */
+  prepare(id: string, body: PrepareBinding, options: CommandOptions) {
+    return read(this.config, `${path(id)}/preparations`, BindingPreparationReceiptSchema, {
+      ...command(options),
+      method: 'POST',
+      body: input(PrepareBindingSchema, body),
+    });
+  }
   put(id: string, body: PutProviderBinding, options: OperationOptions = {}) {
     return read(this.config, path(id), binding, {
       ...options,
