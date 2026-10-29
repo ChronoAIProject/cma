@@ -1,0 +1,614 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "binding-media-upload",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_success",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "11"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "att_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "agent_id": "agt_contract",
+          "name": "voice.ogg",
+          "path": "/home/attachments/agt_contract/att_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/voice.ogg",
+          "size_bytes": 11,
+          "media_type": "audio/ogg",
+          "sha256": "ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-upload-forbidden",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "11"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_continuation_refused"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-upload-unavailable",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "11"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_continuation_unavailable"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-upload-invalid",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "11"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "invalid_media_continuation"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-upload-conflict",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "11"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_continuation_conflict"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-upload-not_ready",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_not_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "11"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_agent_not_ready"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-receipt",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_success",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "att_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "agent_id": "agt_contract",
+          "name": "voice.ogg",
+          "path": "/home/attachments/agt_contract/att_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/voice.ogg",
+          "size_bytes": 11,
+          "media_type": "audio/ogg",
+          "sha256": "ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-receipt-forbidden",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_continuation_refused"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-receipt-unavailable",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_continuation_unavailable"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-receipt-missing",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_attachment_not_found"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-supplement",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement",
+      "scenario": "binding_media_success",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/supplement",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "gateway_binding_generation": null,
+          "event_expires_at": 1800000000,
+          "artifact": {
+            "attachment_index": 0,
+            "kind": "transcript",
+            "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_sha256": "ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0",
+            "name": "voice.ogg",
+            "media_type": "audio/ogg",
+            "size_bytes": 11,
+            "text_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "derived_text": "Hello from the recording."
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "command_id": "cmd_media_contract",
+          "response_id": "resp_media_contract",
+          "response_url": "/api/v2/responses/resp_media_contract",
+          "status": "queued",
+          "queue_deadline": "2026-10-30T00:00:00Z",
+          "metadata": {
+            "cma_parent_command_id": "cmd_parent_contract",
+            "cma_parent_response_id": "resp_parent_contract",
+            "cma_parent_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cma_artifact_id": "0:transcript",
+            "cma_command_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-supplement-forbidden",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement",
+      "scenario": "binding_media_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/supplement",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "gateway_binding_generation": null,
+          "event_expires_at": 1800000000,
+          "artifact": {
+            "attachment_index": 0,
+            "kind": "transcript",
+            "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_sha256": "ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0",
+            "name": "voice.ogg",
+            "media_type": "audio/ogg",
+            "size_bytes": 11,
+            "text_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "derived_text": "Hello from the recording."
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_continuation_refused"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-supplement-unavailable",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement",
+      "scenario": "binding_media_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/supplement",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "gateway_binding_generation": null,
+          "event_expires_at": 1800000000,
+          "artifact": {
+            "attachment_index": 0,
+            "kind": "transcript",
+            "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_sha256": "ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0",
+            "name": "voice.ogg",
+            "media_type": "audio/ogg",
+            "size_bytes": 11,
+            "text_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "derived_text": "Hello from the recording."
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_continuation_unavailable"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-supplement-invalid",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement",
+      "scenario": "binding_media_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/supplement",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "gateway_binding_generation": null,
+          "event_expires_at": 1800000000,
+          "artifact": {
+            "attachment_index": 0,
+            "kind": "transcript",
+            "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_sha256": "ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0",
+            "name": "voice.ogg",
+            "media_type": "audio/ogg",
+            "size_bytes": 11,
+            "text_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "derived_text": "Hello from the recording."
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "invalid_media_continuation"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-supplement-conflict",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement",
+      "scenario": "binding_media_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/supplement",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "gateway_binding_generation": null,
+          "event_expires_at": 1800000000,
+          "artifact": {
+            "attachment_index": 0,
+            "kind": "transcript",
+            "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_sha256": "ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0",
+            "name": "voice.ogg",
+            "media_type": "audio/ogg",
+            "size_bytes": 11,
+            "text_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "derived_text": "Hello from the recording."
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_continuation_conflict"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-supplement-not_ready",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement",
+      "scenario": "binding_media_not_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/supplement",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "gateway_binding_generation": null,
+          "event_expires_at": 1800000000,
+          "artifact": {
+            "attachment_index": 0,
+            "kind": "transcript",
+            "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_sha256": "ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0",
+            "name": "voice.ogg",
+            "media_type": "audio/ogg",
+            "size_bytes": 11,
+            "text_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "derived_text": "Hello from the recording."
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_agent_not_ready"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-missing-length",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_invalid_headers",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "invalid_media_continuation"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-missing-type",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_invalid_headers",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-length": "11"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "invalid_media_continuation"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-encoding",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_invalid_headers",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "11",
+          "content-encoding": "gzip"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "invalid_media_continuation"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-too-large",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_invalid_headers",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "20971521"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "media_too_large"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "binding-media-incomplete-body",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_body_mismatch",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "11"
+        },
+        "rawBody": "short"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": "invalid_media_continuation"
+        },
+        "bodyKind": "json"
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 use super::{
-    failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MIGRATIONS, RECORDS, SESSIONS, THREAD_FENCES,
-    WHATSAPP_FLOWS,
+    failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MEDIA_CONTINUATIONS, MIGRATIONS, RECORDS,
+    SESSIONS, THREAD_FENCES, WHATSAPP_FLOWS,
 };
 use crate::records::RecordError;
 use futures_util::TryStreamExt;
@@ -62,7 +62,7 @@ pub async fn verify_with_authority(
             if resource.len() != 2
                 || resource.get_str("db").ok() != Some(db.name())
                 || (!COLLECTIONS.contains(&collection)
-                    && ![THREAD_FENCES, WHATSAPP_FLOWS].contains(&collection))
+                    && ![THREAD_FENCES, WHATSAPP_FLOWS, MEDIA_CONTINUATIONS].contains(&collection))
             {
                 return Err(invalid());
             }
@@ -136,7 +136,8 @@ pub(super) fn migration_validator() -> Document {
             "required":["_id","version"],"properties":{
                 "_id":{"bsonType":"string"},"version":{"enum":[1,2]}}},
         "$or":[{"_id":"schema","version":2},
-            {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1}]
+            {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1},
+            {"_id":"media_continuations","version":1}]
     }
 }
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {

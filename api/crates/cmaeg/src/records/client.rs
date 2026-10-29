@@ -69,6 +69,8 @@ pub struct RecordClient {
     thread_fences_fixture: bool,
     #[cfg(test)]
     whatsapp_reaction_fixture: bool,
+    #[cfg(test)]
+    media_continuations_fixture: bool,
 }
 
 impl RecordClient {
@@ -111,6 +113,8 @@ impl RecordClient {
             thread_fences_fixture: false,
             #[cfg(test)]
             whatsapp_reaction_fixture: false,
+            #[cfg(test)]
+            media_continuations_fixture: false,
         })
     }
 
@@ -157,6 +161,7 @@ impl RecordClient {
 
     pub fn record_url(&self, record_id: &str) -> Result<Url, RecordError> {
         self.check_thread_fence_transport()?;
+        self.check_media_continuation_transport()?;
         let record_path = self.record_path;
         let id = uuid::Uuid::parse_str(record_id)
             .map_err(|_| RecordError::Rejected("invalid record ID".into()))?;
@@ -300,11 +305,17 @@ impl RecordClient {
         limit: usize,
     ) -> Result<Vec<RecordHead>, RecordError> {
         self.check_thread_fence_transport()?;
+        self.check_media_continuation_transport()?;
         if let Some(db) = &self.database {
             return db
                 .for_kind(self.record_kind)
                 .list(owner, after, limit)
                 .await;
+        }
+        if self.record_kind == super::RecordKind::MediaContinuation && !(1..=32).contains(&limit) {
+            return Err(RecordError::Rejected(
+                "invalid media continuation page size".into(),
+            ));
         }
         let url = self
             .base_url
@@ -445,3 +456,6 @@ mod write;
 
 #[path = "client_whatsapp_reactions.rs"]
 mod whatsapp_reactions;
+
+#[path = "client_media_continuations.rs"]
+mod media_continuations;

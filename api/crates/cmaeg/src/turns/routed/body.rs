@@ -84,7 +84,17 @@ impl Journal {
 
     pub(super) async fn body(&self, lease: &Lease) -> Result<FrozenTurn, ExecutionError> {
         self.guard(lease).await?;
-        let state = &lease.state;
+        let body = self.retained_body(&lease.state).await?;
+        self.guard(lease).await?;
+        Ok(body)
+    }
+    /// Read immutable frozen input without acquiring/mutating the original
+    /// response lease. Callers must independently bind the retained checkpoint
+    /// to their admitted plan and current effect authority.
+    pub(super) async fn retained_body(
+        &self,
+        state: &TargetState,
+    ) -> Result<FrozenTurn, ExecutionError> {
         let reference = state.body.as_ref().ok_or(ExecutionError::Corrupt)?;
         if !(1..=MAX_BODY).contains(&reference.len)
             || reference.chunks.len() != reference.len.div_ceil(BODY_CHUNK)
@@ -131,7 +141,6 @@ impl Journal {
             None if body.binding_generation.is_some() => return Err(ExecutionError::Corrupt),
             None => {}
         }
-        self.guard(lease).await?;
         Ok(body)
     }
 }

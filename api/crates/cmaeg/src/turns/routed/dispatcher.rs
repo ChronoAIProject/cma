@@ -60,6 +60,17 @@ pub trait ExecutionPort: Send + Sync {
         binding: &'a ProviderBinding,
         credential: &'a Secret,
     ) -> BoxFuture<'a, StartResult>;
+    /// Persist independent continuation scheduling after immutable body freeze.
+    /// Failure must prevent the original provider POST; a wake-up never grants
+    /// permission to replay that original request.
+    fn prepare_continuations<'a>(
+        &'a self,
+        _plan: &'a AdmittedPlan,
+        _target: &'a StoredTarget,
+        _body: &'a FrozenTurn,
+    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 pub enum StartResult {
@@ -302,6 +313,8 @@ impl Dispatcher {
         // Media/conversation preparation has its own bound. Renew the still
         // owned lease so it cannot consume the subsequent acceptance budget.
         self.journal.renew(lease).await?;
+        self.port.prepare_continuations(plan, target, &body).await?;
+        self.journal.guard(lease).await?;
         // The durable start marker precedes any network effect. If either CAS
         // confirmation or the fresh authority check fails, no POST is made.
         self.journal.transition(lease, Phase::Starting).await?;

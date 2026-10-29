@@ -32,6 +32,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "auth_login_attempts",
     "auth_subjects",
     "binding_conversations",
+    super::media_uploads::COLLECTION,
     "bot_setups",
     "bot_setup_contexts",
     "bots",
@@ -389,10 +390,11 @@ mod tests {
     }
 
     #[test]
-    fn warm_pool_target_grants_are_required_without_database_wide_access() {
+    fn durable_target_grants_are_required_without_database_wide_access() {
         for target in [
             super::super::native_warm_pools::COLLECTION,
             super::super::native_prepared::COLLECTION,
+            super::super::media_uploads::COLLECTION,
         ] {
             let mut grants = role("cma").get_array("privileges").unwrap().clone();
             let grant = grants

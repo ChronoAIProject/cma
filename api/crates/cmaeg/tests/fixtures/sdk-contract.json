@@ -191,6 +191,17 @@
             }
           ]
         }
+      ],
+      "media_responses": [
+        {
+          "attachment_index": 0,
+          "kind": "transcript",
+          "response_id": "resp_media_fixture",
+          "response_url": "/api/v2/responses/resp_media_fixture",
+          "status": "completed",
+          "delivery": "delivered",
+          "observed_at": "2026-10-29T00:00:00Z"
+        }
       ]
     }
   ],
@@ -266,6 +277,17 @@
                       "thread_id": "fixture-thread"
                     }
                   ]
+                }
+              ],
+              "media_responses": [
+                {
+                  "attachment_index": 0,
+                  "kind": "transcript",
+                  "response_id": "resp_media_fixture",
+                  "response_url": "/api/v2/responses/resp_media_fixture",
+                  "status": "completed",
+                  "delivery": "delivered",
+                  "observed_at": "2026-10-29T00:00:00Z"
                 }
               ]
             }
@@ -1744,6 +1766,17 @@
                 }
               ]
             }
+          ],
+          "media_responses": [
+            {
+              "attachment_index": 0,
+              "kind": "transcript",
+              "response_id": "resp_media_fixture",
+              "response_url": "/api/v2/responses/resp_media_fixture",
+              "status": "completed",
+              "delivery": "delivered",
+              "observed_at": "2026-10-29T00:00:00Z"
+            }
           ]
         }
       ],
@@ -1797,6 +1830,17 @@
                 }
               ]
             }
+          ],
+          "media_responses": [
+            {
+              "attachment_index": 0,
+              "kind": "transcript",
+              "response_id": "resp_media_fixture",
+              "response_url": "/api/v2/responses/resp_media_fixture",
+              "status": "completed",
+              "delivery": "delivered",
+              "observed_at": "2026-10-29T00:00:00Z"
+            }
           ]
         }
       ],
@@ -1849,6 +1893,17 @@
                   "thread_id": "fixture-thread"
                 }
               ]
+            }
+          ],
+          "media_responses": [
+            {
+              "attachment_index": 0,
+              "kind": "transcript",
+              "response_id": "resp_media_fixture",
+              "response_url": "/api/v2/responses/resp_media_fixture",
+              "status": "completed",
+              "delivery": "delivered",
+              "observed_at": "2026-10-29T00:00:00Z"
             }
           ]
         }
@@ -7407,7 +7462,11 @@
         "native_lark_conversation_history_enabled": false,
         "native_telegram_topic_lifecycle_enabled": true,
         "native_telegram_general_topic_lifecycle_enabled": true,
-        "native_whatsapp_message_events_enabled": false
+        "native_whatsapp_message_events_enabled": false,
+        "response_recovery_providers": [
+          "cma",
+          "nyxbot"
+        ]
       },
       "agent_tools": [
         {
@@ -7471,7 +7530,11 @@
         "native_lark_conversation_history_enabled": false,
         "native_telegram_topic_lifecycle_enabled": true,
         "native_telegram_general_topic_lifecycle_enabled": true,
-        "native_whatsapp_message_events_enabled": false
+        "native_whatsapp_message_events_enabled": false,
+        "response_recovery_providers": [
+          "cma",
+          "nyxbot"
+        ]
       },
       "agent_tools": [
         {
@@ -7544,7 +7607,11 @@
         "native_lark_conversation_history_enabled": false,
         "native_telegram_topic_lifecycle_enabled": true,
         "native_telegram_general_topic_lifecycle_enabled": true,
-        "native_whatsapp_message_events_enabled": false
+        "native_whatsapp_message_events_enabled": false,
+        "response_recovery_providers": [
+          "cma",
+          "nyxbot"
+        ]
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -9166,7 +9233,11 @@
       "native_lark_conversation_history_enabled": false,
       "native_telegram_topic_lifecycle_enabled": true,
       "native_telegram_general_topic_lifecycle_enabled": true,
-      "native_whatsapp_message_events_enabled": false
+      "native_whatsapp_message_events_enabled": false,
+      "response_recovery_providers": [
+        "cma",
+        "nyxbot"
+      ]
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -9214,7 +9285,11 @@
       "native_lark_conversation_history_enabled": false,
       "native_telegram_topic_lifecycle_enabled": true,
       "native_telegram_general_topic_lifecycle_enabled": true,
-      "native_whatsapp_message_events_enabled": false
+      "native_whatsapp_message_events_enabled": false,
+      "response_recovery_providers": [
+        "cma",
+        "nyxbot"
+      ]
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -9262,7 +9337,11 @@
       "native_lark_conversation_history_enabled": false,
       "native_telegram_topic_lifecycle_enabled": true,
       "native_telegram_general_topic_lifecycle_enabled": true,
-      "native_whatsapp_message_events_enabled": false
+      "native_whatsapp_message_events_enabled": false,
+      "response_recovery_providers": [
+        "cma",
+        "nyxbot"
+      ]
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -9360,6 +9439,58 @@
       "native_telegram_general_topic_lifecycle_enabled": true,
       "native_whatsapp_message_events_enabled": false,
       "native_telegram_topic_creation_enabled": true
+    },
+    {
+      "dynamic_sources_writes_enabled": false,
+      "multi_consumer_writes_enabled": false,
+      "native_bot_mentions_writes_enabled": true,
+      "thread_contract_writes_enabled": false,
+      "platforms": [
+        {
+          "id": "whatsapp",
+          "label": "WhatsApp",
+          "verification_modes": [
+            {
+              "id": "raw_event",
+              "writes_enabled": false
+            },
+            {
+              "id": "trusted_normalized",
+              "writes_enabled": true
+            }
+          ]
+        }
+      ],
+      "relay_raw_verification_writes_enabled": false,
+      "outbound_messages_writes_enabled": false,
+      "native_media_writes_enabled": false,
+      "native_discord_writes_enabled": true,
+      "native_discord_auto_activation_enabled": true,
+      "native_discord_capacity": 64,
+      "lark_resource_writes_enabled": false,
+      "native_discord_thread_history_enabled": false,
+      "native_whatsapp_writes_enabled": true,
+      "native_whatsapp_auto_activation_enabled": true,
+      "lark_message_effects_writes_enabled": false,
+      "native_discord_reactions_enabled": true,
+      "native_telegram_message_events_enabled": true,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false,
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false,
+      "native_discord_conversation_history_enabled": false,
+      "native_lark_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true,
+      "native_telegram_general_topic_lifecycle_enabled": true,
+      "native_whatsapp_message_events_enabled": false,
+      "response_recovery_providers": [
+        "cma",
+        "nyxbot"
+      ]
     }
   ],
   "PrepareOutboundMessage": [
@@ -10383,6 +10514,93 @@
     {
       "index": 1,
       "message_ref": "confirmed-part-two"
+    }
+  ],
+  "ActivityMediaResponse": [
+    {
+      "attachment_index": 0,
+      "kind": "transcript",
+      "response_id": "resp_media_fixture",
+      "response_url": "/api/v2/responses/resp_media_fixture",
+      "status": "completed",
+      "delivery": "delivered",
+      "observed_at": "2026-10-29T00:00:00Z"
+    }
+  ],
+  "MediaArtifactClaim": [
+    {
+      "attachment_index": 0,
+      "kind": "transcript",
+      "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "name": "voice.ogg",
+      "media_type": "audio/ogg",
+      "size_bytes": 11,
+      "text_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "MediaContinuationKind": [
+    "original",
+    "transcript",
+    "text_excerpt"
+  ],
+  "EventAttestationRequest": [
+    {
+      "event_ref": "cmaeg1.ev.fixture",
+      "provider_binding_id": "bnd_fixture",
+      "channel_id": "ch_fixture",
+      "conversation_id": "conv_fixture",
+      "event_id": "event_fixture",
+      "activity_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "binding_generation": 7,
+      "event_expires_at": 1800000000,
+      "artifact": {
+        "attachment_index": 0,
+        "kind": "transcript",
+        "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "name": "voice.ogg",
+        "media_type": "audio/ogg",
+        "size_bytes": 11,
+        "text_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    }
+  ],
+  "EventAttestationResponse": [
+    {
+      "current": true
+    },
+    {
+      "current": false
+    }
+  ],
+  "RetainedMediaResponse": [
+    {
+      "attachment_index": 0,
+      "kind": "transcript",
+      "response_id": "resp_media_fixture",
+      "response_url": "/api/v2/responses/resp_media_fixture",
+      "status": "completed",
+      "delivery": "delivered",
+      "consumer_id": "consumer-fixture",
+      "refusal": "delivery_refused"
+    }
+  ],
+  "MediaResponsePage": [
+    {
+      "items": [
+        {
+          "attachment_index": 0,
+          "kind": "transcript",
+          "response_id": "resp_media_fixture",
+          "response_url": "/api/v2/responses/resp_media_fixture",
+          "status": "completed",
+          "delivery": "delivered",
+          "consumer_id": "consumer-fixture",
+          "refusal": "delivery_refused"
+        }
+      ],
+      "next_cursor": 16
     }
   ]
 }

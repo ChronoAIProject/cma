@@ -66,6 +66,7 @@ pub(crate) async fn fixture(bound: bool) -> Fixture {
         .reserve_command(CommandReservation {
             binding: None,
             envelope: AgentCommandEnvelope {
+                continuation: None,
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: AgentCommandId(SOURCE.into()),
                 agent_id: agent.id.clone(),

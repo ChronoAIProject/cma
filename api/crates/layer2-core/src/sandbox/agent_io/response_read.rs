@@ -9,6 +9,7 @@ use super::*;
 /// A response's safe durable acceptance state. Personal callers may also read
 /// their submitted metadata; recipient history keeps that metadata private.
 pub struct AgentResponseReading {
+    pub deferred_failure_detail: Option<String>,
     pub command: CommandStatusView,
     pub metadata: BTreeMap<String, String>,
 }
@@ -45,13 +46,26 @@ impl AgentCommandService {
         {
             return Err(CommandLedgerError::NotFound.into());
         }
-        let AgentCommand::Message { metadata, .. } = &record.receipt.envelope.command else {
+        let AgentCommand::Message { .. } = &record.receipt.envelope.command else {
             return Err(CommandLedgerError::Corrupt.into());
         };
         Ok(AgentResponseReading {
+            deferred_failure_detail: record
+                .receipt
+                .envelope
+                .continuation
+                .as_ref()
+                .and(record.work.dispatch.as_ref())
+                .map(|dispatch| {
+                    super::continuation_retry::deferred_detail(
+                        &record.receipt.envelope,
+                        dispatch.operation_sequence,
+                        dispatch.turn_sequence,
+                    )
+                }),
             command: CommandStatusView::from_record(&record),
             metadata: if personal || authorized.binding_authority().is_some() {
-                metadata.clone()
+                record.receipt.envelope.response_metadata()
             } else {
                 BTreeMap::new()
             },

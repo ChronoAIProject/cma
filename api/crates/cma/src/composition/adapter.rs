@@ -180,6 +180,11 @@ pub(super) async fn production_adapter(
     let mut adapter = CodexAdapter::new(backend, spec)
         .with_provider_tools(provider_tools)
         .with_access_tools(access_tools);
+    if let Some(image) = &config.runtime.machine_sandbox_image {
+        adapter = adapter
+            .with_native_runtime_image(crate::warm_pools::deployment_image(image.clone()))
+            .map_err(|error| format!("machine runtime image is not usable: {error}"))?;
+    }
     if let Some(homes) = home_store {
         preparation = preparation.with_home_volumes(homes.clone());
         adapter = adapter.with_home_volumes(homes);

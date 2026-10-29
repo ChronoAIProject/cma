@@ -1,7 +1,8 @@
 use crate::sandbox::Agent;
 
 pub(super) fn immutable_agent_fields_changed(current: &Agent, next: &Agent) -> bool {
-    current.id != next.id
+    current.work.worktree_recoveries != next.work.worktree_recoveries
+        || current.id != next.id
         || current.worktree_id != next.worktree_id
         || current.workspace_id != next.workspace_id
         || current.sandbox_id != next.sandbox_id

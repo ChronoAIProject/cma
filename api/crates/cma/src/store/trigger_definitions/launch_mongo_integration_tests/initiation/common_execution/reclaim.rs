@@ -60,6 +60,7 @@ fn execution(
         Arc::new(PlatformDefaults::default()),
     );
     Arc::new(crate::commands::ResourceCommandExecution {
+        source_guard: None,
         authority: Arc::new(NoAmbientAuthority),
         access: Arc::new(ResourceAccessService::new(
             resources.clone(),
