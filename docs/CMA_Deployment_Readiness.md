@@ -412,6 +412,13 @@ Sandbox status does not provide those UIDs. Direct Pod-IP connectivity and CRI
 port-forward did not establish a working production transport; changing from
 exec requires a separately tested transport and bootstrap contract.
 
+The remote Google Metadata client disables TCP packet coalescing on its
+Kubernetes connection so successive small desktop and conversation frames do
+not wait for an extra acknowledgement round trip. The client retains the pinned
+CA, request target checks, refreshable identity, retries and configured I/O
+timeouts. This transport setting does not change the fixed runtime exec relay
+or replace existing Sandbox processes.
+
 The installed API consists of the core `Sandbox` plus the three extension
 resources `SandboxTemplate`, `SandboxWarmPool` and `SandboxClaim`. The three
 extension resources alone do not expose suspension: CMA must patch the bound
