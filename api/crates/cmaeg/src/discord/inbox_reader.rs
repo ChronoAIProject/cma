@@ -1,7 +1,7 @@
 //! Restore an immutable native inbox item into the ordinary routed admission contract.
 use super::{
     journal_model::{Authority, Chunk, Inbox},
-    normalize::{normalize, normalize_with_content, Normalized},
+    normalize::{normalize, normalize_with_content, normalize_with_projections, Normalized},
     record_store::Store,
     GatewayError,
 };
@@ -42,6 +42,8 @@ pub struct InboxReader {
 pub(super) struct Body {
     #[serde(default)]
     pub content_projection: Option<super::content::Snapshot>,
+    #[serde(default)]
+    pub forward_projection: Option<super::forward::Snapshot>,
     #[serde(default)]
     pub quote_projection: Option<crate::ingress::quoted_context::Snapshot>,
     #[serde(default)]
@@ -346,7 +348,7 @@ impl Body {
         self.dispatch[if reaction { "message_id" } else { "id" }].as_str()
     }
     pub(super) fn activity(&self, bot: &str) -> Result<Normalized, GatewayError> {
-        if self.content_projection.is_some()
+        if (self.content_projection.is_some() || self.forward_projection.is_some())
             && (self.component.is_some()
                 || self.message_event.is_some()
                 || self.pending_reaction.is_some())
@@ -383,11 +385,18 @@ impl Body {
         else {
             unreachable!()
         };
-        let mut activity = match &self.content_projection {
-            Some(snapshot) => {
-                normalize_with_content(&self.dispatch, bot, admission, Some(snapshot))?
+        let mut activity = match (&self.content_projection, &self.forward_projection) {
+            (None, None) => normalize(&self.dispatch, bot, admission)?,
+            (content, None) => {
+                normalize_with_content(&self.dispatch, bot, admission, content.as_ref())?
             }
-            None => normalize(&self.dispatch, bot, admission)?,
+            (content, forward) => normalize_with_projections(
+                &self.dispatch,
+                bot,
+                admission,
+                content.as_ref(),
+                forward.as_ref(),
+            )?,
         };
         if let Normalized::Activity(activity) = &mut activity {
             if let Some(snapshot) = &self.quote_projection {
