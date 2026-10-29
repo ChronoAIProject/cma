@@ -23,6 +23,8 @@ pub struct RelayAuthoringCapabilities {
     pub native_discord_thread_history_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_telegram_topic_lifecycle_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_telegram_topic_creation_enabled: Option<bool>,
     /// General-topic execution additionally requires the original native forum envelope.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_telegram_general_topic_lifecycle_enabled: Option<bool>,
@@ -135,6 +137,11 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
         ),
         native_telegram_topic_lifecycle_enabled: Some(
             state.native_telegram_topic_lifecycle_enabled
+                && state.native_telegram_durable_admission_enabled
+                && state.multi_consumer_writes_enabled,
+        ),
+        native_telegram_topic_creation_enabled: Some(
+            state.native_telegram_topic_creation_enabled
                 && state.native_telegram_durable_admission_enabled
                 && state.multi_consumer_writes_enabled,
         ),

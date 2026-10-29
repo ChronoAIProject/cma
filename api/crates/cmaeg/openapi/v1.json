@@ -1813,6 +1813,13 @@
               }
             ]
           },
+          "topic_creation": {
+            "description": "Original forum-supergroup scope; current platform permissions are checked per creation.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "topic_lifecycle": {
             "oneOf": [
               {
@@ -2896,7 +2903,7 @@
         "additionalProperties": false,
         "properties": {
           "auto_archive_duration": {
-            "description": "Discord minutes: 60, 1440, 4320, or 10080. Always explicit.",
+            "description": "Required Discord minutes: 60, 1440, 4320, or 10080. Omit for Telegram.",
             "format": "int32",
             "minimum": 0,
             "type": "integer"
@@ -2906,8 +2913,7 @@
           }
         },
         "required": [
-          "name",
-          "auto_archive_duration"
+          "name"
         ],
         "type": "object"
       },
@@ -6109,6 +6115,12 @@
               "null"
             ]
           },
+          "native_telegram_topic_creation_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_telegram_topic_lifecycle_enabled": {
             "type": [
               "boolean",
@@ -6906,6 +6918,10 @@
                 "description": "Retain original message routing for edits and attributable reactions.",
                 "type": "boolean"
               },
+              "topic_creation": {
+                "description": "Owner consent to create and manage new topics in the original forum supergroup.",
+                "type": "boolean"
+              },
               "topic_lifecycle": {
                 "description": "Owner consent to close/reopen only the exact admitted forum topic.",
                 "type": "boolean"
@@ -7368,6 +7384,10 @@
               },
               "message_events": {
                 "description": "Retain original message routing for edits and attributable reactions.",
+                "type": "boolean"
+              },
+              "topic_creation": {
+                "description": "Owner consent to create and manage new topics in the original forum supergroup.",
                 "type": "boolean"
               },
               "topic_lifecycle": {

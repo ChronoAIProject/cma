@@ -34,6 +34,7 @@ pub(super) fn retains_topic_opt_in(current: &ChannelDefinition, source: &Source)
     let Source::Telegram {
         message_events,
         channel_posts,
+        topic_creation,
         ..
     } = source
     else {
@@ -44,6 +45,7 @@ pub(super) fn retains_topic_opt_in(current: &ChannelDefinition, source: &Source)
         let Source::Telegram {
             message_events: old_events,
             channel_posts: old_posts,
+            topic_creation: old_creation,
             ..
         } = &mut retained
         else {
@@ -52,10 +54,34 @@ pub(super) fn retains_topic_opt_in(current: &ChannelDefinition, source: &Source)
         if (*message_events && !*old_events) || (*channel_posts && !*old_posts) {
             return false;
         }
+        *old_creation = *topic_creation;
         *old_events = *message_events;
         *old_posts = *channel_posts;
         retained == *source
     })
+}
+
+/// Creation is independently consented; other Telegram grants do not widen it.
+pub(super) fn retains_creation_opt_in(current: &ChannelDefinition, source: &Source) -> bool {
+    let normalize = |source: &Source| {
+        let mut source = source.clone();
+        if let Source::Telegram {
+            topic_lifecycle,
+            message_events,
+            channel_posts,
+            ..
+        } = &mut source
+        {
+            *topic_lifecycle = false;
+            *message_events = false;
+            *channel_posts = false;
+        }
+        source
+    };
+    current
+        .sources
+        .iter()
+        .any(|old| normalize(old) == normalize(source))
 }
 
 pub(super) fn initialize(
@@ -72,6 +98,9 @@ pub(super) fn initialize(
                     ..
                 } | Source::Telegram {
                     topic_lifecycle: true,
+                    ..
+                } | Source::Telegram {
+                    topic_creation: true,
                     ..
                 }
             )
@@ -98,7 +127,17 @@ pub(super) fn initialize(
             }
         )
     });
-    if (events && !state.native_telegram_message_events_writes_enabled)
+    let creation = definition.sources.iter().any(|s| {
+        matches!(
+            s,
+            Source::Telegram {
+                topic_creation: true,
+                ..
+            }
+        )
+    });
+    if (creation && !state.native_telegram_topic_creation_enabled)
+        || (events && !state.native_telegram_message_events_writes_enabled)
         || (topics && !state.native_telegram_topic_lifecycle_enabled)
         || !state.native_telegram_durable_admission_enabled
         || !state.multi_consumer_writes_enabled

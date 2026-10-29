@@ -18,6 +18,10 @@ pub(crate) enum Scope {
     Numbered(String),
     General,
 }
+pub(crate) struct CreatedTopic {
+    pub id: String,
+    pub name: String,
+}
 impl Scope {
     pub(crate) fn id(&self) -> &str {
         match self {
@@ -28,6 +32,42 @@ impl Scope {
 }
 
 impl TelegramClient {
+    pub(crate) async fn create_topic(
+        &self,
+        token: &Secret,
+        bot: &str,
+        chat: &str,
+        name: &str,
+    ) -> Result<CreatedTopic, Error> {
+        if !super::media_token_matches(token, bot) || !valid_chat(chat) {
+            return Err(Error::Rejected);
+        }
+        cmaeg_core::thread_lifecycle::CreateThreadRequest {
+            name: name.into(),
+            auto_archive_duration: None,
+        }
+        .validate_telegram()
+        .map_err(|_| Error::Rejected)?;
+        let value = self
+            .call(
+                token,
+                "createForumTopic",
+                &json!({"chat_id":chat,"name":name}),
+            )
+            .await?;
+        let id = value["message_thread_id"]
+            .as_i64()
+            .filter(|id| *id > 1)
+            .ok_or(Error::Unconfirmed)?
+            .to_string();
+        if value["name"] != name || !value["icon_color"].is_u64() {
+            return Err(Error::Unconfirmed);
+        }
+        Ok(CreatedTopic {
+            id,
+            name: name.into(),
+        })
+    }
     /// Requires administrator rights even for a creator-owned topic.
     /// Reads are completed before the shared tool performs its final custody check.
     pub(crate) async fn topic_permissions(

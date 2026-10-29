@@ -26,9 +26,44 @@ fn flags() -> WriteFlags {
     WriteFlags {
         telegram_message_events: true,
         telegram_topic_lifecycle: true,
+        telegram_topic_creation: true,
         dynamic_sources: true,
         ..Default::default()
     }
+}
+
+#[tokio::test]
+async fn managed_topic_creation_requires_separate_consent_and_survives_unrelated_saves_and_revocation(
+) {
+    let app = Native::new().await;
+    let current = managed(&app).await;
+    let mut request = update(&current);
+    let crate::channels::SourceRequest::Telegram { topic_creation, .. } = &mut request.sources[0]
+    else {
+        panic!()
+    };
+    *topic_creation = true;
+    expand(&app, &current, &mut request).await;
+    assert!(build_update(&request, &current, WriteFlags::default()).is_err());
+    let opted = build_update(&request, &current, flags()).unwrap();
+    let mut request = update(&opted);
+    request.sources.clear();
+    expand(&app, &opted, &mut request).await;
+    assert_eq!(
+        build_update(&request, &opted, WriteFlags::default())
+            .unwrap()
+            .sources,
+        opted.sources
+    );
+    let crate::channels::SourceRequest::Telegram { topic_creation, .. } = &mut request.sources[0]
+    else {
+        panic!()
+    };
+    *topic_creation = false;
+    expand(&app, &opted, &mut request).await;
+    let revoked = build_update(&request, &opted, WriteFlags::default()).unwrap();
+    assert_eq!(revoked.sources, current.sources);
+    assert!(build_update(&update(&opted), &revoked, WriteFlags::default()).is_err());
 }
 
 async fn expand(app: &Native, current: &ChannelDefinition, request: &mut ChannelUpdateRequest) {

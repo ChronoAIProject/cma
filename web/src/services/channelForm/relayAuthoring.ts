@@ -173,11 +173,13 @@ export function validateRelayAuthoring(
       source.message_events === true &&
       !oldSources.some(
         (old) =>
-          canonical(without(old, ['topic_lifecycle'])) ===
-            canonical(without(source, ['topic_lifecycle'])) ||
+          canonical(without(old, ['topic_lifecycle', 'topic_creation'])) ===
+            canonical(without(source, ['topic_lifecycle', 'topic_creation'])) ||
           (source.channel_posts !== true &&
-            canonical(without(old, ['topic_lifecycle'])) ===
-              canonical(without({ ...source, channel_posts: true }, ['topic_lifecycle']))),
+            canonical(without(old, ['topic_lifecycle', 'topic_creation'])) ===
+              canonical(
+                without({ ...source, channel_posts: true }, ['topic_lifecycle', 'topic_creation']),
+              )),
       ) &&
       discovery.authoring?.native_telegram_message_events_enabled !== true
     )
@@ -191,13 +193,26 @@ export function validateRelayAuthoring(
         (old) =>
           (source.message_events !== true || old.message_events === true) &&
           (source.channel_posts !== true || old.channel_posts === true) &&
-          canonical(without(old, ['message_events', 'channel_posts'])) ===
-            canonical(without(source, ['message_events', 'channel_posts'])),
+          canonical(without(old, ['message_events', 'channel_posts', 'topic_creation'])) ===
+            canonical(without(source, ['message_events', 'channel_posts', 'topic_creation'])),
       ) &&
       discovery.authoring?.native_telegram_topic_lifecycle_enabled !== true
     )
       throw new Error(
         'New or changed Telegram topic management is disabled on this gateway. Your draft has been retained.',
+      );
+    if (
+      source.type === 'telegram' &&
+      source.topic_creation === true &&
+      !oldSources.some(
+        (old) =>
+          canonical(without(old, ['topic_lifecycle', 'message_events', 'channel_posts'])) ===
+          canonical(without(source, ['topic_lifecycle', 'message_events', 'channel_posts'])),
+      ) &&
+      discovery.authoring?.native_telegram_topic_creation_enabled !== true
+    )
+      throw new Error(
+        'New or changed Telegram topic creation is disabled on this gateway. Your draft has been retained.',
       );
     if (source.type === 'discord') {
       if (
