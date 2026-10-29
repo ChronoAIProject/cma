@@ -11,6 +11,8 @@ use layer2_core::sandbox::binding::{
 use layer2_core::CoreError;
 use mongodb::ClientSession;
 
+mod children;
+
 pub(super) const PREPARATIONS: &str = "provider_binding_preparations";
 
 impl MongoBindingCredentials {
@@ -193,118 +195,6 @@ impl MongoBindingCredentials {
             return Err(conflict());
         }
         Ok(receipt)
-    }
-
-    async fn require_terminal_children(
-        &self,
-        binding: &ProviderBinding,
-        session: &mut ClientSession,
-    ) -> Result<(), CoreError> {
-        let mut ids = std::collections::BTreeSet::new();
-        let mut conversations = self
-            .store
-            .bindings
-            .conversations
-            .find(doc! {"$or":[{"binding_id":&binding.binding_id},{"record.binding_id":&binding.binding_id}]})
-            .limit(1025)
-            .session(&mut *session)
-            .await
-            .map_err(unavailable)?;
-        let mut count = 0;
-        while let Some(document) = conversations
-            .next(&mut *session)
-            .await
-            .transpose()
-            .map_err(unavailable)?
-        {
-            let conversation = read_conversation(document).map_err(unavailable)?;
-            count += 1;
-            if count > 1024
-                || conversation.binding_id != binding.binding_id
-                || conversation.owner != binding.owner
-                || conversation.generation > binding.generation
-                || conversation.borrowed
-                || conversation.state
-                    != layer2_core::sandbox::binding::BindingConversationState::Retired
-                || (conversation.generation == binding.generation
-                    && (conversation.sandbox_id != binding.sandbox_id
-                        || conversation.workspace_id != binding.workspace_id))
-            {
-                return Err(conflict());
-            }
-            ids.insert(conversation.agent_id.to_string());
-        }
-        let mut agents = self
-            .store
-            .agents
-            .find(doc! {"$or":[{"sandbox_id":binding.sandbox_id.as_str()},{"record.sandbox_id":binding.sandbox_id.as_str()}]})
-            .limit(1025)
-            .session(&mut *session)
-            .await
-            .map_err(unavailable)?;
-        let mut count = 0;
-        while let Some(document) = agents
-            .next(&mut *session)
-            .await
-            .transpose()
-            .map_err(unavailable)?
-        {
-            let agent = crate::store::agents::read_agent(&document).map_err(unavailable)?;
-            count += 1;
-            if count > 1024
-                || document.contains_key("channel_reuse_cleanup_execution")
-                || document.contains_key("owned_workspace_cleanup_admission_v1")
-                || agent.owner != binding.owner
-                || agent.sandbox_id != binding.sandbox_id
-                || agent.status != layer2_core::sandbox::AgentStatus::Deleted
-                || agent.work.step != layer2_core::sandbox::AgentWorkStep::None
-                || agent.work.lease.is_some()
-                || !agent.work.cleanup_debt.is_empty()
-                || agent.conversation.active_turn.is_some()
-                || agent.conversation.operation.is_some()
-                || !agent.conversation.queued_messages.is_empty()
-            {
-                return Err(conflict());
-            }
-            ids.insert(agent.id.to_string());
-        }
-        let mut worktrees = self
-            .store
-            .worktrees
-            .find(doc! {"$or":[{"sandbox_id":binding.sandbox_id.as_str()},{"record.sandbox_id":binding.sandbox_id.as_str()}]})
-            .limit(1025)
-            .session(&mut *session)
-            .await
-            .map_err(unavailable)?;
-        let mut count = 0;
-        while let Some(document) = worktrees
-            .next(&mut *session)
-            .await
-            .transpose()
-            .map_err(unavailable)?
-        {
-            let worktree =
-                crate::store::worktrees::read_worktree(&document).map_err(unavailable)?;
-            count += 1;
-            if count > 1024
-                || document.contains_key("channel_reuse_cleanup_execution")
-                || document.contains_key("owned_workspace_cleanup_admission_v1")
-                || worktree.owner != binding.owner
-                || worktree.sandbox_id != binding.sandbox_id
-                || worktree.status != layer2_core::sandbox::WorktreeStatus::Removed
-            {
-                return Err(conflict());
-            }
-        }
-        let ids: Vec<_> = ids.into_iter().collect();
-        if !ids.is_empty() && self.store.agent_commands.find_one(doc! {
-            "$and":[
-                {"$or":[{"agent_id":{"$in":&ids}}, {"record.receipt.envelope.agent_id":{"$in":&ids}}]},
-                {"$or":[{"status":{"$in":["queued","in_progress","waiting_action"]}},
-                    {"record.status":{"$in":["queued","in_progress","waiting_action"]}}]},
-            ],
-        }).session(&mut *session).await.map_err(unavailable)?.is_some() { return Err(conflict()); }
-        Ok(())
     }
 }
 

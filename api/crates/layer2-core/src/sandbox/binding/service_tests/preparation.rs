@@ -107,9 +107,9 @@ async fn preparation_inspection_never_replaces_a_recoverable_original_home() {
 }
 
 #[tokio::test]
-async fn only_a_fresh_event_inspects_a_fully_retired_released_home_as_pending() {
+async fn only_a_fresh_event_inspects_a_ready_bindings_retired_released_home_as_pending() {
     let f = fixture();
-    let binding = fail_binding(&f, f.ready().await).await;
+    let binding = f.ready().await;
     let mut sandbox = f
         .store
         .get_sandbox(&binding.sandbox_id)
