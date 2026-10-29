@@ -64,6 +64,8 @@ data:
   CMAEG_NATIVE_LARK_FORMS_ENABLED: "true"
   CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED: "true"
   CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED: "true"
+  # Explicit Discord/WhatsApp sendTyping; WhatsApp also marks the original message read.
+  CMAEG_NATIVE_TYPING_ENABLED: "false"
   # Compatible readers and Custom acceptance verified; enable owner Meta setup/testing.
   CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "true"
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "true"

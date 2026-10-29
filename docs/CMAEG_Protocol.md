@@ -1848,6 +1848,17 @@ Telegram editing supports confirmed interactive cards. With
 Telegram, Lark/Feishu and Discord also receives an editable reference. Ordinary
 legacy text references and custom edits remain unsupported. Disabling issuance
 preserves updates to retained enriched references. Relay typing remains unsupported.
+With `CMAEG_NATIVE_TYPING_ENABLED=true`, original native Discord and private
+WhatsApp message events can expose `capabilities.typing:true` and use the existing
+`sendTyping` operation. The exact retained routed event and current selected
+consumer authority are required; no destination is supplied by the caller.
+Discord typing expires after 10 seconds. WhatsApp typing **also marks the original
+message read**, ends upon a response or after 25 seconds, and is restricted by
+CMA to a private ordinary message younger than 24 hours. These are explicit calls,
+never automatic keepalives or completed replies. Each native call is bounded to
+seven seconds, sends once, and returns an error on uncertain acceptance rather
+than `sent`. Native Lark/Feishu and WhatsApp groups remain unsupported. See
+[Native typing](CMAEG_Native_Typing.md) for authority, activation and provider evidence.
 
 Context is `{event_id,conversation_id,channel_id,provider_binding_id,source,activity_verified,expires_at,activity:{kind,actor,conversation,occurred_at},
 capabilities:{edit,typing,buttons,cards,attachments,max_text_chars}}`. Telegram

@@ -1,8 +1,6 @@
 //! Service composition: build every component from configuration, then serve
 //! HTTP until a termination signal drains turns, deliveries and connections.
-
 use std::{future::IntoFuture, net::SocketAddr, time::Instant};
-
 use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
@@ -111,6 +109,7 @@ pub(crate) async fn serve(
         state.native_whatsapp_forms_enabled && state.native_whatsapp_admission_enabled,
         state.native_whatsapp_flow_writes_enabled && state.native_whatsapp_admission_enabled,
     ));
+    let native_typing = source_settings::native_typing(&config, &state)?;
     let (native_lark_controls, native_lark_thread_start) =
         source_settings::lark_issuance(&config, &state);
     let delivery_engine = delivery::engine::DeliveryEngine::start_observed(
@@ -253,6 +252,7 @@ pub(crate) async fn serve(
     )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        native_typing,
         native_lark_conversation_history: source_settings::lark_history(
             config.native_lark_conversation_history_enabled,
             config.native_lark_mixed_history_enabled,

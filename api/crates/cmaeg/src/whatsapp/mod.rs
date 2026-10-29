@@ -13,6 +13,7 @@ pub mod receipts;
 pub(crate) mod shared_facts;
 pub(crate) mod status;
 pub(crate) mod templates;
+mod typing;
 pub mod webhook;
 pub use client::{Client, Error, Transport};
 

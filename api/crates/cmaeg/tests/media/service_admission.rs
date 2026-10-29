@@ -246,6 +246,7 @@ fn config(media: MediaConfig) -> Config {
         native_discord_media_card_replacements_enabled: false,
         native_lark_message_effects_enabled: false,
         native_lark_received_reactions_enabled: false,
+        native_typing_enabled: false,
         native_whatsapp_writes_enabled: false,
         native_whatsapp_groups_writes_enabled: false,
         native_whatsapp_message_events_enabled: false,
