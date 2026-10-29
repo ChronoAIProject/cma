@@ -72,6 +72,11 @@ pub(super) fn secure_operations(document: &mut utoipa::openapi::OpenApi) {
             operation.operation_id = Some(operation_id(method, path));
             operation.security = Some(if anonymous_path(path) {
                 Vec::new()
+            } else if path == crate::rest::worker_credentials::WORKER_CLASSIFIER_PATH {
+                vec![SecurityRequirement::new(
+                    "bearerAuth",
+                    std::iter::empty::<String>(),
+                )]
             } else {
                 vec![
                     SecurityRequirement::new("bearerAuth", std::iter::empty::<String>()),

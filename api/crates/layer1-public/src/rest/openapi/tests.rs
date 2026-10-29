@@ -341,6 +341,9 @@ fn only_public_discovery_and_previews_are_anonymous() {
             let security = &operation["security"];
             if security.as_array().is_some_and(Vec::is_empty) {
                 anonymous.insert(format!("{method} {path}"));
+            } else if path == crate::rest::worker_credentials::WORKER_CLASSIFIER_PATH {
+                assert_eq!(method, "post");
+                assert_eq!(security, &serde_json::json!([{ "bearerAuth": [] }]));
             } else {
                 assert_eq!(security, &authenticated, "security for {method} {path}");
             }

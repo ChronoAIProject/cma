@@ -3,6 +3,7 @@ use layer2_core::sandbox::binding::{BindingPolicy, BindingResources, BindingServ
 
 pub(crate) struct BindingComposition {
     service: Arc<BindingService>,
+    access: Arc<layer2_core::sandbox::binding::BindingAccessService>,
 }
 impl BindingComposition {
     pub(super) fn new(
@@ -12,6 +13,9 @@ impl BindingComposition {
         bounds: layer2_core::profiles::ProfileCapacityBounds,
     ) -> Self {
         Self {
+            access: layer2_core::sandbox::binding::BindingAccessService::new(
+                stores.sandbox_model.clone(),
+            ),
             service: BindingService::new(
                 stores.sandbox_model.clone(),
                 resources,
@@ -41,7 +45,11 @@ impl BindingComposition {
             )?,
             None => rest::binding_router(self.service.clone()),
         };
-        Ok(routes)
+        Ok(
+            routes.merge(rest::worker_credentials::worker_credential_router(
+                self.access.clone(),
+            )),
+        )
     }
     pub(crate) fn spawn(
         self,

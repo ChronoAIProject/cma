@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 236,
+  "openapi_operations": 237,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -3355,6 +3355,18 @@
         "403": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
         "409": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
         "503": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal."
+      }
+    },
+    "POST /api/v1/cmaeg/worker-credentials/classify": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/worker_credentials.rs# Narrow service-only digest classification with fail-closed storage and bounded lookup.",
+      "required_problems": [
+        "worker_classifier_auth_required",
+        "worker_classifier_invalid_digest",
+        "worker_classifier_unavailable"
+      ],
+      "unreachable_problems": {
+        "worker_classifier_forbidden": "api/crates/cma/src/auth/worker_credentials/tests.rs# Composition verifies the exact machine bearer and both current service capabilities before Layer 1; rejected or revoked authority never installs its service marker."
       }
     }
   }
