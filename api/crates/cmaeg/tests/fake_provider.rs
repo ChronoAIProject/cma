@@ -1,7 +1,7 @@
 use std::{
     convert::Infallible,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -39,6 +39,8 @@ pub struct FakeProviderConfig {
     pub busy_once: bool,
     pub busy_retry_after: Option<u64>,
     pub conversation_missing_once: bool,
+    /// Ordered conversation PUT refusals, before the default successful creation.
+    pub conversation_statuses: Vec<(u16, String)>,
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
     pub reject_binding: bool,
@@ -69,6 +71,7 @@ impl Default for FakeProviderConfig {
             busy_once: false,
             busy_retry_after: None,
             conversation_missing_once: false,
+            conversation_statuses: Vec::new(),
             malformed_frame: false,
             disconnect_after: None,
             reject_binding: false,
@@ -104,6 +107,7 @@ struct StateData {
     busy_once: AtomicBool,
     conversation_missing_once: AtomicBool,
     missing_turn_once: AtomicBool,
+    conversation_attempt: AtomicUsize,
 }
 
 pub struct FakeProvider {
@@ -126,6 +130,7 @@ impl FakeProvider {
             busy_once: AtomicBool::new(busy_once),
             conversation_missing_once: AtomicBool::new(missing_once),
             missing_turn_once: AtomicBool::new(missing_turn_once),
+            conversation_attempt: AtomicUsize::new(0),
         });
         let router = Router::new()
             .route("/.well-known/agent-card.json", get(agent_card))
@@ -251,6 +256,14 @@ async fn ensure_conversation(
         headers,
         body,
     );
+    let attempt = state.conversation_attempt.fetch_add(1, Ordering::SeqCst);
+    if let Some((status, code)) = state.config.conversation_statuses.get(attempt) {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(json!({"code":code})),
+        )
+            .into_response();
+    }
     if state
         .conversation_missing_once
         .swap(false, Ordering::SeqCst)
