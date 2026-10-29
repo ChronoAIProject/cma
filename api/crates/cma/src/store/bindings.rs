@@ -16,6 +16,7 @@ use super::durability::majority_collection;
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore};
 use super::schema::{initialize_collections, DOCUMENT_SCHEMA_VERSION};
 mod admission;
+mod associations;
 mod commands;
 mod conversations;
 mod custody;
@@ -30,6 +31,8 @@ mod documents;
 use documents::*;
 #[cfg(test)]
 mod admission_tests;
+#[cfg(test)]
+mod association_tests;
 #[cfg(test)]
 mod existing_tests;
 #[cfg(test)]
@@ -114,6 +117,22 @@ impl BindingCollections {
             .await
             .map_err(|error| {
                 StoreError::Unavailable(format!("binding preparation index: {error}"))
+            })?;
+        value
+            .conversations
+            .create_index(
+                IndexModel::builder()
+                    .keys(associations::index_keys())
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .name(associations::INDEX.to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("binding association index: {error}"))
             })?;
         // An existing Agent may be borrowed by another channel. Lookup remains
         // unique inside one binding generation; resource lifecycle is retained

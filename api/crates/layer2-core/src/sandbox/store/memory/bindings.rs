@@ -128,6 +128,9 @@ impl BindingStore for InMemorySandboxStore {
         }) {
             return Err(SandboxStoreError::Conflict);
         }
+        state
+            .binding_association_index
+            .insert((next.owner.clone(), next.agent_id.clone(), key.clone()), ());
         state.binding_conversations.insert(key, next);
         Ok(())
     }

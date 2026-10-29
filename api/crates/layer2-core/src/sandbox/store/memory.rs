@@ -62,6 +62,7 @@ mod events;
 mod interrupting_messages;
 mod provenance;
 mod provenance_inventory;
+mod provider_associations;
 mod queued_cancellations;
 #[cfg(test)]
 mod queued_cancellations_tests;
