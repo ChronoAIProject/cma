@@ -23,12 +23,12 @@ fn message() -> OutboundMessage {
     bytes.extend_from_slice(&[0; 3200]);
     serde_json::from_value(json!({"native_attachments":[{"kind":"voice","source":{"type":"base64","data":STANDARD.encode(bytes)}}]})).unwrap()
 }
-fn response(channel: &str) -> Value {
+pub(super) fn response(channel: &str) -> Value {
     json!({"id":"800","channel_id":channel,"author":{"id":"77","bot":true},"type":19,
         "flags":8192,"content":"","message_reference":{"message_id":"700","channel_id":channel},
         "attachments":[{"id":"801","filename":"voice.wav","content_type":"audio/wav","size":3244,"duration_secs":0.1,"waveform":"AA=="}]})
 }
-async fn send(
+pub(super) async fn send(
     sender: &Sender,
     channel: &Arc<ResolvedChannel>,
     event: &EventRefPayload,
