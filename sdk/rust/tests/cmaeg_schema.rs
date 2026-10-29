@@ -40,6 +40,18 @@ fn historical_activity_receipts_roundtrip_without_inventing_event_facts() {
 }
 
 #[test]
+fn historical_media_capabilities_do_not_advertise_native_presentations() {
+    let mut legacy = fixtures()["NativeMediaCapabilities"][0].clone();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("presentation_profiles");
+    let decoded: NativeMediaCapabilities = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(decoded.presentation_profiles.is_none());
+    assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
+}
+
+#[test]
 fn legacy_relay_sources_never_gain_a_resource_binding_on_roundtrip() {
     for platform in ["telegram", "lark", "feishu", "discord", "whatsapp", "slack"] {
         let request = json!({"type":"nyxid_relay","platform":platform,"issuer":"https://nyx.example","key_id":"key-fixture","route_ids":["route-fixture"],"admission":{"type":"all"}});
@@ -302,6 +314,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         NativeMediaKind,
         NativeMediaSource,
         NativeMediaCapabilities,
+        NativePresentationProfile,
         NativeAlbumCapabilities,
         MediaControlsCapabilities,
         NativeMediaUpdate,
