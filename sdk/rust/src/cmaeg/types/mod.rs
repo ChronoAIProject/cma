@@ -48,3 +48,6 @@ pub use thread_lifecycle::*;
 
 mod form_preparation;
 pub use form_preparation::*;
+
+mod media_continuation;
+pub use media_continuation::*;

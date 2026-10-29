@@ -1452,6 +1452,31 @@ Keepalive comments are not events. A slow consumer receives terminal
 There is no durable replay or Last-Event-ID contract. Disconnect removes the
 waiter without cancelling the admitted turn.
 
+New routed existing-Agent media events, when the deployment's media continuation
+writer is enabled, distinguish an individual response from the end of the whole
+stream. Their original terminal response uses `cmaeg.response.completed` or
+`cmaeg.response.failed`, adding `response_id`, `media_pending` and the owner-only
+`media_responses_url` to the control data. A supplementary terminal result uses
+`cmaeg.media.response` with `event_id`, `conversation_id`, its independent
+`response_id` and `response_url`, `parent_response_id`, `delivery_id`,
+`attachment_index`, artifact `kind`, `status` and `text`. Automatic reply policy
+still controls text; disabling it retains terminal metadata without an answer.
+One final `cmaeg.completed` or `cmaeg.failed` closes the stream when media work
+settles. A local 120-second bound instead emits terminal `cmaeg.media.pending`
+while durable background work continues. This applies only to events whose
+original immutable command carries the media scheduling marker; older events
+keep the stream semantics above.
+
+`GET /v1/channels/{channel_id}/events/{event_id}/media-responses?cursor=...`
+returns retained metadata in pages of at most 16 attachment slots. Items identify
+the consumer, attachment, artifact kind, independent response ID/URL, response
+status, delivery outcome and any terminal refusal. It requires creator
+authentication and ownership of the channel, exposes no response text,
+attachment paths or credentials, and remains readable during the original
+record retention period after event execution authority expires. Each linked
+Agent Manager response retains its independent authorization; channel ownership
+does not grant wider Agent conversation visibility.
+
 On both the durable routed lane and legacy Custom ingress using the verified
 `cma_codex` provider, repeating an already-admitted event with
 `?mode=stream` returns the normal 202 accepted JSON body when the current request
@@ -2770,6 +2795,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
 | `GET /v1/channels/{channel_id}/activity/stream` | `streamChannelActivity` |
+| `GET /v1/channels/{channel_id}/events/{event_id}/media-responses` | `getEventMediaResponses` |
+| `POST /v1/event-attestations` | `attestRetainedEvent` |
 | `PUT /v1/channels/{channel_id}` | `updateChannel` |
 | `POST /v1/channels/{channel_id}/outbound-messages` | `prepareOutboundMessage` |
 | `GET /v1/channels/{channel_id}/outbound-messages/{delivery_id}` | `getOutboundMessage` |
@@ -3422,6 +3449,15 @@ Telegram/Lark/Feishu, `raw_event` and explicit `trusted_normalized` for
 Discord/WhatsApp, and `trusted_normalized` for Slack. Each mode has
 `writes_enabled`; this describes new authoring, not upstream transport health,
 ordinary-message delivery, or bot provisioning.
+
+Optional `relay_authoring.response_recovery_providers` lists the registered
+provider slugs whose configuration includes both durable response recovery paths.
+It exposes no URLs or credentials and performs no provider requests. This is
+configuration eligibility, not proof of provider availability, a connected bot,
+or confirmed delivery. The portal explains an unsupported selected provider
+before new direct Discord authoring. Exact saved sources remain editable without
+being rewritten. Older gateways may omit this additive field; the server's
+admission checks remain authoritative.
 
 `relay_raw_verification_writes_enabled` is independent of
 `dynamic_sources_writes_enabled`, `multi_consumer_writes_enabled`,

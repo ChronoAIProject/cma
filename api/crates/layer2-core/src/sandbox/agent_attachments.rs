@@ -52,7 +52,8 @@ impl From<AdapterError> for AttachmentError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentAttachment {
     pub id: String,
     pub agent_id: AgentId,
@@ -72,6 +73,13 @@ pub struct AttachmentAdmission {
     name: String,
     media_type: String,
     deadline: tokio::time::Instant,
+    capability: ResourceCapability,
+    source: Option<Arc<dyn AttachmentSourceGuard>>,
+}
+
+#[async_trait::async_trait]
+pub trait AttachmentSourceGuard: Send + Sync {
+    async fn check(&self) -> Result<(), AttachmentError>;
 }
 
 pub struct AttachmentMetadata<'a> {
@@ -189,6 +197,50 @@ impl AgentAttachmentService {
             name,
             media_type: media_type.into(),
             deadline: tokio::time::Instant::now() + ATTACHMENT_TIMEOUT,
+            capability: ResourceCapability::OperateAgent,
+            source: None,
+        })
+    }
+    /// Narrow application-only entry point for an exact retained external event.
+    /// The source guard proves the artifact; no ordinary binding upload gains access.
+    pub fn admit_external_event(
+        &self,
+        authorized: AuthorizedResource,
+        parent: &super::agent_io::AgentCommandEnvelope,
+        attachment_id: String,
+        metadata: AttachmentMetadata<'_>,
+        source: Arc<dyn AttachmentSourceGuard>,
+    ) -> Result<AttachmentAdmission, AttachmentError> {
+        authorized
+            .binding_authority()
+            .ok_or(AttachmentError::Conflict)?
+            .require_command(parent)
+            .map_err(|_| AttachmentError::Conflict)?;
+        if parent.command.external_event().is_none()
+            || parent.continuation.is_some()
+            || !attachment_id.starts_with("att_")
+            || attachment_id.len() != 68
+            || !attachment_id[4..]
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            || !valid_media_type(metadata.media_type)
+        {
+            return Err(AttachmentError::Invalid);
+        }
+        available(&authorized.snapshot)?;
+        let identity = identity(&authorized.snapshot)?;
+        Ok(AttachmentAdmission {
+            authorized,
+            target: ResourceTarget::Agent {
+                agent_id: parent.agent_id.clone(),
+            },
+            identity,
+            id: attachment_id,
+            name: sanitize_name(metadata.name)?,
+            media_type: metadata.media_type.into(),
+            deadline: tokio::time::Instant::now() + ATTACHMENT_TIMEOUT,
+            capability: ResourceCapability::Interact,
+            source: Some(source),
         })
     }
     pub async fn upload(
@@ -207,12 +259,15 @@ impl AgentAttachmentService {
         &self,
         admission: &AttachmentAdmission,
     ) -> Result<ResourceAccessSnapshot, AttachmentError> {
+        if let Some(source) = &admission.source {
+            source.check().await?;
+        }
         let current = self
             .access
             .current_read_snapshot(
                 &admission.authorized,
                 &admission.target,
-                ResourceCapability::OperateAgent,
+                admission.capability,
             )
             .await?;
         available(&current)?;

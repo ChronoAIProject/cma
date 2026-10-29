@@ -66,6 +66,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     "channel_usage_events",
     AGENT_COMMANDS,
     AGENT_ARTIFACTS,
+    super::media_uploads::COLLECTION,
     SANDBOX_CONTROLS,
     AGENT_COMMAND_ORDERS,
     RESOURCE_POLICIES,
@@ -106,6 +107,7 @@ pub struct MongoSandboxStore {
     pub(super) channel_usage_events: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
     pub(super) agent_artifacts: Collection<Document>,
+    pub(super) media_uploads: Collection<Document>,
     pub(super) sandbox_controls: Collection<Document>,
     pub(super) command_authorization_audits: Collection<Document>,
     pub(super) agent_command_orders: Collection<Document>,
@@ -180,6 +182,7 @@ impl MongoSandboxStore {
             channel_usage_events: majority_collection(&database, "channel_usage_events"),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
             agent_artifacts: majority_collection(&database, AGENT_ARTIFACTS),
+            media_uploads: majority_collection(&database, super::media_uploads::COLLECTION),
             sandbox_controls: majority_collection(&database, SANDBOX_CONTROLS),
             command_authorization_audits: majority_collection(
                 &database,

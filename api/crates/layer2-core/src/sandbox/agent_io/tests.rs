@@ -154,6 +154,7 @@ fn admission_receipt_binds_version_input_and_order_without_conflating_owner_and_
     let command = AgentCommand::message("hello");
     let receipt = AdmissionReceipt {
         envelope: AgentCommandEnvelope {
+            continuation: None,
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: AgentCommandId::generate(),
             agent_id: AgentId("agt_existing".into()),

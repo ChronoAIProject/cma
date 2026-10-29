@@ -4,11 +4,16 @@ import { requestResponse, type OperationOptions } from '../http.js';
 import { input, read, segment } from '../resources.js';
 import { CloudEventSchema, EventAcceptedSchema, type CloudEvent } from './types.js';
 import { signWebhook } from './signing.js';
-import { gatewayFrames } from './stream.js';
+import { gatewayFrames, type GatewayMediaStreamEvent, type GatewayStreamEvent } from './stream.js';
 
 export interface EventOptions extends OperationOptions {
   /** Omit for a source authenticated with the configured bearer credential. */
   readonly webhook?: { readonly secret: string; readonly id: string; readonly timestamp: string };
+}
+
+export interface StreamEventOptions extends EventOptions {
+  /** Observe separate attachment responses after the original turn; omitted/false preserves legacy completion. */
+  readonly mediaResponses?: boolean;
 }
 
 async function prepare(event: CloudEvent, options: EventOptions) {
@@ -49,8 +54,20 @@ export class CmaegEvents {
   }
 
   /** One admitted event, with no automatic reconnect or retry after uncertainty. */
-  async *streamEvent(channelId: string, event: CloudEvent, options: EventOptions = {}) {
-    const path = `/v1/channels/${segment(channelId)}/events?mode=stream`;
+  streamEvent(
+    channelId: string,
+    event: CloudEvent,
+    options?: EventOptions & { readonly mediaResponses?: false },
+  ): AsyncGenerator<GatewayStreamEvent>;
+  streamEvent(
+    channelId: string,
+    event: CloudEvent,
+    options: StreamEventOptions,
+  ): AsyncGenerator<GatewayMediaStreamEvent>;
+  async *streamEvent(channelId: string, event: CloudEvent, options: StreamEventOptions = {}) {
+    if (options.mediaResponses !== undefined && typeof options.mediaResponses !== 'boolean')
+      throw new ValidationError('mediaResponses must be a boolean');
+    const path = `/v1/channels/${segment(channelId)}/events?mode=stream${options.mediaResponses === true ? '&media_responses=true' : ''}`;
     const prepared = await prepare(event, options);
     const timeout = options.timeoutMs ?? this.config.requestTimeoutMs;
     if (!Number.isSafeInteger(timeout) || timeout <= 0)
@@ -69,7 +86,7 @@ export class CmaegEvents {
         headers: { ...prepared.headers, Accept: 'text/event-stream' },
         signal: controller.signal,
       });
-      yield* gatewayFrames(response, controller.signal, prepared.eventId);
+      yield* gatewayFrames(response, controller.signal, prepared.eventId, options.mediaResponses);
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener('abort', abort);

@@ -2,6 +2,10 @@ use super::{Cmaeg, sign_webhook, types::*};
 use crate::{Error, Result, http::Request, stream::EventStream};
 use reqwest::{Method, StatusCode, header};
 use serde::{Deserialize, Serialize};
+mod media;
+pub use media::{
+    GatewayMediaEvent, GatewayMediaStream, MediaResponse, MediaTurnResult, OriginalMediaResponse,
+};
 
 /// Runtime signing values; never print or persist this credential object.
 pub struct WebhookAuth<'a> {
@@ -74,8 +78,22 @@ impl Cmaeg {
         event: &CloudEvent,
         options: &EventOptions<'_>,
     ) -> Result<GatewayStream> {
+        self.open_gateway_stream(channel_id, event, options, false)
+            .await
+    }
+
+    async fn open_gateway_stream(
+        &self,
+        channel_id: &str,
+        event: &CloudEvent,
+        options: &EventOptions<'_>,
+        media_responses: bool,
+    ) -> Result<GatewayStream> {
         let segments = ["v1", "channels", channel_id, "events"];
-        let query = [("mode", "stream".into())];
+        let mut query = vec![("mode", "stream".into())];
+        if media_responses {
+            query.push(("media_responses", "true".into()));
+        }
         let mut request = request(&segments, event, options, StatusCode::OK)?;
         request.query = &query;
         let stream = crate::stream::open_bounded(&self.client.inner, request, 1024 * 1024).await?;

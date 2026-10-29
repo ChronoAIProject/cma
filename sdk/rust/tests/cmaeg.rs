@@ -1,5 +1,7 @@
 #[path = "cmaeg/connections.rs"]
 mod connections;
+#[path = "cmaeg/media_stream.rs"]
+mod media_stream;
 
 #[path = "support/wire.rs"]
 mod wire;
@@ -220,9 +222,12 @@ fn completed() -> String {
     )
 }
 fn expect_stream(server: &WireServer, body: String) {
+    expect_stream_at(server, body, "/v1/channels/channel/events?mode=stream");
+}
+fn expect_stream_at(server: &WireServer, body: String, path: &str) {
     let mut request = wire::json(
         "POST",
-        "/v1/channels/channel/events?mode=stream",
+        path,
         Some(serde_json::to_value(event()).unwrap()),
         200,
         Value::Null,
