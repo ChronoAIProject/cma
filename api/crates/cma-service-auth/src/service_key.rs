@@ -2,10 +2,10 @@
 //! This verifies identity only; a service must separately exclude worker keys.
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::http::{HeaderMap, header::AUTHORIZATION};
+use axum::http::{header::AUTHORIZATION, HeaderMap};
 use serde_json::Value;
 
-use crate::{AuthError, NyxIdAuth, bounded_text};
+use crate::{bounded_text, AuthError, NyxIdAuth};
 
 pub fn is_service_key(token: &str) -> bool {
     token.starts_with("nyx_") || token.starts_with("nyxid_ag_")
