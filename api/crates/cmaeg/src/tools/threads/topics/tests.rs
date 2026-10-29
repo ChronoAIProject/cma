@@ -13,6 +13,8 @@ use reqwest::{header::HeaderMap, StatusCode, Url};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Mutex, time::Duration};
 
+#[path = "create_tests.rs"]
+mod create;
 #[path = "general_tests.rs"]
 mod general;
 #[path = "rename_tests.rs"]
@@ -25,6 +27,7 @@ struct Memory {
     hook: Option<Box<dyn FnOnce() + Send>>,
     delay: Duration,
     write_hook: Option<Box<dyn FnOnce() + Send>>,
+    created: u64,
 }
 #[derive(Default)]
 struct Telegram(Mutex<Memory>);
@@ -59,6 +62,10 @@ impl TelegramTransport for Telegram {
                     }
                     "getChatMember" => {
                         json!({"user":{"id":77,"is_bot":true},"status":"administrator","can_manage_topics":true})
+                    }
+                    "createForumTopic" => {
+                        memory.created += 1;
+                        json!({"message_thread_id":900+memory.created,"name":body["name"],"icon_color":7322096})
                     }
                     "closeForumTopic"
                     | "reopenForumTopic"
@@ -124,9 +131,18 @@ async fn fixture_with_native_message(
     raw: Value,
     general_enabled: bool,
 ) -> (App, Arc<Telegram>) {
+    fixture_with_grants(named, consent, false, raw, general_enabled).await
+}
+async fn fixture_with_grants(
+    named: bool,
+    consent: bool,
+    creation: bool,
+    raw: Value,
+    general_enabled: bool,
+) -> (App, Arc<Telegram>) {
     let mut app = App::new(None, named).await;
     app.definition.sources = vec![serde_json::from_value(
-        json!({"type":"telegram","bot_id":"77","admission":{"type":"all"},"topic_lifecycle":consent}),
+        json!({"type":"telegram","bot_id":"77","admission":{"type":"all"},"topic_lifecycle":consent,"topic_creation":creation}),
     )
     .unwrap()];
     app.definition.secrets.telegram_bot_token = Some(Secret::new("77:topic-fixture"));
@@ -172,7 +188,8 @@ async fn fixture_with_native_message(
                 .unwrap()
                 .with_transport(telegram.clone()),
         ))
-        .with_general_topics(general_enabled),
+        .with_general_topics(general_enabled)
+        .with_creation(creation),
     ));
     app.state.discord_threads = None;
     app.mount().await;
