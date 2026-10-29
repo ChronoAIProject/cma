@@ -1,4 +1,8 @@
-import { EndpointResponseSchema, FieldRefusalSchema } from './channel-results.js';
+import {
+  EndpointResponseSchema,
+  FieldRefusalSchema,
+  NativeDiscordActivationSchema,
+} from './channel-results.js';
 export * from './channel-results.js';
 import { NativeLarkIdentitySchema } from './primitives.js';
 import { CredentialsRequestSchema, CredentialPatchSchema } from './credentials.js';
@@ -444,15 +448,6 @@ export const ProviderResponseSchema = object({
   slug: text,
 });
 export type ProviderResponse = Output<typeof ProviderResponseSchema>;
-
-/** Native intake eligibility; selection is not a socket-health claim. */
-export const NativeDiscordActivationSchema = object({
-  state: text,
-  detail: text,
-  capacity: integer,
-  selected_records: integer,
-});
-export type NativeDiscordActivation = Output<typeof NativeDiscordActivationSchema>;
 
 export const ChannelResponseSchema = object({
   native_discord_activation: optional(nullable(NativeDiscordActivationSchema)),
