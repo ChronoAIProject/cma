@@ -78,12 +78,7 @@ impl SandboxAdapter for HostedAdapter {
         request: &RuntimeProvisionRequest,
         home: &crate::HomeVolumeRequest,
     ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
-        let rendered = self
-            .deployment
-            .render_runtime(&request.spec, request.generation)?;
-        self.backend
-            .select_native_pool(&rendered, &self.deployment.image, home)
-            .await
+        self.select_native_pool_request(request, home).await
     }
     fn capabilities(&self) -> AdapterCapabilities {
         self.deployment.capabilities()
