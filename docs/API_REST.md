@@ -485,8 +485,15 @@ native MCP tool names.
 
 Both DELETE operations return 204 after durable retirement admission. Conversation
 cleanup stops the Agent and removes its Worktree through the existing workers;
-binding cleanup also retires its Sandbox. Once retired, a binding or conversation
-id cannot be resurrected in the same generation. Supplied keys use encrypted
+binding cleanup first admits retirement of its exact owned Sandbox, fencing
+revival before waiting for conversation cleanup. This lets a paused Sandbox's
+existing retirement worker remove its retained provider object and prove process
+absence without starting a replacement Pod. Paused Agents with an earlier
+`binding_retired` stop then settle under the same parent/generation/home/provider
+absence checks; no runtime close receipt or completed turn is fabricated. A
+borrowed ExistingAgent target only loses its binding association and retains its
+Agent and resumable Sandbox. Once retired, a binding or conversation id cannot
+be resurrected in the same generation. Supplied keys use encrypted
 custody and are never minted, renewed, or revoked by the managed-key controller.
 
 Binding PUT with the same profile digest and a changed supplied key rotates the
