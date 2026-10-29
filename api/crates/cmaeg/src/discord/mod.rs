@@ -20,6 +20,11 @@ mod content_replay_tests;
 #[cfg(test)]
 mod content_tests;
 pub(crate) mod facts;
+mod forward;
+#[cfg(test)]
+mod forward_replay_tests;
+#[cfg(test)]
+mod forward_tests;
 pub(crate) mod history_authority;
 pub mod inbox_dispatch;
 mod inbox_reader;
