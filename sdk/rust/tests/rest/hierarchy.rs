@@ -1,6 +1,39 @@
 use super::*;
 
 #[tokio::test]
+async fn agent_worktree_recovery_is_keyed_bodyless_and_checks_exact_identity_and_status() {
+    let server = Server::new().await;
+    let path = "/agents/agent-1/recover-worktree";
+    let mut pending = agent();
+    pending["status"] = json!("starting");
+    for _ in 0..2 {
+        server.expect("POST", path, None, 202, Some(pending.clone()));
+        let agent = server
+            .client
+            .agents()
+            .recover_worktree("agent-1", &key())
+            .await
+            .unwrap();
+        assert_eq!(agent.id, "agent-1");
+        assert_eq!(agent.status, AgentStatus::Starting);
+    }
+    let mut foreign = pending.clone();
+    foreign["id"] = json!("another-agent");
+    for (status, response) in [(202, foreign), (200, pending)] {
+        server.expect("POST", path, None, status, Some(response));
+        assert!(matches!(
+            server
+                .client
+                .agents()
+                .recover_worktree("agent-1", &key())
+                .await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.assert_drained();
+}
+
+#[tokio::test]
 async fn workspace_prepare_recovery_is_keyed_bodyless_and_checks_exact_identity_and_status() {
     let server = Server::new().await;
     let path = "/workspaces/workspace-1/recover-prepare";
