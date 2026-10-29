@@ -1,7 +1,7 @@
 //! Restore an immutable native inbox item into the ordinary routed admission contract.
 use super::{
     journal_model::{Authority, Chunk, Inbox},
-    normalize::{normalize, Normalized},
+    normalize::{normalize, normalize_with_content, Normalized},
     record_store::Store,
     GatewayError,
 };
@@ -40,6 +40,8 @@ pub struct InboxReader {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Body {
+    #[serde(default)]
+    pub content_projection: Option<super::content::Snapshot>,
     #[serde(default)]
     pub quote_projection: Option<crate::ingress::quoted_context::Snapshot>,
     #[serde(default)]
@@ -344,6 +346,13 @@ impl Body {
         self.dispatch[if reaction { "message_id" } else { "id" }].as_str()
     }
     pub(super) fn activity(&self, bot: &str) -> Result<Normalized, GatewayError> {
+        if self.content_projection.is_some()
+            && (self.component.is_some()
+                || self.message_event.is_some()
+                || self.pending_reaction.is_some())
+        {
+            return Err(GatewayError::Protocol);
+        }
         if self.pending_reaction.is_some() {
             return Err(GatewayError::Unavailable);
         }
@@ -374,7 +383,12 @@ impl Body {
         else {
             unreachable!()
         };
-        let mut activity = normalize(&self.dispatch, bot, admission)?;
+        let mut activity = match &self.content_projection {
+            Some(snapshot) => {
+                normalize_with_content(&self.dispatch, bot, admission, Some(snapshot))?
+            }
+            None => normalize(&self.dispatch, bot, admission)?,
+        };
         if let Normalized::Activity(activity) = &mut activity {
             if let Some(snapshot) = &self.quote_projection {
                 snapshot
