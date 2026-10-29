@@ -1589,6 +1589,7 @@ See [Agent sharing](Agent_Sharing.md) for audience and permission semantics.
 |---|---|---|---|
 | `GET /api/v1/agents/{id}/channel-usage` | - | - | 200 AgentChannelUsageView |
 | `GET /api/v1/agents/{id}/channel-usage/history` | - | cursor, limit | 200 AgentChannelUsageHistoryView |
+| `GET /api/v1/agents/{id}/provider-associations` | - | cursor, limit | 200 AgentProviderAssociationsView |
 
 Channel usage is separate from immutable creation origin. An authorized summary
 contains `agent_id` and `channel_usage` with `active`, `has_history`, nullable

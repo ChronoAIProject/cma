@@ -74,6 +74,12 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
                 files,
             ),
         ))
+        .merge(rest::agent_provider_associations_router(
+            layer2_core::sandbox::provider_associations::AgentProviderAssociationService::new(
+                events.store.clone(),
+                events.access.clone(),
+            ),
+        ))
         .merge(rest::agent_artifacts_router(AgentArtifactService::new(
             events.store,
             events.access,
