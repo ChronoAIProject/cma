@@ -275,6 +275,7 @@ impl App {
         let (sender, _) = mpsc::channel(1);
         let state = ToolsState {
             native_whatsapp_forms: None,
+            native_typing: None,
             native_media_edits: None,
             telegram_topics: None,
             discord_threads: None,

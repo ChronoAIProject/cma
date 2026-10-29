@@ -30,7 +30,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{sync::mpsc, task::JoinHandle};
-
 pub const DEFAULT_KEY: &str = "nyx_fixture_thread_default";
 
 pub struct Memory {
@@ -281,6 +280,7 @@ impl App {
         let (sender, _) = mpsc::channel(1);
         let state = ToolsState {
             native_whatsapp_forms: None,
+            native_typing: None,
             native_media_edits: None,
             native_lark_conversation_history: None,
             discord_conversation_history: None,
