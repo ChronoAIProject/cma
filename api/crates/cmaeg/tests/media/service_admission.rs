@@ -254,6 +254,8 @@ fn config(media: MediaConfig) -> Config {
         native_whatsapp_media_enabled: false,
         native_lark_outbound_media_enabled: false,
         native_lark_media_controls_enabled: false,
+        native_lark_multi_image_controls_enabled: false,
+        native_telegram_albums_enabled: false,
         native_lark_thread_start_enabled: false,
         native_whatsapp_outbound_media_enabled: false,
         native_whatsapp_interactions_enabled: false,

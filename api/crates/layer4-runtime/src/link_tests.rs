@@ -16,6 +16,9 @@ use tokio_tungstenite::tungstenite::Message as ClientMessage;
 use super::*;
 use crate::lanes;
 
+#[path = "link_workspace_recovery_tests.rs"]
+mod workspace_recovery;
+
 fn add_worktree_request(request: WorktreeRequest) -> RequestFrame {
     RequestFrame::AddWorktree(FencedRequest::new(1, request))
 }

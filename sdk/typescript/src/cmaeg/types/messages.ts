@@ -184,7 +184,16 @@ export const MediaControlsCapabilitiesSchema = object({
   replace_media: optional(nullable(boolean)),
 });
 export type MediaControlsCapabilities = Output<typeof MediaControlsCapabilitiesSchema>;
+export const NativeAlbumCapabilitiesSchema = object({
+  min_attachments: integer,
+  max_attachments: integer,
+  kind_groups: array(array(text)),
+  controls: boolean,
+  message_operations: boolean,
+});
+export type NativeAlbumCapabilities = Output<typeof NativeAlbumCapabilitiesSchema>;
 export const NativeMediaCapabilitiesSchema = object({
+  albums: optional(nullable(NativeAlbumCapabilitiesSchema)),
   controls: optional(nullable(MediaControlsCapabilitiesSchema)),
   kinds: array(text),
   sources: array(text),

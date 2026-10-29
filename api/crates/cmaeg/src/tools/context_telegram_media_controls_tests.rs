@@ -90,3 +90,57 @@ async fn telegram_media_controls_discovery_matches_source_destination_and_issuan
         .is_none());
     }
 }
+
+#[tokio::test]
+async fn telegram_album_discovery_is_gated_and_matches_original_native_destination() {
+    let tools_fixture = FixtureState::new().await;
+    let mut state = state(&tools_fixture, false);
+    let request = fixture::request(
+        |value| {
+            fixture::targets(value);
+            value["sources"] =
+                json!([{"type":"telegram","bot_id":"77","admission":{"type":"all"}}]);
+        },
+        fixture::message("Original human event"),
+    );
+    let mut event = request
+        .event_ref
+        .open(&fixture::keys(), fixture::NOW)
+        .unwrap()
+        .payload;
+    for enabled in [false, true] {
+        for verified in [false, true] {
+            state.native_telegram_albums_enabled = enabled;
+            let value = NativeMediaCapabilities::for_event(
+                &state,
+                &request.channel,
+                &event,
+                &request.activity,
+                verified,
+            )
+            .unwrap();
+            assert_eq!(value.albums.is_some(), enabled && verified);
+            if let Some(album) = value.albums {
+                assert_eq!((album.min_attachments, album.max_attachments), (2, 4));
+                assert_eq!(
+                    album.kind_groups,
+                    vec![vec!["image", "video"], vec!["file"], vec!["audio"]]
+                );
+                assert!(!album.controls && !album.message_operations);
+            }
+        }
+    }
+    if let cmaeg_core::seal::ReplyAddress::Telegram { chat_id, .. } = &mut event.reply {
+        *chat_id = "-99".into();
+    }
+    assert!(NativeMediaCapabilities::for_event(
+        &state,
+        &request.channel,
+        &event,
+        &request.activity,
+        true
+    )
+    .unwrap()
+    .albums
+    .is_none());
+}

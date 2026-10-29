@@ -46,12 +46,12 @@ impl InteractionStore {
             return Err(Error::Denied);
         }
         let revision = old.revision.checked_add(1).ok_or(Error::Denied)?;
-        super::render_with_image(
+        super::render_with_images(
             message,
             &old.id,
             revision,
             form,
-            old.native_lark.as_ref().and_then(|a| a.image.as_ref()),
+            old.native_lark.as_ref().ok_or(Error::Denied)?.images()?,
         )?;
         old.superseded = true;
         self.save(&old, Some(version)).await?;

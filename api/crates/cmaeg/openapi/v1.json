@@ -4369,6 +4369,43 @@
         ],
         "type": "object"
       },
+      "NativeAlbumCapabilities": {
+        "description": "Native album constraints. Albums do not issue individual or aggregate operation references.",
+        "properties": {
+          "controls": {
+            "type": "boolean"
+          },
+          "kind_groups": {
+            "description": "Each album must use kinds from one group; image/video may be mixed.",
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "max_attachments": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message_operations": {
+            "type": "boolean"
+          },
+          "min_attachments": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "min_attachments",
+          "max_attachments",
+          "kind_groups",
+          "controls",
+          "message_operations"
+        ],
+        "type": "object"
+      },
       "NativeAttachment": {
         "additionalProperties": false,
         "properties": {
@@ -4500,6 +4537,17 @@
       },
       "NativeMediaCapabilities": {
         "properties": {
+          "albums": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeAlbumCapabilities",
+                "description": "Eligible ordered attachments are sent as one album; absent when disabled."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "controls": {
             "oneOf": [
               {
