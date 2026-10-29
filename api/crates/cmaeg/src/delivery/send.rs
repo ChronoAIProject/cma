@@ -135,7 +135,16 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
-        if message.native_media_update.is_some()
+        let discord_voice = self.relay.native_discord_voice
+            && matches!(event.reply, ReplyAddress::Discord { .. })
+            && crate::discord::voice::eligible(message);
+        if (!discord_voice
+            && !crate::media::presentations::allowed(
+                self.relay.native_media_presentations,
+                &event.reply,
+                message,
+            ))
+            || message.native_media_update.is_some()
             || message.clear_native_attachments
             || (message.reply_with_received_sticker
                 && !matches!(event.reply, ReplyAddress::NativeLark(_)))
@@ -153,13 +162,6 @@ impl Sender {
             ReplyAddress::Whatsapp { .. } | ReplyAddress::WhatsappGroup(_)
         ) {
             return Box::pin(self.whatsapp_reply(ctx, event, message)).await;
-        }
-        if message
-            .native_attachments
-            .iter()
-            .any(|item| item.kind == cmaeg_core::message::NativeMediaKind::Sticker)
-        {
-            return (unsupported(), SendEffects::default());
         }
         if matches!(event.reply, ReplyAddress::Discord { .. }) {
             return Box::pin(self.discord_reply(ctx, event, message)).await;

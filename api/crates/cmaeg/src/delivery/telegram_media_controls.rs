@@ -83,7 +83,10 @@ impl Sender {
         }
         file.caption = (!caption.is_empty()).then_some(caption.clone());
         let kind = message.native_attachments[0].kind;
-        if matches!(kind, NativeMediaKind::Sticker) {
+        if matches!(
+            kind,
+            NativeMediaKind::Sticker | NativeMediaKind::Voice | NativeMediaKind::Animation
+        ) {
             return (unsupported(), effects);
         }
         let route = crate::telegram::route(bot_id, chat_id);
@@ -181,7 +184,9 @@ impl Sender {
             NativeMediaKind::File => "document",
             NativeMediaKind::Audio => "audio",
             NativeMediaKind::Video => "video",
-            NativeMediaKind::Sticker => unreachable!(),
+            NativeMediaKind::Sticker | NativeMediaKind::Voice | NativeMediaKind::Animation => {
+                unreachable!()
+            }
         };
         if value["from"]["id"]
             .as_i64()

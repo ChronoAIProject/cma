@@ -15,6 +15,7 @@ pub mod routing_store;
 pub mod telegram;
 pub(crate) mod whatsapp;
 
+mod native_lark_read_status;
 mod state;
 mod whatsapp_status;
 pub use state::IngressState;
@@ -22,6 +23,8 @@ pub use state::IngressState;
 #[cfg(test)]
 mod whatsapp_tests;
 
+#[cfg(test)]
+mod native_lark_read_status_tests;
 #[cfg(test)]
 mod native_lark_tests;
 
