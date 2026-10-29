@@ -23,6 +23,9 @@ pub struct CommandEvidence {
     status: AgentResponseStatus,
     failure: Option<CommandFailure>,
     approvals: BTreeSet<String>,
+    prewrite_marker: Option<(u64, String)>,
+    deferred_expected: Option<String>,
+    deferred: Option<(u64, String)>,
 }
 
 impl CommandEvidence {
@@ -34,6 +37,15 @@ impl CommandEvidence {
             .clone()
             .ok_or(CommandLedgerError::Conflict)?;
         Ok(Self {
+            deferred_expected: command.receipt.envelope.continuation.as_ref().map(|_| {
+                super::continuation_retry::deferred_detail(
+                    &command.receipt.envelope,
+                    dispatch.operation_sequence,
+                    dispatch.turn_sequence,
+                )
+            }),
+            deferred: None,
+            prewrite_marker: None,
             dispatch,
             trigger_first: matches!(
                 command.receipt.envelope.actor,
@@ -113,6 +125,9 @@ impl CommandEvidence {
                     return Err(CommandLedgerError::Corrupt);
                 }
                 self.delivery(*state, &entry.appended_at)?;
+                if *state == AgentOperationDelivery::PreWriteFailed {
+                    self.prewrite_marker = Some((entry.seq, entry.appended_at.clone()));
+                }
             }
             AgentLogKind::TurnCompleted { turn_sequence }
                 if self.message && *turn_sequence == self.dispatch.turn_sequence =>
@@ -124,9 +139,19 @@ impl CommandEvidence {
             {
                 self.finish(AgentResponseStatus::Cancelled, None)?;
             }
-            AgentLogKind::TurnFailed { turn_sequence, .. }
-                if self.message && *turn_sequence == self.dispatch.turn_sequence =>
-            {
+            AgentLogKind::TurnFailed {
+                turn_sequence,
+                failure,
+            } if self.message && *turn_sequence == self.dispatch.turn_sequence => {
+                if failure.class == super::SOURCE_DEFERRED_FAILURE
+                    && self.delivery == AgentOperationDelivery::PreWriteFailed
+                    && self.prewrite_marker.as_ref().is_some_and(|(seq, at)| {
+                        seq.checked_add(1) == Some(entry.seq) && at == &entry.appended_at
+                    })
+                    && self.deferred_expected.as_ref() == Some(&failure.detail)
+                {
+                    self.deferred = Some((entry.seq, entry.appended_at.clone()));
+                }
                 self.finish(
                     AgentResponseStatus::Failed,
                     Some(CommandFailure {
@@ -246,10 +271,22 @@ impl CommandEvidence {
     /// Apply only after the snapshot's entire log was validated. Clear exactly
     /// this command's lease; a newer command may already own the Agent lane.
     pub fn apply(
+        self,
+        command: &mut AdmittedAgentCommand,
+        lane: &mut CommandLane,
+        agent: &Agent,
+    ) -> Result<bool, CommandLedgerError> {
+        self.apply_with_continuation_retry(command, lane, agent, false)
+    }
+    pub fn has_source_deferred(&self) -> bool {
+        self.deferred.is_some()
+    }
+    pub fn apply_with_continuation_retry(
         mut self,
         command: &mut AdmittedAgentCommand,
         lane: &mut CommandLane,
         agent: &Agent,
+        retry_authority_current: bool,
     ) -> Result<bool, CommandLedgerError> {
         if agent.id != self.dispatch.claim.agent_id
             || agent.conversation.last_seq != self.cursor
@@ -303,6 +340,9 @@ impl CommandEvidence {
             {
                 lane.lease = None;
             }
+        }
+        if let Some((cursor, at)) = &self.deferred {
+            next.defer_source_attempt(agent, retry_authority_current, *cursor, at)?;
         }
         if &next == command {
             return Ok(false);

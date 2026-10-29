@@ -6,6 +6,8 @@
 //! never see the reply token: they hold a [`MediaTarget`] whose Debug omits
 //! it, and every fetch happens inside a job. [`compose`] is the only place
 //! that chooses implementations; everything else depends on the seams.
+#[path = "service_continuations.rs"]
+mod continuations;
 #[path = "service_native_lark.rs"]
 mod native_lark;
 use super::{
@@ -46,6 +48,7 @@ use crate::{
     Config, ConfigError, MediaToolProviders,
 };
 use cmaeg_core::{channel::ConsumerView, seal::MasterKeyRing};
+pub use continuations::ContinuationOriginal;
 use futures_util::future::BoxFuture;
 use std::{
     fmt,

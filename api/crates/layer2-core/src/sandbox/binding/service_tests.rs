@@ -513,4 +513,5 @@ mod existing;
 
 mod continuity;
 
+mod continuation_tests;
 mod retirement;

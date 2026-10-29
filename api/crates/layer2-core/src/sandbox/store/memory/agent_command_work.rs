@@ -55,6 +55,21 @@ pub(super) fn bind_dispatch(
             crate::sandbox::AgentLogKind::TurnStarted { turn_sequence, .. } => Some(turn_sequence),
             _ => None,
         });
+    let envelope = &state
+        .agent_commands
+        .get(&claim.command_id)
+        .ok_or(SandboxStoreError::Conflict)?
+        .receipt
+        .envelope;
+    if let Some(proof) = &envelope.continuation {
+        let parent = state
+            .agent_commands
+            .get(&proof.parent_command_id)
+            .ok_or(SandboxStoreError::Conflict)?;
+        proof
+            .require_parent(envelope, &parent.receipt)
+            .map_err(|_| SandboxStoreError::Conflict)?;
+    }
     let command = state
         .agent_commands
         .get_mut(&claim.command_id)
@@ -170,7 +185,9 @@ impl AgentCommandWorkerStore for InMemorySandboxStore {
         for entry in state.agent_logs.get(&agent_id).into_iter().flatten() {
             evidence.observe(entry)?;
         }
-        if evidence.apply(&mut command, &mut lane, agent)? {
+        let retry_current = evidence.has_source_deferred()
+            && super::bindings::continuation_retry_authority(&state, &command.receipt.envelope);
+        if evidence.apply_with_continuation_retry(&mut command, &mut lane, agent, retry_current)? {
             state.agent_commands.insert(id.clone(), command.clone());
             state.agent_command_orders.insert(agent_id, lane);
         }
@@ -323,7 +340,7 @@ fn claim_next(
     let mut message_held = false;
     for command in waiting {
         command.validate()?;
-        message_held |= command.holds_message_order();
+        message_held |= command.holds_message_order(&request.now);
         if message_held
             && matches!(
                 command.receipt.envelope.command,

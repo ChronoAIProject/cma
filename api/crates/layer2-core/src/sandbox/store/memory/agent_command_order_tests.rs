@@ -50,6 +50,7 @@ fn insert(
         queued_input: None,
         receipt: AdmissionReceipt {
             envelope: AgentCommandEnvelope {
+                continuation: None,
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: AgentCommandId::generate(),
                 agent_id: agent.id.clone(),
