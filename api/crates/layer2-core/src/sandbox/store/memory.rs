@@ -51,6 +51,9 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
+mod agent_worktree_recovery;
+#[cfg(test)]
+mod agent_worktree_recovery_tests;
 mod bindings;
 mod channel_usage;
 mod command_audit;
@@ -308,7 +311,10 @@ impl AgentStore for InMemorySandboxStore {
     }
 
     async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
-        if agent.work.resolved_skills.is_some() || !agent.work.live_skills.is_empty() {
+        if agent.work.resolved_skills.is_some()
+            || !agent.work.live_skills.is_empty()
+            || !agent.work.worktree_recoveries.is_empty()
+        {
             return Err(SandboxStoreError::Conflict);
         }
         let mut state = self.lock();
@@ -334,7 +340,9 @@ impl AgentStore for InMemorySandboxStore {
         let id = agent.id.clone();
         let mut state = self.lock();
         let current = state.agents.get(&id).ok_or(SandboxStoreError::NotFound)?;
-        if current.owner != agent.owner
+        if current.worktree_id != agent.worktree_id
+            || current.work.worktree_recoveries != agent.work.worktree_recoveries
+            || current.owner != agent.owner
             || current.profile != agent.profile
             || current.conversation.settings != agent.conversation.settings
             || current.work.resolved_skills != agent.work.resolved_skills

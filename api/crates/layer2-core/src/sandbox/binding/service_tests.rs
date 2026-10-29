@@ -512,3 +512,5 @@ mod event_tests;
 mod existing;
 
 mod continuity;
+
+mod retirement;
