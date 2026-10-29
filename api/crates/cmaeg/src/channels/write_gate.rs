@@ -87,7 +87,7 @@ pub(crate) fn check(
                 ..
             }
         ) && !flags.telegram_topic_lifecycle
-            && !current.is_some_and(|old| old.sources.contains(source))
+            && !current.is_some_and(|old| super::native_telegram::retains_topic_opt_in(old, source))
     }) {
         return Err(ValidationError::new(
             format!("/sources/{index}/topic_lifecycle"),
