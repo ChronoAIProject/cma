@@ -374,3 +374,72 @@ async fn agent_control_worker_must_publish_the_exact_requested_stop_reason() {
         Some(published)
     );
 }
+
+#[tokio::test]
+async fn published_process_stop_skips_only_connection_leases_and_preserves_writer_drain() {
+    use crate::sandbox::{AgentCleanupDebt, AgentWorkLease, AgentWorkReceipt};
+    for step in [
+        AgentWorkStep::PublishReady,
+        AgentWorkStep::PublishConnection,
+        AgentWorkStep::DispatchFirstMessage,
+        AgentWorkStep::None,
+        AgentWorkStep::AddWorktree,
+        AgentWorkStep::MaterializeHome,
+        AgentWorkStep::OpenConversation,
+        AgentWorkStep::InstallSkill,
+    ] {
+        for has_debt in [false, true] {
+            let store = ready_store(1).await;
+            let mut agent = created(
+                store
+                    .admit_agent(admission("stop-published"))
+                    .await
+                    .unwrap(),
+            )
+            .agent;
+            agent.status = AgentStatus::Ready;
+            agent.conversation.conversation_id = Some("existing-conversation".into());
+            agent.conversation.runtime_generation = Some(1);
+            agent.work.step = step;
+            agent.work.lease = Some(AgentWorkLease {
+                holder: "previous".into(),
+                fence: 1,
+                expires_at: TWO_MINUTES.into(),
+            });
+            agent.work.receipts = vec![AgentWorkReceipt {
+                step: AgentWorkStep::OpenConversation,
+                operation_id: "completed-open".into(),
+                request_sha256: "a".repeat(64),
+                completed_at: NOW.into(),
+            }];
+            if has_debt {
+                agent.work.cleanup_debt.push(AgentCleanupDebt {
+                    step: AgentWorkStep::MaterializeHome,
+                    operation_id: "incomplete-home".into(),
+                    request_sha256: "b".repeat(64),
+                });
+            }
+            replace_agent(&store, agent.clone());
+            let stopped = store
+                .schedule_agent_stop(stop_request(&agent, AgentStopReason::Owner))
+                .await
+                .unwrap()
+                .into_agent();
+            let safe = !has_debt
+                && matches!(
+                    step,
+                    AgentWorkStep::PublishReady
+                        | AgentWorkStep::PublishConnection
+                        | AgentWorkStep::DispatchFirstMessage
+                        | AgentWorkStep::None
+                );
+            assert_eq!(
+                stopped.work.cleanup_not_before.as_deref(),
+                if safe { None } else { Some(TWO_MINUTES) },
+                "{step:?}, debt={has_debt}"
+            );
+            assert_eq!(stopped.work.ready_at, MINUTE);
+            assert!(stopped.work.lease.is_none());
+        }
+    }
+}
