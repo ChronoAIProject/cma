@@ -438,3 +438,6 @@ mod received_fixture;
 mod received_retry_tests;
 #[cfg(test)]
 mod received_tests;
+
+#[cfg(test)]
+mod native_lark_sticker_context_tests;

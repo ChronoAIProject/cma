@@ -1,6 +1,6 @@
 //! One voice-only multipart POST; uncertain transport never retries the send.
 use super::{valid_id, DiscordRest, PreparedFile, RestError};
-use crate::discord::voice::{Metadata, FLAG};
+use crate::discord::voice::{Metadata, PreparedVoice, FLAG};
 use cmaeg_core::channel::Secret;
 use serde_json::{json, Value};
 
@@ -12,14 +12,13 @@ impl DiscordRest {
         bot: &str,
         channel: &str,
         original: &str,
-        file: &PreparedFile,
-        metadata: &Metadata,
+        prepared: &PreparedVoice,
     ) -> Result<String, RestError> {
-        if ![bot, channel, original].into_iter().all(valid_id)
-            || crate::discord::voice::metadata(file).as_ref() != Some(metadata)
-        {
+        if ![bot, channel, original].into_iter().all(valid_id) {
             return Err(RestError::Rejected);
         }
+        let file = prepared.file();
+        let metadata = prepared.metadata();
         self.ready(token)?;
         self.verify_bot(token, bot).await?;
         self.ready(token)?;
@@ -70,7 +69,7 @@ fn confirmed(
         || files.len() != 1
         || !files[0]["id"].as_str().is_some_and(valid_id)
         || files[0]["filename"].as_str() != Some(file.filename.as_str())
-        || files[0]["content_type"].as_str() != Some("audio/wav")
+        || files[0]["content_type"].as_str() != Some(file.mime.as_str())
         || files[0]["size"].as_u64() != Some(file.bytes.len() as u64)
         || files[0]["duration_secs"].as_f64() != Some(metadata.duration_secs)
         || files[0]["waveform"].as_str() != Some(metadata.waveform.as_str())

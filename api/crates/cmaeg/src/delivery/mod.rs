@@ -85,4 +85,6 @@ mod native_media_ref;
 mod split_text_tests;
 
 #[cfg(test)]
+mod discord_opus_voice_tests;
+#[cfg(test)]
 mod discord_voice_tests;

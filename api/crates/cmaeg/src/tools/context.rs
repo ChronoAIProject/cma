@@ -56,6 +56,9 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// Resend this event's received native Lark sticker to its original conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_with_received_sticker: Option<bool>,
     /// One text reply can start the exact original native Lark group message thread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_thread_start: Option<bool>,
@@ -230,6 +233,7 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        reply_with_received_sticker: None,
         native_thread_start: (state.native_lark_thread_start_enabled
             && activity_verified
             && crate::native_lark::thread_start::eligible(channel, event, &activity))

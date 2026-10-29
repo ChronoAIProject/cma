@@ -1573,6 +1573,15 @@
         "expires_at": 1800000600
       },
       "topic_creation": true
+    },
+    {
+      "attachments": "link_text",
+      "buttons": "numbered_text",
+      "cards": "text",
+      "edit": false,
+      "max_text_chars": 6000,
+      "typing": false,
+      "reply_with_received_sticker": true
     }
   ],
   "ChannelCreateRequest": [
@@ -6223,6 +6232,10 @@
       "clear_native_attachments": true,
       "text": "Uploads removed",
       "blocks": []
+    },
+    {
+      "reply_with_received_sticker": true,
+      "blocks": []
     }
   ],
   "PartitionKey": [
@@ -10654,6 +10667,16 @@
       "max_bytes": 3840044,
       "caption": false,
       "profile": "Canonical mono signed 16-bit little-endian PCM WAV at 16kHz, 0.1–120 seconds",
+      "message_operations": false,
+      "max_attachments": 1,
+      "text": false
+    },
+    {
+      "kind": "voice",
+      "mime_types": ["audio/ogg"],
+      "max_bytes": 8388608,
+      "caption": false,
+      "profile": "One complete mono Opus Ogg stream, 0.1 to less than 120 seconds; uploaded unchanged; metadata derived with the shared sandboxed decoder",
       "message_operations": false,
       "max_attachments": 1,
       "text": false
