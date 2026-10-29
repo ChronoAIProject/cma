@@ -44,7 +44,7 @@ provider/client acceptance.
 This slice does not add Telegram animated WebP/TGS/WebM stickers, video notes,
 Lark received-key sticker sends, or Discord voice under this shared gate.
 [Native Discord voice](CMAEG_Native_Discord_Voice.md) has an independent gate and
-a canonical PCM WAV profile with derived duration/waveform, exactly one file,
+canonical PCM WAV and shared-decoder Opus Ogg profiles with derived duration/waveform, exactly one file,
 no text/stickers and no edits; generic audio uploads do not satisfy that contract.
 
 Validation is covered by Rust wire, invalid-profile, gate, capability and retained

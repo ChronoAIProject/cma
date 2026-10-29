@@ -4,6 +4,9 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::BytesMut;
 use cmaeg_core::message::{NativeMediaKind, OutboundMessage};
 
+mod prepared;
+pub(crate) use prepared::{prepare, Decoder, PreparedVoice};
+
 pub(crate) const MAX_SECONDS: usize = 120;
 pub(crate) const MAX_BYTES: usize = pcm::WAV_HEADER_BYTES + MAX_SECONDS * pcm::PCM_BYTES_PER_SECOND;
 pub(crate) const FLAG: u64 = 1 << 13;
@@ -37,17 +40,24 @@ pub(crate) struct Metadata {
 /// RIFF/WAVE, one fmt/data pair, mono signed 16-bit LE, 16kHz, no trailing bytes.
 /// No compressed stream is decoded and no caller duration/waveform is accepted.
 pub(crate) fn metadata(file: &PreparedFile) -> Option<Metadata> {
-    if file.mime != "audio/wav" || file.caption.is_some() || file.bytes.len() > MAX_BYTES {
+    if file.mime != "audio/wav" || file.caption.is_some() {
         return None;
     }
-    let data = file.bytes.get(pcm::WAV_HEADER_BYTES..)?;
+    pcm_metadata(&file.bytes)
+}
+
+pub(super) fn pcm_metadata(bytes: &[u8]) -> Option<Metadata> {
+    if bytes.len() > MAX_BYTES {
+        return None;
+    }
+    let data = bytes.get(pcm::WAV_HEADER_BYTES..)?;
     // At least one 100ms bin; shorter clips cannot provide the declared preview.
     if data.len() < pcm::PCM_BYTES_PER_SECOND / 10 || !data.len().is_multiple_of(2) {
         return None;
     }
     let mut expected = BytesMut::zeroed(pcm::WAV_HEADER_BYTES);
     pcm::write_wav_header(&mut expected, u32::try_from(data.len()).ok()?);
-    if file.bytes[..pcm::WAV_HEADER_BYTES] != expected[..] {
+    if bytes[..pcm::WAV_HEADER_BYTES] != expected[..] {
         return None;
     }
     let samples = data.len() / 2;
@@ -74,3 +84,6 @@ pub(crate) fn metadata(file: &PreparedFile) -> Option<Metadata> {
 #[cfg(test)]
 #[path = "voice_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod test_support;
