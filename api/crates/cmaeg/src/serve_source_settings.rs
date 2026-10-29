@@ -121,3 +121,22 @@ impl crate::delivery::relay_client::RelayClient {
             .with_native_whatsapp_groups(config.native_whatsapp_groups_enabled)
     }
 }
+
+/// Typing is an explicit, short-lived native write, separately activated for rollout.
+pub(super) fn native_typing(
+    config: &Config,
+    state: &ManagementState,
+) -> Result<Option<Arc<crate::tools::NativeTyping>>, crate::ConfigError> {
+    if !config.native_typing_enabled {
+        return Ok(None);
+    }
+    Ok(Some(Arc::new(crate::tools::NativeTyping::new(
+        crate::whatsapp::Client::production()?,
+        crate::discord::DiscordRest::new()?,
+        state.native_whatsapp_admission_enabled && state.native_whatsapp_writes_enabled,
+        state.native_discord_admission_enabled
+            && state.native_discord_writes_enabled
+            && config.native_discord.enabled
+            && config.routing.recovery_enabled,
+    ))))
+}
