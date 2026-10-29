@@ -117,6 +117,8 @@ for (const mode of ['complete', 'deadline'] as const) {
       `data: ${JSON.stringify({ type, threadId: 'agt_local', runId: '9', ...fields })}\n\n`;
     let commands = 0;
     let closed = false;
+    let headersObserved = false;
+    let chunksObserved = 0;
     const server = createServer((incoming, response) => {
       incoming.resume();
       if (incoming.url === '/api/v1/agui/run' && incoming.method === 'POST') {
@@ -143,16 +145,12 @@ for (const mode of ['complete', 'deadline'] as const) {
     const origin = `http://127.0.0.1:${address.port}`;
     const channel = new TransformStream<Uint8Array, Uint8Array>();
     const writer = channel.writable.getWriter();
-    const inspected = inspectOwnerStream(
-      new Response(channel.readable),
-      'agt_local',
-      [],
-      AbortSignal.timeout(5000),
-    ).then(
-      (turn) => ({ passed: true, turn }),
-      () => ({ passed: false, turn: undefined }),
-    );
     try {
+      if (mode === 'deadline') {
+        const time = new Date('2026-01-01T00:00:00Z');
+        await page.clock.install({ time });
+        await page.clock.pauseAt(time);
+      }
       await page.route('**/*', (route) =>
         new URL(route.request().url()).origin === origin ? route.continue() : route.abort(),
       );
@@ -161,8 +159,11 @@ for (const mode of ['complete', 'deadline'] as const) {
         if (event.stage === 'headers') {
           expect(event.status).toBe(200);
           expect(event.media).toBe('text/event-stream');
-        } else if (event.stage === 'chunk') await writer.write(Uint8Array.from(event.bytes));
-        else if (event.stage === 'end') await writer.close();
+          headersObserved = true;
+        } else if (event.stage === 'chunk') {
+          await writer.write(Uint8Array.from(event.bytes));
+          chunksObserved++;
+        } else if (event.stage === 'end') await writer.close();
         else await writer.abort(new Error('Local observation cancelled'));
       });
       await page.addInitScript(ownerStreamTap, {
@@ -171,7 +172,16 @@ for (const mode of ['complete', 'deadline'] as const) {
         timeoutMs: mode === 'complete' ? 5000 : 200,
       });
       await page.goto(`${origin}/agents/agt_local`);
-      const consumed = await page.evaluate(async () => {
+      const inspected = inspectOwnerStream(
+        new Response(channel.readable),
+        'agt_local',
+        [],
+        AbortSignal.timeout(5000),
+      ).then(
+        (turn) => ({ passed: true, turn }),
+        () => ({ passed: false, turn: undefined }),
+      );
+      const consumed = page.evaluate(async () => {
         try {
           const response = await fetch('/api/v1/agui/run', {
             method: 'POST',
@@ -188,7 +198,13 @@ for (const mode of ['complete', 'deadline'] as const) {
           return false;
         }
       });
-      expect(consumed).toBe(mode === 'complete');
+      if (mode === 'deadline') {
+        // Expire an admitted response, independently of browser/network setup speed.
+        await expect.poll(() => commands).toBe(1);
+        await expect.poll(() => headersObserved && chunksObserved > 0).toBe(true);
+        await page.clock.runFor(200);
+      }
+      expect(await consumed).toBe(mode === 'complete');
       expect(await inspected).toEqual({
         passed: mode === 'complete',
         turn: mode === 'complete' ? 9 : undefined,

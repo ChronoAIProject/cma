@@ -71,7 +71,10 @@ impl NativeMediaEditAuthority {
             || message.relay_message.is_some()
             || message.interaction_record_id.is_some()
             || message.route_id != self.destination.route()
-            || self.kind == NativeMediaKind::Sticker
+            || matches!(
+                self.kind,
+                NativeMediaKind::Sticker | NativeMediaKind::Voice | NativeMediaKind::Animation
+            )
             || !hex(&self.original_sha256)
             || !hex(&self.authority_sha256)
             || self.issued_at <= 0

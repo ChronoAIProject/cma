@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::{broadcast, Mutex};
 
+#[path = "batch.rs"]
+mod batch;
 #[path = "refresh.rs"]
 mod refresh;
 #[cfg(test)]

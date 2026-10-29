@@ -89,3 +89,24 @@ fn debug_does_not_expose_media_bytes_urls_or_metadata() {
     )
     .contains("c2VjcmV0"));
 }
+
+#[test]
+fn voice_and_animation_are_explicit_additive_kinds_without_changing_audio_or_bytes() {
+    for kind in ["audio", "video", "voice", "animation", "sticker"] {
+        let wire = json!({"blocks":[],"native_attachments":[{"kind":kind,"source":{"type":"base64","data":"AQIDBA=="}}]});
+        let message: OutboundMessage = serde_json::from_value(wire.clone()).unwrap();
+        message.validate().unwrap();
+        assert_eq!(serde_json::to_value(&message).unwrap(), wire);
+    }
+    for kind in ["voice", "animation", "sticker"] {
+        let patch: cmaeg_core::message::NativeMediaUpdate =
+            serde_json::from_value(json!({"replacement":{
+                "kind":kind,"source":{"type":"base64","data":"AQIDBA=="}
+            }}))
+            .unwrap();
+        assert!(
+            patch.validate().is_err(),
+            "presentation must not gain media edit authority"
+        );
+    }
+}

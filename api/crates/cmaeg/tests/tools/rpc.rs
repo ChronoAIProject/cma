@@ -180,7 +180,11 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
         }
         let media_kinds = &mut tool["inputSchema"]["$defs"]["NativeMediaKind"]["enum"];
         let mut expanded = previous["inputSchema"]["$defs"]["NativeMediaKind"]["enum"].clone();
-        expanded.as_array_mut().unwrap().push(json!("sticker"));
+        expanded.as_array_mut().unwrap().extend([
+            json!("voice"),
+            json!("animation"),
+            json!("sticker"),
+        ]);
         assert_eq!(*media_kinds, expanded);
         *media_kinds = previous["inputSchema"]["$defs"]["NativeMediaKind"]["enum"].clone();
         let media_description =

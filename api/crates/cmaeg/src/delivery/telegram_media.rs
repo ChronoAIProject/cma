@@ -254,6 +254,7 @@ impl Sender {
         if total == 1
             && confirmed == 1
             && message.native_attachments.len() == 1
+            && !crate::media::presentations::special(message.native_attachments[0].kind)
             && self.relay.telegram_effects_enabled()
             && self.relay.telegram_media_effects_enabled()
         {
