@@ -749,7 +749,10 @@ if let Some(thread) = receipt.thread {
 ```
 
 Omit `auto_archive_duration` for Telegram; Discord still requires its existing
-supported duration. Names use the neutral 1–100 printable-character bound.
+supported duration. Rust source callers must update `CreateThreadRequest` literals
+from `auto_archive_duration: 1440` to `auto_archive_duration: Some(1440)` for
+Discord, or `None` for Telegram. This is a Rust source migration; existing Discord
+HTTP request bytes are unchanged. Names use the neutral 1–100 printable-character bound.
 The confirmed receipt may contain a sealed `thread_ref` usable for rename,
 close and reopen, tied to the original consumer, custody and event expiry.
 A confirmed receipt can omit that reference if custody changed during creation.

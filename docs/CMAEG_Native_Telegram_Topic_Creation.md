@@ -42,6 +42,9 @@ false; this snapshot does not grant Telegram archive/lock operations. A confirme
 write whose local custody was revoked in flight is reported without a fresh
 reference. References use a distinct Telegram v2 payload; existing Discord v1
 payloads and bytes remain unchanged. Both SDKs preserve the opaque reference.
+The Rust SDK request field changes from `u16` to `Option<u16>`: existing Discord
+source callers use `Some(duration)`, while Telegram uses `None`. This source-level
+migration does not change existing Discord HTTP request bytes.
 
 Use `manageThread` with `target:{"type":"thread","thread_ref":"…"}` and
 `close`, `reopen`, or `rename` with an explicit `name`. Creation consent and its
