@@ -30,42 +30,9 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{sync::mpsc, task::JoinHandle};
-
 pub const DEFAULT_KEY: &str = "nyx_fixture_thread_default";
-
-pub struct Memory {
-    pub calls: Vec<(String, String, Value)>,
-    pub channels: BTreeMap<String, Value>,
-    pub active: Value,
-    pub archived: Value,
-    pub message: Value,
-    pub delay: Option<(String, String, Duration)>,
-    pub status: StatusCode,
-    pub create_accepted: bool,
-    pub patch_response: Option<Value>,
-    pub hook: Option<Box<dyn FnOnce() + Send>>,
-    pub hook_path: String,
-    pub hook_method: String,
-}
-pub struct App {
-    pub backend: Arc<fake_cma::FakeCma>,
-    pub memory: Arc<Mutex<Memory>>,
-    pub state: ToolsState,
-    pub definition: ChannelDefinition,
-    pub event: EventRefPayload,
-    pub activity: Activity,
-    pub key: String,
-    pub base: String,
-    pub source_body: Value,
-    servers: Vec<JoinHandle<()>>,
-}
-impl Drop for App {
-    fn drop(&mut self) {
-        for server in &self.servers {
-            server.abort();
-        }
-    }
-}
+mod model;
+pub use model::{App, Memory};
 pub fn thread(id: &str, kind: u8, parent: &str, archived: bool) -> Value {
     json!({"id":id,"type":kind,"guild_id":"100","parent_id":parent,"owner_id":"77","name":"Review",
         "thread_metadata":{"archived":archived,"locked":false,"auto_archive_duration":1440}})
@@ -281,6 +248,7 @@ impl App {
         let (sender, _) = mpsc::channel(1);
         let state = ToolsState {
             native_whatsapp_forms: None,
+            native_typing: None,
             native_media_edits: None,
             native_lark_conversation_history: None,
             discord_conversation_history: None,
@@ -303,6 +271,7 @@ impl App {
             native_discord_media_controls_enabled: false,
             native_discord_media_card_edits_enabled: false,
             native_discord_media_card_replacements_enabled: false,
+            native_discord_media_card_sets_enabled: false,
             whatsapp_interactions_enabled: false,
             native_whatsapp_interactions_enabled: false,
             native_whatsapp_media_controls_enabled: false,
@@ -311,6 +280,7 @@ impl App {
             native_lark_outbound_media_enabled: false,
             native_lark_media_controls_enabled: false,
             native_lark_multi_image_controls_enabled: false,
+            native_lark_media_card_replacements_enabled: false,
             native_telegram_albums_enabled: false,
             native_lark_thread_start_enabled: false,
             native_whatsapp_outbound_media_enabled: false,

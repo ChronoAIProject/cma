@@ -14,9 +14,11 @@ const platforms = ['telegram', 'lark', 'feishu', 'discord', 'whatsapp', 'slack']
 export function SourceFields({
   value,
   onChange,
+  managedIdentity = false,
 }: {
   value: Fields;
   onChange: (v: Fields) => void;
+  managedIdentity?: boolean;
 }) {
   const discovery = useRelayCapabilities();
   const rawUnavailable = modeUnavailable(discovery, String(value.platform), 'raw_event');
@@ -168,8 +170,11 @@ export function SourceFields({
             />
             <p className="channel-field-hint">
               Agents may rename, close or reopen the forum topic containing an admitted message.
-              Requires a forum supergroup and bot administrator permission to manage topics. General
-              topics, private chats, topic creation and browsing are excluded.
+              Requires a forum supergroup and bot administrator permission to manage topics.
+              {discovery.authoring?.native_telegram_general_topic_lifecycle_enabled === true
+                ? ' General topics are included; reopening General also makes it visible. '
+                : ' General topics are unavailable. '}
+              Private chats, topic creation and browsing are excluded.
             </p>
             <Toggle
               label="Receive message edits and reactions"
@@ -190,10 +195,13 @@ export function SourceFields({
             />
             <p className="channel-field-hint">
               Private and group message edits and reactions from identifiable users reach the agents
-              that received the original message. Refresh the bot webhook after enabling this
-              setting. Reaction updates require bot administrator access. Anonymous reactions and
-              aggregate reaction counts keep the actor unknown and require open sender admission.
-              Telegram does not provide general message deletion events.
+              that received the original message.{' '}
+              {managedIdentity
+                ? 'Managed connections register these event types; an older registration may need an operator refresh. '
+                : 'If the current webhook does not subscribe to these event types, refresh its registration. '}
+              Reaction updates require bot administrator access. Anonymous reactions and aggregate
+              reaction counts keep the actor unknown and require open sender admission. Telegram
+              does not provide general message deletion events.
             </p>
             <Toggle
               label="Receive channel posts and edits"
@@ -211,7 +219,10 @@ export function SourceFields({
               Requires message events and open sender admission. Channel posts identify the channel,
               not a human publisher; chat allowlists and addressing rules still apply. Channel edits
               reach the original agents. Discussion-group forwards and channel direct-message topics
-              are not included. Refresh the bot webhook to receive these updates.
+              are not included.{' '}
+              {managedIdentity
+                ? 'Managed connections register these event types; an older registration may need an operator refresh.'
+                : 'If the current webhook does not subscribe to these event types, refresh its registration.'}
             </p>
             {discovery.authoring?.native_telegram_message_events_enabled !== true ? (
               <p className="channel-field-hint">
@@ -221,18 +232,28 @@ export function SourceFields({
             ) : null}
           </>
         ) : null}
-        <TextField
-          label="Bot ID"
-          value={value.bot_id}
-          onChange={(v) => onChange(optional(value, 'bot_id', v || undefined))}
-          required={value.type === 'telegram'}
-          hint="Use the platform's bot user ID for exact mention and reply matching."
-        />
-        <TextField
-          label="Bot username"
-          value={value.bot_username}
-          onChange={(v) => onChange(optional(value, 'bot_username', v || undefined))}
-        />
+        {managedIdentity ? (
+          <p className="channel-field-hint">
+            Bot {String(value.bot_id)}
+            {value.bot_username ? ` (@${String(value.bot_username)})` : ''} is managed by this
+            connection. Its identity and credentials are retained.
+          </p>
+        ) : (
+          <>
+            <TextField
+              label="Bot ID"
+              value={value.bot_id}
+              onChange={(v) => onChange(optional(value, 'bot_id', v || undefined))}
+              required={value.type === 'telegram'}
+              hint="Use the platform's bot user ID for exact mention and reply matching."
+            />
+            <TextField
+              label="Bot username"
+              value={value.bot_username}
+              onChange={(v) => onChange(optional(value, 'bot_username', v || undefined))}
+            />
+          </>
+        )}
       </Section>
       {value.type === 'nyxid_relay' && ['lark', 'feishu'].includes(String(value.platform)) ? (
         <>

@@ -45,6 +45,8 @@ pub struct RecoverySupport {
 #[serde(deny_unknown_fields)]
 pub struct FrozenTurn {
     pub conversation_id: ConversationId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_generation: Option<u64>,
     pub idempotency_key: IdempotencyKey,
     pub input: Vec<Value>,
     pub metadata: BTreeMap<String, String>,
@@ -71,11 +73,14 @@ impl FrozenTurn {
     /// separately transmitted idempotency key. Adapters must send these fields
     /// unchanged; delivery policy is a local journal field, never provider input.
     pub fn provider_body(&self) -> Vec<u8> {
-        cmaeg_core::profile::canonical_json(serde_json::json!({
+        let mut body = serde_json::json!({
             "conversation":self.conversation_id,"stream":true,"input":self.input,
             "metadata":self.metadata,"event_context":self.event_context,
-        }))
-        .into_bytes()
+        });
+        if let Some(generation) = self.binding_generation {
+            body["binding_generation"] = generation.into();
+        }
+        cmaeg_core::profile::canonical_json(body).into_bytes()
     }
     pub fn event_ref(
         plan: &AdmittedPlan,
@@ -98,6 +103,8 @@ impl FrozenTurn {
             .map_err(|_| ExecutionError::Expired)?
             .payload;
         if self.conversation_id != target.launch.event.conversation_id
+            || self.binding_generation == Some(0)
+            || (self.binding_generation.is_some() && !plan.prepares_binding(target))
             || self.idempotency_key != target.launch.idempotency_key
             || self.event_context.channel_id != plan.identity.channel_id
             || self.event_context.conversation_id != self.conversation_id
@@ -193,6 +200,8 @@ pub struct TargetState {
     pub retained_until: i64,
     pub event_expires_at: i64,
     pub phase: Phase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_preparation: Option<super::BindingPreparation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<super::delivery_state::DeliveryCheckpoint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

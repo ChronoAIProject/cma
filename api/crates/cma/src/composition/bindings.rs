@@ -33,10 +33,11 @@ impl BindingComposition {
         gateway: Option<&crate::config::GatewayConfig>,
     ) -> Result<Router, String> {
         let routes = match gateway {
-            Some(gateway) => rest::binding_router_with_native_tools_alias(
+            Some(gateway) => rest::binding_router_with_native_tools_alias_and_preparation(
                 self.service.clone(),
                 &format!("{}/mcp", gateway.public_url.trim_end_matches('/')),
                 &format!("{}/mcp", gateway.public_api_url.trim_end_matches('/')),
+                gateway.binding_preparation_enabled,
             )?,
             None => rest::binding_router(self.service.clone()),
         };

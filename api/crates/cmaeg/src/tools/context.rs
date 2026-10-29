@@ -436,3 +436,7 @@ pub(super) fn unavailable() -> Problem {
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "context_discord_media_set_tests.rs"]
+mod media_set_tests;

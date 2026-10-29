@@ -235,14 +235,8 @@ pub async fn update(
     let pointer = open_pointer(state, channel_id)?;
     let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
     let current = load(state, creator, channel_id).await?;
-    crate::connections::binding::expand_update(
-        state,
-        creator,
-        &current.definition.record_id,
-        current.definition.connection_ref.as_deref(),
-        &mut request,
-    )
-    .await?;
+    crate::connections::binding::expand_update(state, creator, &current.definition, &mut request)
+        .await?;
     validate_update_request(&request).map_err(ManagementError::Invalid)?;
     custom_attachments_allowed(state, &request.sources)?;
     if current
