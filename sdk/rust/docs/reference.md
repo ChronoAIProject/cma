@@ -322,6 +322,18 @@ timeout covers the complete stream. Requests do not follow redirects or retry
 uncertain mutations. Context reads retain the full persisted activity; typing and
 message-update receipts explicitly report unsupported transports.
 
+`stream_event_with_media(channel_id, &event, &EventOptions::default())` explicitly
+adds `media_responses=true` and returns `GatewayMediaStream`. Existing
+`stream_event`, `EventOptions` literals and exhaustive `GatewayEvent` matches stay
+unchanged. The new stream's `GatewayMediaEvent::ResponseCompleted` /
+`ResponseFailed` describes the original response and does not close observation;
+`MediaResponse` contains each separate supplementary response. Final `Completed`
+or `Failed` retains original turn text/error plus `status` and `media_complete`.
+`MediaPending` ends bounded observation after 120 seconds; inspect channel Activity
+or `get_event_media_responses`, without resubmitting the admitted event. Configure
+a request timeout exceeding 120 seconds to observe the server deadline. Response
+URLs require their existing independent authority and are never followed automatically.
+
 
 ## Owner Bots
 
