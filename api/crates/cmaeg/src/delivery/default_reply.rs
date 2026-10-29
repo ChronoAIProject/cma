@@ -28,6 +28,10 @@ impl Sender {
         // A default address has no authority to reply to a message/thread at
         // the ingress origin, nor to mint origin-bound interaction callbacks.
         if message.reply_with_received_sticker
+            || message
+                .native_attachments
+                .iter()
+                .any(|a| crate::media::presentations::special(a.kind))
             || message.thread_reply
             || message.reply_to.is_some()
             || crate::interactions::has_controls(message)

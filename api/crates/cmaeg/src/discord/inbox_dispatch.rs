@@ -38,6 +38,7 @@ impl InboxDispatcher {
             super::selection::Selection::new(&crate::NativeDiscordConfig {
                 enabled: true,
                 discovery_enabled: false,
+                rich_content_enabled: false,
                 records: selected,
             }),
         )

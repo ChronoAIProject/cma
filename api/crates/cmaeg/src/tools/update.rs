@@ -42,6 +42,17 @@ impl ToolsState {
                     "received_sticker_requires_replyToEvent",
                 ));
             }
+            if message
+                .native_attachments
+                .iter()
+                .any(|a| crate::media::presentations::special(a.kind))
+            {
+                return Err(Problem::new(
+                    ProblemCode::InvalidRequest,
+                    422,
+                    "native_media_presentation_update_unsupported",
+                ));
+            }
             let (channel, message_ref, _) = self
                 .authorize_message(caller, reference, "updateMessage")
                 .await?;

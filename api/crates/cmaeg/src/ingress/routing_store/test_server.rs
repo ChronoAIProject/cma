@@ -42,6 +42,7 @@ pub struct Memory {
     pub unavailable_reads: AtomicUsize,
     pub unavailable_read_id: Mutex<Option<String>>,
     pub writes: AtomicUsize,
+    pub delay_ms: AtomicUsize,
 }
 impl Memory {
     fn now(&self) -> i64 {
@@ -81,6 +82,7 @@ impl Server {
             unavailable_reads: AtomicUsize::new(0),
             unavailable_read_id: Mutex::new(None),
             writes: AtomicUsize::new(0),
+            delay_ms: AtomicUsize::new(0),
         });
         let app = Router::new()
             .route("/api/v1/gateway/channel-records/{id}", get(read_channel))
@@ -145,6 +147,7 @@ impl Server {
     }
 }
 async fn read_channel(State(state): State<Arc<Memory>>, Path(id): Path<String>) -> Response {
+    delay(&state).await;
     match state.channels.lock().unwrap().get(&id) {
         Some(row) => {
             Json(json!({"version":row.version,"blob":STANDARD.encode(&row.blob)})).into_response()
@@ -164,6 +167,7 @@ async fn write(
     Path(id): Path<String>,
     Json(input): Json<Put>,
 ) -> Response {
+    delay(&state).await;
     let now = state.now();
     let Ok(blob) = STANDARD.decode(input.blob) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -221,6 +225,7 @@ async fn write(
     }
 }
 async fn read(State(state): State<Arc<Memory>>, Path(id): Path<String>) -> Response {
+    delay(&state).await;
     if state.unavailable_read_id.lock().unwrap().as_deref() == Some(&id) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
@@ -237,6 +242,12 @@ async fn read(State(state): State<Arc<Memory>>, Path(id): Path<String>) -> Respo
             Json(json!({"version":row.version,"blob":STANDARD.encode(&row.blob)})).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+async fn delay(state: &Memory) {
+    let millis = state.delay_ms.load(Ordering::SeqCst);
+    if millis > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(millis as u64)).await;
     }
 }
 #[derive(Deserialize)]
