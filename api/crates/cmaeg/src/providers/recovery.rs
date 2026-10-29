@@ -60,6 +60,7 @@ impl ProviderClient {
         identity: &RecoveryIdentity,
         agent_key: &Secret,
     ) -> Result<RecoverySnapshot, ProviderError> {
+        self.record_worker_key(agent_key).await?;
         identity.validate()?;
         let handle = self.handle(provider)?;
         let url = handle
@@ -100,6 +101,7 @@ impl ProviderClient {
         starting_after: Option<u64>,
         agent_key: &Secret,
     ) -> Result<RecoveryStream, ProviderError> {
+        self.record_worker_key(agent_key).await?;
         identity.validate()?;
         if starting_after == Some(u64::MAX) {
             return Err(ProviderError::InvalidRequest(

@@ -32,6 +32,7 @@ pub mod telemetry;
 pub mod tools;
 pub mod turns;
 pub mod whatsapp;
+pub mod worker_credentials;
 
 use axum::{routing::get, Json, Router};
 use serde::Serialize;
