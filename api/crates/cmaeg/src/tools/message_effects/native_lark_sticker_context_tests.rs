@@ -76,16 +76,16 @@ async fn received_sticker_capability_needs_exact_retention_gate_and_current_call
             .resolver
             .resolve_current(f.app.event.channel_id.as_str())
             .await;
-        match resolved {
-            Ok(channel) => assert!(native_lark::stickers::load(
+        // A removed source may invalidate the whole current definition.
+        if let Ok(channel) = resolved {
+            assert!(native_lark::stickers::load(
                 f.app.state.resolver.record_client(),
                 f.app.state.keys.clone(),
                 &channel,
                 &f.app.event
             )
             .await
-            .is_none()),
-            Err(_) => {} // A removed source may invalidate the whole current definition.
+            .is_none());
         }
     }
 }
