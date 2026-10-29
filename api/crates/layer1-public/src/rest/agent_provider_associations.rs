@@ -17,6 +17,24 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(read),
+    components(schemas(
+        AgentProviderAssociationsView,
+        ProviderAssociationView,
+        ProviderAssociationRelationshipView,
+        ProviderAssociationConversationStateView,
+        ProviderAssociationBindingStateView,
+    ))
+)]
+struct ProviderAssociationsDoc;
+
+pub(crate) fn document() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi as _;
+    ProviderAssociationsDoc::openapi()
+}
+
 pub fn agent_provider_associations_router(service: Arc<AgentProviderAssociationService>) -> Router {
     Router::new()
         .route("/api/v1/agents/{id}/provider-associations", get(read))
