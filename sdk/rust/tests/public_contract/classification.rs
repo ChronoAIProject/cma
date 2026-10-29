@@ -16,6 +16,8 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
     ("preparation-inspect-invalid-json", Classification::RawJson),
     ("preparation-reserve-invalid-json", Classification::RawJson),
     ("preparation-reserve-missing-key", Classification::Local),
+    ("agent-worktree-recovery-missing-key", Classification::Local),
+    ("agent-worktree-recovery-invalid-key", Classification::Local),
     (
         "workspace-prepare-recovery-missing-key",
         Classification::Local,

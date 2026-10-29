@@ -12,6 +12,33 @@ import {
 } from './resource-fixtures.js';
 
 describe('Agent resource commands', () => {
+  it('recovers a never-ready Agent with a keyed bodyless request and exact response identity', async () => {
+    const test = transport();
+    const pending = { ...agent, status: 'starting' };
+    for (let replay = 0; replay < 2; replay += 1) {
+      test.answer(pending, 202);
+      expect(await test.client.agents.recoverWorktree(agent.id, command)).toEqual(pending);
+      const sent = test.calls.at(-1)!;
+      expect(sent.url).toContain(`/api/v1/agents/${agent.id}/recover-worktree`);
+      expect(sent.init.method).toBe('POST');
+      expect(sent.init.body).toBeUndefined();
+      expect(new Headers(sent.init.headers).get('idempotency-key')).toBe(command.idempotencyKey);
+    }
+    const count = test.calls.length;
+    expect(() => test.client.agents.recoverWorktree(agent.id, { idempotencyKey: '' })).toThrow(
+      ValidationError,
+    );
+    expect(test.calls).toHaveLength(count);
+    test.answer({ ...pending, id: 'another-agent' }, 202);
+    await expect(test.client.agents.recoverWorktree(agent.id, command)).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+    test.answer(pending, 200);
+    await expect(test.client.agents.recoverWorktree(agent.id, command)).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+  });
+
   it('reads safe source categories and rejects mismatched, unknown or personal-only projections', async () => {
     const test = transport();
     for (const kind of ['manual', 'workspace_profile', 'trigger']) {
