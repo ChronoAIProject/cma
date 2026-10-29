@@ -40,6 +40,11 @@ impl CodexAdapter {
         &self.hosted
     }
 
+    pub fn with_native_runtime_image(mut self, image: crate::RuntimeImage) -> crate::Result<Self> {
+        self.hosted = self.hosted.with_native_runtime_image(image)?;
+        Ok(self)
+    }
+
     pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
         self.hosted = self.hosted.with_home_volumes(store);
         self
