@@ -198,6 +198,7 @@ use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
     let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
     let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        clear_native_attachments: None,
         native_media_update: None,
         whatsapp_template: None,
         native_attachments: None,
@@ -773,6 +774,18 @@ the exact confirmed upload. Its independent replacement gate may additionally
 advertise `replace_media: true` for one same-card upload replacement with complete
 content/controls. Media/form combinations remain unsupported. Historical cards without a retained native file proof
 remain callback-only.
+
+The additional Discord attachment-set gate can raise `controls.max_attachments`
+to four. Send the complete new set to replace all previous files on one confirmed
+card. When `controls.clear_media` is true, `updateMessage` also accepts
+`clear_native_attachments: true` with complete replacement text/controls to remove
+every upload. Clear plus nonempty attachments is invalid; omitted/false clear and
+empty attachments retain the previous set. Ordinary sends and unsupported
+platforms reject clear intent. A confirmed clear returns an ordinary card reference
+with no media authority; uncertain results must not be replayed as a new write.
+New-card issuance gates do not revoke retained edits or otherwise enabled
+replacements. See [Discord attachment sets](../../../docs/CMAEG_Native_Discord_Card_Edits.md#complete-attachment-sets-and-explicit-removal).
+
 
 For native Lark/Feishu, the separate image-card issuance gate adds
 `native_media.controls.kinds: ["image"]`, `max_attachments: 1`,

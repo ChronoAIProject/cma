@@ -34,20 +34,24 @@ impl Sender {
             Ok(Admission::Ready(candidate)) => candidate,
             Err(_) => return unsupported(),
         };
-        let replacement = !message.native_attachments.is_empty();
+        let replacement =
+            !message.native_attachments.is_empty() || message.clear_native_attachments;
         let mut content = message.clone();
         content.native_attachments.clear();
+        content.clear_native_attachments = false;
         let form = crate::interactions::discord_form::schema(message).is_ok();
         let Some(identity) = candidate.card.discord.as_ref() else {
             return unsupported();
         };
-        if (replacement && !self.relay.discord_media_card_replacements_enabled())
+        if ((message.native_attachments.len() > 1 || message.clear_native_attachments)
+            && !self.relay.discord_media_card_sets)
+            || (replacement && !self.relay.discord_media_card_replacements_enabled())
             || (candidate.card.revision == 1
                 && (!self.relay.discord_card_edits_enabled()
                     || (reference.consumer.is_some()
                         && !self.relay.consumer_interactions_enabled())))
             || (candidate.card.revision == 1
-                && identity.media.is_some()
+                && identity.media_items().is_ok_and(|items| !items.is_empty())
                 && !self.relay.discord_media_card_edits_enabled())
             || (discord::multiselect_requested(message)
                 && !self.relay.discord_multiselect_enabled()
@@ -100,9 +104,9 @@ impl Sender {
             Ok(_) => return unsupported(),
             Err(error) => return refused(rendering, outcome(error)),
         }
-        let file = if replacement {
+        let files = if replacement {
             match crate::discord::outbound_media::prepare(&message.native_attachments).await {
-                Ok(mut files) if files.len() == 1 => files.pop(),
+                Ok(files) => Some(files),
                 _ => {
                     return refused(
                         rendering,
@@ -131,6 +135,46 @@ impl Sender {
         if !ctx.gate.commit() {
             return refused(rendering, expired());
         }
+        // Complete download and multipart serialization while the original callback
+        // remains usable. Discord uploads files inside PATCH, not via a separate API.
+        let prepared_before = if replacement {
+            match self.verify_discord_card_media(&candidate, credential).await {
+                Ok(snapshot) => snapshot,
+                Err(error) => return refused(rendering, outcome(error)),
+            }
+        } else {
+            None
+        };
+        let replacement_request =
+            if let (Some(files), Some(before)) = (files, prepared_before.as_ref()) {
+                match self
+                    .prepare_discord_card_replacement(
+                        &candidate,
+                        message,
+                        &parts[0].text,
+                        files,
+                        before,
+                    )
+                    .await
+                {
+                    Ok(prepared) => Some(prepared),
+                    Err(error) => {
+                        return refused(rendering, outcome(error));
+                    }
+                }
+            } else {
+                None
+            };
+        if let Err(error) = self.relay.discord.verify_media_bot(credential, &bot).await {
+            return refused(rendering, outcome(error));
+        }
+        let current_channel = match store
+            .refreshed_discord_channel(&candidate.card, reference, ctx.channel)
+            .await
+        {
+            Ok(channel) => channel,
+            Err(_) => return unsupported(),
+        };
         let serial = store.mutation_store();
         let held = match serial
             .acquire(
@@ -154,11 +198,18 @@ impl Sender {
         // Refresh after the shared destination lock, before the card CAS. A
         // callback may have won in the meantime; retain its consumed result.
         let candidate = match store
-            .discord_edit_candidate(ctx.channel, reference, message)
+            .discord_edit_candidate(&current_channel, reference, message)
             .await
         {
             Ok(Admission::Ready(candidate)) => candidate,
-            _ => return discord_edit::uncertain(),
+            Ok(Admission::Replay(receipt)) => {
+                let _ = serial.release(held).await;
+                return receipt;
+            }
+            Err(_) => {
+                let _ = serial.release(held).await;
+                return discord_edit::uncertain();
+            }
         };
         // The platform may have changed independently. Refuse before card CAS
         // if its current upload/content/controls no longer match the retained proof.
@@ -169,20 +220,31 @@ impl Sender {
                 return refused(rendering, outcome(error));
             }
         };
-        let replacement_request = if let (Some(file), Some(before)) = (file, before.as_ref()) {
-            match self
-                .prepare_discord_card_replacement(&candidate, message, &parts[0].text, file, before)
-                .await
-            {
-                Ok(prepared) => Some(prepared),
-                Err(error) => {
-                    let _ = serial.release(held).await;
-                    return refused(rendering, outcome(error));
-                }
+        let current_channel = match store
+            .refreshed_discord_channel(&candidate.card, reference, ctx.channel)
+            .await
+        {
+            Ok(channel) => channel,
+            Err(_) => {
+                let _ = serial.release(held).await;
+                return unsupported();
             }
-        } else {
-            None
         };
+        let candidate = match store
+            .discord_edit_candidate(&current_channel, reference, message)
+            .await
+        {
+            Ok(Admission::Ready(candidate)) => candidate,
+            Ok(Admission::Replay(receipt)) => {
+                let _ = serial.release(held).await;
+                return receipt;
+            }
+            Err(_) => {
+                let _ = serial.release(held).await;
+                return discord_edit::uncertain();
+            }
+        };
+        let original_card = candidate.card.clone();
         let (claimed, request) = if let Some((replacement, request)) = replacement_request {
             (
                 store
@@ -197,7 +259,13 @@ impl Sender {
             Ok(claim) => claim,
             Err(_) => return discord_edit::uncertain(),
         };
-        let edited = if let (Some(request), Some(before)) = (request, before) {
+        let edited = if store
+            .refreshed_discord_channel(&original_card, reference, ctx.channel)
+            .await
+            .is_err()
+        {
+            Err(crate::discord::RestError::Rejected)
+        } else if let (Some(request), Some(before)) = (request, before) {
             self.replace_discord_card_media(
                 &mut claim.prepared,
                 credential,
@@ -212,7 +280,7 @@ impl Sender {
             .card
             .discord
             .as_ref()
-            .is_some_and(|i| i.media.is_some())
+            .is_some_and(|i| i.media_items().is_ok_and(|items| !items.is_empty()))
         {
             self.edit_discord_card_media(
                 &claim.prepared,

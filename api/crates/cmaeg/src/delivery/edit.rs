@@ -52,6 +52,12 @@ impl Sender {
         reference: &MessageRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if message.clear_native_attachments
+            && !(reference.interaction_record_id.is_some()
+                && reference.route_id.starts_with("discord:"))
+        {
+            return (unsupported(), SendEffects::default());
+        }
         if crate::interactions::native_lark::is_reference(reference) {
             return (
                 self.native_lark_card_update(ctx, reference, message).await,
