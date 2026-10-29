@@ -6,6 +6,61 @@ use crate::{
 use cmaeg_core::{ids::MessageRef, seal::MessageRefPayload};
 use serde_json::json;
 
+#[tokio::test]
+async fn discord_voice_confirmed_and_unknown_operation_results_never_reauthorize_after_restart() {
+    for confirmed in [false, true] {
+        let server = Server::start().await;
+        let store = Store::new(server.records.clone(), Arc::new(fixture::keys()));
+        let message: OutboundMessage = serde_json::from_value(json!({"native_attachments":[{
+            "kind":"voice","mime_type":"audio/wav","source":{"type":"base64","data":"AQIDBA=="}
+        }]}))
+        .unwrap();
+        let content = hash(&message);
+        let Admission::Claimed(claim) = store
+            .claim_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                "discord:77:99:700:consumer".into(),
+                "voice-request",
+                content.clone(),
+                "user-1",
+                fixture::NOW + 600,
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("first claim")
+        };
+        let mut receipt = uncertain("native_delivery_unconfirmed");
+        if confirmed {
+            receipt.delivery = DeliveryOutcome::Confirmed {
+                platform_message_id: Some("800".into()),
+            };
+        }
+        store.finish(claim, &receipt).await.unwrap();
+        let restarted = Store::new(server.records.clone(), Arc::new(fixture::keys()));
+        let Admission::Replay(replayed) = restarted
+            .claim_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                "discord:77:99:700:consumer".into(),
+                "voice-request",
+                content,
+                "user-1",
+                fixture::NOW + 600,
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("a retained outcome must not authorize another POST")
+        };
+        assert_eq!(
+            serde_json::to_value(replayed).unwrap(),
+            serde_json::to_value(receipt).unwrap()
+        );
+    }
+}
+
 fn receipt() -> IntentReceipt {
     let mut receipt = uncertain("partial_delivery");
     receipt.message_parts = (0..80)

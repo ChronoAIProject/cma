@@ -3,6 +3,12 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    /// Independently issue native Discord voice replies after compatible readers deploy.
+    pub fn with_native_discord_voice(mut self, enabled: bool) -> Self {
+        self.native_discord_voice = enabled;
+        self
+    }
+
     /// Enable only after every serving and rollback reader supports voice/animation kinds.
     pub fn with_native_media_presentations(mut self, enabled: bool) -> Self {
         self.native_media_presentations = enabled;

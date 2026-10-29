@@ -154,6 +154,14 @@ impl NativeMediaCapabilities {
             Self::for_source(&activity.source, state.native_media_enabled).map(
                 |mut capabilities| {
                     if verified
+                        && state.native_discord_voice_enabled
+                        && discord_voice_destination(channel, event, activity)
+                    {
+                        capabilities.kinds.push("voice".into());
+                        capabilities.presentation_profiles =
+                            Some(vec![NativePresentationProfile::discord_voice()]);
+                    }
+                    if verified
                         && state.native_media_presentations_enabled
                         && telegram_album_destination(channel, event, activity)
                     {
@@ -314,4 +322,23 @@ fn telegram_album_destination(
             && channel.definition.source_of(&activity.source).is_some()
             && channel.definition.secrets.telegram_bot_token.as_ref()
                 .is_some_and(|token| crate::telegram::media_token_matches(token, bot_id)))
+}
+
+fn discord_voice_destination(
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+    activity: &Activity,
+) -> bool {
+    use cmaeg_core::seal::ReplyAddress;
+    event.lineage.is_none()
+        && event.activity_sha256.is_some()
+        && event.channel_id == channel.id
+        && event.record_id == channel.pointer.record_id
+        && matches!((&event.reply, &activity.source),
+            (ReplyAddress::Discord { bot_id, channel_id, thread_id, .. }, SourceKind::Discord { bot_id: source })
+            if bot_id == source && channel_id == &activity.conversation.id
+                && thread_id == &activity.conversation.thread_id
+                && thread_id.as_ref().is_none_or(|thread| thread == channel_id)
+                && channel.definition.source_of(&activity.source).is_some()
+                && crate::discord::rest::token(channel, bot_id).is_some())
 }
