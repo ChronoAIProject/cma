@@ -3,7 +3,8 @@
 set -euo pipefail
 export DISPLAY=:99
 if [[ ${1:-} == --browser ]]; then
-  exec chromium --user-data-dir="$HOME/.cma/chrome" --no-first-run --disable-gpu --disable-dev-shm-usage about:blank
+  shift
+  exec chromium --user-data-dir="$HOME/.cma/chrome" --no-first-run --disable-gpu --disable-dev-shm-usage "${@:-about:blank}"
 fi
 [[ ${CMA_DESKTOP_TOKEN:-} =~ ^[0-9a-f]{32}$ ]]
 # A web page in Chromium must not bypass CMA by connecting to a loopback
@@ -11,7 +12,20 @@ fi
 umask 077
 printf '%s: 127.0.0.1:5900\n' "$CMA_DESKTOP_TOKEN" >/tmp/cma-desktop-token
 unset CMA_DESKTOP_TOKEN
-mkdir -p "$HOME/.cma/chrome"
+mkdir -p "$HOME/.cma/chrome" "$HOME/Desktop" "$HOME/Documents" "$HOME/Downloads"
+export XDG_RUNTIME_DIR=/tmp/cma-desktop-runtime
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_TYPE=x11 DESKTOP_SESSION=xfce
+# Seed desktop preferences only on first use; customization belongs to the home.
+config="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
+mkdir -p "$config"
+for source in /usr/share/cma-desktop/*.xml; do
+  target="$config/${source##*/}"
+  if [[ ! -e "$target" && ! -L "$target" ]]; then
+    cp --no-clobber "$source" "$target"
+  fi
+done
 # /tmp is an empty writable mount. Xvfb cannot create the conventional socket
 # directory itself as a non-root user, but accepts an existing shared directory.
 mkdir -p /tmp/.X11-unix
@@ -47,7 +61,7 @@ stop_desktop() {
   trap - INT TERM EXIT
   if ((result != 0)); then
     printf 'desktop stopped during %s (exit %s)\n' "$desktop_stage" "$result" >&2
-    tail -c 4000 /tmp/cma-{xvfb,openbox,chromium,x11vnc,websockify}.log >&2 2>/dev/null || true
+    tail -c 4000 /tmp/cma-{xvfb,xfce,chromium,x11vnc,websockify}.log >&2 2>/dev/null || true
   fi
   kill "${children[@]}" 2>/dev/null || true
   wait "${children[@]}" 2>/dev/null || true
@@ -61,7 +75,7 @@ require_process() {
 }
 # The readiness client disconnects before the window manager starts. Keep the
 # same display alive across that gap instead of resetting all X11 state.
-Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp -ac -noreset >/tmp/cma-xvfb.log 2>&1 &
+Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp -ac -noreset -s 0 >/tmp/cma-xvfb.log 2>&1 &
 children+=("$!")
 for ((attempt=0; attempt<100; attempt++)); do
   xdotool getdisplaygeometry >/dev/null 2>&1 && break
@@ -69,16 +83,18 @@ for ((attempt=0; attempt<100; attempt++)); do
   sleep 0.1
 done
 xdotool getdisplaygeometry >/dev/null
-desktop_stage=window-manager
-openbox >/tmp/cma-openbox.log 2>&1 &
+desktop_stage=desktop-shell
+dbus-run-session -- xfce4-session >/tmp/cma-xfce.log 2>&1 &
 children+=("$!")
 wm_ready=0
-for ((attempt=0; attempt<100; attempt++)); do
-  if wmctrl -m >/dev/null 2>&1; then
+for ((attempt=0; attempt<300; attempt++)); do
+  if wmctrl -m >/dev/null 2>&1 \
+    && xdotool search --onlyvisible --class xfce4-panel >/dev/null 2>&1 \
+    && xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1; then
     wm_ready=1
     break
   fi
-  require_process "${children[1]}" /tmp/cma-openbox.log
+  require_process "${children[1]}" /tmp/cma-xfce.log
   sleep 0.1
 done
 [[ "$wm_ready" == 1 ]]
@@ -105,7 +121,7 @@ children+=("$!")
 websockify --host-token --token-plugin=TokenFile --token-source=/tmp/cma-desktop-token 127.0.0.1:6080 >/tmp/cma-websockify.log 2>&1 &
 children+=("$!")
 # Closing the browser is normal. Keep the desktop available, and let the user
-# reopen Chromium from the desktop's right-click menu (or ask their Agent).
+# reopen applications from the persistent XFCE panel, menu or desktop icons.
 # Display/window-manager/stream failure still tears down the session.
 desktop_stage=running
 wait -n "${children[0]}" "${children[1]}" "${children[3]}" "${children[4]}"
