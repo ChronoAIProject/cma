@@ -19,6 +19,7 @@ export function useAuthorizedRead<Value>(
     readonly read: typeof read;
     readonly revision: number;
     readonly result: AuthorizedRead<Value>;
+    readonly refreshing: boolean;
   }>();
   const reload = useCallback(() => setRevision((value) => value + 1), []);
   useEffect(() => {
@@ -26,11 +27,15 @@ export function useAuthorizedRead<Value>(
     let active = true;
     let pending: AbortController | undefined;
     let expiration: ReturnType<typeof setTimeout> | undefined;
+    // Wall-clock authority deadline of the published value. Background tabs may
+    // throttle `expiration`, so foreground checks this directly.
+    let validUntil: number | undefined;
     const publish = (result: AuthorizedRead<Value>) => {
-      if (active) setStored({ read, revision, result });
+      if (active) setStored({ read, revision, result, refreshing: false });
     };
     const clear = () => {
       clearTimeout(expiration);
+      validUntil = undefined;
       pending?.abort();
       pending = undefined;
       publish({ status: 'loading' });
@@ -39,12 +44,18 @@ export function useAuthorizedRead<Value>(
       if (!active || pending !== undefined || document.visibilityState === 'hidden') return;
       const request = new AbortController();
       pending = request;
+      setStored((current) =>
+        current?.read === read && current.revision === revision && current.result.status === 'ready'
+          ? { ...current, refreshing: true }
+          : current,
+      );
       const started = Date.now();
       const timeout = setTimeout(() => {
         request.abort();
         if (pending === request) {
           pending = undefined;
           clearTimeout(expiration);
+          validUntil = undefined;
           publish({
             status: 'error',
             message: 'Current resource access could not be checked. Try again.',
@@ -63,6 +74,7 @@ export function useAuthorizedRead<Value>(
         if (!Number.isFinite(deadline) || deadline <= Date.now())
           throw new Error('Current resource access has expired. Try again.');
         clearTimeout(expiration);
+        validUntil = deadline;
         expiration = setTimeout(() => {
           clear();
           void load();
@@ -71,6 +83,7 @@ export function useAuthorizedRead<Value>(
       } catch (error) {
         if (active && pending === request) {
           clearTimeout(expiration);
+          validUntil = undefined;
           publish({
             status: 'error',
             ...((error instanceof ApiError && error.isRetryable) ||
@@ -89,8 +102,14 @@ export function useAuthorizedRead<Value>(
         if (pending === request) pending = undefined;
       }
     };
+    // A value still inside its authority deadline stays visible while it is
+    // revalidated, exactly as during the periodic refresh. Only a value whose
+    // deadline passed while the tab was in the background is withdrawn first.
+    // `focus` and `visibilitychange` usually fire together; `load` coalesces
+    // them into one request instead of aborting and restarting it.
     const foreground = () => {
-      clear();
+      if (document.visibilityState === 'hidden') return;
+      if (validUntil !== undefined && Date.now() >= validUntil) clear();
       void load();
     };
     void load();
@@ -113,5 +132,5 @@ export function useAuthorizedRead<Value>(
     read !== undefined
       ? stored.result
       : { status: 'loading' };
-  return { state, reload };
+  return { state, reload, refreshing: state.status === 'ready' && stored?.refreshing === true };
 }
