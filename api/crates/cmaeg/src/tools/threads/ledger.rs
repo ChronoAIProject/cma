@@ -155,6 +155,17 @@ impl Store {
         );
         self.acquire_destination(destination, owner).await
     }
+    pub async fn acquire_topic_creation(
+        &self,
+        bot: &str,
+        chat: &str,
+        owner: &str,
+    ) -> Result<Option<Fence>, Problem> {
+        let destination = super::hash(
+            &serde_json::json!({"platform":"telegram","bot":bot,"chat":chat,"operation":"create_topic"}),
+        );
+        self.acquire_destination(destination, owner).await
+    }
     async fn acquire_destination(
         &self,
         destination: String,

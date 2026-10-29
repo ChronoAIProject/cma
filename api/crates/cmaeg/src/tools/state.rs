@@ -320,12 +320,13 @@ impl ToolsState {
             response.capabilities.typing |= self
                 .native_typing_capability(caller, &channel, &event, verified)
                 .await;
-            response.capabilities.topic_lifecycle =
-                self.topic_capabilities(caller, &event, &channel).await;
-            response.capabilities.thread_lifecycle =
-                self.thread_capabilities(caller, &event, &channel).await;
-            response.capabilities.conversation_history =
-                self.history_capabilities(caller, &event, &channel).await;
+            self.enrich_conversation_capabilities(
+                caller,
+                &event,
+                &channel,
+                &mut response.capabilities,
+            )
+            .await;
             Ok(response)
         }
         .await;
@@ -367,12 +368,8 @@ impl ToolsState {
         response.capabilities.typing |= self
             .native_typing_capability(caller, &channel, &event, true)
             .await;
-        response.capabilities.topic_lifecycle =
-            self.topic_capabilities(caller, &event, &channel).await;
-        response.capabilities.thread_lifecycle =
-            self.thread_capabilities(caller, &event, &channel).await;
-        response.capabilities.conversation_history =
-            self.history_capabilities(caller, &event, &channel).await;
+        self.enrich_conversation_capabilities(caller, &event, &channel, &mut response.capabilities)
+            .await;
         Ok(response)
     }
     pub(super) async fn deliver<T>(

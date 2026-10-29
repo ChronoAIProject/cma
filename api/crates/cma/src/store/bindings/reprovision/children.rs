@@ -1,7 +1,7 @@
 //! Retain historical rows while proving the retired hierarchy has no work.
 use super::*;
 use layer2_core::sandbox::{
-    binding::BindingConversationState, Agent, AgentWorkStep, WorktreeStatus,
+    binding::BindingConversationState, Agent, AgentOperationDelivery, AgentWorkStep, WorktreeStatus,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -210,6 +210,16 @@ fn settled_agent(agent: &Agent) -> bool {
         && agent.work.cleanup_debt.is_empty()
         && agent.requested_stop_reason.is_none()
         && agent.conversation.active_turn.is_none()
-        && agent.conversation.operation.is_none()
+        // Completed turns retain their successful delivery receipt after owner
+        // retirement. Validate the full record; unresolved or failed delivery
+        // must not authorize a replacement generation.
+        && agent.conversation.operation.as_ref().is_none_or(|operation| {
+            operation.state == AgentOperationDelivery::ExecutionObserved
+                && operation.validate().is_ok()
+        })
         && agent.conversation.queued_messages.is_empty()
 }
+
+#[cfg(test)]
+#[path = "children_tests.rs"]
+mod tests;

@@ -10,6 +10,78 @@ use serde_json::json;
 fn keys() -> MasterKeyRing {
     MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([4; 32]))).unwrap()
 }
+#[test]
+fn telegram_created_reference_is_separate_chat_scoped_and_never_extends_the_event() {
+    use cmaeg_core::seal::TelegramThreadRefPayload;
+    let mut event = payload().event;
+    event.reply = ReplyAddress::Telegram {
+        bot_id: "77".into(),
+        chat_id: "-100".into(),
+        message_id: "800".into(),
+        thread_id: None,
+    };
+    let value = TelegramThreadRefPayload {
+        v: 2,
+        event,
+        custody: "b".repeat(64),
+        chat_id: "-100".into(),
+        thread_id: "901".into(),
+        issued_at: 10,
+        expires_at: 100,
+    };
+    let keys = keys();
+    let reference = ThreadRef::seal_telegram(&value, &keys).unwrap();
+    assert!(reference.open_telegram(&keys, 99).is_ok());
+    assert!(matches!(
+        reference.open_telegram(&keys, 100),
+        Err(OpenError::Expired)
+    ));
+    assert!(reference.open(&keys, 20).is_err());
+    let discord = ThreadRef::seal(&payload(), &keys).unwrap();
+    assert!(discord.open_telegram(&keys, 20).is_err());
+    for case in 0..8 {
+        let mut invalid = value.clone();
+        match case {
+            0 => invalid.v = 1,
+            1 => invalid.chat_id = "-200".into(),
+            2 => invalid.thread_id = "1".into(),
+            3 => invalid.thread_id = "0901".into(),
+            4 => invalid.expires_at += 1,
+            5 => invalid.event.activity_sha256 = None,
+            6 => invalid.event.reply = payload().event.reply,
+            _ => invalid.custody.clear(),
+        }
+        assert!(!invalid.valid(), "{case}");
+        let raw = seal::seal(&keys, TokenKind::ThreadRef, &invalid).unwrap();
+        assert!(
+            raw.parse::<ThreadRef>()
+                .unwrap()
+                .open_telegram(&keys, 20)
+                .is_err(),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn neutral_create_request_preserves_discord_bytes_and_requires_platform_specific_archive_policy() {
+    let discord = r#"{"name":"Review","auto_archive_duration":1440}"#;
+    let request: CreateThreadRequest = serde_json::from_str(discord).unwrap();
+    assert_eq!(serde_json::to_string(&request).unwrap(), discord);
+    request.validate_discord().unwrap();
+    assert!(request.validate_telegram().is_err());
+    let telegram: CreateThreadRequest = serde_json::from_value(json!({"name":"Review"})).unwrap();
+    telegram.validate_telegram().unwrap();
+    assert!(telegram.validate_discord().is_err());
+    assert_eq!(
+        serde_json::to_value(telegram).unwrap(),
+        json!({"name":"Review"})
+    );
+    assert!(serde_json::from_value::<CreateThreadRequest>(
+        json!({"name":"Review","auto_archive_duration":null})
+    )
+    .is_err());
+}
 fn payload() -> ThreadRefPayload {
     ThreadRefPayload {
         v: 1,
@@ -108,7 +180,7 @@ fn lifecycle_requests_reject_destinations_other_members_and_unsupported_archive_
     for duration in [60, 1440, 4320, 10080] {
         assert!(CreateThreadRequest {
             name: "Review".into(),
-            auto_archive_duration: duration
+            auto_archive_duration: Some(duration)
         }
         .validate()
         .is_ok());
@@ -121,14 +193,14 @@ fn lifecycle_requests_reject_destinations_other_members_and_unsupported_archive_
     ] {
         assert!(CreateThreadRequest {
             name,
-            auto_archive_duration: 1440
+            auto_archive_duration: Some(1440)
         }
         .validate()
         .is_err());
     }
     assert!(CreateThreadRequest {
         name: "Review".into(),
-        auto_archive_duration: 0
+        auto_archive_duration: Some(0)
     }
     .validate()
     .is_err());
