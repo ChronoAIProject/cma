@@ -78,15 +78,38 @@ it('keeps a current value on foreground and coalesces focus and visibility into 
     );
   const hook = renderHook(() => useAuthorizedRead(read));
   await waitFor(() => expect(hook.result.current.state.status).toBe('ready'));
+  expect(hook.result.current.refreshing).toBe(false);
   act(() => {
     document.dispatchEvent(new Event('visibilitychange'));
     window.dispatchEvent(new Event('focus'));
   });
   // Still inside its authority deadline: no loading flash while revalidating.
   expect(hook.result.current.state).toEqual({ status: 'ready', value: 'previous fact' });
+  expect(hook.result.current.refreshing).toBe(true);
   expect(read).toHaveBeenCalledTimes(2);
   await act(async () => finish?.({ value: 'current fact' }));
   expect(hook.result.current.state).toEqual({ status: 'ready', value: 'current fact' });
+  expect(hook.result.current.refreshing).toBe(false);
+});
+
+it('clears retained data and refresh status when a foreground check refuses access', async () => {
+  let refuse: ((reason: Error) => void) | undefined;
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce({ value: 'previous fact' })
+    .mockImplementation(
+      () =>
+        new Promise<AuthorizedValue<string>>((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+  const hook = renderHook(() => useAuthorizedRead(read));
+  await waitFor(() => expect(hook.result.current.state.status).toBe('ready'));
+  act(() => window.dispatchEvent(new Event('focus')));
+  expect(hook.result.current.refreshing).toBe(true);
+  await act(async () => refuse?.(new Error('Access removed')));
+  expect(hook.result.current.state).toEqual({ status: 'error', message: 'Access removed' });
+  expect(hook.result.current.refreshing).toBe(false);
 });
 
 it('withdraws a value on foreground when its deadline passed while timers were throttled', async () => {

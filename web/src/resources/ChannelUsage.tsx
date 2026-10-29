@@ -50,7 +50,7 @@ export function ChannelUsage({
         </p>
       )}
       {manager && value?.has_history ? (
-        <Button size="sm" onClick={() => setHistoryFor({ read })}>
+        <Button size="sm" disabled={current.refreshing} onClick={() => setHistoryFor({ read })}>
           Channel history
         </Button>
       ) : null}
@@ -60,7 +60,12 @@ export function ChannelUsage({
         onClose={() => setHistoryFor(undefined)}
       >
         {retainManagement ? (
-          <ChannelHistory key={id} client={client} id={id} enabled={manager} />
+          <ChannelHistory
+            key={id}
+            client={client}
+            id={id}
+            enabled={manager && !current.refreshing}
+          />
         ) : (
           <p role="alert">Current access does not allow channel history.</p>
         )}
