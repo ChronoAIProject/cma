@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 mod preparation;
+pub(super) mod preparation_contract;
 mod readiness;
 mod retry;
 pub(super) use readiness::create_backing_resources;
