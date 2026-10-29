@@ -968,6 +968,17 @@ checkpoint writer hold; they cannot create new holds or transfer archives.
 configuration field. Log level changes never authorize credential-value output.
 Keep model/service/provider configuration out of ad hoc frontend build flags.
 
+The API Deployment sets `TOKIO_WORKER_THREADS=2`, consumed by Tokio's existing
+multithread runtime before CMA starts. Its one-CPU quota would otherwise select
+one worker. Production desktop measurements found CPU work occupying that sole
+worker for about a second, delaying both desktop frames and liveness responses.
+Two workers let the operating system schedule interactive IO while one task is
+busy. This does not increase the CPU quota or replace profiling and moving
+expensive work off async workers; simultaneous CPU work can still delay IO.
+Apply this as an API-only rollout, preserving live Sandbox Pods and conversation
+history. Verify the worker count and public desktop input-to-pixel latency after
+the rollout. Rollback restores the previous worker setting on the same API image.
+
 Execution policy is pinned before each effect and participates in its operation
 fingerprint. A changed timeout or clone-depth environment value must not change
 an already admitted replay plan. Existing Sandboxes likewise keep their pinned
