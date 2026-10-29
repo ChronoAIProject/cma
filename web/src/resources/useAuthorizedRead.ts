@@ -19,6 +19,7 @@ export function useAuthorizedRead<Value>(
     readonly read: typeof read;
     readonly revision: number;
     readonly result: AuthorizedRead<Value>;
+    readonly refreshing: boolean;
   }>();
   const reload = useCallback(() => setRevision((value) => value + 1), []);
   useEffect(() => {
@@ -30,7 +31,7 @@ export function useAuthorizedRead<Value>(
     // throttle `expiration`, so foreground checks this directly.
     let validUntil: number | undefined;
     const publish = (result: AuthorizedRead<Value>) => {
-      if (active) setStored({ read, revision, result });
+      if (active) setStored({ read, revision, result, refreshing: false });
     };
     const clear = () => {
       clearTimeout(expiration);
@@ -43,6 +44,11 @@ export function useAuthorizedRead<Value>(
       if (!active || pending !== undefined || document.visibilityState === 'hidden') return;
       const request = new AbortController();
       pending = request;
+      setStored((current) =>
+        current?.read === read && current.revision === revision && current.result.status === 'ready'
+          ? { ...current, refreshing: true }
+          : current,
+      );
       const started = Date.now();
       const timeout = setTimeout(() => {
         request.abort();
@@ -126,5 +132,5 @@ export function useAuthorizedRead<Value>(
     read !== undefined
       ? stored.result
       : { status: 'loading' };
-  return { state, reload };
+  return { state, reload, refreshing: state.status === 'ready' && stored?.refreshing === true };
 }
