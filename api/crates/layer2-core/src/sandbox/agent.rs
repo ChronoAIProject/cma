@@ -153,6 +153,7 @@ impl Agent {
             || !self.conversation.queued_messages.is_empty()
             || self.work.next_fence == 0
             || self.work.resolved_skills.is_some()
+            || !self.work.worktree_recoveries.is_empty()
         {
             return Err(SandboxModelError::invalid_value("agent.admission"));
         }
@@ -184,6 +185,7 @@ impl Agent {
     }
 
     pub fn validate_conversation(&self) -> Result<(), SandboxModelError> {
+        self.validate_worktree_recoveries()?;
         let identity_shape = match (
             self.conversation.conversation_id.as_deref(),
             self.conversation.runtime_generation,

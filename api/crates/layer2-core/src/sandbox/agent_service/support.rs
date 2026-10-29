@@ -105,6 +105,12 @@ pub(super) fn control_error(error: AgentControlStoreError) -> AgentServiceError 
         AgentControlStoreError::WorkConflict { step } => AgentServiceError::WorkConflict { step },
         AgentControlStoreError::StopReasonConflict => AgentServiceError::StopReasonConflict,
         AgentControlStoreError::Conflict => AgentServiceError::ControlConflict,
+        AgentControlStoreError::WorktreeRecoveryConflict => {
+            AgentServiceError::WorktreeRecoveryConflict
+        }
+        AgentControlStoreError::LimitReached { limit, live } => {
+            AgentServiceError::LimitReached { limit, live }
+        }
         AgentControlStoreError::Corrupt(detail) => AgentServiceError::Corrupt(detail),
         AgentControlStoreError::Unavailable(detail) => AgentServiceError::Unavailable(detail),
     }

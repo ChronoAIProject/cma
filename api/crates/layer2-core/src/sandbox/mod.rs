@@ -32,6 +32,11 @@ mod agent_reads_usage;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
+mod agent_worktree_recovery;
+pub use agent_worktree_recovery::{
+    plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
+    AgentWorktreeRecoveryMutation,
+};
 mod background_checkpoint;
 pub mod binding;
 pub mod channel_usage;
