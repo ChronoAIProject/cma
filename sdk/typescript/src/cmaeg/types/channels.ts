@@ -127,6 +127,7 @@ export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
 
 const TelegramSourceSchema = object({
   topic_lifecycle: optional(boolean),
+  topic_creation: optional(boolean),
   message_events: optional(boolean),
   channel_posts: optional(boolean),
   admission: AdmissionPolicySchema,

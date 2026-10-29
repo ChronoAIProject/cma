@@ -66,6 +66,9 @@ pub enum Source {
         /// Opt in to rename/close/reopen of the exact original forum topic.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         topic_lifecycle: Option<bool>,
+        /// Create and manage new topics in the original admitted forum supergroup.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        topic_creation: Option<bool>,
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_events: Option<bool>,
@@ -184,6 +187,9 @@ pub enum SourceRequest {
         /// Opt in to rename/close/reopen of the exact original forum topic.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         topic_lifecycle: Option<bool>,
+        /// Create and manage new topics in the original admitted forum supergroup.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        topic_creation: Option<bool>,
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_events: Option<bool>,

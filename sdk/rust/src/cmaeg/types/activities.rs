@@ -276,6 +276,9 @@ pub struct Capabilities {
     /// One text reply can start the exact admitted native Lark group root thread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_thread_start: Option<bool>,
+    /// Original forum-supergroup scope; current platform permissions are checked per creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_creation: Option<bool>,
     /// Eligibility for issuing native media edit references on confirmed single uploads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_media_edits: Option<super::NativeMediaEditCapabilities>,
