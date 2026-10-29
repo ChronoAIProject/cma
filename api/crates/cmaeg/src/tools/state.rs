@@ -19,6 +19,9 @@ use cmaeg_core::{
 use std::{sync::Arc, time::Duration};
 use tokio::sync::oneshot;
 use tracing::Instrument;
+#[path = "state_validation.rs"]
+mod validation;
+pub(super) use validation::validate;
 #[derive(Clone)]
 pub struct ToolsState {
     pub native_typing: Option<Arc<super::NativeTyping>>,
@@ -56,6 +59,7 @@ pub struct ToolsState {
     pub native_media_enabled: bool,
     /// Bounded native Lark image/document/audio/video uploads, independently default-off.
     pub native_lark_outbound_media_enabled: bool,
+    pub native_lark_sticker_replies_enabled: bool,
     pub native_lark_media_controls_enabled: bool,
     pub native_lark_multi_image_controls_enabled: bool,
     pub native_lark_media_card_replacements_enabled: bool,
@@ -220,6 +224,9 @@ impl ToolsState {
                     return Ok(receipt);
                 }
             }
+            if message.reply_with_received_sticker {
+                return Err(invalid("received_sticker_requires_retained_routing"));
+            }
             let (receipt, received) = oneshot::channel();
             let result = self
                 .deliver(
@@ -335,8 +342,7 @@ impl ToolsState {
         observation.finish(if result.is_ok() { "success" } else { "error" });
         result
     }
-    /// Verify an ingress snapshot before any provider command exists. No local
-    /// cache or provider read participates in this cryptographic attestation.
+    /// Verify ingress cryptographically without a provider command, cache or read.
     pub async fn verify_context(
         &self,
         caller: AgentCaller,
@@ -467,23 +473,6 @@ pub(crate) fn owner(
         ));
     }
     Ok(matched)
-}
-pub(super) fn validate(message: &OutboundMessage) -> Result<(), Problem> {
-    message.validate().map_err(|error| {
-        Problem::new(
-            if error.message.contains("32768") {
-                ProblemCode::PayloadTooLarge
-            } else {
-                ProblemCode::InvalidRequest
-            },
-            if error.message.contains("32768") {
-                413
-            } else {
-                400
-            },
-            error.to_string(),
-        )
-    })
 }
 fn open_error(error: OpenError) -> Problem {
     match error {

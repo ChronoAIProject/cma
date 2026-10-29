@@ -226,6 +226,13 @@ pub struct IntentReceipt {
 /// CMAEG `OutboundMessage` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutboundMessage {
+    /// Resend only the exact target event's retained native Lark sticker.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub reply_with_received_sticker: Option<bool>,
     /// Update-only explicit removal; supported only when clear_media is advertised.
     #[serde(
         default,

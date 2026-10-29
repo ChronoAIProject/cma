@@ -255,6 +255,7 @@ export const NativeMediaEditCapabilitiesSchema = object({
 export type NativeMediaEditCapabilities = Output<typeof NativeMediaEditCapabilitiesSchema>;
 
 export const OutboundMessageSchema = object({
+  reply_with_received_sticker: optional(boolean),
   clear_native_attachments: optional(boolean),
   native_media_update: optional(NativeMediaUpdateSchema),
   whatsapp_template: optional(nullable(WhatsappTemplateSchema)),

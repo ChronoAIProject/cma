@@ -224,7 +224,7 @@ pub(crate) async fn serve(
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),
         state.master_keys.clone(),
-        config.ingress,
+        config.ingress.clone(),
         std::sync::Arc::new(turns::observer::ObservedLauncher::new(
             runner.clone(),
             observers.activity.clone(),
@@ -234,12 +234,7 @@ pub(crate) async fn serve(
     .with_telegram(telegram.clone())
     .with_telegram_effects(telegram_effects || config.native_telegram_received_reactions_enabled)
     .with_interactions(interactions)
-    .with_media_enabled(config.media.enabled)
-    .with_native_lark_intake(config.native_lark_intake_enabled)
-    .with_native_lark_media(config.native_lark_media_enabled)
-    .with_whatsapp_message_events(config.native_whatsapp_message_events_enabled)
-    .with_whatsapp_media(config.native_whatsapp_media_enabled)
-    .with_whatsapp_groups(config.native_whatsapp_groups_enabled)
+    .with_native_intake_config(&config)
     .with_routed(
         routed
             .as_ref()
@@ -304,6 +299,7 @@ pub(crate) async fn serve(
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         native_lark_outbound_media_enabled: config.native_lark_outbound_media_enabled,
+        native_lark_sticker_replies_enabled: config.native_lark_sticker_replies_enabled,
         native_lark_thread_start_enabled: native_lark_thread_start,
         native_lark_media_controls_enabled: config.native_lark_media_controls_enabled
             && native_lark_controls,

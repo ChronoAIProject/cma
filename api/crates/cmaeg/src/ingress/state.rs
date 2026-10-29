@@ -12,6 +12,7 @@ use tokio::sync::Semaphore;
 pub struct IngressState {
     pub native_lark_intake_enabled: bool,
     pub native_lark_media_enabled: bool,
+    pub native_lark_stickers_enabled: bool,
     pub resolver: ChannelResolver,
     pub master_keys: Arc<MasterKeyRing>,
     pub jwks: Arc<JwksCache>,
@@ -37,6 +38,10 @@ pub struct IngressState {
 impl IngressState {
     pub fn with_whatsapp_message_events(mut self, enabled: bool) -> Self {
         self.native_whatsapp_message_events_enabled = enabled;
+        self
+    }
+    pub fn with_native_lark_stickers(mut self, enabled: bool) -> Self {
+        self.native_lark_stickers_enabled = enabled;
         self
     }
     pub fn with_native_lark_media(mut self, enabled: bool) -> Self {
@@ -99,6 +104,7 @@ impl IngressState {
         Ok(Self {
             native_lark_intake_enabled: false,
             native_lark_media_enabled: false,
+            native_lark_stickers_enabled: false,
             routed: None,
             interactions: None,
             telegram: None,
