@@ -546,6 +546,11 @@ jobs:
         # than hold a runner for the workflow's whole timeout.
         timeout-minutes: 5
         run: npm run check:styles
+      - name: Desktop and conversation browser layout
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+        run: npx playwright test --config e2e/desktop-conversation.config.ts
       - name: Dependency audit
         run: npm audit --audit-level=high
 
