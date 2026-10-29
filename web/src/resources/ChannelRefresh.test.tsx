@@ -80,6 +80,8 @@ it('retains the open history page across a buffered focus recheck while clearing
   holdSummary = true;
   act(() => window.dispatchEvent(new Event('focus')));
   await waitFor(() => expect(finishSummary).toBeDefined());
+  expect(screen.getByText('Previously linked to a channel')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Channel history' })).toBeDisabled();
   expect(screen.getByRole('dialog', { name: 'Channel history' })).toBeInTheDocument();
   expect(screen.queryByText(/^(first|second)-page-manager$/)).not.toBeInTheDocument();
   expect(pages).toHaveLength(beforeFocus);
