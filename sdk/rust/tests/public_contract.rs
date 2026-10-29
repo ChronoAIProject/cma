@@ -38,7 +38,9 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
         || op.contains("/gateway/interaction-records")
     {
         bots::dispatch(c).await
-    } else if op.contains("/cmaeg/bindings") {
+    } else if op.contains("/cmaeg/bindings")
+        || op == "POST /api/v1/cmaeg/worker-credentials/classify"
+    {
         bindings::dispatch(c).await
     } else if op == "GET /api/v2/ui/transport"
         || op == "GET /api/v2/agents/{agent_id}/events"

@@ -60,6 +60,13 @@ impl BindingAccessService {
     ) -> Result<bool, crate::sandbox::store::SandboxStoreError> {
         self.store.contains_key_hash(hash).await
     }
+    /// Fresh current/retained-key classification; store errors never mean unknown.
+    pub async fn classify_worker_key_hash(
+        &self,
+        hash: &str,
+    ) -> Result<bool, crate::sandbox::store::SandboxStoreError> {
+        self.store.classify_worker_key_hash(hash).await
+    }
     pub fn new(store: Arc<dyn BindingStore>) -> Arc<Self> {
         Arc::new(Self { store })
     }

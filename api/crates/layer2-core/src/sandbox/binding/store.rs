@@ -9,6 +9,15 @@ use crate::sandbox::store::SandboxStoreError;
 pub trait BindingStore: Send + Sync {
     /// Current and retained former binding keys cannot acquire ambient authority.
     async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError>;
+    /// Fresh classification for an external security decision. Implementations
+    /// must observe prior acknowledged registrations/rotations across clients;
+    /// ordinary majority lookups alone cannot authorize a negative result.
+    /// Unsupported adapters fail closed instead of silently weakening the read.
+    async fn classify_worker_key_hash(&self, _hash: &str) -> Result<bool, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "fresh worker credential classification is unavailable".into(),
+        ))
+    }
     /// Unique hash lookup. Retired bindings never authenticate.
     async fn find_by_key_hash(
         &self,

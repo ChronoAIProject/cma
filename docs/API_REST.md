@@ -375,6 +375,44 @@ The binding records the authenticated manager separately from the resource owner
 in the profile. A different manager cannot read or replace that binding.
 Responses use `Cache-Control: no-store` and never contain supplied key material.
 
+`POST /api/v1/cmaeg/worker-credentials/classify` is a read-only Gateway
+machine endpoint. It accepts exactly `{"sha256":"<64 lowercase hex>"}` and
+returns exactly `{"classification":"known_worker"}` or
+`{"classification":"unknown"}`. A recognized digest includes current, rotated
+and retired binding keys. The response exposes no owner or resource metadata.
+An unknown result is only one input to Gateway authorization; it is never proof
+that an owner key is eligible on its own.
+
+This operation requires the existing Gateway NyxID service-account access JWT
+(`sa=true`, `token_type=access`) and both current management capabilities
+`cma:provider:bindings` and `cma:gateway:records`. The exact supplied bearer must
+pass existing provider userinfo and authenticated introspection; the verified
+subject, type, active disposition and unexpired lifetime must agree. Decoding a
+JWT is only an initial refusal filter and cannot establish authority. Browser
+cookies, ordinary owner access tokens or API keys (even with management
+permissions), binding worker keys, delegated actors, identity-forwarding proofs
+and resource-scoped credentials are refused. Only the exact POST path without
+query parameters uses this authentication lane; no shared prefix is widened.
+
+The JSON body is limited to 1 KiB and rejects unknown fields, uppercase,
+prefixed or incorrectly sized digests. Authentication has a two-second deadline;
+classification has a one-second deadline. Production starts a fresh causal
+session and first reads the uniquely indexed current-key hash on the primary
+with linearizable read concern. A current match is immediately `known_worker`.
+Otherwise the same session carries that response's `operationTime` as
+`afterClusterTime` into a primary majority read of indexed retained key history.
+This prevents a history read from preceding the unique-document barrier or
+previously acknowledged registrations and rotations in another Manager process.
+The query does not claim linearizable semantics for a non-unique history filter.
+Missing barrier timestamps fail closed. Each Mongo operation has a 750 ms
+server deadline, and the complete storage check has a 900 ms deadline. Existing
+binding writes retain their majority acknowledgement. The stronger classification
+read and its tighter deadline apply only to this new endpoint; existing Manager
+owner/worker authentication lookups keep their previous behavior. All results
+use `Cache-Control: no-store`; no negative cache is used. Invalid credentials return 401/403, invalid input returns 400, and missing
+or unavailable provider authority, store failures and deadlines return 503.
+**No failure is converted to `unknown`.**
+
 `PUT /api/v1/cmaeg/bindings/{binding_id}` accepts
 `{schema_version:1,profile,profile_digest,agent_key,tools:{native_mcp_url,nyxid_service_slug}}`.
 The digest is `sha256:` followed by the canonical profile digest. The response
@@ -1317,6 +1355,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
 | `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+| `POST /api/v1/cmaeg/worker-credentials/classify` | WorkerCredentialDigest | Gateway service bearer only | 200 WorkerCredentialClassificationView; 400/401/403/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}` | PutBindingRequest | - | 200 BindingView; 400/401/403/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}` | - | - | 204 empty; 401/403/409/503 ProblemDocument |
