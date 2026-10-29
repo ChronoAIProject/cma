@@ -3,6 +3,13 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    pub(crate) fn with_discord_voice_decoder(
+        mut self,
+        decoder: Option<crate::discord::voice::Decoder>,
+    ) -> Self {
+        self.discord_voice_decoder = decoder;
+        self
+    }
     /// Independently issue native Discord voice replies after compatible readers deploy.
     pub fn with_native_discord_voice(mut self, enabled: bool) -> Self {
         self.native_discord_voice = enabled;
