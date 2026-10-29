@@ -3849,3 +3849,29 @@ watch its actions. **Reconnect** resets input control.
 | 2026-10-29 | Apply Machine Included hint alignment through its containing section while using the existing shared field hint class. |
 
 | 2026-10-29 | Show owned Machine desktops beside their conversation by default, stack within narrow workspaces, preserve chat during viewer toggles, and retain controls in full screen without changing the shared desktop resolution. |
+
+Machine desktop loading reserves the screen pane with a quiet desktop-shaped
+skeleton: a window inside a frame, using the shared shimmer and running state
+dot. The placeholder uses at most 70% of the available width, capped at 360px,
+with a 16:10 outline, 12px frame radius, 8px inner window radius, and existing
+12/16/24px spacing. Its 14px/20px label names connecting or loading the first
+screen. The connection handshake alone does not mean the display is ready;
+keep input disabled until actual remote pixels are painted. A 30-second failure
+shows a persistent recovery message and leaves Reconnect available. The screen
+and placeholder use the existing 200ms opacity transition without moving chat.
+
+A 22px outlined control label beside Machine desktop states Watching, You
+control, or Agent working, using the existing 6px badge radius, 12px/18px text
+and state dot. The header divider fades to the business accent during active
+user or Agent control. The persistent status announces changes politely.
+Handoffs also show a visual notice for five seconds at the bottom of the desktop
+pane, inset 16px, with 12px by 16px padding, 12px radius and layer-1 background.
+Its 14px/20px words repeat the persistent state without an extra live-region
+announcement. Use shared Presence for the 200ms appearance/removal; notices
+never intercept input or focus, including in full screen. A newer transition
+replaces the previous notice and starts its own five-second lifetime. A turn
+starting revokes user input immediately. Completion returns to Watching until
+the user explicitly chooses Control desktop again. Reconnect also resets input.
+Reduced motion removes fades and shimmer while preserving all status text.
+
+| 2026-10-30 | Animate actual desktop loading and five-second control handoff feedback, keep one persistent accessible status, preserve first-frame readiness, and require explicit input takeover after Agent work or reconnect. |
