@@ -28,6 +28,7 @@ pub struct DiscordApi {
     pub(super) thread_metadata: bool,
     pub(super) message_events: bool,
     pub(super) quoted_context: bool,
+    pub(super) rich_content: bool,
     pub(super) reactions: bool,
 }
 impl DiscordApi {
@@ -47,6 +48,7 @@ impl DiscordApi {
             thread_metadata: false,
             message_events: false,
             quoted_context: false,
+            rich_content: false,
             reactions: false,
         })
     }
@@ -56,6 +58,10 @@ impl DiscordApi {
     }
     pub(super) fn with_quoted_context(mut self, enabled: bool) -> Self {
         self.quoted_context = enabled;
+        self
+    }
+    pub(super) fn with_rich_content(mut self, enabled: bool) -> Self {
+        self.rich_content = enabled;
         self
     }
     pub(super) fn with_message_events(mut self, enabled: bool) -> Self {

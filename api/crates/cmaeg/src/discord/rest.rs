@@ -17,6 +17,7 @@ mod media_presentation_tests;
 mod thread_history;
 pub(crate) mod threads;
 mod typing;
+mod voice;
 use crate::{
     channels::resolver::ResolvedChannel,
     media::{

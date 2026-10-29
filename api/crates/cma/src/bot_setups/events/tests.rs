@@ -184,6 +184,8 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
     let records = Arc::new(RecordClient::new(backend, "service-fixture").unwrap());
     let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":backend,"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1}]).to_string()).unwrap();
     ToolsState {
+        native_media_presentations_enabled: false,
+        native_discord_voice_enabled: false,
         native_whatsapp_forms: None,
         native_typing: None,
         discord_thread_history: None,

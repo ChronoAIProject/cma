@@ -41,6 +41,10 @@ data:
   # Requires every reader to support durable media-card custody before enabling.
   # Ordered native albums; existing single uploads and their references are unchanged.
   CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED: "false"
+  # Reader-first voice/animation kinds and native Telegram static stickers; existing audio is unchanged.
+  CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED: "false"
+  # Canonical PCM WAV voice-only Discord replies, independently enabled.
+  CMAEG_NATIVE_DISCORD_VOICE_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED: "false"
   CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED: "false"
@@ -55,7 +59,8 @@ data:
   CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED: "false"
   # Requires separately migrated persistent fence storage and runtime grants.
   CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED: "false"
-  CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED: "false"
+  # Compatible creation readers and persistent fences are released; owners still opt in.
+  CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED: "true"
   CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED: "false"
   CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED: "false"
   # Bounded original Discord history is enabled; source consent remains required.
@@ -109,6 +114,8 @@ data:
   # Owner-selected reaction intents and durable confirmed outbound target receipts.
   CMAEG_DISCORD_REACTIONS_ENABLED: "true"
   CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED: "true"
+  # Enable only after all readers support content_projection v1 and old pods drain.
+  CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED: "false"
   CMAEG_DISCORD_FORMS_ENABLED: "true"
   # Upgrade all card-edit readers before starting native replacement chains.
   CMAEG_DISCORD_CARD_EDITS_ENABLED: "true"

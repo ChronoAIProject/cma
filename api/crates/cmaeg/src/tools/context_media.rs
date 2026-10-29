@@ -1,13 +1,19 @@
+#[path = "context_presentations.rs"]
+mod presentations;
 use super::{
     native_whatsapp_templates, Activity, EventRefPayload, NativeStickerCapabilities,
     NativeVideoCapabilities, ResolvedChannel, ToolsState,
 };
 use cmaeg_core::activity::SourceKind;
+pub use presentations::NativePresentationProfile;
 use serde::Serialize;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct NativeMediaCapabilities {
+    /// Explicit native presentation profiles; absent while issuance is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_profiles: Option<Vec<NativePresentationProfile>>,
     /// Eligible ordered attachments are sent as one album; absent when disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub albums: Option<NativeAlbumCapabilities>,
@@ -122,6 +128,14 @@ impl NativeMediaCapabilities {
             Self::native_whatsapp(state.native_whatsapp_outbound_media_enabled).map(
                 |mut capabilities| {
                     if verified
+                        && state.native_media_presentations_enabled
+                        && matches!(event.reply, cmaeg_core::seal::ReplyAddress::Whatsapp { .. })
+                    {
+                        capabilities.kinds.push("voice".into());
+                        capabilities.presentation_profiles =
+                            Some(vec![NativePresentationProfile::voice(false)]);
+                    }
+                    if verified
                         && state.native_whatsapp_media_controls_enabled
                         && state.native_whatsapp_interactions_enabled
                         && (event.consumer.is_none() || state.consumer_interactions_enabled)
@@ -139,6 +153,24 @@ impl NativeMediaCapabilities {
         } else {
             Self::for_source(&activity.source, state.native_media_enabled).map(
                 |mut capabilities| {
+                    if verified
+                        && state.native_discord_voice_enabled
+                        && discord_voice_destination(channel, event, activity)
+                    {
+                        capabilities.kinds.push("voice".into());
+                        capabilities.presentation_profiles =
+                            Some(vec![NativePresentationProfile::discord_voice()]);
+                    }
+                    if verified
+                        && state.native_media_presentations_enabled
+                        && telegram_album_destination(channel, event, activity)
+                    {
+                        capabilities
+                            .kinds
+                            .extend(["voice", "animation", "sticker"].map(String::from));
+                        capabilities.presentation_profiles =
+                            Some(NativePresentationProfile::telegram());
+                    }
                     if verified
                         && state.native_telegram_albums_enabled
                         && telegram_album_destination(channel, event, activity)
@@ -165,6 +197,10 @@ impl NativeMediaCapabilities {
                         && (discord_controls || telegram_controls)
                     {
                         let mut controls = MediaControlsCapabilities::single(1024);
+                        if capabilities.presentation_profiles.is_some() {
+                            controls.kinds =
+                                Some(["image", "file", "audio", "video"].map(String::from).into());
+                        }
                         if discord_controls && state.native_discord_media_card_sets_enabled {
                             controls.max_attachments = cmaeg_core::message::MAX_NATIVE_ATTACHMENTS;
                         }
@@ -190,6 +226,7 @@ impl NativeMediaCapabilities {
 
     pub(super) fn native_lark(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
+            presentation_profiles: None,
             albums: None,
             controls: None,
             kinds: ["image", "file", "audio", "video"].map(String::from).into(),
@@ -211,6 +248,7 @@ impl NativeMediaCapabilities {
 
     pub(super) fn native_whatsapp(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
+            presentation_profiles: None,
             albums: None,
             controls: None,
             kinds: ["image", "file", "audio", "sticker", "video"]
@@ -253,6 +291,7 @@ impl NativeMediaCapabilities {
             return None;
         }
         Some(Self {
+            presentation_profiles: None,
             albums: None,
             controls: None,
             kinds: ["image", "file", "audio", "video"].map(String::from).into(),
@@ -283,4 +322,23 @@ fn telegram_album_destination(
             && channel.definition.source_of(&activity.source).is_some()
             && channel.definition.secrets.telegram_bot_token.as_ref()
                 .is_some_and(|token| crate::telegram::media_token_matches(token, bot_id)))
+}
+
+fn discord_voice_destination(
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+    activity: &Activity,
+) -> bool {
+    use cmaeg_core::seal::ReplyAddress;
+    event.lineage.is_none()
+        && event.activity_sha256.is_some()
+        && event.channel_id == channel.id
+        && event.record_id == channel.pointer.record_id
+        && matches!((&event.reply, &activity.source),
+            (ReplyAddress::Discord { bot_id, channel_id, thread_id, .. }, SourceKind::Discord { bot_id: source })
+            if bot_id == source && channel_id == &activity.conversation.id
+                && thread_id == &activity.conversation.thread_id
+                && thread_id.as_ref().is_none_or(|thread| thread == channel_id)
+                && channel.definition.source_of(&activity.source).is_some()
+                && crate::discord::rest::token(channel, bot_id).is_some())
 }

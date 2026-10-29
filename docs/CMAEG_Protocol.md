@@ -3112,6 +3112,12 @@ forum-topic/reply-chain and mention evidence before it can advertise this contra
 
 ## Explicit native outbound media
 
+Separately gated [native media presentations](CMAEG_Native_Media_Presentations.md)
+add explicit `voice`/`animation` kinds, Telegram static WebP sticker sends and
+WhatsApp private voice messages. Discover `presentation_profiles`; ordinary
+`audio`/`video`, original destinations and existing operation references keep
+their meanings. New presentations grant no media-edit/control/album authority.
+
 `OutboundMessage.native_attachments` is an optional array, omitted when empty.
 It is independent of legacy `blocks` attachment records, which retain their
 link-text rendering. A caller must discover `context.capabilities.native_media`
@@ -3832,6 +3838,36 @@ The original profile, routing and partition snapshot is retained; current source
 or credential revocation prevents replay, and consumer credentials must still
 match that snapshot. Application code must durably admit this launch once and
 recover its existing routing plan rather than create a new plan on retry.
+
+`CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED=false` is a separate writer gate for
+descriptive sticker, embed and poll intake. When enabled, newly captured human
+MESSAGE_CREATE bodies can retain a version-1 `content_projection` alongside the
+unchanged dispatch. The reader checks its exact message/channel/author identities
+and canonical bounded facts, then projects those facts into ordinary Message text
+after sender/chat/group admission. Embed author/provider labels remain untrusted
+content attribution; they never replace the message actor. No media locator,
+external fetch, vote, poll mutation or new delivery authority is produced. The
+existing attachments keep their original exact locators.
+
+The projection handles at most three sticker items, ten embeds with at most 25
+fields each, and one default-layout poll with at most ten distinct answer IDs.
+Descriptive text is clipped with explicit truncation/omission facts. At most
+16 KiB is appended within the existing 32 KiB Message text limit; original text
+takes priority. Empty or unsupported metadata alone is not an admission signal.
+Metadata-only MESSAGE_UPDATE dispatches remain outside the existing edit contract,
+even if they carry an edited timestamp. Admitted text/attachment edits still use
+the original retained routing and actor, and do not adopt updated rich metadata.
+
+Old bodies without `content_projection` retain legacy normalization and digests.
+Same-message replay restores the existing inbox before consulting the writer gate
+or a redelivered body. Retained projections are read with the gate off. Because
+older readers deny unknown inbox-body fields, deploy these compatible readers and
+drain every predecessor before enabling the writer; retain compatible readers
+until all such snapshots expire. Turning the writer off does not permit binary
+rollback across this reader boundary. Authenticated capability discovery reports
+`native_discord_rich_content_enabled`; this is configuration, not platform delivery
+verification. See [native Discord rich content](CMAEG_Native_Discord_Rich_Content.md)
+for the provider contract and limits.
 
 The native inbox dispatcher uses a durable-only admission entry point. Missing
 routing, unsupported delivery and oversized stored payloads are refused before

@@ -20,6 +20,14 @@ pub(super) fn normalize(
     bot: &str,
     policy: &AdmissionPolicy,
 ) -> Result<Normalized, GatewayError> {
+    normalize_with_content(raw, bot, policy, None)
+}
+pub(super) fn normalize_with_content(
+    raw: &Value,
+    bot: &str,
+    policy: &AdmissionPolicy,
+    content: Option<&super::content::Snapshot>,
+) -> Result<Normalized, GatewayError> {
     let id = snowflake(&raw["id"])?;
     let chat = snowflake(&raw["channel_id"])?;
     let sender = snowflake(&raw["author"]["id"])?;
@@ -100,6 +108,10 @@ pub(super) fn normalize(
     if text.len() > 32 * 1024 {
         return Ok(Normalized::Refused(Refusal::ContentUnsupported));
     }
+    let text = match content {
+        Some(snapshot) => snapshot.text(raw)?,
+        None => text.to_owned(),
+    };
     let files = raw["attachments"]
         .as_array()
         .ok_or(GatewayError::Protocol)?;
@@ -150,7 +162,7 @@ pub(super) fn normalize(
         event_id: EventId::new(format!("discord:{bot}:{id}"))
             .map_err(|_| GatewayError::Protocol)?,
         kind: ActivityKind::Message {
-            text: text.into(),
+            text,
             attachments,
             mentions_bot: mentioned == Some(true),
             reply_to: None,

@@ -31,7 +31,9 @@ fn result(message: &OutboundMessage, thread: Option<i64>) -> Value {
                     NativeMediaKind::Video => "video",
                     NativeMediaKind::File => "document",
                     NativeMediaKind::Audio => "audio",
-                    NativeMediaKind::Sticker => unreachable!(),
+                    NativeMediaKind::Sticker
+                    | NativeMediaKind::Voice
+                    | NativeMediaKind::Animation => unreachable!(),
                 };
                 let file = json!({"file_id":format!("file-{i}")});
                 let mut value = json!({

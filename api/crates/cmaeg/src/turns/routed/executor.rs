@@ -59,6 +59,14 @@ impl RoutedTargetExecutor {
         else {
             return Ok(match outcome {
                 DispatchOutcome::Retry => Disposition::Retry(RETRY),
+                DispatchOutcome::Terminal(super::Phase::Refused { code })
+                    if code == super::expiry::EXPIRED_BEFORE_START =>
+                {
+                    self.delivery
+                        .report_expired_before_start(&work.identity, &work.target_id)
+                        .await?;
+                    Disposition::Settled
+                }
                 _ => Disposition::Settled,
             });
         };
