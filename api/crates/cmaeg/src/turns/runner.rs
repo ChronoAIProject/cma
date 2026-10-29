@@ -277,17 +277,9 @@ impl TurnRunner {
                         ensure_pending = false;
                         continue;
                     }
-                    // Binding creation acknowledges its durable reservation
-                    // before its sandbox is ready. This exact CMA refusal
-                    // precedes conversation admission; keep the original event
-                    // pending rather than losing its first message. Unknown
-                    // outcomes and other conflicts must never enter this retry.
-                    Err(ProviderError::Rejected { status: 409, code })
-                        if consumer.provider.slug.as_str() == "cma_codex"
-                            && code == "binding_not_ready" =>
-                    {
-                        Err(ProviderError::Busy { retry_after: None })
-                    }
+                    // Keep the same pending conversation and event while the
+                    // provider explicitly asks us to wait before admission.
+                    Err(error @ ProviderError::Busy { .. }) => Err(error),
                     Err(error) => return Err(error),
                 }
             } else {
