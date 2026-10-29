@@ -55,6 +55,9 @@ impl Transcriber for TranscriptService {
         })
     }
 }
+#[path = "media_worker_preparation_tests.rs"]
+mod preparation;
+
 type Requests = Arc<Mutex<Vec<Value>>>;
 fn metadata(kind: &str) -> Value {
     json!({
