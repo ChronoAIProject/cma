@@ -207,6 +207,7 @@ use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
     let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
     let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        structured_content: None,
         reply_with_received_sticker: None,
         clear_native_attachments: None,
         native_media_update: None,
@@ -916,3 +917,5 @@ actual PCM samples. Generic `audio` is unchanged. No message-operation reference
 is issued, and an uncertain result must not be retried under a new operation ID.
 Other codecs, including Ogg/Opus, are refused for this Discord voice profile.
 [Discord voice limits and acceptance status](../../../docs/CMAEG_Native_Discord_Voice.md).
+
+`StructuredContent` describes exclusive contact, static location and venue data in `OutboundMessage.structured_content`. Use only the original event's advertised `structured_replies` capability with a stable reply idempotency key. Omission preserves legacy message bytes; this adds no recipient or live-location fields.

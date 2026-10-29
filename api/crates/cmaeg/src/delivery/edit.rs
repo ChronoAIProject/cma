@@ -52,6 +52,9 @@ impl Sender {
         reference: &MessageRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if message.structured_content.is_some() {
+            return (unsupported(), SendEffects::default());
+        }
         if message
             .native_attachments
             .iter()

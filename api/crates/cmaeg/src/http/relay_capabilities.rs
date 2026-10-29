@@ -5,6 +5,9 @@ use utoipa::ToSchema;
 
 #[derive(Serialize, ToSchema)]
 pub struct RelayAuthoringCapabilities {
+    /// New Custom channels may opt into durable execution for recovery-capable providers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_durable_execution_enabled: Option<bool>,
     /// Registered provider slugs with response replay. Configuration, not connection health.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_recovery_providers: Option<Vec<String>>,
@@ -116,6 +119,7 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
     })
     .collect();
     RelayAuthoringCapabilities {
+        custom_durable_execution_enabled: Some(state.custom_durable_execution_enabled),
         response_recovery_providers: Some(state.providers.response_recovery_providers()),
         native_lark_writes_enabled: Some(
             state.native_lark_writes_enabled

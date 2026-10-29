@@ -10,6 +10,7 @@ use crate::{
     whatsapp::{
         outbound::{MediaUpload, UploadedMedia},
         receipts::{Receipt, RETENTION},
+        structured::PreparedStructured,
         templates::PreparedTemplate,
         Error,
     },
@@ -28,6 +29,7 @@ enum NativePart {
     Upload(MediaUpload),
     Media(UploadedMedia),
     Template(PreparedTemplate),
+    Structured(PreparedStructured),
 }
 
 impl Sender {
@@ -84,6 +86,21 @@ impl Sender {
         {
             return self.whatsapp_controls_reply(ctx, event, message).await;
         }
+        let structured = match message.structured_content.as_ref() {
+            Some(content) if group.is_none() && self.relay.native_whatsapp_structured_replies => {
+                match PreparedStructured::new(phone_number_id, recipient_id, message_id, content) {
+                    Ok(prepared) => Some(prepared),
+                    Err(_) => {
+                        return (
+                            rejected("native_whatsapp_structured_content_invalid"),
+                            effects,
+                        )
+                    }
+                }
+            }
+            Some(_) => return (unsupported(), effects),
+            None => None,
+        };
         let media = !message.native_attachments.is_empty();
         if (media
             && (!self.relay.native_whatsapp_outbound_media_enabled()
@@ -129,7 +146,33 @@ impl Sender {
             ..rejected("empty_message")
         };
         let deadline = Instant::now() + Duration::from_secs(60);
+        if structured.is_some() {
+            let Some(interactions) = &self.relay.interactions else {
+                return (unsupported(), effects);
+            };
+            if !matches!(
+                timeout_at(
+                    deadline,
+                    crate::whatsapp::structured::authorized(
+                        interactions.channel_records(),
+                        self.keys.clone(),
+                        ctx.channel,
+                        event,
+                    )
+                )
+                .await,
+                Ok(true)
+            ) {
+                return (
+                    rejected("native_whatsapp_original_event_unavailable"),
+                    effects,
+                );
+            }
+        }
         let prepared = async {
+            if let Some(structured) = structured {
+                return Some(VecDeque::from([NativePart::Structured(structured)]));
+            }
             if let Some(template) = template {
                 return Some(VecDeque::from([NativePart::Template(template)]));
             }
@@ -215,6 +258,12 @@ impl Sender {
             // write, including the gap between upload and recipient send.
             let send = async {
                 match operation {
+                    NativePart::Structured(structured) => self
+                        .relay
+                        .whatsapp
+                        .send_structured(credentials, structured)
+                        .await
+                        .map(Some),
                     NativePart::Template(template) => self
                         .relay
                         .whatsapp

@@ -22,3 +22,12 @@ export const TestChannelResponseSchema = object({
   level: ConformanceLevelSchema,
 });
 export type TestChannelResponse = Output<typeof TestChannelResponseSchema>;
+
+/** Native intake eligibility; selection is not a socket-health claim. */
+export const NativeDiscordActivationSchema = object({
+  state: text,
+  detail: text,
+  capacity: integer,
+  selected_records: integer,
+});
+export type NativeDiscordActivation = Output<typeof NativeDiscordActivationSchema>;

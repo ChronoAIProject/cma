@@ -1178,3 +1178,5 @@ actual PCM samples. Generic `audio` is unchanged. No message-operation reference
 is issued, and an uncertain result must not be retried under a new operation ID.
 Other codecs, including Ogg/Opus, are refused for this Discord voice profile.
 [Discord voice limits and acceptance status](../../../docs/CMAEG_Native_Discord_Voice.md).
+
+`StructuredContent` describes exclusive contact, static location and venue data in `OutboundMessage.structured_content`. Use only the original event's advertised `structured_replies` capability with a stable reply idempotency key. Omission preserves legacy message bytes; this adds no recipient or live-location fields.

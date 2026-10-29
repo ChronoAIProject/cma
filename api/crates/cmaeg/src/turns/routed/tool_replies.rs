@@ -80,6 +80,9 @@ impl RoutedToolReplies {
         delayed: bool,
         idempotency_key: Option<&str>,
     ) -> Result<Option<IntentReceipt>, ExecutionError> {
+        if message.structured_content.is_some() && (delayed || idempotency_key.is_none()) {
+            return Err(ExecutionError::Invalid);
+        }
         if idempotency_key.is_some_and(|key| {
             key.is_empty() || key.len() > 128 || !key.bytes().all(|byte| (33..=126).contains(&byte))
         }) {

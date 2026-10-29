@@ -54,7 +54,10 @@ pub fn build_definition(
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
-        routing: None,
+        routing: request
+            .durable_custom_execution
+            .then(super::custom_execution::default_routing),
+        durable_custom_execution: request.durable_custom_execution,
         secrets: build_secrets(credentials),
         created_at: OffsetDateTime::now_utc()
             .format(&Rfc3339)
@@ -124,6 +127,15 @@ pub fn build_update(
     current: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<ChannelDefinition, ValidationError> {
+    if request
+        .durable_custom_execution
+        .is_some_and(|value| value != current.durable_custom_execution)
+    {
+        return Err(ValidationError::new(
+            "/durable_custom_execution",
+            "immutable; create a new channel to change execution mode",
+        ));
+    }
     if request.provider.target != current.provider.target {
         return Err(ValidationError::new(
             "/provider/target",
@@ -211,6 +223,7 @@ pub fn build_update(
         // No request carries routing yet, so a full update keeps the stored
         // policy, exactly as it keeps the consumer keys in the secrets.
         routing: current.routing.clone(),
+        durable_custom_execution: current.durable_custom_execution,
         secrets: credentials,
         created_at: current.created_at.clone(),
         version: current.version,
@@ -387,6 +400,9 @@ impl ChannelCreateRequest {
             "channel_key": self.credentials.channel_key.as_ref().map(|key| hash_secret(key.as_str())),
             "hmac_secrets": self.credentials.hmac_secrets.iter().map(|value| (&value.key_id, hash_secret(value.secret.as_str()))).collect::<Vec<_>>(),
         });
+        if self.durable_custom_execution {
+            value["durable_custom_execution"] = true.into();
+        }
         if let Some(reference) = &self.connection_ref {
             value["connection_ref"] = reference.clone().into();
         }

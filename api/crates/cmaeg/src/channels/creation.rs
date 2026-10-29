@@ -48,6 +48,8 @@ pub async fn create(
                 state.write_flags(),
             )
             .map_err(ManagementError::Invalid)?;
+            super::custom_execution::validate_providers(&state.providers, &definition)?;
+            super::custom_execution::validate_media(state, None, &definition)?;
             super::native_discord::initialize(state, &mut definition)?;
             super::native_telegram::initialize(state, None, &mut definition)?;
             crate::native_lark::management::initialize(state, None, &mut definition)?;
@@ -99,6 +101,7 @@ pub async fn create(
     if creation.ready {
         return Ok(completed(current));
     }
+    super::custom_execution::validate_providers(&state.providers, &current.definition)?;
     // Rebinding is idempotent in the provider contract. The retained record lets
     // the creator recover or delete this exact reservation after any uncertain result.
     let binding = state

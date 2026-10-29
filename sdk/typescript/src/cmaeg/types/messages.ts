@@ -1,4 +1,5 @@
 import { WhatsappTemplateSchema } from './whatsapp-template.js';
+import { StructuredContentSchema } from './structured-content.js';
 import {
   AttachmentKindSchema,
   MessageRefSchema,
@@ -255,6 +256,7 @@ export const NativeMediaEditCapabilitiesSchema = object({
 export type NativeMediaEditCapabilities = Output<typeof NativeMediaEditCapabilitiesSchema>;
 
 export const OutboundMessageSchema = object({
+  structured_content: optional(StructuredContentSchema),
   reply_with_received_sticker: optional(boolean),
   clear_native_attachments: optional(boolean),
   native_media_update: optional(NativeMediaUpdateSchema),
