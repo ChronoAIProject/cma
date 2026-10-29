@@ -30,7 +30,7 @@ fn response(channel: &str) -> Value {
 }
 async fn send(
     sender: &Sender,
-    channel: &ResolvedChannel,
+    channel: &Arc<ResolvedChannel>,
     event: &EventRefPayload,
     message: &OutboundMessage,
     allowed: bool,
