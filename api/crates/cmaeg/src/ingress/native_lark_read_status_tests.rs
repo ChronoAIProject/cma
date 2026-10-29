@@ -354,3 +354,6 @@ async fn unconfirmed_incoming_other_reader_and_group_messages_never_gain_read_st
 
 #[path = "native_lark_read_status_isolation_tests.rs"]
 mod isolation_tests;
+
+#[path = "native_lark_read_status_batch_tests.rs"]
+mod batch_tests;
