@@ -15,6 +15,7 @@ mod document_artifacts;
 mod document_storage;
 mod gateway;
 mod health;
+mod media_continuations;
 mod permissions;
 mod profile_authoring;
 mod profile_policy;

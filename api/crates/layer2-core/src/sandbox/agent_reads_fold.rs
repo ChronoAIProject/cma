@@ -23,6 +23,9 @@ pub(super) fn fold_agent_log(
     agent: &Agent,
     entries: &[AgentLogEntry],
 ) -> Result<AgentLogProjection, String> {
+    agent
+        .validate_worktree_recoveries()
+        .map_err(|error| error.to_string())?;
     let Some(first) = entries.first() else {
         return Err("agent log has no creation record".into());
     };
@@ -30,7 +33,8 @@ pub(super) fn fold_agent_log(
         AgentLogKind::Created {
             workspace_id,
             worktree_id,
-        } if workspace_id == &agent.workspace_id && worktree_id == &agent.worktree_id => {}
+        } if workspace_id == &agent.workspace_id && worktree_id == agent.creation_worktree_id() => {
+        }
         AgentLogKind::Created { .. } => {
             return Err("agent creation log lineage does not match".into());
         }

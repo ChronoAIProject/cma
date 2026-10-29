@@ -156,7 +156,11 @@ impl RoutedDelivery {
             if !gate.commit() {
                 return Err(ExecutionError::LostLease);
             }
-            evidence.local = Some(custom.local(&event, effect));
+            evidence.local = Some(if body.metadata.contains_key(super::media_schedule::KEY) {
+                custom.local_response(&event, effect, &frame.response_id)
+            } else {
+                custom.local(&event, effect)
+            });
             drop(cancel);
             self.record_custom(lease, &evidence).await?;
             if effect.terminal() {

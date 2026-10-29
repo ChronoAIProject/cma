@@ -13,6 +13,8 @@ pub struct RuntimeContractMismatch {
 /// A provider-neutral adapter failure.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AdapterError {
+    #[error("input authority temporarily unavailable: {0}")]
+    InputAuthorityUnavailable(String),
     #[error("runtime unavailable: {0}")]
     Unavailable(String),
     #[error("runtime rejected request: {0}")]
@@ -32,6 +34,9 @@ impl AdapterError {
     #[must_use]
     pub fn context(self, context: &str) -> Self {
         match self {
+            Self::InputAuthorityUnavailable(message) => {
+                Self::InputAuthorityUnavailable(format!("{context}: {message}"))
+            }
             Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
             Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
             Self::OperationIdentityConflict(message) => {

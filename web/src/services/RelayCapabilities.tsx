@@ -3,6 +3,7 @@ import { Button } from '../ui/Button';
 import { ServiceError, serviceRequest, type Denied } from './client';
 
 export interface RelayAuthoringCapabilities {
+  readonly response_recovery_providers?: readonly string[] | null;
   readonly native_lark_writes_enabled?: boolean | null;
   readonly native_lark_intake_enabled?: boolean | null;
   readonly native_lark_controls_enabled?: boolean | null;
@@ -164,6 +165,16 @@ export function nativeDiscordUnavailable(
   )
     return 'This gateway has not enabled automatic activation for new direct Discord channels.';
   return undefined;
+}
+
+/** Additive discovery: older gateways still enforce eligibility when saving. */
+export function nativeDiscordProviderUnavailable(
+  discovery: RelayDiscovery,
+  provider: string,
+): string | undefined {
+  const supported = discovery.authoring?.response_recovery_providers;
+  if (!provider || supported == null || supported.includes(provider)) return undefined;
+  return `${provider} does not support reconnecting to interrupted Discord responses on this gateway yet. Choose another agent provider before creating a direct Discord channel.`;
 }
 
 export function nativeWhatsappUnavailable(

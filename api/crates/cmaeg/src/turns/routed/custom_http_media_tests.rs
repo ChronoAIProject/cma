@@ -16,7 +16,12 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-fn inline_media() -> Arc<MediaService> {
+pub(super) fn inline_media() -> Arc<MediaService> {
+    inline_media_with(Arc::new(DisabledTranscriber))
+}
+pub(super) fn inline_media_with(
+    transcriber: Arc<dyn crate::media::transcribe::Transcriber>,
+) -> Arc<MediaService> {
     // Only the real inline reader is available: this fixture cannot fetch a URL
     // or satisfy another platform's media locator with invented bytes.
     let inline = Arc::new(InlineSource);
@@ -27,7 +32,6 @@ fn inline_media() -> Arc<MediaService> {
         inline,
     ));
     let decode = Arc::new(Semaphore::new(1));
-    let transcriber = Arc::new(DisabledTranscriber);
     let stt = SttConfig::default();
     let limits = MediaLimits::from_config(&MediaConfig::default());
     Arc::new(MediaService::new(MediaDeps {

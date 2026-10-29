@@ -69,6 +69,7 @@ pub(super) fn project(
     reading: AgentResponseReading,
     snapshot: &AgentEventStreamSnapshot,
 ) -> Option<V2ResponseObject> {
+    let deferred_failure_detail = reading.deferred_failure_detail;
     let command = reading.command;
     if command.receipt.agent_id != snapshot.id {
         return None;
@@ -133,11 +134,19 @@ pub(super) fn project(
     let mut output = super::output::OutputProjection::default();
     let mut lost_frames = 0_u64;
     let mut turn_active = true;
+    let mut prewrite_failed = None;
     for entry in snapshot.history.iter().skip(start + 1) {
         if let Some(kind) = &entry.kind {
             output.observe(kind, &snapshot.id, turn);
         }
         match &entry.kind {
+            Some(AgentLogKind::OperationDeliveryChanged {
+                operation_sequence,
+                state: layer2_core::sandbox::AgentOperationDelivery::PreWriteFailed,
+                operation: layer2_core::sandbox::AgentOperationKind::SendMessage,
+            }) if operation_sequence.checked_add(1) == Some(turn) => {
+                prewrite_failed = Some((entry.seq, &entry.appended_at));
+            }
             Some(AgentLogKind::TurnStarted { .. }) => break,
             Some(AgentLogKind::Usage {
                 input_tokens,
@@ -181,6 +190,17 @@ pub(super) fn project(
                 failure,
             }) if *turn_sequence == turn => {
                 turn_active = false;
+                if deferred_failure_detail.as_ref().is_some_and(|expected| {
+                    entry.deferred_failure_detail.as_ref() == Some(expected)
+                }) && prewrite_failed.is_some_and(|(seq, at)| {
+                    seq.checked_add(1) == Some(entry.seq) && at == &entry.appended_at
+                }) && !command.status.is_terminal()
+                    && failure.class == layer2_core::sandbox::agent_io::SOURCE_DEFERRED_FAILURE
+                {
+                    response.status = V2ResponseStatus::Queued;
+                    response.error = None;
+                    continue;
+                }
                 response.status = V2ResponseStatus::Failed;
                 response.error = Some(ResponseError {
                     code: failure.class.clone(),

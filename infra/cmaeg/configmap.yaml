@@ -14,6 +14,8 @@ data:
   CMAEG_ROUTED_CHANNEL_RECORDS: ""
   # Keep recovery and selected records after stopping admission, until retained work expires.
   CMAEG_ROUTED_RECOVERY_ENABLED: "true"
+  # Deploy the optional media index and both services' readers before enabling writers.
+  CMAEG_MEDIA_CONTINUATIONS_ENABLED: "false"
   CMAEG_ROUTED_ADMISSION_ENABLED: "true"
   # Reader-first preparation; no binding can be replaced without explicit enrollment.
   CMAEG_BINDING_PREPARATION_ENABLED: "false"
@@ -133,11 +135,11 @@ data:
   CMAEG_CMA_BASE_URL: "http://cma-api.chrono-bot.svc"
   CMAEG_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
   CMAEG_TOOLS_NYXID_SLUG: "cmaeg"
-  # Native inbox dispatch uses the CMA Responses v2 durable GET replay contract.
-  # Do not add this to nyxbot: its deployed API has no verified durable GET replay.
+  # Native inbox dispatch requires each provider's verified durable GET replay.
+  # NyxBot native snapshot/cursor semantics are covered by provider_recovery tests.
   # Recovery reads do not enable the durable dispatcher or retry a turn POST.
   CMAEG_PROVIDERS: >-
-    [{"slug":"cma_codex","base_url":"http://cma-api.chrono-bot.svc","kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses","recovery":{"response":"/api/v2/responses/{response_id}","events":"/api/v2/responses/{response_id}/events"}},"max_inflight":256},{"slug":"nyxbot","base_url":"https://nyx-api.chrono-ai.fun","kind":"responses_http","paths":{"agent_card":"/api/v1/nyxbot/agent-card","binding":"/api/v1/nyxbot/bindings/{binding_id}","conversation":"/api/v1/nyxbot/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v1/nyxbot/responses"},"max_inflight":256}]
+    [{"slug":"cma_codex","base_url":"http://cma-api.chrono-bot.svc","kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses","recovery":{"response":"/api/v2/responses/{response_id}","events":"/api/v2/responses/{response_id}/events"}},"max_inflight":256},{"slug":"nyxbot","base_url":"https://nyx-api.chrono-ai.fun","kind":"responses_http","paths":{"agent_card":"/api/v1/nyxbot/agent-card","binding":"/api/v1/nyxbot/bindings/{binding_id}","conversation":"/api/v1/nyxbot/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v1/nyxbot/responses","recovery":{"response":"/api/v1/nyxbot/responses/{response_id}","events":"/api/v1/nyxbot/responses/{response_id}/events"}},"max_inflight":256}]
   CMAEG_MEDIA_TOOL_PROVIDERS: "cma_codex"
   CMAEG_NON_HUMAN_PROVIDERS: "cma_codex"
   CMAEG_MEDIA_ENABLED: "true"
@@ -150,7 +152,7 @@ data:
   CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR: "268435456"
   CMAEG_MEDIA_LINK_TTL_SECONDS: "120"
   CMAEG_MEDIA_PREPARE_BUDGET_MS: "15000"
-  CMAEG_MEDIA_FFMPEG_DIR: ""
+  CMAEG_MEDIA_FFMPEG_DIR: "/opt/ffmpeg/bin"
   CMAEG_MEDIA_VIDEO_FRAMES: "6"
   CMAEG_STT_MAX_SECONDS: "600"
   CMAEG_STT_MAX_BYTES: "20971520"
@@ -158,7 +160,8 @@ data:
   CMAEG_STT_CHANNEL_SECONDS_PER_HOUR: "3600"
   CMAEG_STT_SECONDS_PER_HOUR: "36000"
   CMAEG_STT_EAGER_MAX_SECONDS: "300"
-  CMAEG_STT_URL: ""
+  # Production uses the dedicated cmaeg-stt Secret; never a user's session token.
+  CMAEG_STT_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/llm-openai/audio/transcriptions"
   CMAEG_STT_MODEL: "gpt-transcribe"
   CMAEG_STT_FORMATS: "mp3,mp4,mpeg,mpga,m4a,wav,webm"
   CMAEG_STT_TIMEOUT_MS: "30000"

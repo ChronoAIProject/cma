@@ -8,6 +8,8 @@ use mongodb::bson::{doc, DateTime, Document};
 #[path = "agent_lifecycle_bootstrap_fixture.rs"]
 mod fixture;
 use fixture::{work, Fixture};
+#[path = "agent_lifecycle_bootstrap_failure_tests.rs"]
+mod failure_tests;
 
 fn start(
     service: Arc<InlineAgentLifecycle>,
