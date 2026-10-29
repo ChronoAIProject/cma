@@ -1,3 +1,5 @@
+#[path = "provider_recovery/nyxbot.rs"]
+mod nyxbot;
 #[path = "provider_recovery/support.rs"]
 mod support;
 use cmaeg::providers::{ProviderError, ResponsesEvent};
