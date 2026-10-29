@@ -29,8 +29,13 @@ async fn static_replies_fail_closed_without_gate_retained_proof_or_original_nati
             gate: &gate,
         };
         let (result, _) = sender.reply(&context, &event, &message).await;
-        assert_eq!(result.delivery.kind(), "rejected", "{case}");
+        assert_eq!(
+            result.delivery,
+            super::intents::DeliveryOutcome::Unsupported,
+            "{case}"
+        );
         assert!(result.message_ref.is_none());
+        assert!(result.message_parts.is_empty());
         assert!(f.calls().is_empty());
         assert!(gate.calls().is_empty());
     }
