@@ -49,6 +49,32 @@ impl CmaManagementAuth {
             || matches!(parts.as_slice(), [binding,"preparation-inspections" | "preparations"] if id(binding))
             || matches!(parts.as_slice(), [binding,"conversations",conversation] if id(binding) && id(conversation))
     }
+    pub(super) fn with_service(mut self, token: crate::service_auth::ServiceAuth) -> Self {
+        self.token = token;
+        self
+    }
+    pub(super) fn permits_worker_classifier(&self, url: &Url) -> bool {
+        url.origin() == self.origin
+            && url.path() == super::worker_classifier::PATH
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url.username().is_empty()
+            && url.password().is_none()
+    }
+    pub(super) async fn worker_classifier_bearer(
+        &self,
+        url: &Url,
+    ) -> Result<Secret, ProviderError> {
+        if !self.permits_worker_classifier(url) {
+            return Err(ProviderError::InvalidRequest(
+                "worker classifier requires exact CMA management route".into(),
+            ));
+        }
+        self.token
+            .bearer()
+            .await
+            .map_err(|error| ProviderError::Unavailable(error.to_string()))
+    }
 }
 impl ProviderClient {
     pub(crate) fn with_service_auth(mut self, token: crate::service_auth::ServiceAuth) -> Self {
@@ -125,13 +151,16 @@ mod tests {
                 &Url::parse(&format!("https://cma.example{path}")).unwrap()
             ));
         }
-        for url in ["http://cma.example/api/v1/cmaeg/bindings/binding_one",
+        for url in [
+            "http://cma.example/api/v1/cmaeg/bindings/binding_one",
             "https://cma.example:8443/api/v1/cmaeg/bindings/binding_one",
             "https://other.example/api/v1/cmaeg/bindings/binding_one",
-            "https://cma.example/api/v2/responses", "https://cma.example/.well-known/agent-card.json",
+            "https://cma.example/api/v2/responses",
+            "https://cma.example/.well-known/agent-card.json",
             "https://cma.example/api/v1/cmaeg/bindings/binding_one/conversations/conversation_one/events/event_one",
-            "https://cma.example/api/v1/cmaeg/bindings/binding_one?target=other"] {
-            assert!(!auth.permits(&provider,&Url::parse(url).unwrap()),"{url}");
+            "https://cma.example/api/v1/cmaeg/bindings/binding_one?target=other",
+        ] {
+            assert!(!auth.permits(&provider, &Url::parse(url).unwrap()), "{url}");
         }
         assert!(!auth.permits(
             &ProviderSlug::new("external").unwrap(),

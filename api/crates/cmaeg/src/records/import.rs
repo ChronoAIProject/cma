@@ -50,6 +50,9 @@ fn decode(line: &str) -> Result<(RecordKind, Document), RecordError> {
     Ok((record.kind, document))
 }
 pub async fn import(db: &Database, path: &std::path::Path) -> Result<u64, RecordError> {
+    // Imported sealed consumers can execute without a provider bind. Register
+    // every admitted worker hash before any record becomes visible.
+    let tracking = crate::worker_credentials::WorkerCredentials::from_environment(db).await?;
     let file = std::fs::File::open(path)
         .map_err(|_| RecordError::Rejected("record export is unreadable".into()))?;
     let mut reader = BufReader::new(file);
@@ -73,6 +76,14 @@ pub async fn import(db: &Database, path: &std::path::Path) -> Result<u64, Record
             ));
         }
         let (kind, desired) = decode(&line)?;
+        if kind == RecordKind::Channel {
+            if let Some(tracking) = &tracking {
+                let blob = desired
+                    .get_binary_generic("blob")
+                    .map_err(|_| RecordError::Rejected("invalid imported channel blob".into()))?;
+                tracking.record_blob(blob).await?;
+            }
+        }
         if desired
             .get_datetime("expires_at")
             .is_ok_and(|expiry| *expiry <= DateTime::now())
