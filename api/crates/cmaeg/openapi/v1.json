@@ -5016,6 +5016,13 @@
           "kind": {
             "type": "string"
           },
+          "max_attachments": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "max_bytes": {
             "format": "int64",
             "minimum": 0,
@@ -5032,6 +5039,12 @@
           },
           "profile": {
             "type": "string"
+          },
+          "text": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
