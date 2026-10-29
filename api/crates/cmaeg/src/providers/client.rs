@@ -105,6 +105,15 @@ impl ProviderClient {
         self.providers.len()
     }
 
+    /// Configured replay support only; this does not probe provider or platform health.
+    pub fn response_recovery_providers(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .filter(|(_, handle)| handle.entry.paths.recovery.is_some())
+            .map(|(slug, _)| slug.as_str().to_owned())
+            .collect()
+    }
+
     pub async fn bind(
         &self,
         provider: &ProviderSlug,
