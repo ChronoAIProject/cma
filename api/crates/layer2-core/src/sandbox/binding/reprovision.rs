@@ -187,6 +187,8 @@ impl ProviderBinding {
             .as_deref()
             .and_then(unix_seconds)
             .ok_or_else(conflict)?;
+        // `work.execution` retains the provisioning policy after completion;
+        // pending steps/leases and lifecycle records establish active work.
         if !eligible_binding(self)
             || intent.binding_id != self.binding_id
             || intent.owner != self.owner
@@ -207,7 +209,10 @@ impl ProviderBinding {
                 SandboxWorkStep::None | SandboxWorkStep::WaitForPurge
             )
             || sandbox.work.lease.is_some()
-            || sandbox.work.execution.is_some()
+            || sandbox
+                .work
+                .execution
+                .is_some_and(|policy| policy.validate().is_err())
             || sandbox.lifecycle.operation.is_some()
             || sandbox.lifecycle.home_recovery.is_some()
             || sandbox.lifecycle.unpublished_recovery.is_some()
@@ -233,7 +238,10 @@ impl ProviderBinding {
             )
             || workspace.work.step != WorkspaceWorkStep::None
             || workspace.work.lease.is_some()
-            || workspace.work.execution.is_some()
+            || workspace
+                .work
+                .execution
+                .is_some_and(|policy| policy.validate().is_err())
         {
             return Err(conflict());
         }
@@ -278,8 +286,10 @@ fn reserve(
     Ok(next)
 }
 fn eligible_binding(binding: &ProviderBinding) -> bool {
-    matches!(binding.state, BindingState::Failed { .. })
-        && binding.work == BindingWork::Idle
+    matches!(
+        binding.state,
+        BindingState::Ready | BindingState::Failed { .. }
+    ) && binding.work == BindingWork::Idle
         && binding.existing_agent.is_none()
         && binding.previous.is_none()
         && binding.profile.environment.is_some()

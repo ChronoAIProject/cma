@@ -7,6 +7,18 @@ use serde_json::json;
 use tower::ServiceExt;
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if let Some(mode) = name.strip_prefix("binding_preparation_") {
+        return Some(Scenario {
+            router: management::preparation_contract::fixture(mode).await,
+            subject: (mode != "anonymous").then_some("manager"),
+            authorization: if mode == "forbidden" {
+                Authorization::none()
+            } else {
+                management::authority()
+            },
+            symbols: Default::default(),
+        });
+    }
     if name == "provider_card" {
         return Some(Scenario {
             router: crate::a2a::router("https://cma.example"),
