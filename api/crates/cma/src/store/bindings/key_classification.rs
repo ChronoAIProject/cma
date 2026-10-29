@@ -1,7 +1,7 @@
 //! A unique-document linearizable barrier precedes any negative history lookup.
 use super::*;
 use mongodb::{
-    options::{ReadConcern, ReadPreference},
+    options::{ReadConcern, ReadPreference, SelectionCriteria},
     ClientSession,
 };
 use std::time::Duration;
@@ -50,7 +50,7 @@ async fn current_or_barrier(
         .records
         .find_one(doc! {"record.key_sha256": hash})
         .read_concern(ReadConcern::linearizable())
-        .selection_criteria(ReadPreference::Primary)
+        .selection_criteria(SelectionCriteria::ReadPreference(ReadPreference::Primary))
         .max_time(Duration::from_millis(750))
         .projection(doc! {"_id": 1})
         .session(&mut session)
@@ -82,7 +82,7 @@ async fn history(
         .records
         .find_one(doc! {"key_history": hash})
         .read_concern(ReadConcern::majority())
-        .selection_criteria(ReadPreference::Primary)
+        .selection_criteria(SelectionCriteria::ReadPreference(ReadPreference::Primary))
         .max_time(Duration::from_millis(750))
         .projection(doc! {"_id": 1})
         .session(barrier)
