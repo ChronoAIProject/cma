@@ -54,7 +54,9 @@ impl MongoRecords {
             }
             seen[index] = true;
             let live = match (self.kind, row.expires_at) {
-                (RecordKind::Interaction, Some(expiry)) => expiry > now,
+                (RecordKind::Interaction | RecordKind::MediaContinuation, Some(expiry)) => {
+                    expiry > now
+                }
                 (
                     RecordKind::Channel
                     | RecordKind::Connection
