@@ -19,8 +19,9 @@ mod management;
 pub use management::ManagementConfig;
 mod media;
 mod native_discord;
+pub mod owner_keys;
 mod routing;
-mod secrets;
+pub(crate) mod secrets;
 mod service;
 mod service_account;
 pub use service::*;
@@ -109,7 +110,10 @@ impl std::fmt::Display for ConfigError {
                 )
             }
             Self::InvalidMaxInflight { value } => {
-                write!(formatter, "{CMAEG_PROVIDER_MAX_INFLIGHT}={value:?} is invalid: expected a positive integer")
+                write!(
+                    formatter,
+                    "{CMAEG_PROVIDER_MAX_INFLIGHT}={value:?} is invalid: expected a positive integer"
+                )
             }
             Self::InvalidManagement { detail } => {
                 write!(formatter, "management configuration is invalid: {detail}")
@@ -282,7 +286,7 @@ impl Config {
                     return Err(ConfigError::InvalidManagement {
                         detail: "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED must be true or false"
                             .into(),
-                    })
+                    });
                 }
             },
             thread_contract_writes_enabled: match env::var("CMAEG_THREAD_CONTRACT_WRITES_ENABLED") {
@@ -292,7 +296,7 @@ impl Config {
                 _ => {
                     return Err(ConfigError::InvalidManagement {
                         detail: "CMAEG_THREAD_CONTRACT_WRITES_ENABLED must be true or false".into(),
-                    })
+                    });
                 }
             },
             multi_consumer_writes_enabled: routing::write_flag(

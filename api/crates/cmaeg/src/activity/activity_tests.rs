@@ -22,6 +22,9 @@ use std::{
     time::Duration,
 };
 
+#[path = "owner_keys_tests.rs"]
+mod owner_keys;
+
 struct AuthFixture {
     task: tokio::task::JoinHandle<()>,
     allowed: Arc<AtomicBool>,

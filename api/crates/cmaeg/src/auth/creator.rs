@@ -7,8 +7,7 @@ use std::{
 };
 
 use axum::{
-    extract::FromRequestParts,
-    http::{request::Parts, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -96,46 +95,13 @@ impl IntoResponse for CreatorAuthError {
     }
 }
 
-impl<S> FromRequestParts<S> for Creator
-where
-    S: CreatorAuthState + Send + Sync,
-{
-    type Rejection = CreatorAuthError;
-
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let auth = state.creator_auth();
-        if let Some(service) = &auth.service {
-            let principal = service
-                .authenticate(&parts.headers)
-                .await
-                .map_err(service_error)?;
-            let outbound = parts.uri.path().split('/').nth(4) == Some("outbound-messages");
-            let permission = match parts.method {
-                axum::http::Method::GET | axum::http::Method::HEAD => "cma-eg:channels:read",
-                _ if outbound => "cma-eg:channels:update",
-                axum::http::Method::DELETE => "cma-eg:channels:delete",
-                axum::http::Method::POST if parts.uri.path().ends_with("/test") => {
-                    "cma-eg:channels:test"
-                }
-                axum::http::Method::POST => "cma-eg:channels:create",
-                _ => "cma-eg:channels:update",
-            };
-            principal.require(permission).map_err(service_error)?;
-            return Ok(Creator {
-                subject: principal.subject,
-                organization: false,
-                token_hash: token_hash(
-                    bearer(&parts.headers).ok_or(CreatorAuthError::NotAuthenticated)?,
-                ),
-            });
-        }
-        auth.authenticate(&parts.headers).await
-    }
-}
+#[path = "creator_request.rs"]
+mod request;
 
 #[derive(Debug, Clone)]
 pub struct CreatorAuthenticator {
     service: Option<cma_service_auth::NyxIdAuth>,
+    owner_keys: Option<super::owner_keys::OwnerKeyAuthenticator>,
     client: Client,
     base_url: String,
     cache: std::sync::Arc<DashMap<String, CacheEntry>>,
@@ -158,6 +124,7 @@ impl CreatorAuthenticator {
             .build()?;
         Ok(Self {
             service: None,
+            owner_keys: None,
             client,
             base_url: base_url.trim_end_matches('/').to_owned(),
             cache: std::sync::Arc::new(DashMap::new()),
@@ -169,7 +136,41 @@ impl CreatorAuthenticator {
         self.service = Some(service);
         self
     }
+    pub(crate) fn with_owner_keys(
+        mut self,
+        auth: super::owner_keys::OwnerKeyAuthenticator,
+    ) -> Self {
+        self.owner_keys = Some(auth);
+        self
+    }
+    async fn authenticate_owner_key(
+        &self,
+        headers: &HeaderMap,
+        permission: &str,
+    ) -> Result<Creator, CreatorAuthError> {
+        // Ordinary keys identify a personal subject. Header-selected organization
+        // authority must never widen that scope, including through SSE refresh.
+        if headers.contains_key("x-cmaeg-owner") {
+            return Err(CreatorAuthError::Forbidden);
+        }
+        let auth = self
+            .owner_keys
+            .as_ref()
+            .ok_or(CreatorAuthError::NotAuthenticated)?;
+        let hash = token_hash(bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?);
+        let principal = auth.authenticate(headers, &hash, permission).await?;
+        Ok(Creator {
+            subject: principal.subject,
+            token_hash: hash,
+            organization: false,
+        })
+    }
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Creator, CreatorAuthError> {
+        if bearer(headers).is_some_and(cma_service_auth::is_service_key) {
+            return self
+                .authenticate_owner_key(headers, "cma-eg:channels:read")
+                .await;
+        }
         if let Some(service) = &self.service {
             let principal = service.authenticate(headers).await.map_err(service_error)?;
             principal
@@ -194,6 +195,21 @@ impl CreatorAuthenticator {
         token: &str,
         owner: Option<&str>,
     ) -> Result<Creator, CreatorAuthError> {
+        if cma_service_auth::is_service_key(token) {
+            if owner.is_some() {
+                return Err(CreatorAuthError::Forbidden);
+            }
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                axum::http::header::AUTHORIZATION,
+                format!("Bearer {token}")
+                    .parse()
+                    .map_err(|_| CreatorAuthError::NotAuthenticated)?,
+            );
+            return self
+                .authenticate_owner_key(&headers, "cma-eg:channels:read")
+                .await;
+        }
         let token_hash = token_hash(token);
         let cache_key = owner.map_or_else(
             || token_hash.clone(),
@@ -422,6 +438,14 @@ fn selected_owner(headers: &HeaderMap) -> Result<Option<&str>, CreatorAuthError>
 }
 
 fn bearer(headers: &HeaderMap) -> Option<&str> {
+    if headers
+        .get_all(axum::http::header::AUTHORIZATION)
+        .iter()
+        .count()
+        != 1
+    {
+        return None;
+    }
     let value = headers
         .get(axum::http::header::AUTHORIZATION)?
         .to_str()
@@ -443,7 +467,7 @@ fn token_hash(token: &str) -> String {
     )
 }
 
-fn service_error(error: cma_service_auth::AuthError) -> CreatorAuthError {
+pub(super) fn service_error(error: cma_service_auth::AuthError) -> CreatorAuthError {
     match error {
         cma_service_auth::AuthError::Unauthenticated => CreatorAuthError::NotAuthenticated,
         cma_service_auth::AuthError::Forbidden => CreatorAuthError::Forbidden,

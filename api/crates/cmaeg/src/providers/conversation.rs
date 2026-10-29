@@ -19,6 +19,7 @@ impl ProviderClient {
         delete: bool,
         generation: Option<u64>,
     ) -> Result<(), ProviderError> {
+        self.record_worker_key(agent_key).await?;
         let handle = self.handle(provider)?;
         let _permit = acquire(&handle.inflight).await?;
         let url = handle

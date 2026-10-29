@@ -25,6 +25,7 @@ pub struct MongoRecords {
     db: Database,
     records: Collection<Record>,
     kind: RecordKind,
+    worker_credentials: Option<crate::worker_credentials::WorkerCredentials>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,6 +58,8 @@ impl MongoRecords {
             .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
             .build();
         Ok(Self {
+            worker_credentials: crate::worker_credentials::WorkerCredentials::from_environment(&db)
+                .await?,
             records: db.collection_with_options(RECORDS, options),
             kind: RecordKind::Channel,
             db,
@@ -76,6 +79,7 @@ impl MongoRecords {
                     .build(),
             ),
             kind,
+            worker_credentials: self.worker_credentials.clone(),
         }
     }
     fn live(&self, mut filter: Document) -> Document {
@@ -86,6 +90,11 @@ impl MongoRecords {
             filter.insert("expires_at", doc! {"$gt":DateTime::now()});
         }
         filter
+    }
+    pub(crate) fn worker_credentials(
+        &self,
+    ) -> Option<crate::worker_credentials::WorkerCredentials> {
+        self.worker_credentials.clone()
     }
     pub async fn put(
         &self,
@@ -118,6 +127,11 @@ impl MongoRecords {
     ) -> Result<u64, RecordError> {
         if owner.is_empty() || owner.len() > 512 || blob.is_empty() || blob.len() > 65536 {
             return Err(RecordError::Rejected("invalid record".into()));
+        }
+        if self.kind == RecordKind::Channel {
+            if let Some(tracking) = &self.worker_credentials {
+                tracking.record_blob(blob).await?;
+            }
         }
         if retention == super::retention::InteractionRetention::WhatsappReaction
             && self.kind != RecordKind::Interaction
@@ -293,6 +307,7 @@ fn failure(_: mongodb::error::Error) -> RecordError {
 
 #[path = "mongo_schema.rs"]
 mod schema;
+pub(crate) use schema::migration_validator;
 pub use schema::{migrate, role, verify, verify_with_authority};
 
 #[path = "mongo_thread_fences.rs"]
