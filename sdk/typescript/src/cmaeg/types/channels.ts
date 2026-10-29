@@ -190,8 +190,8 @@ export const SourceRequestSchema = tagged(
   'type',
 );
 export type SourceRequest = Output<typeof SourceRequestSchema>;
-
 export const ChannelCreateRequestSchema = object({
+  durable_custom_execution: optional(boolean),
   connection_ref: optional(nullable(text)),
   connection_admission: optional(nullable(AdmissionPolicySchema)),
   credentials: CredentialsRequestSchema,
@@ -415,8 +415,8 @@ export const SourceSchema = tagged(
   'type',
 );
 export type Source = Output<typeof SourceSchema>;
-
 export const PublicChannelDefinitionSchema = object({
+  durable_custom_execution: optional(boolean),
   connection_ref: optional(nullable(text)),
   created_at: text,
   creation: optional(nullable(ChannelCreationSchema)),

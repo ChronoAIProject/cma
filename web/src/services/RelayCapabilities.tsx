@@ -3,6 +3,7 @@ import { Button } from '../ui/Button';
 import { ServiceError, serviceRequest, type Denied } from './client';
 
 export interface RelayAuthoringCapabilities {
+  readonly custom_durable_execution_enabled?: boolean | null;
   readonly response_recovery_providers?: readonly string[] | null;
   readonly native_lark_writes_enabled?: boolean | null;
   readonly native_lark_intake_enabled?: boolean | null;

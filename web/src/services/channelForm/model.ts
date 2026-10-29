@@ -95,6 +95,7 @@ export function channelDraft(channel?: Channel, owner = ''): Fields {
       'created_at',
       'version',
       'routing',
+      'durable_custom_execution',
     ]),
     provider: {
       ...without(object(d.provider), ['binding_id', 'level']),
@@ -187,7 +188,7 @@ export function channelRequest(
     throw new Error('Choose a ready CMA-managed Telegram connection.');
   const patch = credentialsPatch(channelCredentials(credentials, draft, !channel), !channel);
   return {
-    ...draft,
+    ...without(draft, ['durable_custom_execution']),
     ...(patch ? { credentials: patch } : {}),
     ...(channel ? { expected_version: channel.version } : { record_id: record }),
   };
