@@ -65,6 +65,13 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
     let mut inventory = Vec::new();
     macro_rules! check { ($($ty:ident),+ $(,)?) => {$({ inventory.push(stringify!($ty)); roundtrip::<$ty>(stringify!($ty), &examples); })+}; }
     check!(
+        ActivityMediaResponse,
+        EventAttestationRequest,
+        EventAttestationResponse,
+        MediaArtifactClaim,
+        MediaContinuationKind,
+        MediaResponsePage,
+        RetainedMediaResponse,
         FormCustomerMessage,
         FormPreparationReceipt,
         FormPreparationState,

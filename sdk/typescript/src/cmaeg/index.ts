@@ -15,6 +15,7 @@ import type { CreateThreadRequest, ManageThreadRequest, ThreadListView } from '.
 import {
   CmaegActivity,
   type ChannelActivityOptions,
+  type EventMediaResponseOptions,
   type StreamChannelActivityOptions,
 } from './activity.js';
 import type {
@@ -111,6 +112,9 @@ export class Cmaeg {
   }
   getChannelActivity(id: string, options?: ChannelActivityOptions) {
     return this.#activity.getChannelActivity(id, options);
+  }
+  getEventMediaResponses(id: string, eventId: string, options?: EventMediaResponseOptions) {
+    return this.#activity.getEventMediaResponses(id, eventId, options);
   }
   streamChannelActivity(id: string, options?: StreamChannelActivityOptions) {
     return this.#activity.streamChannelActivity(id, options);
@@ -233,6 +237,7 @@ export type { CreateChannelOptions, ListChannelOptions } from './channels.js';
 export type { EventOptions } from './events.js';
 export type { GatewayStreamEvent } from './stream.js';
 export type {
+  EventMediaResponseOptions,
   ChannelActivityOptions,
   StreamChannelActivityOptions,
   ChannelActivityEvent,
