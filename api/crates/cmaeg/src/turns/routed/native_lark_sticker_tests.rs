@@ -5,7 +5,10 @@ use super::{
 };
 use crate::{
     auth::AgentCaller,
-    delivery::{custom::CustomDelivery, engine::DeliveryEngine, relay_client::RelayClient},
+    delivery::{
+        custom::CustomDelivery, engine::DeliveryEngine, intents::DeliveryOutcome,
+        relay_client::RelayClient,
+    },
     http::readiness::Readiness,
     ingress::routing_store::test_server::Server,
     interactions::InteractionStore,
@@ -177,7 +180,22 @@ async fn received_sticker_default_named_confirmed_unknown_replays_never_send_twi
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!(replay.delivery, first.delivery);
+            if unknown {
+                assert_eq!(
+                    first.delivery,
+                    DeliveryOutcome::Unknown {
+                        reason: "native_lark_acceptance_unconfirmed".into()
+                    }
+                );
+                assert_eq!(
+                    replay.delivery,
+                    DeliveryOutcome::Unknown {
+                        reason: "routed_reply_uncertain".into()
+                    }
+                );
+            } else {
+                assert_eq!(replay.delivery, first.delivery);
+            }
             assert_eq!(api.writes.lock().unwrap().len(), 1);
             // A removed consumer loses authority even though the result is durable.
             {
