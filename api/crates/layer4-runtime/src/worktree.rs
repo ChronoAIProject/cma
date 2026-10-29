@@ -28,7 +28,10 @@ pub(crate) async fn add(
         path.as_os_str().to_owned(),
         OsString::from(&base_commit),
     ];
-    if let Err(error) = git.checked(&repository, args, "add worktree").await {
+    if let Err(error) = git
+        .checked_checkout(&repository, args, "add worktree")
+        .await
+    {
         cleanup_failed_add(&git, &repository, &path, &branch).await;
         return Err(error);
     }
