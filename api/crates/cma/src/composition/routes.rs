@@ -84,3 +84,31 @@ pub(super) fn agent_files(
         layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(store, access),
     ))
 }
+
+/// Compose owner-authorized creation, provenance and retained membership reads.
+pub(super) fn agent_metadata(
+    stores: &MongoStores,
+    access: Arc<layer2_core::resource_access::ResourceAccessService>,
+) -> Router {
+    use layer1_public::rest;
+    use layer2_core::sandbox::{
+        channel_usage::AgentChannelUsageService,
+        provider_associations::AgentProviderAssociationService, AgentProvenanceInventoryService,
+        AgentProvenanceService,
+    };
+
+    rest::agent_provenance_inventory_router(AgentProvenanceInventoryService::new(
+        stores.sandbox_model.clone(),
+        access.clone(),
+    ))
+    .merge(rest::agent_channel_usage_router(
+        AgentChannelUsageService::new(stores.sandbox_model.clone(), access.clone()),
+    ))
+    .merge(rest::agent_provider_associations_router(
+        AgentProviderAssociationService::new(stores.sandbox_model.clone(), access.clone()),
+    ))
+    .merge(rest::agent_provenance_router(AgentProvenanceService::new(
+        stores.sandbox_model.clone(),
+        access,
+    )))
+}

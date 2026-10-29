@@ -18,6 +18,9 @@ pub async fn attach_subject(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    if super::worker_credentials::matches_path(request.uri().path()) {
+        return super::worker_credentials::attach(&auth, request, next).await;
+    }
     if request
         .headers()
         .contains_key(super::resource_request::HEADER)

@@ -7,7 +7,7 @@ use cmaeg::{
 };
 use std::{ffi::OsString, io::Write, path::Path};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -56,6 +56,9 @@ fn main() {
         [command @ ("--migrate"
         | "--print-runtime-role"
         | "--print-migration-role"
+        | "--migrate-worker-credentials"
+        | "--print-worker-credentials-runtime-role"
+        | "--print-worker-credentials-migration-role"
         | "--migrate-thread-fences"
         | "--print-thread-fences-runtime-role"
         | "--print-thread-fences-migration-role"
@@ -66,6 +69,9 @@ fn main() {
         | "--print-whatsapp-forms-runtime-role"
         | "--print-whatsapp-forms-migration-role")] => run_database_command(command),
         ["--import-legacy-records", path] => run_import(path),
+        ["--attest-owner-key-cutover", release, "--all-writers-drained"] => {
+            run_owner_key_cutover(release)
+        }
         ["--audit-custom-attachments"] => audit(false),
         ["--audit-custom-attachments", "--clear"] => audit(true),
         ["--audit-routing"] => audit_routing(RoutingAuditMode::Report),
@@ -179,13 +185,19 @@ fn run_database_command(command: &str) {
         if !matches!(
             command,
             "--migrate"
+                | "--migrate-worker-credentials"
                 | "--migrate-thread-fences"
                 | "--migrate-whatsapp-forms"
                 | "--migrate-media-continuations"
         ) {
             println!(
                 "{}",
-                if command.contains("thread-fences") {
+                if command.contains("worker-credentials") {
+                    cmaeg::worker_credentials::mongo::role(
+                        &database,
+                        command.ends_with("migration-role"),
+                    )
+                } else if command.contains("thread-fences") {
                     cmaeg::records::mongo::thread_fences_role(
                         &database,
                         command.ends_with("migration-role"),
@@ -211,7 +223,9 @@ fn run_database_command(command: &str) {
         let client = mongodb::Client::with_uri_str(uri)
             .await
             .map_err(|_| "Gateway database client configuration failed; details withheld")?;
-        if command == "--migrate-thread-fences" {
+        if command == "--migrate-worker-credentials" {
+            cmaeg::worker_credentials::mongo::migrate(&client.database(&database)).await
+        } else if command == "--migrate-thread-fences" {
             cmaeg::records::mongo::migrate_thread_fences(&client.database(&database)).await
         } else if command == "--migrate-media-continuations" {
             cmaeg::records::mongo::migrate_media_continuations(&client.database(&database)).await
@@ -269,6 +283,31 @@ fn import_failure(error: cmaeg::records::RecordError) -> &'static str {
         }
         RecordError::Unavailable(_) => "Gateway record import unavailable; details withheld",
         _ => "Gateway record import failed; details withheld",
+    }
+}
+
+/// Explicit operator statement, never a server startup side effect. Every
+/// historical untracked writer/importer must be drained before this command.
+fn run_owner_key_cutover(release: &str) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("cannot initialize cutover command runtime"));
+    if runtime
+        .block_on(async {
+            let name = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE).map_err(|_| ())?;
+            let uri = std::env::var(cmaeg::CMAEG_MONGODB_URI).map_err(|_| ())?;
+            let client = mongodb::Client::with_uri_str(uri).await.map_err(|_| ())?;
+            let receipt =
+                cmaeg::worker_credentials::cutover::attest(&client.database(&name), release, true)
+                    .await
+                    .map_err(|_| ())?;
+            println!("{}", serde_json::to_string(&receipt).map_err(|_| ())?);
+            Ok::<(), ()>(())
+        })
+        .is_err()
+    {
+        fail("owner-key cutover failed or uncertain; inspect durable attestation before retry")
     }
 }
 

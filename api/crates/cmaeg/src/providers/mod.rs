@@ -15,6 +15,11 @@ mod responses;
 mod sse;
 mod stream;
 mod transport;
+mod worker_classifier;
+pub(crate) use worker_classifier::WorkerClassifierClient;
+
+#[cfg(test)]
+mod worker_tracking_tests;
 
 pub use client::ProviderClient;
 pub use client_types::{

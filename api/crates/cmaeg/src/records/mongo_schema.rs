@@ -3,6 +3,7 @@ use super::{
     SESSIONS, THREAD_FENCES, WHATSAPP_FLOWS,
 };
 use crate::records::RecordError;
+use crate::worker_credentials::mongo::{CUTOVERS, USES};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, Document},
@@ -62,13 +63,24 @@ pub async fn verify_with_authority(
             if resource.len() != 2
                 || resource.get_str("db").ok() != Some(db.name())
                 || (!COLLECTIONS.contains(&collection)
-                    && ![THREAD_FENCES, WHATSAPP_FLOWS, MEDIA_CONTINUATIONS].contains(&collection))
+                    && ![
+                        THREAD_FENCES,
+                        WHATSAPP_FLOWS,
+                        MEDIA_CONTINUATIONS,
+                        USES,
+                        CUTOVERS,
+                    ]
+                    .contains(&collection))
             {
                 return Err(invalid());
             }
             for action in grant.get_array("actions").map_err(|_| invalid())? {
                 let action = action.as_str().ok_or_else(&invalid)?;
-                let allowed = if [THREAD_FENCES, WHATSAPP_FLOWS].contains(&collection) {
+                let allowed = if collection == USES {
+                    &["find", "insert", "listIndexes"][..]
+                } else if collection == CUTOVERS {
+                    &["find", "listIndexes"][..]
+                } else if [THREAD_FENCES, WHATSAPP_FLOWS].contains(&collection) {
                     &["find", "insert", "update", "listIndexes"][..]
                 } else if collection != MIGRATIONS {
                     &["find", "insert", "update", "remove", "listIndexes"][..]
@@ -130,14 +142,15 @@ pub async fn verify_with_authority(
     Ok(())
 }
 /// Independent optional migrations must preserve every supported marker.
-pub(super) fn migration_validator() -> Document {
+pub(crate) fn migration_validator() -> Document {
     doc! {
         "$jsonSchema":{"bsonType":"object","additionalProperties":false,
             "required":["_id","version"],"properties":{
                 "_id":{"bsonType":"string"},"version":{"enum":[1,2]}}},
         "$or":[{"_id":"schema","version":2},
             {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1},
-            {"_id":"media_continuations","version":1}]
+            {"_id":"media_continuations","version":1},{"_id":"worker_credentials","version":1},
+            {"_id":"worker_tracking_cutover","version":1}]
     }
 }
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {

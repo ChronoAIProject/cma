@@ -40,11 +40,13 @@ pub(crate) async fn serve(
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
     service_auth.bearer().await?;
-    let providers = std::sync::Arc::new(
-        providers::ProviderClient::from_config(&config)?.with_service_auth(service_auth.clone()),
-    );
     let (records, creator_auth, browser) =
-        crate::serve_storage::compose(&config, service_auth).await?;
+        crate::serve_storage::compose(&config, service_auth.clone()).await?;
+    let providers = std::sync::Arc::new(
+        providers::ProviderClient::from_config(&config)?
+            .with_service_auth(service_auth)
+            .with_worker_credentials(records.worker_credentials()),
+    );
     let resource_connections = connections::relay_resources::ResourceConnections::new(
         creator_auth.clone(),
         &config.management.nyxid_base_url,
