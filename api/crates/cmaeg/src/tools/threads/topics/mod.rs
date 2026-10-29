@@ -1,12 +1,16 @@
 //! Event-only Telegram topic management, sharing the neutral REST/MCP entry point.
 mod authority;
+mod create;
 use super::*;
 use crate::telegram::{topics::Mutation, Error as TelegramError, TelegramClient};
+use cmaeg_core::seal::TelegramThreadRefPayload;
 use cmaeg_core::thread_lifecycle::{TopicAction, TopicLifecycleCapabilities};
 
 pub struct TelegramTopics {
     api: Arc<TelegramClient>,
     general_enabled: bool,
+    lifecycle_enabled: bool,
+    creation_enabled: bool,
     slots: Semaphore,
     budget: std::time::Duration,
 }
@@ -15,9 +19,22 @@ impl TelegramTopics {
         Self {
             api,
             general_enabled: false,
+            lifecycle_enabled: true,
+            creation_enabled: false,
             slots: Semaphore::new(8),
             budget: budget::TOTAL,
         }
+    }
+    pub fn with_lifecycle(mut self, enabled: bool) -> Self {
+        self.lifecycle_enabled = enabled;
+        self
+    }
+    pub fn with_creation(mut self, enabled: bool) -> Self {
+        self.creation_enabled = enabled;
+        self
+    }
+    pub(crate) fn creation_enabled(&self) -> bool {
+        self.creation_enabled
     }
     pub fn with_general_topics(mut self, enabled: bool) -> Self {
         self.general_enabled = enabled;
@@ -35,7 +52,9 @@ impl ToolsState {
         caller: AgentCaller,
         event: &EventRefPayload,
     ) -> Result<(Arc<ResolvedChannel>, authority::Authority), Problem> {
-        self.topic_client()?;
+        if !self.topic_client()?.lifecycle_enabled {
+            return Err(authority::denied());
+        }
         let current = self
             .resolver
             .resolve_current(event.channel_id.as_str())
@@ -45,7 +64,7 @@ impl ToolsState {
         if !self.resolver.record_client().thread_fences_ready().await {
             return Err(unavailable());
         }
-        authority::load(self, caller, event, &current).await
+        authority::load(self, caller, event, &current, false).await
     }
     pub(in crate::tools) async fn topic_capabilities(
         &self,
@@ -54,6 +73,9 @@ impl ToolsState {
         channel: &ResolvedChannel,
     ) -> Option<TopicLifecycleCapabilities> {
         let client = self.telegram_topics.as_deref()?;
+        if !client.lifecycle_enabled {
+            return None;
+        }
         let ReplyAddress::Telegram {
             bot_id,
             thread_id,
@@ -86,6 +108,36 @@ impl ToolsState {
         name: Option<&str>,
         key: &str,
     ) -> Result<ThreadReceipt, Problem> {
+        self.manage_topic_target(caller, event, None, action, name, key)
+            .await
+    }
+    pub(super) async fn manage_created_telegram_topic(
+        &self,
+        caller: AgentCaller,
+        reference: TelegramThreadRefPayload,
+        action: ThreadAction,
+        name: Option<&str>,
+        key: &str,
+    ) -> Result<ThreadReceipt, Problem> {
+        self.manage_topic_target(
+            caller,
+            reference.event.clone(),
+            Some(reference),
+            action,
+            name,
+            key,
+        )
+        .await
+    }
+    async fn manage_topic_target(
+        &self,
+        caller: AgentCaller,
+        event: EventRefPayload,
+        created: Option<TelegramThreadRefPayload>,
+        action: ThreadAction,
+        name: Option<&str>,
+        key: &str,
+    ) -> Result<ThreadReceipt, Problem> {
         super::super::validate_reply_key(Some(key))?;
         let action = match action {
             ThreadAction::Close => Mutation::Close,
@@ -104,7 +156,7 @@ impl ToolsState {
         let budget = Budget::new(self.topic_client()?.budget);
         tokio::time::timeout_at(
             budget.end,
-            self.mutate_topic(caller, event, action, key, &budget),
+            self.mutate_topic(caller, event, created, action, key, &budget),
         )
         .await
         .unwrap_or_else(|_| Ok(receipt(budget.expired())))
@@ -114,7 +166,12 @@ impl ToolsState {
         caller: AgentCaller,
         original: &authority::Authority,
     ) -> Result<Arc<ResolvedChannel>, Problem> {
-        let (channel, current) = self.topic_authority(caller, &original.event).await?;
+        let (channel, current) = if original.creation {
+            self.topic_creation_authority(caller, &original.event)
+                .await?
+        } else {
+            self.topic_authority(caller, &original.event).await?
+        };
         if current.custody != original.custody {
             return Err(authority::denied());
         }
@@ -124,13 +181,23 @@ impl ToolsState {
         &self,
         caller: AgentCaller,
         event: EventRefPayload,
+        created: Option<TelegramThreadRefPayload>,
         action: Mutation<'_>,
         key: &str,
         budget: &Budget,
     ) -> Result<ThreadReceipt, Problem> {
         let client = self.topic_client()?;
         let _permit = client.slots.try_acquire().map_err(|_| busy())?;
-        let (channel, authority) = self.topic_authority(caller, &event).await?;
+        let (channel, authority) = if let Some(reference) = created {
+            let (channel, mut authority) = self.topic_creation_authority(caller, &event).await?;
+            if reference.custody != authority.custody || reference.chat_id != authority.chat {
+                return Err(authority::denied());
+            }
+            authority.topic = crate::telegram::topics::Scope::Numbered(reference.thread_id);
+            (channel, authority)
+        } else {
+            self.topic_authority(caller, &event).await?
+        };
         let store = ledger::Store::telegram(self.resolver.record_client(), self.keys.clone());
         let scope = hash(
             &serde_json::json!({"channel":event.channel_id,"record":event.record_id,"event":event.event_id,"consumer":event.consumer,"platform":"telegram","bot":authority.bot,"chat":authority.chat,"topic":authority.topic.id()}),

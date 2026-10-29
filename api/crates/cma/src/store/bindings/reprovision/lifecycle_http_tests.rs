@@ -281,6 +281,34 @@ async fn mongo_preparation_public_owner_retirement_preserves_ready_history_and_r
             .status,
         AgentStatus::Ready
     );
+    // A completed ordinary turn retains its successful operation receipt. The
+    // owner retirement and reservation must preserve it with the original Agent.
+    let mut completed_agent = f
+        .store
+        .get_agent(&original_conversation.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut completed_operation = AgentOperationRecord::new(
+        1,
+        completed_agent.conversation.runtime_generation.unwrap(),
+        1,
+        AgentOperationIntent::send_message("completed original turn"),
+        layer2_core::now_rfc3339(),
+    )
+    .unwrap();
+    completed_operation
+        .mark_execution_observed(layer2_core::now_rfc3339())
+        .unwrap();
+    completed_agent.conversation.operation = Some(completed_operation.clone());
+    f.store
+        .agents
+        .replace_one(
+            doc! {"_id": completed_agent.id.as_str()},
+            crate::store::agents::agent_document(&completed_agent).unwrap(),
+        )
+        .await
+        .unwrap();
     let retired = retire(&f, &original, &original_conversation, &key).await;
     assert_eq!(retired.work.execution, original_sandbox_policy);
     assert_eq!(
@@ -299,6 +327,15 @@ async fn mongo_preparation_public_owner_retirement_preserves_ready_history_and_r
         .get_agent(&original_conversation.agent_id)
         .await
         .unwrap();
+    assert_eq!(
+        original_agent
+            .as_ref()
+            .unwrap()
+            .conversation
+            .operation
+            .as_ref(),
+        Some(&completed_operation)
+    );
     let original_worktree = f
         .store
         .get_worktree(&original_conversation.worktree_id)
