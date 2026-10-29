@@ -226,6 +226,13 @@ pub struct IntentReceipt {
 /// CMAEG `OutboundMessage` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutboundMessage {
+    /// Exclusive contact, static location or venue, when advertised by the original event.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub structured_content: Option<super::StructuredContent>,
     /// Resend only the exact target event's retained native Lark sticker.
     #[serde(
         default,

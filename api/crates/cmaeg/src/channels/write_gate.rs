@@ -30,6 +30,7 @@ pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 /// Flags that admit writes of new stored shapes. Default off until explicitly enabled.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteFlags {
+    pub durable_custom_execution: bool,
     pub native_lark: bool,
     /// Admits explicit native bot mention opt-ins after all readers support them.
     pub native_bot_mentions: bool,
@@ -80,6 +81,7 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    super::custom_execution::write_gate(current, next, flags.durable_custom_execution)?;
     if let Some(index) = next.sources.iter().position(|source| {
         matches!(
             source,

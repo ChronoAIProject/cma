@@ -15,3 +15,4 @@ export * from './types/whatsapp-template.js';
 export * from './types/outbound.js';
 export * from './types/form-preparation.js';
 export * from './types/media-continuation.js';
+export * from './types/structured-content.js';

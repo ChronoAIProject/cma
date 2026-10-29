@@ -72,6 +72,9 @@ mod telegram_media_controls_fixture;
 mod telegram_media_controls_tests;
 #[cfg(test)]
 mod telegram_media_tests;
+mod telegram_structured;
+#[cfg(test)]
+mod telegram_structured_tests;
 pub mod webhook_client;
 mod whatsapp;
 mod whatsapp_controls;
