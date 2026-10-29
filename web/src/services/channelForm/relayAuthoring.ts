@@ -186,7 +186,13 @@ export function validateRelayAuthoring(
     if (
       source.type === 'telegram' &&
       source.topic_lifecycle === true &&
-      !unchanged &&
+      !oldSources.some(
+        (old) =>
+          (source.message_events !== true || old.message_events === true) &&
+          (source.channel_posts !== true || old.channel_posts === true) &&
+          canonical(without(old, ['message_events', 'channel_posts'])) ===
+            canonical(without(source, ['message_events', 'channel_posts'])),
+      ) &&
       discovery.authoring?.native_telegram_topic_lifecycle_enabled !== true
     )
       throw new Error(

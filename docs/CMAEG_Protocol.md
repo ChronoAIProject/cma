@@ -1329,9 +1329,12 @@ Platform provisioning may inspect `getMe`, `getWebhookInfo`, and a manager bot's
 `request_managed_bot` **reply keyboard**, and token retrieval uses
 `getManagedBotToken(user_id=<child bot ID>)`. Gateway provisioning must preserve
 an unrelated existing webhook and never rotate a token merely to recover it.
-Native webhook registration subscribes to `message` and `callback_query` and
-preserves pending updates. The broader `managed_bot` lifecycle update is not
-subscribed to or interpreted as creation consent in this version.
+Native webhook registration subscribes to `message`, `edited_message`,
+`channel_post`, `edited_channel_post`, `callback_query`, `message_reaction` and
+`message_reaction_count`, and preserves pending updates. Admission still requires
+the corresponding saved source consent and enabled capabilities. The broader
+`managed_bot` lifecycle update is not subscribed to or interpreted as creation
+consent in this version.
 
 ### Custom CloudEvents
 
@@ -2904,8 +2907,17 @@ rule still applies: an unrelated registration service must not re-register a
 webhook for a gateway-owned child connection.
 
 Connection references are immutable on a bound channel. Generic updates retain
-the opaque reference and supply the new `connection_admission`; platform secrets
-remain gateway-owned. Deletion checks the exact retained gateway webhook,
+the opaque reference. With `sources: []`, the original Telegram admission and
+topic/message-event/channel-post consent are preserved; `connection_admission`,
+when supplied, explicitly overrides admission. An owner may instead submit the
+single existing Telegram source to update its consent flags and admission. The
+bot ID must match the connection, and an optional username must match its saved
+identity. Extra sources, another bot or platform, and platform credential
+overrides are refused. The existing authoring gates, durable admission and
+channel version checks still apply. New connections retain the original
+`sources: []` creation contract and all three consent flags default off.
+Platform secrets remain gateway-owned, and these updates do not register a
+webhook. Deletion checks the exact retained gateway webhook,
 unbinds the provider and durably retires the connection reservation. A pending
 activation or uncertain platform response keeps its reservation and credential
 claim until reconciliation finishes, including after a replica restart. Another

@@ -62,7 +62,7 @@ export function ChannelMap({
             {activityPreview}
             <div className="channel-map__actions">
               {onActivity ? <Button onClick={onActivity}>Activity</Button> : null}
-              {canAddProducer ? (
+              {canAddProducer && !channel.definition.connection_ref ? (
                 <Button
                   disabled={groups[0]!.length >= 4}
                   title={

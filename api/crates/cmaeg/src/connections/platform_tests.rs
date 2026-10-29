@@ -1,4 +1,6 @@
 //! Native platform fixtures exercise durable provisioning boundaries over HTTP.
+#[path = "consent_tests.rs"]
+mod consent_tests;
 use super::{
     binding,
     model::*,
