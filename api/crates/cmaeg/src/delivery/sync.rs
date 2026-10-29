@@ -15,6 +15,7 @@ use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 struct Entry {
     sender: mpsc::Sender<Frame>,
     failed: Arc<AtomicBool>,
+    deadline: Arc<Mutex<Option<tokio::time::Instant>>>,
 }
 struct Frame {
     name: &'static str,
@@ -40,6 +41,7 @@ pub struct Waiter {
     receiver: mpsc::Receiver<Frame>,
     failed: Arc<AtomicBool>,
     ended: bool,
+    deadline: Arc<Mutex<Option<tokio::time::Instant>>>,
 }
 impl Drop for Waiter {
     fn drop(&mut self) {
@@ -55,11 +57,13 @@ impl SyncRegistry {
         let id = uuid::Uuid::new_v4().to_string();
         let (sender, receiver) = mpsc::channel(8);
         let failed = Arc::new(AtomicBool::new(false));
+        let deadline = Arc::new(Mutex::new(None));
         waiters.insert(
             id.clone(),
             Entry {
                 sender,
                 failed: failed.clone(),
+                deadline: deadline.clone(),
             },
         );
         Some((
@@ -70,6 +74,7 @@ impl SyncRegistry {
                 receiver,
                 failed,
                 ended: false,
+                deadline,
             },
         ))
     }
@@ -103,6 +108,14 @@ impl SyncRegistry {
         }
         sent
     }
+    /// Bounds only explicitly opted-in continuation streams. It never extends
+    /// a prior deadline or changes the terminal contract of ordinary streams.
+    pub(crate) fn bound(&self, waiter: &str, budget: std::time::Duration) {
+        if let Some(entry) = self.waiters.lock().unwrap().get(waiter) {
+            let mut deadline = entry.deadline.lock().unwrap();
+            deadline.get_or_insert_with(|| tokio::time::Instant::now() + budget);
+        }
+    }
     pub fn len(&self) -> usize {
         self.waiters.lock().unwrap().len()
     }
@@ -119,7 +132,22 @@ impl Waiter {
             let frame = if waiter.failed.load(Ordering::Acquire) {
                 None
             } else {
-                waiter.receiver.recv().await
+                let deadline = *waiter.deadline.lock().unwrap();
+                match deadline {
+                    Some(deadline) => {
+                        match tokio::time::timeout_at(deadline, waiter.receiver.recv()).await {
+                            Ok(frame) => frame,
+                            Err(_) => {
+                                waiter.ended = true;
+                                let event = Event::default()
+                                    .event("cmaeg.media.pending")
+                                    .data(r#"{"status":"pending","retrieval":"channel_activity"}"#);
+                                return Some((Ok(event), waiter));
+                            }
+                        }
+                    }
+                    None => waiter.receiver.recv().await,
+                }
             };
             if waiter.failed.load(Ordering::Acquire) {
                 waiter.ended = true;
@@ -135,5 +163,31 @@ impl Waiter {
                 waiter,
             ))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::{IntoResponse, Sse};
+    use tokio::time::{advance, Duration, Instant};
+
+    #[tokio::test(start_paused = true)]
+    async fn media_stream_deadline_emits_pending_and_cannot_be_extended() {
+        let registry = Arc::new(SyncRegistry::default());
+        let (id, waiter) = registry.register().unwrap();
+        let start = Instant::now();
+        registry.bound(&id, Duration::from_secs(120));
+        advance(Duration::from_secs(60)).await;
+        registry.bound(&id, Duration::from_secs(120));
+        let response = Sse::new(waiter.stream()).into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(start.elapsed(), Duration::from_secs(120));
+        let stream = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(stream.contains("event: cmaeg.media.pending"), "{stream}");
+        assert!(!stream.contains("cmaeg.completed"), "{stream}");
+        assert!(registry.is_empty());
     }
 }
