@@ -196,6 +196,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
       param('record_id'),
       query.has('expected_version') ? Number(query.get('expected_version')) : undefined,
     ),
+  'GET /api/v1/agents/{id}/provider-associations': ({ client, param, options }) =>
+    client.agents.providerAssociations(param('id'), options),
   'GET /api/v1/agents/{id}/channel-usage': ({ client, param }) =>
     client.agents.channelUsage(param('id')),
   'GET /api/v1/agents/{id}/channel-usage/history': ({ client, param, options }) =>

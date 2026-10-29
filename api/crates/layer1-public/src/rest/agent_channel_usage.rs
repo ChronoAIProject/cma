@@ -42,6 +42,9 @@ async fn private_headers(
     response
 }
 
+/// Legacy explicit Bridge usage projection. Provider conversation admissions
+/// are not recorded here; use provider-associations for retained membership.
+/// Empty usage does not establish that an Agent has never been associated.
 #[utoipa::path(get,path="/api/v1/agents/{id}/channel-usage",tag="agents",
     params(("id"=String,Path)),responses((status=200,body=AgentChannelUsageView),(status=404,body=crate::rest::ProblemDocument)))]
 pub(crate) async fn read(
