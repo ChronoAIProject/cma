@@ -143,7 +143,7 @@ async fn tools_list_matches_the_pre_refactor_golden_with_reviewed_extensions() {
     assert_tools_with_reviewed_extensions(&mut list["result"]);
 }
 
-/// Preserve recorded schemas apart from reviewed optional key/history, media and docs.
+/// Preserve recorded schemas apart from reviewed optional key/history, media, stickers and docs.
 pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
     let golden: Value = serde_json::from_str(TOOLS_LIST_GOLDEN).unwrap();
     for (tool, previous) in list["tools"]
@@ -197,6 +197,18 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
                     == "The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy."
         );
         *media_description = previous_description.clone();
+        let sticker = tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reply_with_received_sticker")
+            .unwrap();
+        assert_eq!(
+            sticker,
+            json!({
+                "type": "boolean",
+                "description": "Resend only the exact retained native Lark sticker received in this event."
+            })
+        );
         let clear = tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
             .as_object_mut()
             .unwrap()
