@@ -441,7 +441,7 @@ async fn thread_lifecycle_uses_exact_scoped_routes_and_never_retries_unknown_wri
     );
     let create = CreateThreadRequest {
         name: "Review".into(),
-        auto_archive_duration: 1440,
+        auto_archive_duration: Some(1440),
     };
     let unknown = json!({"outcome":{"status":"unknown","reason":"thread_write_unconfirmed"}});
     let mut request = wire::json(
@@ -534,4 +534,78 @@ fn quoted_message_content_and_reference_only_forms_roundtrip_without_changing_le
         let activity: ActivityKind = serde_json::from_value(value.clone()).unwrap();
         same(activity, value);
     }
+}
+
+#[tokio::test]
+async fn telegram_topic_creation_omits_archive_and_manages_the_returned_scope() {
+    let server = WireServer::new().await;
+    let client = client(&server);
+    let examples: Value = serde_json::from_str(include_str!(
+        "../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json"
+    ))
+    .unwrap();
+    let receipt = examples["ThreadReceipt"][1].clone();
+    let create = CreateThreadRequest {
+        name: "Release planning".into(),
+        auto_archive_duration: None,
+    };
+    let mut expected = wire::json(
+        "POST",
+        "/v1/events/original%2Fforum/threads",
+        Some(json!({"name":"Release planning"})),
+        200,
+        receipt.clone(),
+        true,
+    );
+    expected
+        .headers
+        .insert("idempotency-key".into(), "topic-create".into());
+    server.expect(expected);
+    let created = client
+        .create_event_thread("original/forum", "topic-create", &create)
+        .await
+        .unwrap();
+    same(&created, receipt);
+    let target = ThreadTarget::Thread {
+        thread_ref: created.thread.unwrap().thread_ref,
+    };
+    let manage = ManageThreadRequest {
+        target,
+        action: ThreadAction::Close,
+        name: None,
+    };
+    let confirmed = json!({"outcome":{"status":"confirmed"}});
+    let mut expected = wire::json(
+        "POST",
+        "/v1/thread-operations",
+        Some(
+            json!({"target":{"type":"thread","thread_ref":"cmaeg1.tr.telegram-fixture"},"action":"close"}),
+        ),
+        200,
+        confirmed.clone(),
+        true,
+    );
+    expected
+        .headers
+        .insert("idempotency-key".into(), "topic-close".into());
+    server.expect(expected);
+    same(
+        client.manage_thread("topic-close", &manage).await.unwrap(),
+        confirmed,
+    );
+    server.assert_drained();
+}
+
+#[test]
+fn telegram_create_request_preserves_omission_and_rejects_explicit_null() {
+    let value = r#"{"name":"Release planning"}"#;
+    let request: CreateThreadRequest = serde_json::from_str(value).unwrap();
+    assert!(request.auto_archive_duration.is_none());
+    assert_eq!(serde_json::to_string(&request).unwrap(), value);
+    assert!(
+        serde_json::from_str::<CreateThreadRequest>(
+            r#"{"name":"Release planning","auto_archive_duration":null}"#
+        )
+        .is_err()
+    );
 }
