@@ -1,6 +1,8 @@
 //! Native uploads use bounded prepared bytes, never platform file locators or remote URLs.
 #[path = "media_album.rs"]
 mod album;
+#[path = "media_native_presentation.rs"]
+mod native_presentation;
 use super::{positive, valid_token, Error, TelegramClient};
 use crate::media::outbound::{PreparedFile, MAX_OUTBOUND_BYTES};
 pub(crate) use album::{album_supported, AlbumUpload};
@@ -38,7 +40,7 @@ impl TelegramClient {
         chat: &str,
         thread: Option<&str>,
         kind: NativeMediaKind,
-        file: PreparedFile,
+        mut file: PreparedFile,
         markup: Option<&Value>,
     ) -> Result<MediaUpload, Error> {
         if !chat
@@ -53,12 +55,19 @@ impl TelegramClient {
         {
             return Err(Error::Rejected);
         }
+        if crate::media::presentations::special(kind)
+            && (markup.is_some() || !native_presentation::prepare(kind, &mut file))
+        {
+            return Err(Error::Rejected);
+        }
         let (method, field) = match kind {
             NativeMediaKind::Image => ("sendPhoto", "photo"),
             NativeMediaKind::File => ("sendDocument", "document"),
             NativeMediaKind::Audio => ("sendAudio", "audio"),
             NativeMediaKind::Video => ("sendVideo", "video"),
-            NativeMediaKind::Sticker => return Err(Error::Rejected),
+            NativeMediaKind::Voice => ("sendVoice", "voice"),
+            NativeMediaKind::Animation => ("sendAnimation", "animation"),
+            NativeMediaKind::Sticker => ("sendSticker", "sticker"),
         };
         let part = Part::bytes(file.bytes)
             .file_name(file.filename)
@@ -117,8 +126,17 @@ impl TelegramClient {
     ) -> Result<Value, Error> {
         let chat = upload.chat.clone();
         let thread = upload.thread.clone();
+        let expected = match upload.method {
+            "sendVoice" => Some("voice"),
+            "sendAnimation" => Some("animation"),
+            "sendSticker" => Some("sticker"),
+            _ => None,
+        };
         let value = self.send_upload(token, bot, upload).await?;
         message_identity(&value, &chat, thread.as_deref())?;
+        if expected.is_some_and(|kind| !value[kind].is_object()) {
+            return Err(Error::Unconfirmed);
+        }
         Ok(value)
     }
 
