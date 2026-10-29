@@ -8,7 +8,7 @@ pub(super) struct Authority {
     pub event: EventRefPayload,
     pub bot: String,
     pub chat: String,
-    pub topic: String,
+    pub topic: crate::telegram::topics::Scope,
     pub custody: String,
 }
 
@@ -22,7 +22,7 @@ pub(super) async fn load(
         bot_id,
         chat_id,
         message_id,
-        thread_id: Some(topic),
+        thread_id,
     } = &event.reply
     else {
         return Err(unsupported());
@@ -33,7 +33,9 @@ pub(super) async fn load(
         || event.channel_id != channel.id
         || event.record_id != channel.pointer.record_id
         || !crate::telegram::topics::valid_chat(chat_id)
-        || !crate::telegram::topics::valid_topic(topic)
+        || thread_id
+            .as_deref()
+            .is_some_and(|topic| !crate::telegram::topics::valid_topic(topic))
     {
         return Err(unsupported());
     }
@@ -77,7 +79,7 @@ pub(super) async fn load(
             })
         || plan.activity.conversation.kind != ConversationKind::Group
         || plan.activity.conversation.id != *chat_id
-        || plan.activity.conversation.thread_id.as_deref() != Some(topic)
+        || plan.activity.conversation.thread_id != *thread_id
     {
         return Err(denied());
     }
@@ -93,15 +95,33 @@ pub(super) async fn load(
         || message.get("business_connection_id").is_some()
         || message.get("guest_query_id").is_some()
         || message["chat"]["type"] != "supergroup"
-        || message["is_topic_message"] != true
         || numeric(&message["chat"]["id"]).as_deref() != Some(chat_id)
-        || numeric(&message["message_thread_id"]).as_deref() != Some(topic)
         || numeric(&message["message_id"]).as_deref() != Some(message_id)
         || numeric(&message["from"]["id"]).as_deref() != Some(&plan.activity.actor.id)
         || message["from"]["is_bot"] != false
     {
         return Err(unsupported());
     }
+    let topic = match thread_id {
+        Some(topic)
+            if message["is_topic_message"] == true
+                && numeric(&message["message_thread_id"]).as_deref() == Some(topic) =>
+        {
+            crate::telegram::topics::Scope::Numbered(topic.clone())
+        }
+        None if state.topic_client()?.general_enabled
+            && message["chat"]["is_forum"] == true
+            && message.get("message_thread_id").is_none()
+            && message.get("is_topic_message").is_none()
+            && message.get("direct_messages_topic").is_none()
+            && message["chat"]["is_direct_messages"] != true =>
+        {
+            // Telegram emits positive forum chat metadata, but omits both topic
+            // markers for General. Keep the admitted event/reply thread unset.
+            crate::telegram::topics::Scope::General
+        }
+        _ => return Err(unsupported()),
+    };
     let consumer = current
         .consumer(event.consumer.as_ref())
         .ok_or_else(denied)?;
@@ -110,7 +130,7 @@ pub(super) async fn load(
     let custody = hash(&serde_json::json!({
         "domain":"cmaeg.telegram-topic-custody.v1", "channel":current.id,"record":event.record_id,
         "owner":current.definition.owner,"source":source,"event":event,"actor":plan.activity.actor,
-        "bot":bot_id,"chat":chat_id,"topic":topic,"consumer":event.consumer,
+        "bot":bot_id,"chat":chat_id,"topic":topic.id(),"consumer":event.consumer,
         "provider":consumer.provider,"agent_key":consumer.agent_key_hash,
         "credential":crate::channels::definition::hash_secret(credential.as_str()),
         "bot_token":crate::channels::definition::hash_secret(bot_token.as_str()),
@@ -122,7 +142,7 @@ pub(super) async fn load(
             event: event.clone(),
             bot: bot_id.clone(),
             chat: chat_id.clone(),
-            topic: topic.clone(),
+            topic,
             custody,
         },
     ))

@@ -63,7 +63,7 @@ of the public contract.
 | profile authoring | 4 |
 | profile marketplace | 3 |
 | profiles | 1 |
-| provider bindings | 6 |
+| provider bindings | 8 |
 | resource access | 7 |
 | response controls v2 | 5 |
 | responses | 7 |
@@ -235,6 +235,8 @@ of the public contract.
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}` |
 | `GET /api/v1/cmaeg/bindings/{binding_id}` |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}` |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections` |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/preparations` |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` |
@@ -398,7 +400,7 @@ historical revisions. The complete configuration is returned in `profile`.
 
 ## Supplemental browser, discovery and operational routes
 
-These router surfaces supplement the 180 OpenAPI operations above. Browser
+These router surfaces supplement the 182 OpenAPI operations above. Browser
 identity and connection flows retain their cookie, redirect and same-origin
 requirements; they are not generic resource CRUD. `GET /auth/signup-options`
 and the public Trigger embed routes are already included in the OpenAPI table.

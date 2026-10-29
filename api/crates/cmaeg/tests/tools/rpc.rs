@@ -193,6 +193,16 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
                     == "The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy."
         );
         *media_description = previous_description.clone();
+        let clear = tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("clear_native_attachments")
+            .unwrap();
+        assert_eq!(clear["type"], "boolean");
+        assert_eq!(
+            clear["description"],
+            "Explicitly remove every native attachment; updateMessage only when advertised."
+        );
         let thread_description = &mut tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
             ["thread_reply"]["description"];
         assert_eq!(

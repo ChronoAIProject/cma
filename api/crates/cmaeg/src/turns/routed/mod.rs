@@ -14,9 +14,21 @@ mod delivery_receipts;
 mod delivery_state;
 mod destinations;
 mod dispatcher;
+mod dispatcher_authority;
 mod executor;
+mod generation_provenance;
 mod journal;
 mod model;
+mod preparation;
+pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
+#[cfg(test)]
+mod custom_preparation_fixture;
+#[cfg(test)]
+mod custom_preparation_tests;
+#[cfg(test)]
+mod preparation_dispatch_tests;
+#[cfg(test)]
+mod preparation_tests;
 mod projection_store;
 mod received_message;
 mod replay_projection;

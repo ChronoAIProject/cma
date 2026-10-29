@@ -1329,9 +1329,12 @@ Platform provisioning may inspect `getMe`, `getWebhookInfo`, and a manager bot's
 `request_managed_bot` **reply keyboard**, and token retrieval uses
 `getManagedBotToken(user_id=<child bot ID>)`. Gateway provisioning must preserve
 an unrelated existing webhook and never rotate a token merely to recover it.
-Native webhook registration subscribes to `message` and `callback_query` and
-preserves pending updates. The broader `managed_bot` lifecycle update is not
-subscribed to or interpreted as creation consent in this version.
+Native webhook registration subscribes to `message`, `edited_message`,
+`channel_post`, `edited_channel_post`, `callback_query`, `message_reaction` and
+`message_reaction_count`, and preserves pending updates. Admission still requires
+the corresponding saved source consent and enabled capabilities. The broader
+`managed_bot` lifecycle update is not subscribed to or interpreted as creation
+consent in this version.
 
 ### Custom CloudEvents
 
@@ -1848,6 +1851,17 @@ Telegram editing supports confirmed interactive cards. With
 Telegram, Lark/Feishu and Discord also receives an editable reference. Ordinary
 legacy text references and custom edits remain unsupported. Disabling issuance
 preserves updates to retained enriched references. Relay typing remains unsupported.
+With `CMAEG_NATIVE_TYPING_ENABLED=true`, original native Discord and private
+WhatsApp message events can expose `capabilities.typing:true` and use the existing
+`sendTyping` operation. The exact retained routed event and current selected
+consumer authority are required; no destination is supplied by the caller.
+Discord typing expires after 10 seconds. WhatsApp typing **also marks the original
+message read**, ends upon a response or after 25 seconds, and is restricted by
+CMA to a private ordinary message younger than 24 hours. These are explicit calls,
+never automatic keepalives or completed replies. Each native call is bounded to
+seven seconds, sends once, and returns an error on uncertain acceptance rather
+than `sent`. Native Lark/Feishu and WhatsApp groups remain unsupported. See
+[Native typing](CMAEG_Native_Typing.md) for authority, activation and provider evidence.
 
 Context is `{event_id,conversation_id,channel_id,provider_binding_id,source,activity_verified,expires_at,activity:{kind,actor,conversation,occurred_at},
 capabilities:{edit,typing,buttons,cards,attachments,max_text_chars}}`. Telegram
@@ -2893,8 +2907,17 @@ rule still applies: an unrelated registration service must not re-register a
 webhook for a gateway-owned child connection.
 
 Connection references are immutable on a bound channel. Generic updates retain
-the opaque reference and supply the new `connection_admission`; platform secrets
-remain gateway-owned. Deletion checks the exact retained gateway webhook,
+the opaque reference. With `sources: []`, the original Telegram admission and
+topic/message-event/channel-post consent are preserved; `connection_admission`,
+when supplied, explicitly overrides admission. An owner may instead submit the
+single existing Telegram source to update its consent flags and admission. The
+bot ID must match the connection, and an optional username must match its saved
+identity. Extra sources, another bot or platform, and platform credential
+overrides are refused. The existing authoring gates, durable admission and
+channel version checks still apply. New connections retain the original
+`sources: []` creation contract and all three consent flags default off.
+Platform secrets remain gateway-owned, and these updates do not register a
+webhook. Deletion checks the exact retained gateway webhook,
 unbinds the provider and durably retires the connection reservation. A pending
 activation or uncertain platform response keeps its reservation and credential
 claim until reconciliation finishes, including after a replica restart. Another
@@ -4252,7 +4275,16 @@ changes only the topic name, preserving its icon and open/closed state.
 The gateway restores exact native human-message custody and the original selected
 consumer, verifies forum-supergroup bot permissions, rechecks current custody,
 and dispatches one operation. Telegram does not accept a `thread_ref` or expose
-list/create/private/General-topic operations. Discord rejects `close` before
+list/create/private-topic operations. General additionally requires the separate
+default-off `CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED` gate and
+positive `chat.is_forum:true` in the original native supergroup message, with
+both topic markers absent. Missing topic fields alone or synthetic topic ID `1`
+never grant General authority. Public Activity and ReplyAddress thread fields
+stay absent; only proven internal scope and fences use General ID `1`. Dedicated
+General methods omit `message_thread_id`; reopening General also unhides it.
+Discovery exposes the effective additive authoring boolean
+`native_telegram_general_topic_lifecycle_enabled` and preserves the existing
+context capability shape. Discord rejects `close` before
 platform IO. Confirmed results omit `thread`.
 
 Stable idempotency keys and non-TTL bot/chat/topic fences prevent uncertain

@@ -140,6 +140,7 @@ export function loadCorpus(): ContractCase[] {
           fixture.scenario,
           (scope = new Map<string, unknown>([
             ['ephemeral_credential', randomUUID()],
+            ['recent_admission', Math.floor(Date.now() / 1000) - 1],
             ['interaction_expiry', Math.floor(Date.now() / 1000) + 3600],
           ])),
         );

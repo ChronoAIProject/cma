@@ -185,6 +185,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
     let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":backend,"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1}]).to_string()).unwrap();
     ToolsState {
         native_whatsapp_forms: None,
+        native_typing: None,
         discord_thread_history: None,
         telegram_topics: None,
         discord_threads: None,
@@ -197,6 +198,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         native_discord_media_controls_enabled: false,
         native_discord_media_card_edits_enabled: false,
         native_discord_media_card_replacements_enabled: false,
+        native_discord_media_card_sets_enabled: false,
         native_telegram_media_control_edits_enabled: false,
         native_media_edits: None,
         native_lark_effects: None,
@@ -230,6 +232,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         native_lark_outbound_media_enabled: false,
         native_lark_media_controls_enabled: false,
         native_lark_multi_image_controls_enabled: false,
+        native_lark_media_card_replacements_enabled: false,
         native_telegram_albums_enabled: false,
         native_lark_thread_start_enabled: false,
         native_whatsapp_outbound_media_enabled: false,

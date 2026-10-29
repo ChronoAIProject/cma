@@ -29,17 +29,17 @@ pub(crate) struct Claim {
 pub(crate) struct Replacement {
     id: String,
     request_hash: String,
-    media: super::discord_media::Media,
+    media: Vec<super::discord_media::Media>,
 }
 impl Replacement {
     pub(crate) fn prepare(
         message: &OutboundMessage,
-        file: &crate::media::outbound::PreparedFile,
+        files: &[crate::media::outbound::PreparedFile],
     ) -> Result<Self, Error> {
         Ok(Self {
             id: uuid::Uuid::new_v4().to_string(),
             request_hash: request_hash(message),
-            media: super::discord_media::Media::replacement(message, file)?,
+            media: super::discord_media::Media::prepare_set(message, files, true)?,
         })
     }
     pub(crate) fn id(&self) -> &str {
@@ -111,7 +111,7 @@ impl InteractionStore {
         candidate: Candidate,
         message: &OutboundMessage,
     ) -> Result<Claim, Error> {
-        if !message.native_attachments.is_empty() {
+        if !message.native_attachments.is_empty() || message.clear_native_attachments {
             return Err(Error::Denied);
         }
         self.begin_discord_revision(candidate, message, None).await
@@ -140,7 +140,8 @@ impl InteractionStore {
         validate_edit(&card, message)?;
         if card.superseded
             || card.discord_edit.is_some()
-            || replacement.is_some() == message.native_attachments.is_empty()
+            || replacement.is_some()
+                != (!message.native_attachments.is_empty() || message.clear_native_attachments)
         {
             return Err(Error::Denied);
         }
@@ -152,6 +153,7 @@ impl InteractionStore {
         next.revision = next.revision.checked_add(1).ok_or(Error::Denied)?;
         next.message = message.clone();
         next.message.native_attachments.clear();
+        next.message.clear_native_attachments = false;
         next.consumed = None;
         next.reference = None;
         next.discord_edit = None;
@@ -159,7 +161,7 @@ impl InteractionStore {
         if let Some(identity) = &mut next.discord {
             identity.form = super::discord_form::authority(message).ok();
             if let Some(replacement) = replacement {
-                identity.media = Some(replacement.media);
+                identity.set_media(replacement.media)?;
             }
         }
         if let Some(state) = &mut next.discord_effect {
@@ -212,14 +214,12 @@ impl InteractionStore {
 /// Replay checks this immutable request before any source URL is materialized again.
 fn validate_edit(card: &Card, message: &OutboundMessage) -> Result<(), Error> {
     message.validate().map_err(|_| Error::Denied)?;
-    let media = card
-        .discord
-        .as_ref()
-        .and_then(|identity| identity.media.as_ref());
-    if media.is_some_and(|media| !media.has_edit_authority())
-        || message.native_attachments.len() > 1
-        || (!message.native_attachments.is_empty() && media.is_none())
-        || (media.is_some()
+    let identity = card.discord.as_ref().ok_or(Error::Denied)?;
+    let media = identity.media_items()?;
+    if media.iter().any(|media| !media.has_edit_authority())
+        || ((!message.native_attachments.is_empty() || message.clear_native_attachments)
+            && media.is_empty())
+        || (!media.is_empty()
             && message
                 .blocks
                 .iter()

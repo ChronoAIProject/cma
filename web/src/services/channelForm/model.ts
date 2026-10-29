@@ -131,7 +131,7 @@ export function usesHmacCredentials(draft: Fields): boolean {
 export function channelCredentials(values: Fields, draft: Fields, create: boolean): Fields {
   const keys = new Set([
     'agent_key',
-    ...(!create || !draft.connection_ref
+    ...(!draft.connection_ref
       ? records(draft.sources).flatMap((source) => producerCredentialKeys(source.type))
       : []),
     // The central channel editor retains explicit management of the shared HMAC list.
@@ -206,6 +206,28 @@ export function selectedDraft(base: Fields, draft: Fields, section: EditorSectio
   return selected;
 }
 /** Adopt confirmed server values for the saved node, retain other node drafts. */
-export function confirmedDraft(draft: Fields, confirmed: Fields, section: EditorSection): Fields {
-  return selectedDraft(draft, confirmed, section);
+export function confirmedDraft(
+  draft: Fields,
+  confirmed: Fields,
+  section: EditorSection,
+  submitted: Fields = {},
+): Fields {
+  const selected = selectedDraft(draft, confirmed, section);
+  if (
+    section.kind !== 'channel' ||
+    !submitted.connection_ref ||
+    submitted.connection_admission === undefined
+  )
+    return selected;
+  // A connection-level admission override changes the saved producer too.
+  // Adopt that field without discarding its other unsaved consent choices.
+  return {
+    ...selected,
+    sources: records(selected.sources).map((source) => {
+      const saved = records(confirmed.sources).find(
+        (value) => value.type === 'telegram' && value.bot_id === source.bot_id,
+      );
+      return saved ? { ...source, admission: saved.admission } : source;
+    }),
+  };
 }

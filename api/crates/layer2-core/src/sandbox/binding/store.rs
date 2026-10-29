@@ -68,6 +68,7 @@ pub fn validate_binding_write(
         (None, None)
             if next.revision == 1
                 && next.generation == 1
+                && next.generation_guard.is_none()
                 && next.previous.is_none()
                 && (matches!(
                     (&next.state, next.work),
@@ -91,6 +92,7 @@ pub fn validate_binding_write(
                 || current.tool_endpoint != next.tool_endpoint
                 || current.existing_agent != next.existing_agent
                 || current.created_at != next.created_at
+                || current.generation_guard != next.generation_guard
                 || crate::seconds_from_rfc3339(&next.updated_at)
                     < crate::seconds_from_rfc3339(&current.updated_at)
                 || (current.state == BindingState::Retired && next.state != BindingState::Retired)

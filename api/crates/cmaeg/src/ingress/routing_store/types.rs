@@ -70,6 +70,9 @@ pub struct StoredTarget {
     /// Stable across retry/restart, including the default target.
     pub id: String,
     pub launch: ConsumerLaunch,
+    /// Operator opt-in captured only for a newly admitted ordinary event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_replacement_version: Option<u8>,
 }
 
 /// A committed snapshot. Its existence alone never authorizes provider effects.
@@ -85,6 +88,12 @@ pub struct AdmittedPlan {
     /// Absent on all legacy admissions; never infer a version from raw bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_projection: Option<u8>,
+    /// Reader-first; no legacy admission can acquire replacement authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_preparation_version: Option<u8>,
+    /// Server-keyed producer custody; absent on legacy and non-replacement plans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) binding_custom_source: Option<super::preparation_source::CustomSourceCustody>,
     pub activity: Activity,
     pub source: Source,
     pub targets: Vec<StoredTarget>,
@@ -99,6 +108,33 @@ impl fmt::Debug for AdmittedPlan {
             .field("targets", &self.targets.len())
             .field("retained_until", &self.retained_until)
             .finish_non_exhaustive()
+    }
+}
+impl AdmittedPlan {
+    pub(crate) fn is_native_interaction(&self) -> bool {
+        matches!(
+            self.kind.as_str(),
+            NATIVE_INTERACTION_KIND
+                | NATIVE_WHATSAPP_INTERACTION_KIND
+                | NATIVE_LARK_INTERACTION_KIND
+                | NATIVE_WHATSAPP_FLOW_INTERACTION_KIND
+        )
+    }
+    pub(crate) fn is_message_event(&self) -> bool {
+        self.kind == MESSAGE_EVENT_KIND
+    }
+    pub(crate) fn prepares_binding(&self, target: &StoredTarget) -> bool {
+        self.binding_preparation_version == Some(1)
+            && target.launch.provider.slug.as_str() == "cma_codex"
+            && target.launch.provider.target.is_profile()
+    }
+    pub(crate) fn permits_binding_preparation(&self) -> bool {
+        self.kind == PAYLOAD_KIND
+            && super::preparation_source::eligible(&self.activity, &self.source)
+            && (!matches!(
+                self.activity.source,
+                cmaeg_core::activity::SourceKind::Custom
+            ) || self.binding_custom_source.is_some())
     }
 }
 
