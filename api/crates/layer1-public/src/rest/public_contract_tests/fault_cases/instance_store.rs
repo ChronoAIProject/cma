@@ -93,6 +93,19 @@ unavailable_port!(SandboxAdminStore {
 
 #[async_trait]
 impl AgentControlStore for UnavailableInstances {
+    async fn begin_agent_worktree_recovery(
+        &self,
+        _: &AgentId,
+        _: &layer2_core::Caller,
+        _: &str,
+        _: &WorktreeId,
+        _: String,
+    ) -> Result<Agent, AgentControlStoreError> {
+        Err(AgentControlStoreError::Unavailable(
+            "contract control storage unavailable".into(),
+        ))
+    }
+
     async fn schedule_agent_stop(
         &self,
         _: AgentStopRequest,

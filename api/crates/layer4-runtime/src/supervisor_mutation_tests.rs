@@ -21,6 +21,9 @@ use crate::mutation_journal::{self, Begin, Operation};
 #[path = "supervisor_warmup_tests.rs"]
 mod warmup_tests;
 
+#[path = "supervisor_worktree_successor_tests.rs"]
+mod worktree_successor_tests;
+
 #[path = "supervisor_workspace_reconciliation_tests.rs"]
 mod workspace_reconciliation_tests;
 #[path = "supervisor_workspace_removal_tests.rs"]
