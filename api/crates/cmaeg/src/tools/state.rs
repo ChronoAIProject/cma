@@ -66,6 +66,7 @@ pub struct ToolsState {
     pub native_media_presentations_enabled: bool,
     pub native_discord_voice_enabled: bool,
     pub native_telegram_structured_replies_enabled: bool,
+    pub native_whatsapp_structured_replies_enabled: bool,
     pub native_telegram_albums_enabled: bool,
     pub native_lark_thread_start_enabled: bool,
     /// Bounded native WhatsApp image/document/audio/sticker/video uploads, independently gated.

@@ -4717,3 +4717,7 @@ An authenticated native sticker is a descriptive message plus an `other` attachm
 ### Native static structured replies
 
 An optional `structured_content` is exclusive contact, static location or venue data. `capabilities.structured_replies` lists the kinds supported for an exact retained native Telegram event. `replyToEvent` requires a stable idempotency key; the existing durable result prevents resends after confirmed or unknown delivery. The independent `CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED` gate defaults to false. No payload chooses a recipient, performs live tracking or fetches a URL. See [native Telegram structured replies](CMAEG_Native_Telegram_Structured_Replies.md) for fields, bounds and reader-first rollout.
+
+## Native WhatsApp static structured replies
+
+The optional exclusive `structured_content` payload also supports native private WhatsApp contact, static location and named venue replies when the exact retained event advertises `structured_replies`. WhatsApp does not accept the neutral contact `vcard` or location `horizontal_accuracy` members; explicit values are refused, never discarded. The same stable idempotency key, original source/consumer authority and durable receipt rules apply. See `CMAEG_Native_WhatsApp_Structured_Replies.md` for wire mapping, activation and platform limits.

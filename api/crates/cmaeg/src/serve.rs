@@ -310,6 +310,9 @@ pub(crate) async fn serve(
         native_discord_voice_enabled: config.native_discord_voice_enabled,
         native_telegram_structured_replies_enabled: config
             .native_telegram_structured_replies_enabled,
+        native_whatsapp_structured_replies_enabled: config
+            .native_whatsapp_structured_replies_enabled
+            && config.native_whatsapp_writes_enabled,
         native_telegram_albums_enabled: config.native_telegram_albums_enabled,
         native_whatsapp_outbound_media_enabled: config.native_whatsapp_outbound_media_enabled,
         whatsapp_reactions: Some(std::sync::Arc::new(tools::WhatsappReactionsClient::new(
