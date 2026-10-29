@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub native_typing: Option<Arc<super::NativeTyping>>,
     pub native_whatsapp_forms: Option<Arc<crate::whatsapp::forms::service::Forms>>,
     pub native_media_edits: Option<Arc<crate::native_media::Client>>,
     pub native_lark_effects: Option<Arc<super::NativeLarkEffectsClient>>,
@@ -262,6 +263,13 @@ impl ToolsState {
             let (channel, event, _) = self
                 .authorize_event(caller, reference, "sendTyping")
                 .await?;
+            if matches!(
+                event.reply,
+                cmaeg_core::seal::ReplyAddress::Whatsapp { .. }
+                    | cmaeg_core::seal::ReplyAddress::Discord { .. }
+            ) {
+                return self.send_native_typing(caller, &channel, &event).await;
+            }
             let (receipt, received) = oneshot::channel();
             self.deliver(
                 DeliveryCommand::Typing {
@@ -309,6 +317,9 @@ impl ToolsState {
                 self,
             );
             response.received_message = received_message;
+            response.capabilities.typing |= self
+                .native_typing_capability(caller, &channel, &event, verified)
+                .await;
             response.capabilities.topic_lifecycle =
                 self.topic_capabilities(caller, &event, &channel).await;
             response.capabilities.thread_lifecycle =
@@ -353,6 +364,9 @@ impl ToolsState {
             self,
         );
         response.received_message = received_message;
+        response.capabilities.typing |= self
+            .native_typing_capability(caller, &channel, &event, true)
+            .await;
         response.capabilities.topic_lifecycle =
             self.topic_capabilities(caller, &event, &channel).await;
         response.capabilities.thread_lifecycle =
