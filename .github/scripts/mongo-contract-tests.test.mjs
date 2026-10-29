@@ -9,6 +9,7 @@ const requiredPrefixes = [
   'document_artifacts::mongo_integration_tests::',
   'store::message_feedback::tests::',
   'agent_lifecycle::workspace::tests::mongo::',
+  'agent_lifecycle::workspace::tests::bootstrap::',
   'warm_pools::tests::mongo::',
   'store::native_warm_pools::retirement::tests::',
   'store::sandbox_admission_mongo_integration_tests::warmup::',
