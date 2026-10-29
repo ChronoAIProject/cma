@@ -35,6 +35,8 @@ pub struct RoutingConfig {
     pub binding_replacement_bindings: BTreeSet<String>,
     /// Reader-first gate for new native reply-context snapshots.
     pub quoted_context_enabled: bool,
+    /// Writer gate; the optional indexed reader keeps existing obligations alive.
+    pub media_continuations_enabled: bool,
     /// Pauses new routed admissions without abandoning accepted work or retries.
     pub admission_enabled: bool,
     /// Explicit rollout selection; an empty set preserves all legacy ingress.
@@ -71,6 +73,7 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
                 .as_deref(),
         )?,
         quoted_context_enabled: write_flag("CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED")?,
+        media_continuations_enabled: write_flag("CMAEG_MEDIA_CONTINUATIONS_ENABLED")?,
         recovery_enabled: write_flag(CMAEG_ROUTED_RECOVERY_ENABLED)?,
         admission_enabled: write_flag(CMAEG_ROUTED_ADMISSION_ENABLED)?,
         execution_records: execution_records(
@@ -104,6 +107,7 @@ impl RoutingConfig {
         if !self.recovery_enabled
             && (self.admission_enabled
                 || self.quoted_context_enabled
+                || self.media_continuations_enabled
                 || self.binding_preparation_enabled
                 || !self.execution_records.is_empty())
         {

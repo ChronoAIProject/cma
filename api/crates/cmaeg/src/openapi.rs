@@ -23,6 +23,7 @@ use utoipa::OpenApi;
     paths(
         http::activity::latest,
         http::activity::stream,
+        http::media_responses::list,
         http::outbound::prepare,
         http::outbound::read,
         http::outbound::commit,

@@ -203,7 +203,8 @@ pub(crate) async fn serve(
             tracker: tracker.clone(),
             custom: custom_delivery,
         },
-    )?;
+    )
+    .await?;
     let runner = std::sync::Arc::new(
         turns::TurnRunner::new(
             providers.clone(),
@@ -347,9 +348,7 @@ pub(crate) async fn serve(
     let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
-    let mut routed_worker = routed.map(|composition| {
-        crate::serve_routed::Worker::start(composition.scheduler, state.readiness.clone())
-    });
+    let mut routed_workers = crate::serve_routed::start_workers(routed, state.readiness.clone());
     // Readers and recovery remain active when controls/forms issuance is disabled.
     let mut native_lark_controls = crate::native_lark::control_recovery::Worker::start(
         ingress.clone(),
@@ -415,7 +414,7 @@ pub(crate) async fn serve(
         if let Some(worker) = &native_discord {
             worker.stop();
         }
-        if let Some(worker) = &routed_worker {
+        for worker in &routed_workers {
             worker.stop_scheduling();
         }
         let (
@@ -427,10 +426,11 @@ pub(crate) async fn serve(
         ) = tokio::join!(
             tracker.drain(deadline),
             async {
-                match &mut routed_worker {
-                    Some(worker) => worker.drain(deadline).await,
-                    None => true,
+                let mut drained = true;
+                for worker in &mut routed_workers {
+                    drained &= worker.drain(deadline).await;
                 }
+                drained
             },
             async {
                 match &mut native_discord {

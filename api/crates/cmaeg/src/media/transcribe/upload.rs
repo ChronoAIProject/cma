@@ -26,6 +26,7 @@ use cmaeg_core::{
     ids::ChannelId,
 };
 use futures_util::future::BoxFuture;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{field::Empty, Instrument};
@@ -145,6 +146,7 @@ pub(crate) async fn transcript_pipeline(
             other => other,
         })?;
     let sniffed = expect(&body, &[Family::Audio, Family::Video])?;
+    let source_sha256 = format!("{:x}", Sha256::digest(&body.bytes));
     let planned = pipeline
         .transcoder
         .plan(body.bytes, sniffed, channel, deadline)
@@ -161,6 +163,7 @@ pub(crate) async fn transcript_pipeline(
     metrics::counter!(names::STT_AUDIO_SECONDS).increment(u64::from(counted));
     Ok(Derived::Transcript {
         document: TextDocument::from_normalized(&text::normalize(&transcript.text), false),
+        source_sha256,
         usage_seconds: transcript.usage_seconds,
         truncated_at_seconds: planned.truncated_at_seconds,
     })

@@ -5,6 +5,7 @@ mod client_types;
 mod context;
 mod frozen;
 mod management_auth;
+mod media_continuations;
 mod preparation;
 mod probe;
 mod recovery;

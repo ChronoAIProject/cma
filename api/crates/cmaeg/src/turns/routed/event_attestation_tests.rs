@@ -17,6 +17,7 @@ fn request(setup: &Setup) -> EventAttestationRequest {
         activity_sha256: event.activity_sha256.unwrap(),
         event_expires_at: event.expires_at,
         binding_generation: None,
+        artifact: None,
     }
 }
 
@@ -153,6 +154,7 @@ async fn attestation_http_is_body_only_bounded_and_discloses_no_retained_content
         activity_sha256: cmaeg_core::seal::event_ref::activity_digest(&plan.activity),
         event_expires_at: delivery_event(&plan, &plan.targets[0]).expires_at,
         binding_generation: None,
+        artifact: None,
     };
     let origin = reqwest::Url::parse(&app.url)
         .unwrap()
