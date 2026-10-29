@@ -30,6 +30,8 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+mod agent_worktree_recovery;
+mod agent_worktree_recovery_records;
 mod agents;
 pub mod auth;
 mod bindings;
@@ -49,6 +51,7 @@ mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
+mod media_uploads;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]

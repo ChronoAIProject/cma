@@ -107,21 +107,30 @@ impl SandboxService {
         id: &crate::SandboxId,
     ) -> Result<bool, SandboxServiceError> {
         use super::binding::{BindingState, BindingWork};
-        let allowed = (binding.state == BindingState::Retired
-            && binding.work == BindingWork::RetireCurrentSandbox
-            && *id == binding.sandbox_id)
-            || (binding.work == BindingWork::RetirePreviousSandbox
-                && binding
+        binding.validate().map_err(SandboxServiceError::Corrupt)?;
+        let allowed = binding.existing_agent.is_none()
+            && ((binding.state == BindingState::Retired
+                && matches!(
+                    binding.work,
+                    BindingWork::RetireCurrentConversations | BindingWork::RetireCurrentSandbox
+                )
+                && *id == binding.sandbox_id)
+                || (matches!(
+                    binding.work,
+                    BindingWork::RetirePreviousConversations | BindingWork::RetirePreviousSandbox
+                ) && binding
                     .previous
                     .as_ref()
-                    .is_some_and(|old| old.retire_sandbox && old.sandbox_id == *id));
+                    .is_some_and(|old| old.retire_sandbox && old.sandbox_id == *id)));
         if !allowed {
             return Err(SandboxServiceError::InvalidState);
         }
         let Some(mut sandbox) = self.store.get_sandbox(id).await.map_err(store_error)? else {
             return Ok(true);
         };
-        if sandbox.owner != binding.owner {
+        if sandbox.owner != binding.owner
+            || sandbox.credential.source != binding.credential_source()
+        {
             return Err(SandboxServiceError::Forbidden);
         }
         if sandbox.status == SandboxStatus::Retired {
