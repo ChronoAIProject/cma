@@ -100,9 +100,15 @@ for (const width of [1600, 1024, 390]) {
             page.evaluate((sideBySide) => {
               const chat = document.querySelector('.agent-surface')!.getBoundingClientRect();
               const desktop = document.querySelector('.agent-desktop')!.getBoundingClientRect();
+              const canvas = document
+                .querySelector('.agent-desktop canvas')!
+                .getBoundingClientRect();
               return (
                 document.documentElement.scrollWidth <= innerWidth &&
                 desktop.bottom <= innerHeight + 1 &&
+                canvas.left >= desktop.left &&
+                canvas.right <= desktop.right + 1 &&
+                canvas.bottom <= desktop.bottom + 1 &&
                 (sideBySide ? desktop.left >= chat.right - 1 : desktop.top >= chat.bottom - 1)
               );
             }, width === 1600),

@@ -38,7 +38,7 @@ import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
-import { DesktopPanel } from './DesktopPanel';
+import { DesktopToggle, DesktopWorkspace } from './DesktopWorkspace';
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
 interface AgentSurfaceProps {
@@ -176,341 +176,323 @@ export function AgentSurface({
   const desktopAvailable = detail.desktop === true && !readOnly;
   const desktopOpen = desktopAvailable && closedDesktopAgentId !== agentId;
   return (
-    <div className="agent-workspace">
-      <div className="agent-workspace__panes" data-desktop={desktopOpen || undefined}>
-        <section className="agent-surface">
-          {connections.dialog}
-          <OwnerAgentHeader
-            onTitleUpdated={controller.applyAgentTitle}
-            detail={detail}
-            availability={controller.resourceAvailability}
-            readOnly={readOnly}
-            busy={
-              status !== 'ready' ||
-              controller.pending !== undefined ||
-              state.historyLoading === true
-            }
-            filesOpen={filesOpen}
-            onFilesOpenChange={accessUncertain ? undefined : onFilesOpenChange}
-            title={title}
-            status={status}
-            headingRef={headingRef}
-            viewerId={viewerId}
-            branch={readOnly ? undefined : detail.worktree.branch}
-            detailsOpen={detailsOpen}
-            detailsUnavailable={accessUncertain}
-            onDetailsOpenChange={(open) => {
-              if (!accessUncertain) onDetailsOpenChange(open);
-            }}
-            breadcrumb={agentBreadcrumb(detail, title, onNavigate)}
-            menu={[
-              ...agentOriginEntries(source, provenance, originLabel),
-              ...(signInAgain ? [{ id: SIGN_IN_AGAIN, label: SIGN_IN_AGAIN_LABEL }] : []),
-            ]}
-            onMenuSelect={(id) => {
-              if (id === SIGN_IN_AGAIN)
-                connections.run(
-                  { type: 'agent', id: agentId },
-                  () => {
-                    controller.clearActionError();
-                    controller.reload();
-                  },
-                  true,
-                );
-            }}
-            moreActions={headerMenu}
-            onMoreAction={
-              onAgentAction === undefined || readOnly
-                ? undefined
-                : (id) =>
-                    onAgentAction({
-                      kind: id as 'stop_agent' | 'delete_agent' | 'export_history',
-                      agentId,
-                    })
-            }
+    <DesktopWorkspace
+      agentId={agentId}
+      open={desktopOpen}
+      running={running || starting}
+      onClose={() => setClosedDesktopAgentId(agentId)}
+    >
+      <section className="agent-surface">
+        {connections.dialog}
+        <OwnerAgentHeader
+          onTitleUpdated={controller.applyAgentTitle}
+          detail={detail}
+          availability={controller.resourceAvailability}
+          readOnly={readOnly}
+          busy={
+            status !== 'ready' || controller.pending !== undefined || state.historyLoading === true
+          }
+          filesOpen={filesOpen}
+          onFilesOpenChange={accessUncertain ? undefined : onFilesOpenChange}
+          title={title}
+          status={status}
+          headingRef={headingRef}
+          viewerId={viewerId}
+          branch={readOnly ? undefined : detail.worktree.branch}
+          detailsOpen={detailsOpen}
+          detailsUnavailable={accessUncertain}
+          onDetailsOpenChange={(open) => {
+            if (!accessUncertain) onDetailsOpenChange(open);
+          }}
+          breadcrumb={agentBreadcrumb(detail, title, onNavigate)}
+          menu={[
+            ...agentOriginEntries(source, provenance, originLabel),
+            ...(signInAgain ? [{ id: SIGN_IN_AGAIN, label: SIGN_IN_AGAIN_LABEL }] : []),
+          ]}
+          onMenuSelect={(id) => {
+            if (id === SIGN_IN_AGAIN)
+              connections.run(
+                { type: 'agent', id: agentId },
+                () => {
+                  controller.clearActionError();
+                  controller.reload();
+                },
+                true,
+              );
+          }}
+          moreActions={headerMenu}
+          onMoreAction={
+            onAgentAction === undefined || readOnly
+              ? undefined
+              : (id) =>
+                  onAgentAction({
+                    kind: id as 'stop_agent' | 'delete_agent' | 'export_history',
+                    agentId,
+                  })
+          }
+        />
+        {/* Keep state messages together above the conversation, in their severity tones. */}
+        <div className="agent-surface__alerts">
+          <AgentAccessRequests
+            key={`access:${agentId}`}
+            agentId={agentId}
+            owner={viewerId}
+            granted={detail.reach}
+            sandboxStatus={detail.sandbox.status}
+            enabled={!readOnly && viewerId !== undefined}
           />
-          {/*
-        One row for every state message, so a second message can never be
-        auto-placed below the composer, and each takes its severity's tone.
-      */}
-          <div className="agent-surface__alerts">
-            <AgentAccessRequests
-              key={`access:${agentId}`}
-              agentId={agentId}
-              owner={viewerId}
-              granted={detail.reach}
-              sandboxStatus={detail.sandbox.status}
-              enabled={!readOnly && viewerId !== undefined}
-            />
-            <Presence>
-              {issue === undefined ? null : (
-                <Alert
-                  tone={historyIncomplete ? 'info' : 'error'}
-                  actions={
-                    <>
-                      {connectionError && !readOnly ? (
-                        <Button size="sm" onClick={connection.retry}>
-                          Retry connections
-                        </Button>
-                      ) : null}
-                      {historyIncomplete ? null : (
-                        <Button
-                          size="sm"
-                          icon={<IconCloseOutline16 />}
-                          aria-label="Dismiss error"
-                          onClick={() => {
-                            connection.clearError();
-                            connections.clearError();
-                            controller.clearActionError();
-                          }}
-                        />
-                      )}
-                    </>
-                  }
-                >
-                  {issue}
-                </Alert>
-              )}
-            </Presence>
-            {controller.pendingMessage === undefined && !controller.pendingControl ? null : (
+          <Presence>
+            {issue === undefined ? null : (
               <Alert
-                tone="warning"
+                tone={historyIncomplete ? 'info' : 'error'}
                 actions={
-                  <Button
-                    size="sm"
-                    disabled={
-                      readOnly ||
-                      controller.pending !== undefined ||
-                      historyIncomplete ||
-                      (status === 'starting' && !controller.inputAvailability.allowed)
-                    }
-                    onClick={() => void controller.recoverPending?.()}
-                  >
-                    Recover pending request
-                  </Button>
+                  <>
+                    {connectionError && !readOnly ? (
+                      <Button size="sm" onClick={connection.retry}>
+                        Retry connections
+                      </Button>
+                    ) : null}
+                    {historyIncomplete ? null : (
+                      <Button
+                        size="sm"
+                        icon={<IconCloseOutline16 />}
+                        aria-label="Dismiss error"
+                        onClick={() => {
+                          connection.clearError();
+                          connections.clearError();
+                          controller.clearActionError();
+                        }}
+                      />
+                    )}
+                  </>
                 }
               >
-                {controller.pendingMessage !== undefined
-                  ? 'Your message is awaiting confirmation. Recover it before sending another message.'
-                  : 'Your response action is awaiting confirmation.'}
+                {issue}
               </Alert>
             )}
-            {controller.controlNotice === undefined ? null : (
-              <Alert tone="info">{controller.controlNotice}</Alert>
-            )}
-            {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
-              <AgentLifecycleFollowup
-                client={lifecycleClient}
-                viewerId={viewerId}
-                agentId={agentId}
-              />
-            ) : null}
-
-            {desktopAvailable ? (
-              <div className="agent-surface__desktop-action">
+          </Presence>
+          {controller.pendingMessage === undefined && !controller.pendingControl ? null : (
+            <Alert
+              tone="warning"
+              actions={
                 <Button
                   size="sm"
-                  aria-expanded={desktopOpen}
-                  aria-controls="machine-desktop"
-                  onClick={() => setClosedDesktopAgentId(desktopOpen ? agentId : undefined)}
-                >
-                  {desktopOpen ? 'Hide machine desktop' : 'Open machine desktop'}
-                </Button>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="agent-surface__conversation">
-            {status === 'starting' ||
-            detail.failure !== undefined ||
-            preparation.some((step) => step.status !== 'Done') ? (
-              <ProvisioningProgress
-                title="Agent preparation"
-                steps={preparation}
-                failure={detail.failure}
-              />
-            ) : null}
-            <MessageStream
-              media={
-                lifecycleClient?.files && !accessUncertain && accessAuthorized
-                  ? {
-                      agentId,
-                      files: lifecycleClient.files,
-                      workingDirectory: conversation.runtimeMetadata?.workingDirectory,
-                    }
-                  : undefined
-              }
-              feedback={feedback}
-              user={user}
-              viewPosition={viewPosition}
-              conversation={conversation}
-              optimisticMessages={messageQueue.messages}
-              arrivalsEnabled={!accessUncertain}
-              approvalBusy={approvalBusy}
-              approvalReadOnly={readOnly}
-              onApproval={(id, decision) => void controller.approve(id, decision)}
-            >
-              {controller.queuedInputs === undefined ? null : (
-                <QueuedMessages
-                  items={messageQueue.items}
-                  disabled={readOnly || historyIncomplete || !controller.inputAvailability.allowed}
-                  onEdit={controller.queuedInputs.edit}
-                  onRemove={controller.queuedInputs.remove}
-                  onRecover={controller.queuedInputs.recover}
-                  uploadAttachment={uploadAttachment}
-                  user={user}
-                />
-              )}
-              {controller.queuedInputs?.error ? (
-                <p className="queued-messages__error" role="status">
-                  {controller.queuedInputs.error}{' '}
-                  <Button size="sm" onClick={controller.queuedInputs.refresh}>
-                    Refresh queue
-                  </Button>
-                </p>
-              ) : null}
-              <AgentSandboxStatus
-                observation={controller.progressObservation}
-                onNavigate={onNavigate}
-              />
-            </MessageStream>
-          </div>
-          <div className="agent-surface__input">
-            <Composer
-              settings={
-                readOnly ? undefined : (
-                  <SessionSettings
-                    key={`settings:${viewerId}:${agentId}`}
-                    agentId={agentId}
-                    active={!accessUncertain}
-                    busy={
-                      status !== 'ready' || controller.pending !== undefined || historyIncomplete
-                    }
-                  />
-                )
-              }
-              showUsage
-              usage={conversation.usage}
-              steeringMode={steeringMode}
-              onSteeringModeChange={state.v2 === undefined ? undefined : setSteeringMode}
-              draft={draft}
-              availableCommands={readOnly ? undefined : conversation.availableCommands}
-              key={`composer:${agentId}`}
-              quickMessages={
-                source.status === 'ready' && source.value.access !== 'shared'
-                  ? source.value.trigger?.quick_messages
-                  : undefined
-              }
-              status={status}
-              pausedNotice={pausedNotice}
-              running={running}
-              queueWhileRunning={state.v2 !== undefined}
-              queueWhileStarting={state.v2 !== undefined}
-              starting={starting}
-              controlsUnavailable={controller.controlsUnavailable || historyIncomplete}
-              requestPending={
-                controller.pendingMessage !== undefined || controller.pendingControl === true
-              }
-              acceptedMessage={controller.acceptedMessage}
-              acceptedSteeringMessage={controller.acceptedSteeringMessage}
-              acceptedInterruptionMessage={controller.acceptedInterruptionMessage}
-              uploadAttachment={uploadAttachment}
-              inputAvailability={
-                readOnly
-                  ? {
-                      ...controller.inputAvailability,
-                      allowed: false,
-                      notice: accessUncertain
-                        ? controller.inputAvailability.notice
-                        : 'Only the owner can send messages to this agent.',
-                    }
-                  : verified === undefined
-                    ? { ...controller.inputAvailability, allowed: false }
-                    : controller.inputAvailability
-              }
-              busy={
-                connections.pending ||
-                (controller.pending !== undefined && controller.pending !== 'send')
-              }
-              onSend={(content, onAccepted) => {
-                if (readOnly || verified === undefined) return;
-                const message = optimistic.begin(
-                  content,
-                  running ? (steeringMode === 'queue' ? 'queue' : 'interrupt') : undefined,
-                  controller.queuedInputs?.items.map((item) => item.commandId),
-                );
-                return new Promise<void>((resolve) => {
-                  const settled = () => {
-                    message.settled();
-                    resolve();
-                  };
-                  const cancelled = () => {
-                    message.cancelled();
-                    resolve();
-                  };
-                  const send = () => {
-                    const submit =
-                      running && steeringMode === 'interrupt'
-                        ? controller.interruptWithMessage
-                        : controller.send;
-                    if (submit === undefined) {
-                      cancelled();
-                      return;
-                    }
-                    const args: Parameters<AgentController['send']> = [
-                      content,
-                      (receipt) => {
-                        if (message.accepted(receipt)) onAccepted();
-                        resolve();
-                      },
-                      message.observed,
-                      cancelled,
-                    ];
-                    const request =
-                      running && steeringMode === 'interrupt'
-                        ? submit(...args, message.ordinaryInput)
-                        : submit(...args);
-                    void request.then(settled, settled);
-                  };
-                  if (
-                    state.v2?.owner === (viewerId ?? verified.owner) &&
-                    controller.resourceAvailability.state === 'live'
-                  ) {
-                    // Transport still rechecks identity before admission and acceptance.
-                    send();
-                  } else {
-                    void connections.checkAndRun(
-                      { type: 'agent', id: agentId },
-                      viewerId ?? verified.owner,
-                      send,
-                      state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
-                      cancelled,
-                    );
+                  disabled={
+                    readOnly ||
+                    controller.pending !== undefined ||
+                    historyIncomplete ||
+                    (status === 'starting' && !controller.inputAvailability.allowed)
                   }
-                });
-              }}
-              onStop={controller.interrupt}
-            />
-          </div>
-          {verified === undefined && connection.needed && !readOnly ? (
-            <ConnectionWizard
-              target={{ type: 'agent', id: agentId }}
-              presentation="dialog"
-              expectedOwner={viewerId}
-              onReady={connection.accept}
-              onCancel={() => onNavigate({ kind: 'home' })}
+                  onClick={() => void controller.recoverPending?.()}
+                >
+                  Recover pending request
+                </Button>
+              }
+            >
+              {controller.pendingMessage !== undefined
+                ? 'Your message is awaiting confirmation. Recover it before sending another message.'
+                : 'Your response action is awaiting confirmation.'}
+            </Alert>
+          )}
+          {controller.controlNotice === undefined ? null : (
+            <Alert tone="info">{controller.controlNotice}</Alert>
+          )}
+          {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
+            <AgentLifecycleFollowup
+              client={lifecycleClient}
+              viewerId={viewerId}
+              agentId={agentId}
             />
           ) : null}
-        </section>
-        {desktopOpen ? (
-          <DesktopPanel
-            key={agentId}
-            agentId={agentId}
-            running={running || starting}
-            onClose={() => setClosedDesktopAgentId(agentId)}
+
+          {desktopAvailable ? (
+            <DesktopToggle
+              open={desktopOpen}
+              onToggle={() => setClosedDesktopAgentId(desktopOpen ? agentId : undefined)}
+            />
+          ) : null}
+        </div>
+
+        <div className="agent-surface__conversation">
+          {status === 'starting' ||
+          detail.failure !== undefined ||
+          preparation.some((step) => step.status !== 'Done') ? (
+            <ProvisioningProgress
+              title="Agent preparation"
+              steps={preparation}
+              failure={detail.failure}
+            />
+          ) : null}
+          <MessageStream
+            media={
+              lifecycleClient?.files && !accessUncertain && accessAuthorized
+                ? {
+                    agentId,
+                    files: lifecycleClient.files,
+                    workingDirectory: conversation.runtimeMetadata?.workingDirectory,
+                  }
+                : undefined
+            }
+            feedback={feedback}
+            user={user}
+            viewPosition={viewPosition}
+            conversation={conversation}
+            optimisticMessages={messageQueue.messages}
+            arrivalsEnabled={!accessUncertain}
+            approvalBusy={approvalBusy}
+            approvalReadOnly={readOnly}
+            onApproval={(id, decision) => void controller.approve(id, decision)}
+          >
+            {controller.queuedInputs === undefined ? null : (
+              <QueuedMessages
+                items={messageQueue.items}
+                disabled={readOnly || historyIncomplete || !controller.inputAvailability.allowed}
+                onEdit={controller.queuedInputs.edit}
+                onRemove={controller.queuedInputs.remove}
+                onRecover={controller.queuedInputs.recover}
+                uploadAttachment={uploadAttachment}
+                user={user}
+              />
+            )}
+            {controller.queuedInputs?.error ? (
+              <p className="queued-messages__error" role="status">
+                {controller.queuedInputs.error}{' '}
+                <Button size="sm" onClick={controller.queuedInputs.refresh}>
+                  Refresh queue
+                </Button>
+              </p>
+            ) : null}
+            <AgentSandboxStatus
+              observation={controller.progressObservation}
+              onNavigate={onNavigate}
+            />
+          </MessageStream>
+        </div>
+        <div className="agent-surface__input">
+          <Composer
+            settings={
+              readOnly ? undefined : (
+                <SessionSettings
+                  key={`settings:${viewerId}:${agentId}`}
+                  agentId={agentId}
+                  active={!accessUncertain}
+                  busy={status !== 'ready' || controller.pending !== undefined || historyIncomplete}
+                />
+              )
+            }
+            showUsage
+            usage={conversation.usage}
+            steeringMode={steeringMode}
+            onSteeringModeChange={state.v2 === undefined ? undefined : setSteeringMode}
+            draft={draft}
+            availableCommands={readOnly ? undefined : conversation.availableCommands}
+            key={`composer:${agentId}`}
+            quickMessages={
+              source.status === 'ready' && source.value.access !== 'shared'
+                ? source.value.trigger?.quick_messages
+                : undefined
+            }
+            status={status}
+            pausedNotice={pausedNotice}
+            running={running}
+            queueWhileRunning={state.v2 !== undefined}
+            queueWhileStarting={state.v2 !== undefined}
+            starting={starting}
+            controlsUnavailable={controller.controlsUnavailable || historyIncomplete}
+            requestPending={
+              controller.pendingMessage !== undefined || controller.pendingControl === true
+            }
+            acceptedMessage={controller.acceptedMessage}
+            acceptedSteeringMessage={controller.acceptedSteeringMessage}
+            acceptedInterruptionMessage={controller.acceptedInterruptionMessage}
+            uploadAttachment={uploadAttachment}
+            inputAvailability={
+              readOnly
+                ? {
+                    ...controller.inputAvailability,
+                    allowed: false,
+                    notice: accessUncertain
+                      ? controller.inputAvailability.notice
+                      : 'Only the owner can send messages to this agent.',
+                  }
+                : verified === undefined
+                  ? { ...controller.inputAvailability, allowed: false }
+                  : controller.inputAvailability
+            }
+            busy={
+              connections.pending ||
+              (controller.pending !== undefined && controller.pending !== 'send')
+            }
+            onSend={(content, onAccepted) => {
+              if (readOnly || verified === undefined) return;
+              const message = optimistic.begin(
+                content,
+                running ? (steeringMode === 'queue' ? 'queue' : 'interrupt') : undefined,
+                controller.queuedInputs?.items.map((item) => item.commandId),
+              );
+              return new Promise<void>((resolve) => {
+                const settled = () => {
+                  message.settled();
+                  resolve();
+                };
+                const cancelled = () => {
+                  message.cancelled();
+                  resolve();
+                };
+                const send = () => {
+                  const submit =
+                    running && steeringMode === 'interrupt'
+                      ? controller.interruptWithMessage
+                      : controller.send;
+                  if (submit === undefined) {
+                    cancelled();
+                    return;
+                  }
+                  const args: Parameters<AgentController['send']> = [
+                    content,
+                    (receipt) => {
+                      if (message.accepted(receipt)) onAccepted();
+                      resolve();
+                    },
+                    message.observed,
+                    cancelled,
+                  ];
+                  const request =
+                    running && steeringMode === 'interrupt'
+                      ? submit(...args, message.ordinaryInput)
+                      : submit(...args);
+                  void request.then(settled, settled);
+                };
+                if (
+                  state.v2?.owner === (viewerId ?? verified.owner) &&
+                  controller.resourceAvailability.state === 'live'
+                ) {
+                  // Transport still rechecks identity before admission and acceptance.
+                  send();
+                } else {
+                  void connections.checkAndRun(
+                    { type: 'agent', id: agentId },
+                    viewerId ?? verified.owner,
+                    send,
+                    state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
+                    cancelled,
+                  );
+                }
+              });
+            }}
+            onStop={controller.interrupt}
+          />
+        </div>
+        {verified === undefined && connection.needed && !readOnly ? (
+          <ConnectionWizard
+            target={{ type: 'agent', id: agentId }}
+            presentation="dialog"
+            expectedOwner={viewerId}
+            onReady={connection.accept}
+            onCancel={() => onNavigate({ kind: 'home' })}
           />
         ) : null}
-      </div>
-    </div>
+      </section>
+    </DesktopWorkspace>
   );
 }
