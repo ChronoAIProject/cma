@@ -32,8 +32,8 @@ fn focused_contract_preserves_existing_operations_and_identities() {
             operation_count += 1;
         }
     }
-    assert_eq!(focused["paths"].as_object().unwrap().len(), 62);
-    assert_eq!(operation_count, 76);
+    assert_eq!(focused["paths"].as_object().unwrap().len(), 63);
+    assert_eq!(operation_count, 77);
     assert_eq!(focused["servers"][0]["url"], "/");
     assert_eq!(focused["info"]["title"], "CMA Agent Manager API");
     assert!(focused["info"]["description"]
@@ -46,6 +46,33 @@ fn focused_contract_preserves_existing_operations_and_identities() {
         for (name, value) in values.as_object().unwrap() {
             assert_eq!(value, &full["components"][kind][name], "{kind}/{name}");
         }
+    }
+}
+
+#[test]
+fn focused_contract_exposes_retained_provider_membership_as_an_authenticated_read() {
+    let focused = document();
+    let item = &focused["paths"]["/api/v1/agents/{id}/provider-associations"];
+    assert!(item.get("get").is_some());
+    for method in ["post", "put", "patch", "delete"] {
+        assert!(item.get(method).is_none());
+    }
+    assert!(!item["get"]["security"].as_array().unwrap().is_empty());
+    assert_eq!(
+        item["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/AgentProviderAssociationsView"
+    );
+    for name in [
+        "AgentProviderAssociationsView",
+        "ProviderAssociationView",
+        "ProviderAssociationRelationshipView",
+        "ProviderAssociationConversationStateView",
+        "ProviderAssociationBindingStateView",
+    ] {
+        assert!(
+            focused["components"]["schemas"].get(name).is_some(),
+            "{name}"
+        );
     }
 }
 

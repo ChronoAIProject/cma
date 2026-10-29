@@ -34,6 +34,8 @@ export const localCodes = new Map([
   ['response-controls-v2-invalid-observation', 'invalid_control_observation'],
   ['channel-inventory-invalid-active', 'invalid_instance_query'],
   ['channel-inventory-invalid-history', 'invalid_instance_query'],
+  ['provider-associations-zero-limit', 'invalid_query'],
+  ['provider-associations-large-limit', 'invalid_query'],
   ['channel-usage-zero-limit', 'invalid_query'],
   ['channel-usage-large-limit', 'invalid_query'],
   ['channel-usage-invalid-cursor', 'invalid_query'],

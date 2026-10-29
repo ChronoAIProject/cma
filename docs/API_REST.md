@@ -1628,6 +1628,7 @@ See [Agent sharing](Agent_Sharing.md) for audience and permission semantics.
 |---|---|---|---|
 | `GET /api/v1/agents/{id}/channel-usage` | - | - | 200 AgentChannelUsageView |
 | `GET /api/v1/agents/{id}/channel-usage/history` | - | cursor, limit | 200 AgentChannelUsageHistoryView |
+| `GET /api/v1/agents/{id}/provider-associations` | - | cursor, limit | 200 AgentProviderAssociationsView |
 
 Channel usage is separate from immutable creation origin. An authorized summary
 contains `agent_id` and `channel_usage` with `active`, `has_history`, nullable
@@ -1638,6 +1639,14 @@ reason and before/after binding generations, including reset, rebind and detach.
 Current policy, original authority deadline and retained Agent identity are
 rechecked after buffering. Public callers cannot write channel facts through
 these routes, and channel use grants no additional CMA resource rights.
+
+
+**Coverage:** `channel-usage` and its history describe the legacy explicit Bridge
+usage projection only. Provider binding/conversation admission does not populate
+that projection. An empty result does not establish that the Agent was never
+associated with a provider, and must not be used as deletion eligibility. Use
+`provider-associations` for retained Manager membership; neither route invents
+missing event-use history.
 
 The creation inventory also returns the safe `channel_usage` summary on each row.
 `channel_active=true|false` and `channel_history=true|false` combine with creation
@@ -1904,3 +1913,75 @@ membership is required even for an empty page; failures do not become a false
 successful empty scope. Ownership and whole-Sandbox grants are filtered and
 deduplicated before pagination. The hidden lookahead and held evidence are
 checked after count IO, before releasing either rows or `next`.
+
+### Retained Agent provider associations
+
+`GET /api/v1/agents/{id}/provider-associations?limit=50&cursor=...` requires
+current management authority over that Agent (personal owner or authorized
+organization management). Provider manager or worker credentials do not gain
+owner-management access through this route. Foreign resources remain concealed;
+ordinary shared viewers cannot read the associations. Each buffered result is
+revalidated against current resource policy and Agent incarnation before release.
+The read and its schemas appear in both `/agent-manager/openapi.json` and the
+full `/openapi.json` compatibility document.
+
+The response contains `agent_id`, owner subject `owner`, `agent_created_at`,
+`items`, and optional `next`. Each item identifies the retained `binding_id`,
+`binding_generation`, `provider_conversation_id`, `relationship` (`managed` or
+`borrowed`), and exact `sandbox_id`, `workspace_id`, `worktree_id`. It separately
+reports `conversation_state`, `binding_state`, `current_binding_generation`, and
+`is_current_generation`. `binding_state` means the **current parent binding's
+state at this page's database read snapshot**; a historical conversation has
+its own retained generation and state. Retired associations remain visible even
+when the parent's current environment has changed several generations later.
+
+`association_created_at` and `association_updated_at` are reservation lifecycle
+timestamps. They are **not** first or last message/event usage, delivery receipts,
+or evidence that the Agent can be deleted. These records do not expose a Gateway
+channel identifier or name because Manager does not retain those authoritative
+Gateway facts. Agent creation origin remains unchanged. A former Worktree is accepted only
+when it belongs to the Agent's already-validated retained recovery chain; the
+response retains that association's original Worktree ID.
+
+Pages use a nonunique Manager index on `(record.owner, record.agent_id, _id)` and
+an exclusive opaque cursor scoped to the owner and exact Agent creation record.
+The default limit is 50, with an allowed range of 1–200. A page reads ancestry,
+conversations, and their binding parents under one database snapshot, fetching
+at most `limit + 1` association rows and bounded parent records. Separate pages
+use fresh snapshots: a concurrent newly inserted association whose key sorts
+before an already consumed cursor requires a fresh traversal to observe it.
+The cursor is not an authorization credential. Invalid or foreign continuations
+return `400 invalid_query`; changed authority returns `409 resource_access_changed`;
+missing/corrupt ancestry or parents return a typed error rather than empty success.
+
+Deployment creates the additive `owner_agent_association` index in the existing
+`BindingCollections::open` schema initialization. The service must finish this
+index setup before it becomes ready. Reads explicitly hint that index, so a
+missing index causes a bounded failure rather than a collection scan. No backfill,
+new collection, runtime restart, Agent origin change, or association write is
+needed. Existing unique binding/generation/Agent constraints are preserved.
+
+Example (a retired managed association whose parent is currently generation 3):
+
+```json
+{
+  "agent_id": "agt_example",
+  "owner": "owner-subject",
+  "agent_created_at": "2026-10-01T00:00:00Z",
+  "items": [{
+    "binding_id": "binding-example",
+    "binding_generation": 1,
+    "provider_conversation_id": "event-0001",
+    "relationship": "managed",
+    "sandbox_id": "sbx_example",
+    "workspace_id": "wks_example",
+    "worktree_id": "wkt_example",
+    "conversation_state": "retired",
+    "binding_state": "ready",
+    "current_binding_generation": 3,
+    "is_current_generation": false,
+    "association_created_at": "2026-10-02T00:00:00Z",
+    "association_updated_at": "2026-10-03T00:00:00Z"
+  }]
+}
+```
