@@ -14,6 +14,11 @@ pub(crate) mod components_fixture;
 mod components_restore_tests;
 #[cfg(test)]
 mod components_tests;
+mod content;
+#[cfg(test)]
+mod content_replay_tests;
+#[cfg(test)]
+mod content_tests;
 pub(crate) mod facts;
 pub(crate) mod history_authority;
 pub mod inbox_dispatch;
