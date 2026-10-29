@@ -119,6 +119,13 @@ pub(super) async fn configure(
 }
 
 impl crate::delivery::relay_client::RelayClient {
+    /// Compose native media presentations while preserving each independent issuance gate.
+    pub(super) fn with_native_presentation_config(self, config: &Config) -> Self {
+        self.with_native_media_presentations(config.native_media_presentations_enabled)
+            .with_native_discord_voice(config.native_discord_voice_enabled)
+            .with_native_telegram_albums(config.native_telegram_albums_enabled)
+    }
+
     pub(super) fn with_native_lark_config(
         self,
         config: &Config,
