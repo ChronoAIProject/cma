@@ -248,6 +248,84 @@ async fn fresh_authority_is_checked_between_marker_and_reservation() {
 }
 
 #[tokio::test]
+async fn expiry_before_reservation_preserves_preparation_and_never_retries_an_unknown_receipt() {
+    for lose_reply in [false, true] {
+        let port = PreparingPort::new(false, lose_reply, false);
+        let setup = PreparationSetup::new(port.clone(), true).await;
+        if !lose_reply {
+            setup.current.revoke_at.store(3, Ordering::SeqCst);
+        }
+        assert!(matches!(
+            setup.dispatch().await,
+            Err(ExecutionError::Unavailable | ExecutionError::AuthorityChanged)
+        ));
+        let journal = setup.dispatcher.journal();
+        let before = journal
+            .read::<TargetState>(&setup.plan.targets[0].id)
+            .await
+            .unwrap()
+            .unwrap()
+            .0;
+        assert!(matches!(
+            &before.binding_preparation,
+            Some(BindingPreparation::Pending { .. })
+        ));
+        let expected_reservations = usize::from(lose_reply);
+        assert_eq!(
+            port.reservations.lock().unwrap().len(),
+            expected_reservations
+        );
+        setup
+            .server
+            .memory
+            .clock
+            .store(fixture::NOW + 900, Ordering::SeqCst);
+        let restarted = Dispatcher::new(
+            setup.server.store(),
+            journal.clone(),
+            setup.current.clone(),
+            port.clone(),
+        );
+        for _ in 0..2 {
+            assert!(
+                matches!(restarted.dispatch(&setup.plan.identity, &setup.plan.targets[0].id, "restart").await.unwrap(),
+                DispatchOutcome::Terminal(Phase::Refused { code }) if code == super::expiry::EXPIRED_BEFORE_START)
+            );
+        }
+        let after = journal
+            .read::<TargetState>(&setup.plan.targets[0].id)
+            .await
+            .unwrap()
+            .unwrap()
+            .0;
+        assert_eq!(after.binding_preparation, before.binding_preparation);
+        assert_eq!(port.inspect_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            port.reservations.lock().unwrap().len(),
+            expected_reservations
+        );
+        assert_eq!(port.base.prepares.load(Ordering::SeqCst), 0);
+        assert!(port.base.starts.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn expiry_during_inspection_is_terminal_before_reservation() {
+    let port = PreparingPort::new(false, false, false);
+    let setup = PreparationSetup::new(port.clone(), true).await;
+    let clock = setup.server.memory.clock.clone();
+    clock.store(fixture::NOW + 899, Ordering::SeqCst);
+    *port.on_inspect.lock().unwrap() = Some(Arc::new(move || {
+        clock.store(fixture::NOW + 900, Ordering::SeqCst);
+    }));
+    assert!(matches!(setup.dispatch().await.unwrap(),
+        DispatchOutcome::Terminal(Phase::Refused { code }) if code == super::expiry::EXPIRED_BEFORE_START));
+    assert!(port.reservations.lock().unwrap().is_empty());
+    assert_eq!(port.base.prepares.load(Ordering::SeqCst), 0);
+    assert!(port.base.starts.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn replacement_opt_in_is_separate_from_generation_pins_and_corrupt_receipts_never_start() {
     let port = PreparingPort::new(false, false, false);
     let setup = PreparationSetup::new(port.clone(), false).await;

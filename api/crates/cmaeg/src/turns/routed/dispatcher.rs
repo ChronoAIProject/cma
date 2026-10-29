@@ -143,7 +143,14 @@ impl Dispatcher {
             .find(|target| target.id == target_id)
             .ok_or(ExecutionError::Invalid)?;
         let mut lease = self.journal.claim(&plan, target, worker).await?;
-        let result = self.run(&plan, target, &mut lease).await;
+        let result = match self.run(&plan, target, &mut lease).await {
+            Err(ExecutionError::Expired) => match self.journal.expire_pending(&mut lease).await {
+                Ok(Some(phase)) => Ok(RunResult::Done(DispatchOutcome::Terminal(phase))),
+                Ok(None) => Err(ExecutionError::Expired),
+                Err(error) => Err(error),
+            },
+            result => result,
+        };
         match result {
             Ok(RunResult::Replay {
                 body,
