@@ -165,15 +165,11 @@ async fn static_replies_keep_original_topic_consumer_and_key_across_gate_off_res
                     .await
                     .unwrap()
                     .unwrap();
+                // Explicit keys replay the complete retained receipt, including
+                // the original uncertain outcome, without another platform call.
                 assert_eq!(
-                    replay.delivery,
-                    if uncertain {
-                        DeliveryOutcome::Unknown {
-                            reason: "routed_reply_uncertain".into(),
-                        }
-                    } else {
-                        first.delivery.clone()
-                    }
+                    super::storage::bytes(&replay).unwrap(),
+                    super::storage::bytes(&first).unwrap()
                 );
                 assert_eq!(f.calls().len(), 1);
                 let body: serde_json::Value = serde_json::from_slice(&f.calls()[0].body).unwrap();
