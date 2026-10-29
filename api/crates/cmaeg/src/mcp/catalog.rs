@@ -73,6 +73,10 @@ fn selected(state: &ToolsState) -> Vec<SelectedTool> {
     selected.extend(super::threads::selected(
         state.discord_threads.is_some(),
         state.telegram_topics.is_some(),
+        state
+            .telegram_topics
+            .as_ref()
+            .is_some_and(|client| client.creation_enabled()),
     ));
     selected.extend(super::history::selected(
         state.discord_conversation_history.is_some()

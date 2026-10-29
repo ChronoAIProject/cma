@@ -2908,14 +2908,14 @@ webhook for a gateway-owned child connection.
 
 Connection references are immutable on a bound channel. Generic updates retain
 the opaque reference. With `sources: []`, the original Telegram admission and
-topic/message-event/channel-post consent are preserved; `connection_admission`,
+topic-management/topic-creation/message-event/channel-post consent are preserved; `connection_admission`,
 when supplied, explicitly overrides admission. An owner may instead submit the
 single existing Telegram source to update its consent flags and admission. The
 bot ID must match the connection, and an optional username must match its saved
 identity. Extra sources, another bot or platform, and platform credential
 overrides are refused. The existing authoring gates, durable admission and
 channel version checks still apply. New connections retain the original
-`sources: []` creation contract and all three consent flags default off.
+`sources: []` creation contract and all four consent flags default off.
 Platform secrets remain gateway-owned, and these updates do not register a
 webhook. Deletion checks the exact retained gateway webhook,
 unbinds the provider and durably retires the connection reservation. A pending
@@ -4274,8 +4274,23 @@ accepts 128 characters; CMA preserves the narrower shared request limit. Rename
 changes only the topic name, preserving its icon and open/closed state.
 The gateway restores exact native human-message custody and the original selected
 consumer, verifies forum-supergroup bot permissions, rechecks current custody,
-and dispatches one operation. Telegram does not accept a `thread_ref` or expose
-list/create/private-topic operations. General additionally requires the separate
+and dispatches one operation. This original-topic consent accepts only its event
+target. Separate `topic_creation:true` consent and the default-off
+`CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED` gate allow `createEventThread` to
+create an empty named topic in the original proven forum supergroup. Telegram
+requests contain `name` and omit `auto_archive_duration`; Discord still requires
+its explicit archive duration. A confirmed creation returns the existing
+`ThreadReceipt.thread` shape with a sealed Telegram v2 `thread_ref`, the created
+ID/name, original chat parent and original event expiry. The snapshot has
+`archived:false` and `locked:false`; these fields do not add archive/lock actions.
+`manageThread` accepts that scoped reference for rename/close/reopen while
+creation consent remains active. Existing Discord v1 references and original
+event reply destinations remain unchanged. Eligible event context additionally
+advertises `topic_creation:true`. Stable keys and a persistent bot/chat creation
+fence prevent duplicate dispatch after uncertain results; no upstream list or
+lookup is inferred as reconciliation. See [topic creation](CMAEG_Native_Telegram_Topic_Creation.md).
+Listing, private topics and icon selection remain outside this CMA increment.
+General original-topic management additionally requires the separate
 default-off `CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED` gate and
 positive `chat.is_forum:true` in the original native supergroup message, with
 both topic markers absent. Missing topic fields alone or synthetic topic ID `1`
