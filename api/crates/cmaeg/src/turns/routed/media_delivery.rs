@@ -27,7 +27,10 @@ use crate::{
     providers::{ProviderClient, RecoveryIdentity},
 };
 use cmaeg_core::{
-    channel::ReplyChoice, media_continuation::MediaContinuationKind, message::OutboundMessage,
+    channel::ReplyChoice,
+    media_continuation::MediaContinuationKind,
+    message::OutboundMessage,
+    problem::{Problem, ProblemCode},
 };
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
@@ -418,9 +421,6 @@ impl MediaResponseDelivery for MediaDelivery {
             if self.store.0.read::<Value>(&id).await?.is_some() {
                 return Ok(());
             }
-            if !failed {
-                current_target(self.authority.as_ref(), plan, target).await?;
-            }
             let intent = json!({"kind":"media_stream_close_v1","root":plan.admission_id,"target":target.id,"failed":failed,"outcome":"intent"});
             self.store
                 .0
@@ -432,10 +432,50 @@ impl MediaResponseDelivery for MediaDelivery {
                     None,
                 )
                 .await?;
-            let local = self.coordinator.custom.as_ref().map(|custom| {
-                custom.finish_media(&super::model::delivery_event(plan, target), failed)
+            // The final negotiated frame restores the original terminal
+            // payload. Revalidate AFTER the durable intent, even on failure.
+            let authority = current_target(self.authority.as_ref(), plan, target)
+                .await
+                .and_then(|current| {
+                    if target.launch.event.expires_at <= (self.store.0.clock)() {
+                        Err(ExecutionError::Expired)
+                    } else if !current
+                        .definition
+                        .reply
+                        .sinks
+                        .contains(&cmaeg_core::channel::Sink::Sync {})
+                        || !plan.current_preparation_source(&current.definition, &self.store.0.keys)
+                    {
+                        Err(ExecutionError::AuthorityChanged)
+                    } else {
+                        Ok(())
+                    }
+                });
+            let refusal = authority.err().map(|error| match error {
+                ExecutionError::Expired => Problem::new(
+                    ProblemCode::EventRefExpired,
+                    410,
+                    "media_stream_event_expired",
+                ),
+                ExecutionError::AuthorityChanged => Problem::new(
+                    ProblemCode::Forbidden,
+                    403,
+                    "media_stream_authority_revoked",
+                ),
+                _ => Problem::new(
+                    ProblemCode::ProviderUnavailable,
+                    503,
+                    "media_stream_authority_unavailable",
+                ),
             });
-            let outcome = json!({"kind":"media_stream_close_v1","root":plan.admission_id,"target":target.id,"failed":failed,"outcome":local});
+            let local = self.coordinator.custom.as_ref().map(|custom| {
+                let event = super::model::delivery_event(plan, target);
+                match refusal.as_ref() {
+                    None => custom.finish_media(&event, failed),
+                    Some(refusal) => custom.refuse_media(&event, refusal.clone()),
+                }
+            });
+            let outcome = json!({"kind":"media_stream_close_v1","root":plan.admission_id,"target":target.id,"failed":failed || refusal.is_some(),"outcome":local,"content_suppressed":refusal.is_some(),"refusal":refusal});
             self.store
                 .0
                 .write(

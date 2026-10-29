@@ -16,6 +16,13 @@ struct Entry {
     sender: mpsc::Sender<Frame>,
     failed: Arc<AtomicBool>,
     deadline: Arc<Mutex<Option<tokio::time::Instant>>>,
+    media_responses: bool,
+    original_terminal: Option<OriginalTerminal>,
+}
+struct OriginalTerminal {
+    name: &'static str,
+    data: Value,
+    _permit: OwnedSemaphorePermit,
 }
 struct Frame {
     name: &'static str,
@@ -50,6 +57,12 @@ impl Drop for Waiter {
 }
 impl SyncRegistry {
     pub fn register(self: &Arc<Self>) -> Option<(String, Waiter)> {
+        self.register_with_media_responses(false)
+    }
+    pub(crate) fn register_with_media_responses(
+        self: &Arc<Self>,
+        media_responses: bool,
+    ) -> Option<(String, Waiter)> {
         let mut waiters = self.waiters.lock().unwrap();
         if waiters.len() >= 4096 {
             return None;
@@ -64,6 +77,8 @@ impl SyncRegistry {
                 sender,
                 failed: failed.clone(),
                 deadline: deadline.clone(),
+                media_responses,
+                original_terminal: None,
             },
         );
         Some((
@@ -77,6 +92,52 @@ impl SyncRegistry {
                 deadline,
             },
         ))
+    }
+    pub(crate) fn media_responses(&self, waiter: &str) -> bool {
+        self.waiters
+            .lock()
+            .unwrap()
+            .get(waiter)
+            .is_some_and(|entry| entry.media_responses)
+    }
+    /// Retain the original terminal payload under the same shared byte budget.
+    /// It is used only to preserve the opted-in stream's final legacy fields.
+    pub(crate) fn retain_terminal(&self, waiter: &str, name: &'static str, data: &Value) -> bool {
+        let mut waiters = self.waiters.lock().unwrap();
+        let Some(entry) = waiters
+            .get_mut(waiter)
+            .filter(|entry| entry.media_responses)
+        else {
+            return false;
+        };
+        let bytes = data.to_string().len();
+        let permit = self
+            .bytes
+            .clone()
+            .try_acquire_many_owned(bytes.min(u32::MAX as usize) as u32);
+        let permit = match permit {
+            Ok(permit) if bytes <= 1048576 => permit,
+            _ => {
+                entry.failed.store(true, Ordering::Release);
+                waiters.remove(waiter);
+                return false;
+            }
+        };
+        entry.original_terminal = Some(OriginalTerminal {
+            name,
+            data: data.clone(),
+            _permit: permit,
+        });
+        true
+    }
+    pub(crate) fn original_terminal(&self, waiter: &str) -> Option<(&'static str, Value)> {
+        self.waiters
+            .lock()
+            .unwrap()
+            .get(waiter)?
+            .original_terminal
+            .as_ref()
+            .map(|terminal| (terminal.name, terminal.data.clone()))
     }
     pub fn emit(&self, waiter: &str, name: &'static str, data: &Value, terminal: bool) -> bool {
         let mut waiters = self.waiters.lock().unwrap();
@@ -111,7 +172,13 @@ impl SyncRegistry {
     /// Bounds only explicitly opted-in continuation streams. It never extends
     /// a prior deadline or changes the terminal contract of ordinary streams.
     pub(crate) fn bound(&self, waiter: &str, budget: std::time::Duration) {
-        if let Some(entry) = self.waiters.lock().unwrap().get(waiter) {
+        if let Some(entry) = self
+            .waiters
+            .lock()
+            .unwrap()
+            .get(waiter)
+            .filter(|entry| entry.media_responses)
+        {
             let mut deadline = entry.deadline.lock().unwrap();
             deadline.get_or_insert_with(|| tokio::time::Instant::now() + budget);
         }
@@ -175,7 +242,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn media_stream_deadline_emits_pending_and_cannot_be_extended() {
         let registry = Arc::new(SyncRegistry::default());
-        let (id, waiter) = registry.register().unwrap();
+        let (id, waiter) = registry.register_with_media_responses(true).unwrap();
         let start = Instant::now();
         registry.bound(&id, Duration::from_secs(120));
         advance(Duration::from_secs(60)).await;
@@ -189,5 +256,35 @@ mod tests {
         assert!(stream.contains("event: cmaeg.media.pending"), "{stream}");
         assert!(!stream.contains("cmaeg.completed"), "{stream}");
         assert!(registry.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ordinary_waiter_cannot_acquire_media_deadline_or_retained_payload() {
+        let registry = Arc::new(SyncRegistry::default());
+        let (id, waiter) = registry.register().unwrap();
+        registry.bound(&id, Duration::from_secs(120));
+        assert!(waiter.deadline.lock().unwrap().is_none());
+        assert!(!registry.media_responses(&id));
+        assert!(!registry.retain_terminal(
+            &id,
+            "cmaeg.completed",
+            &serde_json::json!({"text":"legacy"})
+        ));
+        assert!(registry.original_terminal(&id).is_none());
+    }
+
+    #[tokio::test]
+    async fn retained_terminal_uses_shared_byte_budget_and_releases_on_disconnect() {
+        let registry = Arc::new(SyncRegistry::default());
+        let available = registry.bytes.available_permits();
+        let (id, waiter) = registry.register_with_media_responses(true).unwrap();
+        let data = serde_json::json!({"text":"original terminal"});
+        assert!(registry.retain_terminal(&id, "cmaeg.completed", &data));
+        assert_eq!(
+            registry.bytes.available_permits(),
+            available - data.to_string().len()
+        );
+        drop(waiter);
+        assert_eq!(registry.bytes.available_permits(), available);
     }
 }

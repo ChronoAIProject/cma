@@ -1,3 +1,5 @@
+#[path = "media_delivery_authority_tests.rs"]
+mod authority_tests;
 use super::{
     adapter_test_server::HttpServer, delivery_tests::accepted, media_delivery::MediaDelivery,
     media_obligations::*, media_response_store::NativeOutcome, media_worker::MediaResponseDelivery,
@@ -37,7 +39,7 @@ impl Fixture {
     }
     async fn configured(custom: bool, auto_final: bool) -> Self {
         let waiters = Arc::new(SyncRegistry::default());
-        let (id, waiter) = waiters.register().unwrap();
+        let (id, waiter) = waiters.register_with_media_responses(true).unwrap();
         let mut activity = if custom {
             fixture::custom(None)
         } else {
@@ -248,6 +250,19 @@ async fn media_response_reaches_original_custom_stream_with_distinct_durable_ide
         "{text}"
     );
     assert_eq!(text.matches("event: cmaeg.completed").count(), 1, "{text}");
+    let terminal: serde_json::Value = serde_json::from_str(
+        text.split("event: cmaeg.completed\n")
+            .nth(1)
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(terminal["text"], "Original complete");
+    assert_eq!(terminal["message"], serde_json::Value::Null);
+    assert_eq!(terminal["error"], serde_json::Value::Null);
+    assert_eq!(terminal["media_complete"], true);
     assert!(
         text.contains("Processed the persisted attachment.")
             && text.contains("resp_accepted")
