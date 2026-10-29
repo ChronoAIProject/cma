@@ -19,6 +19,7 @@ pub mod jobs;
 pub(crate) mod outbound;
 pub(crate) mod outbound_profiles;
 pub mod prepare;
+pub(crate) mod presentations;
 pub mod service;
 pub mod sniff;
 pub mod source;

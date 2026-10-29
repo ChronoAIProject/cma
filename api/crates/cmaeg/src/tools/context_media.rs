@@ -1,13 +1,19 @@
+#[path = "context_presentations.rs"]
+mod presentations;
 use super::{
     native_whatsapp_templates, Activity, EventRefPayload, NativeStickerCapabilities,
     NativeVideoCapabilities, ResolvedChannel, ToolsState,
 };
 use cmaeg_core::activity::SourceKind;
+pub use presentations::NativePresentationProfile;
 use serde::Serialize;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct NativeMediaCapabilities {
+    /// Explicit native presentation profiles; absent while issuance is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_profiles: Option<Vec<NativePresentationProfile>>,
     /// Eligible ordered attachments are sent as one album; absent when disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub albums: Option<NativeAlbumCapabilities>,
@@ -122,6 +128,14 @@ impl NativeMediaCapabilities {
             Self::native_whatsapp(state.native_whatsapp_outbound_media_enabled).map(
                 |mut capabilities| {
                     if verified
+                        && state.native_media_presentations_enabled
+                        && matches!(event.reply, cmaeg_core::seal::ReplyAddress::Whatsapp { .. })
+                    {
+                        capabilities.kinds.push("voice".into());
+                        capabilities.presentation_profiles =
+                            Some(vec![NativePresentationProfile::voice(false)]);
+                    }
+                    if verified
                         && state.native_whatsapp_media_controls_enabled
                         && state.native_whatsapp_interactions_enabled
                         && (event.consumer.is_none() || state.consumer_interactions_enabled)
@@ -139,6 +153,16 @@ impl NativeMediaCapabilities {
         } else {
             Self::for_source(&activity.source, state.native_media_enabled).map(
                 |mut capabilities| {
+                    if verified
+                        && state.native_media_presentations_enabled
+                        && telegram_album_destination(channel, event, activity)
+                    {
+                        capabilities
+                            .kinds
+                            .extend(["voice", "animation", "sticker"].map(String::from));
+                        capabilities.presentation_profiles =
+                            Some(NativePresentationProfile::telegram());
+                    }
                     if verified
                         && state.native_telegram_albums_enabled
                         && telegram_album_destination(channel, event, activity)
@@ -165,6 +189,10 @@ impl NativeMediaCapabilities {
                         && (discord_controls || telegram_controls)
                     {
                         let mut controls = MediaControlsCapabilities::single(1024);
+                        if capabilities.presentation_profiles.is_some() {
+                            controls.kinds =
+                                Some(["image", "file", "audio", "video"].map(String::from).into());
+                        }
                         if discord_controls && state.native_discord_media_card_sets_enabled {
                             controls.max_attachments = cmaeg_core::message::MAX_NATIVE_ATTACHMENTS;
                         }
@@ -190,6 +218,7 @@ impl NativeMediaCapabilities {
 
     pub(super) fn native_lark(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
+            presentation_profiles: None,
             albums: None,
             controls: None,
             kinds: ["image", "file", "audio", "video"].map(String::from).into(),
@@ -211,6 +240,7 @@ impl NativeMediaCapabilities {
 
     pub(super) fn native_whatsapp(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
+            presentation_profiles: None,
             albums: None,
             controls: None,
             kinds: ["image", "file", "audio", "sticker", "video"]
@@ -253,6 +283,7 @@ impl NativeMediaCapabilities {
             return None;
         }
         Some(Self {
+            presentation_profiles: None,
             albums: None,
             controls: None,
             kinds: ["image", "file", "audio", "video"].map(String::from).into(),
