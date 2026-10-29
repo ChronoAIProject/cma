@@ -2059,6 +2059,10 @@
           "credentials": {
             "$ref": "#/components/schemas/CredentialsRequest"
           },
+          "durable_custom_execution": {
+            "description": "Immutable opt-in to durable execution for this channel's Custom source.",
+            "type": "boolean"
+          },
           "name": {
             "type": "string"
           },
@@ -2286,6 +2290,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "durable_custom_execution": {
+            "description": "Optional echo for older clients; a supplied value must match the saved mode.",
+            "type": [
+              "boolean",
+              "null"
             ]
           },
           "expected_version": {
@@ -5726,6 +5737,10 @@
               }
             ]
           },
+          "durable_custom_execution": {
+            "description": "Immutable owner opt-in for this channel's authenticated Custom events.",
+            "type": "boolean"
+          },
           "name": {
             "type": "string"
           },
@@ -6087,6 +6102,13 @@
       },
       "RelayAuthoringCapabilities": {
         "properties": {
+          "custom_durable_execution_enabled": {
+            "description": "New Custom channels may opt into durable execution for recovery-capable providers.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "dynamic_sources_writes_enabled": {
             "type": "boolean"
           },
