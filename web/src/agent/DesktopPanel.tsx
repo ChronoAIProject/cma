@@ -13,6 +13,9 @@ export function DesktopPanel({
   readonly running: boolean;
   readonly onClose: () => void;
 }) {
+  const panel = useRef<HTMLElement>(null);
+  const [fullScreen, setFullScreen] = useState(false);
+  const [fullScreenError, setFullScreenError] = useState<string>();
   const screen = useRef<HTMLDivElement>(null);
   const connection = useRef<RFB>(undefined);
   const [status, setStatus] = useState('Connecting…');
@@ -30,7 +33,8 @@ export function DesktopPanel({
           `${scheme}://${location.host}/api/v1/agents/${encodeURIComponent(agentId)}/desktop/ws`,
         );
         rfb.scaleViewport = true;
-        rfb.resizeSession = true;
+        // Keep the shared desktop resolution stable while an Agent acts on screenshots.
+        rfb.resizeSession = false;
         rfb.viewOnly = true;
         connection.current = rfb;
         rfb.addEventListener('connect', () => {
@@ -56,15 +60,30 @@ export function DesktopPanel({
   useEffect(() => {
     if (connection.current) connection.current.viewOnly = !control || running;
   }, [control, running]);
+  useEffect(() => {
+    const changed = () => setFullScreen(document.fullscreenElement === panel.current);
+    document.addEventListener('fullscreenchange', changed);
+    return () => document.removeEventListener('fullscreenchange', changed);
+  }, []);
   return (
-    <section className="agent-desktop" aria-label="Machine desktop">
+    <section
+      ref={panel}
+      id="machine-desktop"
+      className="agent-desktop"
+      aria-label="Machine desktop"
+    >
       <header className="agent-desktop__header">
         <div>
           <h2>Machine desktop</h2>
           <p role="status">
             {status}
-            {running ? ' · Agent is working; desktop input is paused.' : ''}
+            {running
+              ? ' · Agent is working. Watch its actions here.'
+              : control
+                ? ' · You are controlling the desktop.'
+                : ' · Ask the Agent to use this desktop, or take control.'}
           </p>
+          {fullScreenError ? <p role="status">{fullScreenError}</p> : null}
         </div>
         <div className="agent-desktop__actions">
           <Button
@@ -87,12 +106,16 @@ export function DesktopPanel({
           <Button
             size="sm"
             onClick={() => {
-              void screen.current
-                ?.requestFullscreen?.()
-                .catch(() => setStatus('Full screen is unavailable in this browser.'));
+              setFullScreenError(undefined);
+              const request = fullScreen
+                ? document.exitFullscreen?.()
+                : panel.current?.requestFullscreen?.();
+              void request?.catch(() =>
+                setFullScreenError('Full screen is unavailable in this browser.'),
+              );
             }}
           >
-            Full screen
+            {fullScreen ? 'Exit full screen' : 'Full screen'}
           </Button>
           <Button
             size="sm"
