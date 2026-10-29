@@ -51,3 +51,6 @@ pub use form_preparation::*;
 
 mod media_continuation;
 pub use media_continuation::*;
+
+mod structured_content;
+pub use structured_content::*;
