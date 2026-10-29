@@ -289,6 +289,9 @@ pub struct ChannelDefinition {
     /// Multi-consumer routing; absent on every legacy channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<RoutingPolicy>,
+    /// Immutable creation opt-in for authenticated Custom durable execution.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub durable_custom_execution: bool,
     #[serde(default, skip_serializing)]
     pub secrets: ChannelSecrets,
     pub created_at: String,
@@ -321,6 +324,12 @@ impl ChannelDefinition {
             self.partition.validate_extended(&self.sources)?;
         }
         self.validate_tail()?;
+        if self.durable_custom_execution && self.routing.is_none() {
+            return Err(ValidationError::new(
+                "/routing",
+                "durable Custom execution requires routing",
+            ));
+        }
         self.validate_routing()
     }
 
