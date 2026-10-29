@@ -29,6 +29,9 @@ pub const MAX_BLOCKS: usize = 16;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutboundMessage {
+    /// Resend only the exact retained native Lark sticker received in this event.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reply_with_received_sticker: bool,
     /// Explicitly remove every native attachment; updateMessage only when advertised.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub clear_native_attachments: bool,
@@ -179,6 +182,23 @@ pub struct BlockRendering {
 impl OutboundMessage {
     /// Validate a provider response before handing it to a delivery adapter.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.reply_with_received_sticker {
+            if self.clear_native_attachments
+                || self.native_media_update.is_some()
+                || self.whatsapp_template.is_some()
+                || !self.native_attachments.is_empty()
+                || self.thread_reply
+                || self.text.is_some()
+                || !self.blocks.is_empty()
+                || self.reply_to.is_some()
+            {
+                return Err(ValidationError::new(
+                    "/reply_with_received_sticker",
+                    "received sticker replies are exclusive of all other message fields",
+                ));
+            }
+            return Ok(());
+        }
         if self.clear_native_attachments && !self.native_attachments.is_empty() {
             return Err(ValidationError::new(
                 "/clear_native_attachments",

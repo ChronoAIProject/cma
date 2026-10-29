@@ -25,6 +25,7 @@ enum NativePart {
     Text(String),
     Upload(MediaUpload),
     Media(UploadedMedia),
+    ReceivedSticker(crate::native_lark::stickers::RetainedSticker),
 }
 impl Sender {
     pub(super) async fn native_lark_reply(
@@ -47,8 +48,10 @@ impl Sender {
             return self.native_lark_controls_reply(ctx, event, message).await;
         }
         let media = !message.native_attachments.is_empty();
+        let sticker = message.reply_with_received_sticker;
         if message.validate().is_err()
             || (media && !self.relay.native_lark_outbound_media_enabled())
+            || (sticker && !self.relay.native_lark_sticker_replies)
             || crate::interactions::has_controls(message)
             || message.whatsapp_template.is_some()
             || message.reply_to.is_some()
@@ -67,7 +70,7 @@ impl Sender {
             return (rejected("native_lark_consumer_unavailable"), effects);
         };
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_lark());
-        let editable = !media && parts.len() == 1;
+        let editable = !media && !sticker && parts.len() == 1;
         let mut result = IntentReceipt {
             message_parts: vec![],
             rendering,
@@ -75,6 +78,17 @@ impl Sender {
         };
         let deadline = Instant::now() + Duration::from_secs(60);
         let prepared = async {
+            if sticker {
+                let records = self.relay.interactions.as_ref()?.channel_records();
+                let proved = crate::native_lark::stickers::load(
+                    records,
+                    self.keys.clone(),
+                    ctx.channel,
+                    event,
+                )
+                .await?;
+                return Some(VecDeque::from([NativePart::ReceivedSticker(proved)]));
+            }
             let files = crate::media::outbound::prepare(&message.native_attachments)
                 .await
                 .ok()?;
@@ -122,7 +136,7 @@ impl Sender {
                 break;
             };
             let token = timeout_at(deadline, async {
-                if media || self.relay.native_lark_effects {
+                if media || sticker || self.relay.native_lark_effects {
                     self.relay
                         .native_lark
                         .verified_token(&reply.identity, credentials)
@@ -158,6 +172,12 @@ impl Sender {
             }
             let send = async {
                 match operation {
+                    NativePart::ReceivedSticker(proved) => self
+                        .relay
+                        .native_lark
+                        .send_received_sticker(&token, proved)
+                        .await
+                        .map(Some),
                     NativePart::Text(text) => self
                         .relay
                         .native_lark
