@@ -8822,6 +8822,8 @@
     "file",
     "audio",
     "video",
+    "voice",
+    "animation",
     "sticker"
   ],
   "NativeMediaSource": [

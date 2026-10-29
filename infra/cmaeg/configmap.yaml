@@ -41,6 +41,8 @@ data:
   # Requires every reader to support durable media-card custody before enabling.
   # Ordered native albums; existing single uploads and their references are unchanged.
   CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED: "false"
+  # Reader-first voice/animation kinds and native Telegram static stickers; existing audio is unchanged.
+  CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED: "false"
   CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED: "false"
   CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED: "false"

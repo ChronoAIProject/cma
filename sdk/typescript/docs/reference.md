@@ -750,7 +750,9 @@ PDF `file` and bounded `audio` attachments. Audio supports AAC-LC ADTS (`audio/a
 `.aac`), AMR narrowband (`audio/amr`, `.amr`), MPEG Layer III (`audio/mpeg`, `.mp3`),
 single-track self-contained AAC-LC M4A (`audio/mp4`, `.m4a`) and mono Opus Ogg
 (`audio/ogg`, `.ogg`). Audio captions are refused; text is a separate message,
-and voice-note presentation is not exposed. The additive optional `mime_types`, `max_total_bytes`,
+and ordinary `audio` does not request voice-note presentation. The separately gated
+`voice` kind supports mono Opus Ogg through `audio.voice=true`; inspect the optional
+`presentation_profiles` capability before requesting it. The additive optional `mime_types`, `max_total_bytes`,
 `max_image_bytes` and `max_caption_chars` fields report that exact subset: 8 MiB
 aggregate bytes, 5,000,000 bytes per image and 1024 caption characters; shared
 metadata still limits captions to 1024 UTF-8 bytes. Existing limits remain four
@@ -1156,3 +1158,13 @@ existing ordered `native_attachments` array. Single-upload requests and their
 references are unchanged. Captions stay per attachment and top-level text is
 separate. Preserve the exact idempotency key on unknown outcomes; never resend an
 uncertain album under another key. The field is omitted when issuance is disabled.
+
+### Explicit native media presentation
+
+The additive `voice` and `animation` kinds preserve ordinary `audio`/`video`
+semantics. Discover `native_media.presentation_profiles`: Telegram can advertise
+mono Opus Ogg voice, GIF/silent H.264 MP4 animation and static 512×512 WebP
+stickers; WhatsApp private destinations can advertise mono Opus Ogg voice.
+These presentations do not grant message operation references or combine with
+controls/albums. Existing WhatsApp stickers keep their prior behavior. See
+[the exact profiles and rollout contract](../../../docs/CMAEG_Native_Media_Presentations.md).

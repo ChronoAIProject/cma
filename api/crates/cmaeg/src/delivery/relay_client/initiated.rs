@@ -50,10 +50,14 @@ impl RelayClient {
         if !message.native_attachments.is_empty() {
             if !self.native_media
                 || !super::media::supported(platform)
-                || message
-                    .native_attachments
-                    .iter()
-                    .any(|item| item.kind == NativeMediaKind::Sticker)
+                || message.native_attachments.iter().any(|item| {
+                    matches!(
+                        item.kind,
+                        NativeMediaKind::Sticker
+                            | NativeMediaKind::Voice
+                            | NativeMediaKind::Animation
+                    )
+                })
             {
                 return Err(invalid("native_media_unsupported"));
             }

@@ -59,6 +59,7 @@ pub struct ToolsState {
     pub native_lark_media_controls_enabled: bool,
     pub native_lark_multi_image_controls_enabled: bool,
     pub native_lark_media_card_replacements_enabled: bool,
+    pub native_media_presentations_enabled: bool,
     pub native_telegram_albums_enabled: bool,
     pub native_lark_thread_start_enabled: bool,
     /// Bounded native WhatsApp image/document/audio/sticker/video uploads, independently gated.
