@@ -39,8 +39,8 @@ async fn failed_store(limit: u8) -> (InMemorySandboxStore, Agent) {
     agent
         .fail(
             TypedFailure {
-                class: "runtime_mutation_outcome_unknown".into(),
-                detail: "partly created worktree after checkout deadline".into(),
+                class: "agent_runtime_rejected".into(),
+                detail: "runtime_mutation_outcome_unknown: partly created worktree after checkout deadline".into(),
             },
             NOW.into(),
         )
@@ -340,8 +340,8 @@ async fn recovery_chain_retains_all_failures_and_old_replay_never_allocates_agai
         next.work.schedule(AgentWorkStep::None, NOW.into());
         next.fail(
             TypedFailure {
-                class: "runtime_mutation_outcome_unknown".into(),
-                detail: "second incomplete checkout".into(),
+                class: "agent_runtime_rejected".into(),
+                detail: "runtime_mutation_outcome_unknown: second incomplete checkout".into(),
             },
             NOW.into(),
         )

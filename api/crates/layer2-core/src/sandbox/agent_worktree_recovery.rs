@@ -50,6 +50,13 @@ fn valid_operation(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
 }
 
+fn is_indeterminate_checkout(failure: &TypedFailure) -> bool {
+    failure.class == "agent_runtime_rejected"
+        && failure
+            .detail
+            .starts_with("runtime_mutation_outcome_unknown: ")
+}
+
 fn exact_debt(debt: &AgentCleanupDebt, worktree: &Worktree, workspace_name: &str) -> bool {
     let request = WorktreeRequest::new(
         format!("worktree:{workspace_name}:{}:add:v1", worktree.name),
@@ -100,7 +107,7 @@ impl Agent {
                     .strip_prefix("wt-")
                     .and_then(|v| v.parse::<u64>().ok())
                     .is_some_and(|v| v > 0)
-                && attempt.original_failure.class == "runtime_mutation_outcome_unknown"
+                && is_indeterminate_checkout(&attempt.original_failure)
                 && workspace_name.is_some_and(|name| {
                     !name.is_empty() && exact_debt(&attempt.original_cleanup_debt, original, name)
                 })
@@ -218,7 +225,7 @@ pub fn plan_agent_worktree_recovery(
         || agent
             .failure
             .as_ref()
-            .is_none_or(|failure| failure.class != "runtime_mutation_outcome_unknown")
+            .is_none_or(|failure| !is_indeterminate_checkout(failure))
         || agent.id
             != *worktree
                 .agent_id
