@@ -157,6 +157,7 @@ pub(crate) async fn serve(
         .with_discord_media_controls(config.native_discord_media_controls_enabled)
         .with_discord_media_card_edits(discord_media_edits)
         .with_discord_media_card_replacements(discord_media_replacements)
+        .with_discord_media_card_sets(config.native_discord_media_card_sets_enabled)
         .with_discord_card_edits(discord_card_edits)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
@@ -297,6 +298,7 @@ pub(crate) async fn serve(
         native_discord_media_controls_enabled: config.native_discord_media_controls_enabled,
         native_discord_media_card_edits_enabled: discord_media_edits,
         native_discord_media_card_replacements_enabled: discord_media_replacements,
+        native_discord_media_card_sets_enabled: config.native_discord_media_card_sets_enabled,
         whatsapp_interactions_enabled: whatsapp_interactions,
         native_whatsapp_interactions_enabled: config.native_whatsapp_interactions_enabled,
         native_whatsapp_media_controls_enabled: config.native_whatsapp_media_controls_enabled,
