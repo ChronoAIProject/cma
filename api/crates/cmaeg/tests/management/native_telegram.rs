@@ -125,57 +125,60 @@ async fn telegram_topic_owner_enrollment_is_automatic_and_independent_of_message
     let mut settings = state(&provider, &cma, &nyxid);
     settings.native_telegram_message_events_writes_enabled = false;
     settings.native_telegram_topic_lifecycle_enabled = true;
+    settings.native_telegram_topic_creation_enabled = true;
     let (base, stop, task) = serve_app(settings).await;
-    let input = body(false);
-    let saved: Value = post(&base, &input).await.json().await.unwrap();
-    assert!(saved["definition"].get("routing").is_none());
-    let provider = saved["definition"]["provider"].clone();
-    let mut update = input;
-    update.as_object_mut().unwrap().remove("credentials");
-    update["sources"][0]["topic_lifecycle"] = true.into();
-    update["expected_version"] = saved["version"].clone();
-    let url = format!(
-        "{base}/v1/channels/{}",
-        saved["channel_id"].as_str().unwrap()
-    );
-    let response = Client::new()
-        .put(&url)
-        .bearer_auth("token-alice")
-        .json(&update)
-        .send()
-        .await
-        .unwrap();
-    let status = response.status();
-    let saved: Value = response.json().await.unwrap();
-    assert_eq!(status, 200, "{saved}");
-    assert_eq!(saved["definition"]["provider"], provider);
-    assert_eq!(
-        saved["definition"]["routing"]["default_targets"],
-        json!(["default"])
-    );
-    assert_eq!(
-        saved["definition"]["routing"]["default_consumer"]["name"],
-        "default"
-    );
-    assert!(saved["definition"]["sources"][0]
-        .get("message_events")
-        .is_none());
-    assert_eq!(saved["definition"]["sources"][0]["topic_lifecycle"], true);
-    update["sources"][0]["topic_lifecycle"] = false.into();
-    update["expected_version"] = saved["version"].clone();
-    let response = Client::new()
-        .put(&url)
-        .bearer_auth("token-alice")
-        .json(&update)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-    let opted_out: Value = response.json().await.unwrap();
-    assert_eq!(
-        opted_out["definition"]["routing"],
-        saved["definition"]["routing"]
-    );
+    for consent in ["topic_lifecycle", "topic_creation"] {
+        let input = body(false);
+        let saved: Value = post(&base, &input).await.json().await.unwrap();
+        assert!(saved["definition"].get("routing").is_none());
+        let provider = saved["definition"]["provider"].clone();
+        let mut update = input;
+        update.as_object_mut().unwrap().remove("credentials");
+        update["sources"][0][consent] = true.into();
+        update["expected_version"] = saved["version"].clone();
+        let url = format!(
+            "{base}/v1/channels/{}",
+            saved["channel_id"].as_str().unwrap()
+        );
+        let response = Client::new()
+            .put(&url)
+            .bearer_auth("token-alice")
+            .json(&update)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let saved: Value = response.json().await.unwrap();
+        assert_eq!(status, 200, "{saved}");
+        assert_eq!(saved["definition"]["provider"], provider);
+        assert_eq!(
+            saved["definition"]["routing"]["default_targets"],
+            json!(["default"])
+        );
+        assert_eq!(
+            saved["definition"]["routing"]["default_consumer"]["name"],
+            "default"
+        );
+        assert!(saved["definition"]["sources"][0]
+            .get("message_events")
+            .is_none());
+        assert_eq!(saved["definition"]["sources"][0][consent], true);
+        update["sources"][0][consent] = false.into();
+        update["expected_version"] = saved["version"].clone();
+        let response = Client::new()
+            .put(&url)
+            .bearer_auth("token-alice")
+            .json(&update)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let opted_out: Value = response.json().await.unwrap();
+        assert_eq!(
+            opted_out["definition"]["routing"],
+            saved["definition"]["routing"]
+        );
+    }
     stop.send(()).unwrap();
     task.await.unwrap();
 }
@@ -185,25 +188,31 @@ async fn telegram_topic_owner_opt_in_requires_own_gate_and_durable_recovery() {
     let provider = FakeProvider::start(FakeProviderConfig::default()).await;
     let cma = FakeCma::start(false).await;
     let nyxid = FakeNyxid::start().await;
-    for case in 0..4 {
-        let mut settings = state(&provider, &cma, &nyxid);
-        settings.native_telegram_topic_lifecycle_enabled = true;
-        match case {
-            0 => settings.native_telegram_topic_lifecycle_enabled = false,
-            1 => settings.native_telegram_durable_admission_enabled = false,
-            2 => settings.multi_consumer_writes_enabled = false,
-            _ => {
-                settings.providers =
-                    management_state(&provider, &cma, &nyxid, key_ring(1)).providers
+    for consent in ["topic_lifecycle", "topic_creation"] {
+        for case in 0..4 {
+            let mut settings = state(&provider, &cma, &nyxid);
+            settings.native_telegram_topic_lifecycle_enabled = consent == "topic_lifecycle";
+            settings.native_telegram_topic_creation_enabled = consent == "topic_creation";
+            match case {
+                0 => {
+                    settings.native_telegram_topic_lifecycle_enabled = false;
+                    settings.native_telegram_topic_creation_enabled = false;
+                }
+                1 => settings.native_telegram_durable_admission_enabled = false,
+                2 => settings.multi_consumer_writes_enabled = false,
+                _ => {
+                    settings.providers =
+                        management_state(&provider, &cma, &nyxid, key_ring(1)).providers
+                }
             }
+            let (base, stop, task) = serve_app(settings).await;
+            let mut input = body(false);
+            input["sources"][0][consent] = true.into();
+            assert_eq!(post(&base, &input).await.status(), 400, "case {case}");
+            assert!(provider.requests().is_empty());
+            assert!(cma.records().is_empty());
+            stop.send(()).unwrap();
+            task.await.unwrap();
         }
-        let (base, stop, task) = serve_app(settings).await;
-        let mut input = body(false);
-        input["sources"][0]["topic_lifecycle"] = true.into();
-        assert_eq!(post(&base, &input).await.status(), 400, "case {case}");
-        assert!(provider.requests().is_empty());
-        assert!(cma.records().is_empty());
-        stop.send(()).unwrap();
-        task.await.unwrap();
     }
 }

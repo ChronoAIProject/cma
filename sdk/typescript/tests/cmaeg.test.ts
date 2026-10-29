@@ -490,3 +490,35 @@ it('uses scoped thread references, explicit stable keys and exact lifecycle wire
   );
   expect(JSON.parse(fetch.mock.calls[3]?.[1]?.body as string)).toEqual(rename);
 });
+
+it('creates a Telegram topic without archive duration and manages its returned scope', async () => {
+  const receipt = examples.ThreadReceipt?.[1];
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(json(receipt))
+    .mockResolvedValueOnce(json({ outcome: { status: 'confirmed' } }));
+  const client = new Cmaeg({
+    baseUrl: 'https://gateway.example',
+    credential: () => 'fixture',
+    fetch,
+  });
+  const created = await client.createEventThread('original/forum', 'topic-create', {
+    name: 'Release planning',
+  });
+  expect(created).toEqual(receipt);
+  expect(fetch.mock.calls[0]?.[0]).toBe(
+    'https://gateway.example/v1/events/original%2Fforum/threads',
+  );
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ name: 'Release planning' });
+  expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('Idempotency-Key')).toBe(
+    'topic-create',
+  );
+  expect(created.thread).toBeDefined();
+  if (!created.thread) throw new Error('confirmed fixture must carry its scoped reference');
+  const target = { type: 'thread' as const, thread_ref: created.thread.thread_ref };
+  await client.manageThread('topic-close', { target, action: 'close' });
+  expect(fetch.mock.calls[1]?.[0]).toBe('https://gateway.example/v1/thread-operations');
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toEqual({ target, action: 'close' });
+  expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('Idempotency-Key')).toBe('topic-close');
+  expect(fetch).toHaveBeenCalledTimes(2);
+});

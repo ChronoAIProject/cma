@@ -167,6 +167,7 @@ async fn admit_update(
         .find_map(|source| match source {
             Source::Telegram {
                 topic_lifecycle: _,
+                topic_creation: _,
                 message_events: _,
                 channel_posts,
                 bot_id,

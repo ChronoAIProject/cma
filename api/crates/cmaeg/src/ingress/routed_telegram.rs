@@ -17,6 +17,9 @@ pub(crate) fn opted_in(request: &LaunchRequest) -> bool {
             } | cmaeg_core::channel::Source::Telegram {
                 topic_lifecycle: true,
                 ..
+            } | cmaeg_core::channel::Source::Telegram {
+                topic_creation: true,
+                ..
             }
         )
     )

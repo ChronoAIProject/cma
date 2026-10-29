@@ -174,7 +174,24 @@ export function SourceFields({
               {discovery.authoring?.native_telegram_general_topic_lifecycle_enabled === true
                 ? ' General topics are included; reopening General also makes it visible. '
                 : ' General topics are unavailable. '}
-              Private chats, topic creation and browsing are excluded.
+              Private chats and topic browsing are excluded; creation needs separate consent.
+            </p>
+            <Toggle
+              label="Create new forum topics"
+              value={value.topic_creation === true}
+              disabled={
+                discovery.authoring?.native_telegram_topic_creation_enabled !== true &&
+                value.topic_creation !== true
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'topic_creation', enabled || undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Agents may create empty named topics in the forum supergroup containing an admitted
+              human message, then rename, close or reopen the topics they created. Requires bot
+              administrator permission to manage topics. Private chats, browsing and icon selection
+              are unavailable. Existing topic management is separate.
             </p>
             <Toggle
               label="Receive message edits and reactions"

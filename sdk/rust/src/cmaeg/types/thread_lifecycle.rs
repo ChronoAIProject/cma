@@ -12,16 +12,26 @@ pub enum ThreadListView {
     /// Archived threads.
     Archived,
 }
-/// Create a public thread anchored to the exact original native human message.
+/// Create a Discord message thread or Telegram topic in the original forum.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateThreadRequest {
     /// Printable name, 1–100 characters.
     pub name: String,
-    /// Explicit Discord minutes: 60, 1440, 4320, or 10080.
-    pub auto_archive_duration: u16,
+    /// Required Discord minutes: 60, 1440, 4320, or 10080. Omit for Telegram.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_archive"
+    )]
+    pub auto_archive_duration: Option<u16>,
 }
-/// A supported exact-thread mutation, subject to Discord permissions.
+fn present_archive<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u16>, D::Error> {
+    u16::deserialize(deserializer).map(Some)
+}
+/// A supported exact-thread mutation, subject to current platform permissions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadAction {
