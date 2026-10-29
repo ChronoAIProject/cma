@@ -45,6 +45,14 @@ function startBridge(directory) {
       stdio: ["pipe", "pipe", "pipe"],
     },
   );
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  const signalGroup = (signal) => {
+    try {
+      process.kill(-child.pid, signal);
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  };
   child.stderr.resume();
   const pending = new Map();
   let sequence = 0;
@@ -84,16 +92,10 @@ function startBridge(directory) {
     },
     async close() {
       lines.close();
-      if (child.exitCode !== null) return;
-      const exited = new Promise((resolve) => child.once("exit", resolve));
-      process.kill(-child.pid, "SIGTERM");
-      const force = setTimeout(() => {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {}
-      }, 1500);
+      signalGroup("SIGTERM");
+      const force = setTimeout(() => signalGroup("SIGKILL"), 1500);
       try {
-        await exited;
+        await closed;
       } finally {
         clearTimeout(force);
       }
@@ -180,7 +182,8 @@ test(
       );
     } finally {
       await bridge?.close();
-      rmSync(directory, { recursive: true });
+      // Native descendants can finish their home writes after the bridge exits.
+      rmSync(directory, { recursive: true, maxRetries: 10, retryDelay: 100 });
     }
   },
 );

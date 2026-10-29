@@ -60,6 +60,7 @@ pub struct HostedAdapter {
     backend: Arc<dyn HostedBackend>,
     runtime: Arc<dyn HostedAgentRuntime>,
     deployment: HostedDeployment,
+    native_runtime_images: BTreeMap<String, crate::RuntimeImage>,
     home_volumes: Option<Arc<dyn crate::HomeVolumeStore>>,
     channel_tools: Option<Arc<dyn super::HostedChannelToolSource>>,
     access_tools: Option<Arc<dyn super::HostedAccessToolSource>>,
@@ -77,6 +78,7 @@ impl HostedAdapter {
             backend,
             runtime,
             deployment,
+            native_runtime_images: BTreeMap::new(),
             home_volumes: None,
             channel_tools: None,
             access_tools: None,
@@ -87,6 +89,32 @@ impl HostedAdapter {
 
     pub fn deployment(&self) -> &HostedDeployment {
         &self.deployment
+    }
+
+    /// Admit an additional deployment-owned image for native cold allocation.
+    /// The caller must verify the installed image's contract before registration.
+    pub fn with_native_runtime_image(mut self, image: crate::RuntimeImage) -> crate::Result<Self> {
+        super::validate_runtime_image(&image.uri)?;
+        crate::runtime_bootstrap::admit_pool_image(&image)?;
+        self.native_runtime_images.insert(image.uri.clone(), image);
+        Ok(self)
+    }
+
+    async fn select_native_pool_request(
+        &self,
+        request: &RuntimeProvisionRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        let rendered = self
+            .deployment
+            .render_runtime(&request.spec, request.generation)?;
+        let image = self
+            .native_runtime_images
+            .get(&rendered.image.uri)
+            .unwrap_or(&self.deployment.image);
+        self.backend
+            .select_native_pool(&rendered, image, home)
+            .await
     }
 
     pub(crate) async fn run_recovery_command(
