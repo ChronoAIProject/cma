@@ -52,6 +52,8 @@ mod agent_lifecycle;
 mod agent_lifecycle_tests;
 mod agent_reads;
 mod agent_worktree_recovery;
+#[cfg(test)]
+mod agent_worktree_recovery_tests;
 mod bindings;
 mod channel_usage;
 mod command_audit;
