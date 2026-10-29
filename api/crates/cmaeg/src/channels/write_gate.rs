@@ -54,6 +54,7 @@ pub struct WriteFlags {
     pub telegram_message_events: bool,
     pub discord_thread_history: bool,
     pub telegram_topic_lifecycle: bool,
+    pub telegram_topic_creation: bool,
     pub discord_thread_lifecycle: bool,
     pub native_lark_conversation_history: bool,
     pub discord_conversation_history: bool,
@@ -79,6 +80,22 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Telegram {
+                topic_creation: true,
+                ..
+            }
+        ) && !flags.telegram_topic_creation
+            && !current
+                .is_some_and(|old| super::native_telegram::retains_creation_opt_in(old, source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/topic_creation"),
+            "native_telegram_topic_creation_disabled",
+        ));
+    }
     if let Some(index) = next.sources.iter().position(|source| {
         matches!(
             source,

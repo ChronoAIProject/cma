@@ -100,6 +100,9 @@ pub(super) async fn configure(
     state.native_telegram_topic_lifecycle_enabled = config.native_telegram_topic_lifecycle_enabled
         && state.native_telegram_durable_admission_enabled
         && state.records.thread_fences_ready().await;
+    state.native_telegram_topic_creation_enabled = config.native_telegram_topic_creation_enabled
+        && state.native_telegram_durable_admission_enabled
+        && state.records.thread_fences_ready().await;
     state.native_telegram_general_topic_lifecycle_enabled = config
         .native_telegram_general_topic_lifecycle_enabled
         && state.native_telegram_topic_lifecycle_enabled;
@@ -147,12 +150,15 @@ pub(super) fn telegram_topics(
     state: &ManagementState,
     api: Arc<crate::telegram::TelegramClient>,
 ) -> Option<Arc<crate::tools::TelegramTopics>> {
-    state.native_telegram_topic_lifecycle_enabled.then(|| {
-        Arc::new(
-            crate::tools::TelegramTopics::new(api)
-                .with_general_topics(state.native_telegram_general_topic_lifecycle_enabled),
-        )
-    })
+    (state.native_telegram_topic_lifecycle_enabled || state.native_telegram_topic_creation_enabled)
+        .then(|| {
+            Arc::new(
+                crate::tools::TelegramTopics::new(api)
+                    .with_lifecycle(state.native_telegram_topic_lifecycle_enabled)
+                    .with_creation(state.native_telegram_topic_creation_enabled)
+                    .with_general_topics(state.native_telegram_general_topic_lifecycle_enabled),
+            )
+        })
 }
 
 /// Typing is an explicit, short-lived native write, separately activated for rollout.
