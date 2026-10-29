@@ -262,6 +262,8 @@ fn control_store_failure(
         AgentControlStoreError::NotFound
         | AgentControlStoreError::StatusConflict { .. }
         | AgentControlStoreError::StopReasonConflict
+        | AgentControlStoreError::WorktreeRecoveryConflict
+        | AgentControlStoreError::LimitReached { .. }
         | AgentControlStoreError::Conflict => {
             SandboxDependencyError::Transient(AGENT_STATE_CHANGED.into())
         }

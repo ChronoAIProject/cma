@@ -268,6 +268,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.agents.create(param('id'), body, command),
   'DELETE /api/v1/agents/{id}': ({ client, param, command }) =>
     client.agents.delete(param('id'), command),
+  'POST /api/v1/agents/{id}/recover-worktree': ({ client, param, command }) =>
+    client.agents.recoverWorktree(param('id'), command),
   'POST /api/v1/agents/{id}/input': ({ client, param, body, command }) =>
     client.agents.input(param('id'), body, command),
   'POST /api/v1/agents/{id}/steer': ({ client, param, body, command }) =>
