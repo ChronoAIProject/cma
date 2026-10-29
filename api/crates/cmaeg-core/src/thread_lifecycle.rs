@@ -18,16 +18,50 @@ pub enum ThreadListView {
 #[serde(deny_unknown_fields)]
 pub struct CreateThreadRequest {
     pub name: String,
-    /// Discord minutes: 60, 1440, 4320, or 10080. Always explicit.
-    pub auto_archive_duration: u16,
+    /// Required Discord minutes: 60, 1440, 4320, or 10080. Omit for Telegram.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_archive"
+    )]
+    #[schema(nullable = false)]
+    pub auto_archive_duration: Option<u16>,
+}
+fn present_archive<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u16>, D::Error> {
+    u16::deserialize(deserializer).map(Some)
 }
 impl CreateThreadRequest {
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_name(&self.name)?;
-        if !matches!(self.auto_archive_duration, 60 | 1440 | 4320 | 10080) {
+        if self
+            .auto_archive_duration
+            .is_some_and(|v| !matches!(v, 60 | 1440 | 4320 | 10080))
+        {
             return Err(ValidationError::new(
                 "/auto_archive_duration",
                 "must be 60, 1440, 4320, or 10080 minutes",
+            ));
+        }
+        Ok(())
+    }
+    pub fn validate_discord(&self) -> Result<(), ValidationError> {
+        self.validate()?;
+        if self.auto_archive_duration.is_none() {
+            return Err(ValidationError::new(
+                "/auto_archive_duration",
+                "is required for Discord",
+            ));
+        }
+        Ok(())
+    }
+    pub fn validate_telegram(&self) -> Result<(), ValidationError> {
+        self.validate()?;
+        if self.auto_archive_duration.is_some() {
+            return Err(ValidationError::new(
+                "/auto_archive_duration",
+                "must be omitted for Telegram",
             ));
         }
         Ok(())

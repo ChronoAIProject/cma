@@ -1438,6 +1438,141 @@
         "expires_at": 1800000600
       },
       "native_thread_start": true
+    },
+    {
+      "attachments": "fixture",
+      "buttons": "fixture",
+      "cards": "fixture",
+      "edit": true,
+      "inbound_media": {
+        "downloads": true,
+        "read_tool": true,
+        "transcripts": true,
+        "visuals": "keyframes"
+      },
+      "max_text_chars": 1,
+      "typing": true,
+      "native_media": {
+        "kinds": [
+          "image",
+          "file",
+          "audio",
+          "video"
+        ],
+        "max_attachments": 4,
+        "max_inline_bytes": 65536,
+        "sources": [
+          "url",
+          "base64"
+        ],
+        "mime_types": [
+          "image/jpeg",
+          "image/png",
+          "application/pdf",
+          "audio/mpeg",
+          "video/mp4"
+        ],
+        "max_total_bytes": 8388608,
+        "max_image_bytes": 5000000,
+        "max_caption_chars": 1024,
+        "sticker": {
+          "width": 512,
+          "height": 512,
+          "max_static_bytes": 100000,
+          "max_animated_bytes": 500000,
+          "max_frames": 128,
+          "max_duration_ms": 10000,
+          "min_frame_duration_ms": 8
+        },
+        "video": {
+          "audio_codec": "aac_lc",
+          "fast_start_required": true,
+          "max_audio_tracks": 1,
+          "max_duration_ms": 600000,
+          "max_frame_rate": 60,
+          "max_height": 1080,
+          "max_samples": 65536,
+          "max_slices_per_frame": 1,
+          "max_width": 1920,
+          "progressive_only": true,
+          "video_codec": "h264",
+          "video_profile": "baseline"
+        },
+        "controls": {
+          "buttons": true,
+          "caption_max_chars": 1024,
+          "choices": true,
+          "max_attachments": 1,
+          "update": false
+        }
+      },
+      "whatsapp_templates": true,
+      "message_effects": {
+        "delete": true,
+        "expires_at": 1800000000,
+        "max_reactions": 1,
+        "reaction": true,
+        "scope": "confirmed_native_bot_message",
+        "media_edit": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        }
+      },
+      "thread_history": true,
+      "whatsapp_template_components": [
+        "header",
+        "body"
+      ],
+      "thread_lifecycle": {
+        "create_from_original_message": true,
+        "list": "public_children_of_original_parent",
+        "manage_original_thread": false,
+        "actions": [
+          "archive",
+          "reopen",
+          "join",
+          "leave",
+          "rename"
+        ],
+        "expires_at": 1800000600
+      },
+      "native_media_edits": {
+        "caption": true,
+        "content": true,
+        "expires_at": 1800000000,
+        "idempotency_key_required": true,
+        "max_attachments": 1,
+        "max_bytes": 8388608,
+        "replacement_kinds": [
+          "file"
+        ]
+      },
+      "forms": false,
+      "conversation_history": {
+        "page_size": 25,
+        "direction": "backward",
+        "attachment_facts_only": true,
+        "max_text_bytes": 32768,
+        "max_metadata_bytes": 16384,
+        "max_output_bytes": 262144,
+        "expires_at": 1793179800
+      },
+      "topic_lifecycle": {
+        "manage_original_topic": true,
+        "actions": [
+          "close",
+          "reopen"
+        ],
+        "expires_at": 1800000600
+      },
+      "topic_creation": true
     }
   ],
   "ChannelCreateRequest": [
@@ -6949,6 +7084,14 @@
         "type": "all"
       },
       "conversation_history": true
+    },
+    {
+      "type": "telegram",
+      "bot_id": "77",
+      "admission": {
+        "type": "all"
+      },
+      "topic_creation": true
     }
   ],
   "SourceKind": [
@@ -7168,6 +7311,14 @@
         "type": "all"
       },
       "conversation_history": true
+    },
+    {
+      "type": "telegram",
+      "bot_id": "77",
+      "admission": {
+        "type": "all"
+      },
+      "topic_creation": true
     }
   ],
   "TestChannelResponse": [
@@ -9238,6 +9389,103 @@
       "native_lark_conversation_history_enabled": false,
       "native_telegram_topic_lifecycle_enabled": true,
       "native_telegram_general_topic_lifecycle_enabled": true,
+      "native_whatsapp_message_events_enabled": false
+    },
+    {
+      "dynamic_sources_writes_enabled": false,
+      "multi_consumer_writes_enabled": false,
+      "native_bot_mentions_writes_enabled": true,
+      "thread_contract_writes_enabled": false,
+      "platforms": [
+        {
+          "id": "whatsapp",
+          "label": "WhatsApp",
+          "verification_modes": [
+            {
+              "id": "raw_event",
+              "writes_enabled": false
+            },
+            {
+              "id": "trusted_normalized",
+              "writes_enabled": true
+            }
+          ]
+        }
+      ],
+      "relay_raw_verification_writes_enabled": false,
+      "outbound_messages_writes_enabled": false,
+      "native_media_writes_enabled": false,
+      "native_discord_writes_enabled": true,
+      "native_discord_auto_activation_enabled": true,
+      "native_discord_capacity": 64,
+      "lark_resource_writes_enabled": false,
+      "native_discord_thread_history_enabled": false,
+      "native_telegram_message_events_enabled": false,
+      "lark_message_effects_writes_enabled": false,
+      "native_discord_reactions_enabled": false,
+      "native_whatsapp_auto_activation_enabled": false,
+      "native_whatsapp_writes_enabled": false,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false,
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false,
+      "native_discord_conversation_history_enabled": false,
+      "native_lark_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true,
+      "native_telegram_general_topic_lifecycle_enabled": true,
+      "native_whatsapp_message_events_enabled": false,
+      "native_telegram_topic_creation_enabled": true
+    },
+    {
+      "dynamic_sources_writes_enabled": false,
+      "multi_consumer_writes_enabled": false,
+      "native_bot_mentions_writes_enabled": true,
+      "thread_contract_writes_enabled": false,
+      "platforms": [
+        {
+          "id": "whatsapp",
+          "label": "WhatsApp",
+          "verification_modes": [
+            {
+              "id": "raw_event",
+              "writes_enabled": false
+            },
+            {
+              "id": "trusted_normalized",
+              "writes_enabled": true
+            }
+          ]
+        }
+      ],
+      "relay_raw_verification_writes_enabled": false,
+      "outbound_messages_writes_enabled": false,
+      "native_media_writes_enabled": false,
+      "native_discord_writes_enabled": true,
+      "native_discord_auto_activation_enabled": true,
+      "native_discord_capacity": 64,
+      "lark_resource_writes_enabled": false,
+      "native_discord_thread_history_enabled": false,
+      "native_whatsapp_writes_enabled": true,
+      "native_whatsapp_auto_activation_enabled": true,
+      "lark_message_effects_writes_enabled": false,
+      "native_discord_reactions_enabled": true,
+      "native_telegram_message_events_enabled": true,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false,
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false,
+      "native_discord_conversation_history_enabled": false,
+      "native_lark_conversation_history_enabled": false,
+      "native_telegram_topic_lifecycle_enabled": true,
+      "native_telegram_general_topic_lifecycle_enabled": true,
       "native_whatsapp_message_events_enabled": false,
       "response_recovery_providers": [
         "cma",
@@ -9647,6 +9895,9 @@
     {
       "name": "Review",
       "auto_archive_duration": 1440
+    },
+    {
+      "name": "Release planning"
     }
   ],
   "ThreadAction": [
@@ -9675,6 +9926,13 @@
       },
       "action": "rename",
       "name": "Incident triage"
+    },
+    {
+      "target": {
+        "type": "thread",
+        "thread_ref": "cmaeg1.tr.telegram-fixture"
+      },
+      "action": "close"
     }
   ],
   "ThreadSummary": [
@@ -9683,6 +9941,15 @@
       "thread_id": "700",
       "parent_id": "98",
       "name": "Review",
+      "archived": false,
+      "locked": false,
+      "expires_at": 1800000600
+    },
+    {
+      "thread_ref": "cmaeg1.tr.telegram-fixture",
+      "thread_id": "901",
+      "parent_id": "-100",
+      "name": "Release planning",
       "archived": false,
       "locked": false,
       "expires_at": 1800000600
@@ -9740,6 +10007,20 @@
         "thread_id": "700",
         "parent_id": "98",
         "name": "Review",
+        "archived": false,
+        "locked": false,
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "outcome": {
+        "status": "confirmed"
+      },
+      "thread": {
+        "thread_ref": "cmaeg1.tr.telegram-fixture",
+        "thread_id": "901",
+        "parent_id": "-100",
+        "name": "Release planning",
         "archived": false,
         "locked": false,
         "expires_at": 1800000600

@@ -53,6 +53,7 @@ fn source(
 ) -> Result<SourceRequest, ManagementError> {
     Ok(SourceRequest::Telegram {
         topic_lifecycle: false,
+        topic_creation: false,
         message_events: false,
         channel_posts: false,
         bot_id: material.bot_id.clone(),
@@ -152,6 +153,7 @@ fn updated_source(
     let [Source::Telegram {
         bot_id,
         topic_lifecycle,
+        topic_creation,
         message_events,
         channel_posts,
         admission,
@@ -165,10 +167,11 @@ fn updated_source(
     if bot_id != &material.bot_id {
         return Err(invalid("managed connection bot identity changed"));
     }
-    let (topic_lifecycle, message_events, channel_posts, admission) =
+    let (topic_lifecycle, topic_creation, message_events, channel_posts, admission) =
         match request.sources.as_slice() {
             [] => (
                 *topic_lifecycle,
+                *topic_creation,
                 *message_events,
                 *channel_posts,
                 admission.clone(),
@@ -177,6 +180,7 @@ fn updated_source(
                 bot_id,
                 bot_username,
                 topic_lifecycle,
+                topic_creation,
                 message_events,
                 channel_posts,
                 admission,
@@ -187,6 +191,7 @@ fn updated_source(
             {
                 (
                     *topic_lifecycle,
+                    *topic_creation,
                     *message_events,
                     *channel_posts,
                     admission.clone(),
@@ -200,6 +205,7 @@ fn updated_source(
         };
     Ok(SourceRequest::Telegram {
         topic_lifecycle,
+        topic_creation,
         message_events,
         channel_posts,
         bot_id: material.bot_id.clone(),
