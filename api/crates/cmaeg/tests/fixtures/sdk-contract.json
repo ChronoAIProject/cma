@@ -1573,6 +1573,15 @@
         "expires_at": 1800000600
       },
       "topic_creation": true
+    },
+    {
+      "attachments": "link_text",
+      "buttons": "numbered_text",
+      "cards": "text",
+      "edit": false,
+      "max_text_chars": 6000,
+      "typing": false,
+      "reply_with_received_sticker": true
     }
   ],
   "ChannelCreateRequest": [
@@ -6222,6 +6231,10 @@
     {
       "clear_native_attachments": true,
       "text": "Uploads removed",
+      "blocks": []
+    },
+    {
+      "reply_with_received_sticker": true,
       "blocks": []
     }
   ],

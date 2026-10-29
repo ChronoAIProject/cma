@@ -25,6 +25,7 @@ impl Capabilities {
             topic_creation: None,
             thread_lifecycle: None,
             native_thread_start: None,
+            reply_with_received_sticker: None,
             conversation_history: None,
         }
     }
@@ -54,6 +55,7 @@ impl Capabilities {
             topic_creation: None,
             thread_lifecycle: None,
             native_thread_start: None,
+            reply_with_received_sticker: None,
             conversation_history: None,
         }
     }
@@ -79,6 +81,7 @@ impl Capabilities {
             topic_creation: None,
             thread_lifecycle: None,
             native_thread_start: None,
+            reply_with_received_sticker: None,
             conversation_history: None,
         }
     }
@@ -114,6 +117,9 @@ impl ToolsState {
         channel: &ResolvedChannel,
         capabilities: &mut Capabilities,
     ) {
+        capabilities.reply_with_received_sticker = self
+            .received_sticker_capability(caller, channel, event, true)
+            .await;
         capabilities.topic_creation = self.topic_creation_capability(caller, event).await;
         capabilities.topic_lifecycle = self.topic_capabilities(caller, event, channel).await;
         capabilities.thread_lifecycle = self.thread_capabilities(caller, event, channel).await;

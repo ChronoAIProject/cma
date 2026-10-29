@@ -14,6 +14,7 @@ pub(crate) mod message;
 pub(crate) mod outbound;
 pub(crate) mod read_status;
 pub mod receipts;
+pub(crate) mod stickers;
 pub(crate) mod thread_start;
 pub(crate) mod webhook;
 use cmaeg_core::{
