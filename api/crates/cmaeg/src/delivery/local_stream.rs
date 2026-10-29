@@ -1,7 +1,10 @@
 //! Local queue evidence is deliberately separate from platform delivery receipts.
 use super::{
-    custom::CustomDelivery, destination::WebhookDestination, gate::SendGate,
-    intents::DeliveryOutcome, render::custom,
+    custom::CustomDelivery,
+    destination::WebhookDestination,
+    gate::{SendGate, NO_CHAT_ROUTE},
+    intents::DeliveryOutcome,
+    render::custom,
 };
 use crate::{channels::resolver::ResolvedChannel, turns::outcomes::TurnOutcome};
 use cmaeg_core::{
@@ -99,6 +102,104 @@ impl CustomStreamEffect {
     }
 }
 impl CustomDelivery {
+    /// A new media-enabled event distinguishes response completion from final
+    /// stream completion. Existing events continue using local() unchanged.
+    pub(crate) fn local_response(
+        &self,
+        event: &EventRefPayload,
+        effect: &CustomStreamEffect,
+        response_id: &str,
+    ) -> LocalStreamOutcome {
+        let ReplyAddress::Sync { waiter } = &event.reply else {
+            return LocalStreamOutcome::Unavailable;
+        };
+        let (legacy, mut data) = effect.frame(event);
+        data["response_id"] = response_id.into();
+        data["media_pending"] = true.into();
+        data["media_responses_url"] = media_responses_url(event).into();
+        let name = match effect {
+            CustomStreamEffect::Completed { .. } => "cmaeg.response.completed",
+            CustomStreamEffect::Failed => "cmaeg.response.failed",
+            _ => legacy,
+        };
+        self.waiters
+            .bound(waiter, std::time::Duration::from_secs(120));
+        if self.waiters.emit(waiter, name, &data, false) {
+            LocalStreamOutcome::Buffered
+        } else {
+            LocalStreamOutcome::Unavailable
+        }
+    }
+    pub(crate) fn local_media_response(
+        &self,
+        event: &EventRefPayload,
+        data: &Value,
+    ) -> LocalStreamOutcome {
+        let ReplyAddress::Sync { waiter } = &event.reply else {
+            return LocalStreamOutcome::Unavailable;
+        };
+        if self
+            .waiters
+            .emit(waiter, "cmaeg.media.response", data, false)
+        {
+            LocalStreamOutcome::Buffered
+        } else {
+            LocalStreamOutcome::Unavailable
+        }
+    }
+    pub(crate) fn finish_media(&self, event: &EventRefPayload, failed: bool) -> LocalStreamOutcome {
+        let ReplyAddress::Sync { waiter } = &event.reply else {
+            return LocalStreamOutcome::Unavailable;
+        };
+        let data = json!({"event_id":event.event_id,"conversation_id":event.conversation_id,"media_complete":!failed,"status":if failed{"incomplete"}else{"completed"}});
+        if self.waiters.emit(
+            waiter,
+            if failed {
+                "cmaeg.failed"
+            } else {
+                "cmaeg.completed"
+            },
+            &data,
+            true,
+        ) {
+            LocalStreamOutcome::Buffered
+        } else {
+            LocalStreamOutcome::Unavailable
+        }
+    }
+    pub(crate) async fn send_media_webhook(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        data: Value,
+        destination: &WebhookDestination,
+        gate: &dyn SendGate,
+    ) -> DeliveryOutcome {
+        if !webhook_authorized(channel, destination) {
+            return DeliveryOutcome::Rejected {
+                reason: "webhook_destination_revoked".into(),
+            };
+        }
+        let Some((_, key)) = channel
+            .definition
+            .secrets
+            .hmac_secrets
+            .iter()
+            .find(|(id, _)| id == &destination.hmac_key_id)
+        else {
+            return DeliveryOutcome::Rejected {
+                reason: "webhook_key_missing".into(),
+            };
+        };
+        let _ticket = match gate.enter_route(NO_CHAT_ROUTE).await {
+            Ok(ticket) => ticket,
+            Err(refusal) => return refusal.outcome(),
+        };
+        let envelope = custom::result(&self.public_origin, event, "cmaeg.media.response", data);
+        self.webhooks
+            .send_gated(&destination.url, key, &envelope, gate)
+            .await
+    }
     pub(crate) fn lost_local_stream(&self, event: &EventRefPayload) {
         if let ReplyAddress::Sync { waiter } = &event.reply {
             // The original frame is never replayed. A waiter surviving a worker
@@ -170,6 +271,20 @@ impl CustomDelivery {
             .send_gated(&destination.url, key, &envelope, gate)
             .await
     }
+}
+fn media_responses_url(event: &EventRefPayload) -> String {
+    let mut url = url::Url::parse("https://gateway.invalid/").expect("static origin");
+    url.path_segments_mut()
+        .expect("static URL supports path")
+        .extend([
+            "v1",
+            "channels",
+            event.channel_id.as_str(),
+            "events",
+            event.event_id.as_str(),
+            "media-responses",
+        ]);
+    url.path().into()
 }
 pub(crate) fn webhook_authorized(
     channel: &ResolvedChannel,

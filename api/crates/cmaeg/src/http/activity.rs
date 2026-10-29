@@ -226,7 +226,7 @@ fn event(page: &ActivityPage, reset: bool) -> Event {
         .json_data(page)
         .expect("activity snapshot serializes")
 }
-async fn owned(
+pub(super) async fn owned(
     state: &ManagementState,
     creator: &Creator,
     id: &cmaeg_core::ids::ChannelId,

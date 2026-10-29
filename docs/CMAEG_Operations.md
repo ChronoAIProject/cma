@@ -198,6 +198,7 @@ applies with all media flags off.**
 | `CMAEG_BINDING_PREPARATION_ENABLED` | boolean | `false` | Enables generation preparation for new routed CMA profile targets. Requires durable recovery, exact provider preparation paths and management authentication. Keep enabled after migration even when new replacement enrollment is stopped. See [fresh-event preparation](CMAEG_Fresh_Event_Binding_Preparation.md). |
 | `CMAEG_BINDING_REPLACEMENT_BINDINGS` | comma-separated binding IDs | empty | Explicit replacement enrollment for new eligible admissions only; no wildcard, at most 256 IDs. Requires generation preparation. Clearing the list stops new replacement authority without changing retained admissions. |
 | `CMAEG_ROUTED_RECOVERY_ENABLED` | boolean | `false` | Installs the durable admission adapter, replay executor, tool receipts and supervised recovery scheduler. Required before selecting records or enabling admission. Keep enabled while retained routed work can execute or retry. A stopped recovery worker removes readiness; shutdown uses the existing turn drain deadline. See [durable routed execution](CMAEG_Routed_Execution.md). |
+| `CMAEG_MEDIA_CONTINUATIONS_ENABLED` | boolean | `false` | New routed events targeting an existing CMA Agent durably deliver original attachments and late transcripts through independent Append commands. Requires routed recovery, enabled media service and the optional Gateway-owned Mongo media index. Deploy compatible Agent Manager and Gateway readers before enabling this writer. A ready index keeps recovery active with the flag off. Original event commands are never replayed or interrupted. See [media continuations](CMAEG_Media_Continuations.md). |
 | `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED` | boolean | `false` | Writes versioned bounded native quoted/context data on new durable ordinary admissions; Discord fixes it at inbox capture. Deploy all serving, provider and rollback readers first. Gate-off replays preserve existing snapshots. See [native quoted context](CMAEG_Native_Quoted_Context.md). |
 | `CMAEG_ROUTED_ADMISSION_ENABLED` | boolean | `false` | Allows new routed plans only for explicitly selected records. Set false to pause new admissions with 503 while exact committed retries and recovery continue. This does not disable the channel's legacy path when no routing policy exists. |
 | `CMAEG_ROUTED_CHANNEL_RECORDS` | comma-separated explicit record IDs | empty | At most 64 IDs; no wildcard. Unselected ingress keeps its existing launcher without admission-store reads. Retain selected IDs while their durable identities can be retried; removing selection is not a safe rollback. Provider replay capability must be explicitly configured and proved before a new routed plan is accepted. |
@@ -330,9 +331,13 @@ its existing `paths` object:
 Both paths are required and use the CMA Responses v2 dialect. The same strict
 allowlisted origin, normalized templates and encoded opaque path segments apply.
 Redirects are never followed. Do not infer recovery from a provider's POST path
-or name. Leave Nyxbot recovery absent until its deployed API supplies a verified
-snapshot/replay contract. The deployment manifest includes the same opt-in
-example and deliberately leaves both provider entries unchanged.
+or name. The deployment manifest also explicitly configures NyxBot's native
+`/api/v1/nyxbot/responses/{response_id}` snapshot and
+`/api/v1/nyxbot/responses/{response_id}/events` replay paths. The source-derived
+NyxBot conformance tests verify exact response identity, native Agent identity,
+terminal output, exclusive durable cursors and recovery from observation errors
+without another turn POST. This is provider contract evidence, not verification
+that a native platform socket is connected or that a platform message arrived.
 
 The transport only reads an already accepted response using the fresh consumer
 agent key supplied by the dispatcher. CMA's response endpoints recheck current

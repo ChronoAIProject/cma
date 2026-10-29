@@ -97,6 +97,20 @@ pub struct ActivityConsumer {
     pub completed_at: Option<String>,
     pub response_id: Option<String>,
     pub deliveries: Vec<ActivityDelivery>,
+    /// Independent appended responses. URLs still require Agent Manager's
+    /// normal response authorization; this feed grants no conversation access.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media_responses: Vec<ActivityMediaResponse>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ActivityMediaResponse {
+    pub attachment_index: u8,
+    pub kind: String,
+    pub response_id: String,
+    pub response_url: String,
+    pub status: String,
+    pub delivery: String,
+    pub observed_at: String,
 }
 impl ActivityConsumer {
     pub(crate) fn new(id: &str) -> Self {
@@ -113,6 +127,7 @@ impl ActivityConsumer {
             completed_at: None,
             response_id: None,
             deliveries: Vec::new(),
+            media_responses: Vec::new(),
         }
     }
 }
@@ -149,6 +164,7 @@ pub struct Change {
     pub conversation_id: Option<String>,
     pub agent_id: Option<String>,
     pub processing_completed: bool,
+    pub media_response: Option<ActivityMediaResponse>,
 }
 impl Change {
     pub fn state(consumer: &str, state: ConsumerState, response_id: Option<String>) -> Self {
@@ -163,6 +179,7 @@ impl Change {
             conversation_id: None,
             agent_id: None,
             processing_completed: false,
+            media_response: None,
         }
     }
     /// Processing completion does not prove a successful provider response.
@@ -235,6 +252,17 @@ impl Change {
         }
         if let Some(id) = &self.response_id {
             consumer.response_id = Some(id.clone());
+        }
+        if let Some(response) = &self.media_response {
+            if let Some(previous) = consumer
+                .media_responses
+                .iter_mut()
+                .find(|old| old.response_id == response.response_id)
+            {
+                *previous = response.clone();
+            } else if consumer.media_responses.len() < 64 {
+                consumer.media_responses.push(response.clone());
+            }
         }
         if let Some(value) = &self.display_name {
             consumer.display_name = Some(value.clone());

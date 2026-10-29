@@ -18,6 +18,7 @@ pub(crate) mod html;
 pub mod management;
 mod management_responses;
 pub mod media;
+pub mod media_responses;
 pub mod message_effects;
 pub mod metrics;
 pub mod native_lark;

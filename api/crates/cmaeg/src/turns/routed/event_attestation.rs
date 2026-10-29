@@ -8,6 +8,7 @@ use super::{
 use crate::ingress::routing_store::{AdmittedPlan, PlanStore, StoredTarget};
 use cmaeg_core::{
     ids::{BindingId, ChannelId, ConversationId, EventId},
+    media_continuation::MediaArtifactClaim,
     seal::{EventRef, MAX_TOKEN_LENGTH},
 };
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,9 @@ pub struct EventAttestationRequest {
     /// The generation actually present in the frozen Gateway request. None is
     /// not a claim about Manager generation; Manager must check its own parent.
     pub binding_generation: Option<u64>,
+    /// Required by attachment and supplement admission. An event-only result
+    /// does not attest file bytes or derived text.
+    pub artifact: Option<MediaArtifactClaim>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
@@ -99,6 +103,14 @@ pub(super) async fn attest(
         .flatten();
     if generation != request.binding_generation {
         return Ok(false);
+    }
+    if let Some(artifact) = &request.artifact {
+        if !super::MediaObligationStore(journal.clone())
+            .attests(&plan, target, artifact)
+            .await?
+        {
+            return Ok(false);
+        }
     }
     // Bypass caches after reading provenance, so a stale retained body never proves
     // present authorization after its channel/source/consumer was revoked.
