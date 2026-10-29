@@ -87,11 +87,15 @@ impl Client {
         {
             return Err(Error::Invalid);
         }
-        let audio = if item.kind == NativeMediaKind::Audio {
+        let audio = if matches!(item.kind, NativeMediaKind::Audio | NativeMediaKind::Voice) {
             if file.caption.is_some() {
                 return Err(Error::Invalid);
             }
-            Some(audio::inspect(&file.bytes).ok_or(Error::Invalid)?)
+            let format = audio::inspect(&file.bytes).ok_or(Error::Invalid)?;
+            if item.kind == NativeMediaKind::Voice && format != audio::Format::Ogg {
+                return Err(Error::Invalid);
+            }
+            Some(format)
         } else {
             None
         };
@@ -133,7 +137,9 @@ impl Client {
             (NativeMediaKind::File, _) => {
                 ("document", document.ok_or(Error::Invalid)?.extensions())
             }
-            (NativeMediaKind::Audio, _) => ("audio", audio.ok_or(Error::Invalid)?.extensions()),
+            (NativeMediaKind::Audio | NativeMediaKind::Voice, _) => {
+                ("audio", audio.ok_or(Error::Invalid)?.extensions())
+            }
             (NativeMediaKind::Video, _) => ("video", video.ok_or(Error::Invalid)?.extensions()),
             (NativeMediaKind::Sticker, "image/webp") => ("sticker", &["webp"][..]),
             _ => return Err(Error::Invalid),
@@ -155,6 +161,9 @@ impl Client {
             return Err(Error::Invalid);
         }
         let mut metadata = json!({});
+        if item.kind == NativeMediaKind::Voice {
+            metadata["voice"] = true.into();
+        }
         if let Some(caption) = file.caption {
             metadata["caption"] = caption.into();
         }
@@ -236,6 +245,7 @@ impl Client {
         reply.validate().map_err(|_| Error::Invalid)?;
         if uploaded.phone != reply.phone_number_id
             || uploaded.kind == "sticker"
+            || uploaded.metadata.get("voice").is_some()
             || credentials.validate().is_err()
         {
             return Err(Error::Invalid);
@@ -288,3 +298,7 @@ impl Client {
 #[cfg(test)]
 #[path = "outbound_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "outbound_voice_tests.rs"]
+mod voice_tests;

@@ -32,6 +32,8 @@ fn media_type(kind: NativeMediaKind) -> &'static str {
         NativeMediaKind::File => "document",
         NativeMediaKind::Audio => "audio",
         NativeMediaKind::Sticker => "sticker",
+        NativeMediaKind::Voice => "voice",
+        NativeMediaKind::Animation => "animation",
     }
 }
 

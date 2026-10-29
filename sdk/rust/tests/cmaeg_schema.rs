@@ -716,3 +716,19 @@ fn native_album_capabilities_preserve_exact_groups_without_operation_authority()
     assert_eq!(albums.kind_groups[0], ["image", "video"]);
     assert_eq!(serde_json::to_value(decoded).unwrap(), value);
 }
+
+#[test]
+fn explicit_media_presentations_preserve_legacy_audio_and_optional_discovery() {
+    for kind in ["audio", "video", "voice", "animation", "sticker"] {
+        let wire = json!({"native_attachments":[{"kind":kind,"source":{"type":"base64","data":"AQIDBA=="}}]});
+        let decoded: OutboundMessage = serde_json::from_value(wire.clone()).unwrap();
+        let encoded = serde_json::to_value(decoded).unwrap();
+        assert_eq!(encoded["native_attachments"], wire["native_attachments"]);
+    }
+    let value = json!({"kinds":["audio","voice"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "presentation_profiles":[{"kind":"voice","mime_types":["audio/ogg"],"max_bytes":8388608,"caption":false,
+        "profile":"One complete mono Opus Ogg stream; no transcoding","message_operations":false}]});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert!(!decoded.presentation_profiles.as_ref().unwrap()[0].message_operations);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}

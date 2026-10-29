@@ -3112,6 +3112,12 @@ forum-topic/reply-chain and mention evidence before it can advertise this contra
 
 ## Explicit native outbound media
 
+Separately gated [native media presentations](CMAEG_Native_Media_Presentations.md)
+add explicit `voice`/`animation` kinds, Telegram static WebP sticker sends and
+WhatsApp private voice messages. Discover `presentation_profiles`; ordinary
+`audio`/`video`, original destinations and existing operation references keep
+their meanings. New presentations grant no media-edit/control/album authority.
+
 `OutboundMessage.native_attachments` is an optional array, omitted when empty.
 It is independent of legacy `blocks` attachment records, which retain their
 link-text rendering. A caller must discover `context.capabilities.native_media`

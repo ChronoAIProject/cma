@@ -131,7 +131,15 @@ export const IntentReceiptSchema = object({
 });
 export type IntentReceipt = Output<typeof IntentReceiptSchema>;
 
-export const NativeMediaKindSchema = enumeration('image', 'file', 'audio', 'video', 'sticker');
+export const NativeMediaKindSchema = enumeration(
+  'image',
+  'file',
+  'audio',
+  'video',
+  'voice',
+  'animation',
+  'sticker',
+);
 export type NativeMediaKind = Output<typeof NativeMediaKindSchema>;
 export const NativeMediaSourceSchema = tagged(
   {
@@ -193,7 +201,17 @@ export const NativeAlbumCapabilitiesSchema = object({
   message_operations: boolean,
 });
 export type NativeAlbumCapabilities = Output<typeof NativeAlbumCapabilitiesSchema>;
+export const NativePresentationProfileSchema = object({
+  kind: text,
+  mime_types: array(text),
+  max_bytes: integer,
+  caption: boolean,
+  profile: text,
+  message_operations: boolean,
+});
+export type NativePresentationProfile = Output<typeof NativePresentationProfileSchema>;
 export const NativeMediaCapabilitiesSchema = object({
+  presentation_profiles: optional(nullable(array(NativePresentationProfileSchema))),
   albums: optional(nullable(NativeAlbumCapabilitiesSchema)),
   controls: optional(nullable(MediaControlsCapabilitiesSchema)),
   kinds: array(text),
