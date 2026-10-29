@@ -92,12 +92,21 @@ async fn accepted_restart_replays_original_response_and_cursor_without_posting_a
         .memory
         .clock
         .store(fixture::NOW + 901, Ordering::SeqCst);
+    let restarted = Dispatcher::new(
+        setup.server.store(),
+        setup.journal().clone(),
+        setup.current.clone(),
+        setup.port.clone(),
+    );
     let DispatchOutcome::Replay {
         mut lease,
         body: replayed,
         response_id: restored,
         durable_cursor,
-    } = setup.dispatch().await.unwrap()
+    } = restarted
+        .dispatch(&setup.plan.identity, &setup.target().id, "restarted")
+        .await
+        .unwrap()
     else {
         panic!("replay")
     };
