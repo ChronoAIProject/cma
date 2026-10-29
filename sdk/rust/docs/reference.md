@@ -919,3 +919,10 @@ Other codecs, including Ogg/Opus, are refused for this Discord voice profile.
 [Discord voice limits and acceptance status](../../../docs/CMAEG_Native_Discord_Voice.md).
 
 `StructuredContent` describes exclusive contact, static location and venue data in `OutboundMessage.structured_content`. Use only the original event's advertised `structured_replies` capability with a stable reply idempotency key. Omission preserves legacy message bytes; this adds no recipient or live-location fields.
+
+The Gateway-only worker credential classifier is `client.provider_bindings().classify_worker_credential(&digest)`. It sends a bare
+lowercase SHA-256 digest and returns `known_worker` or `unknown` only after a
+successful lookup. It requires the verified Gateway service-account access bearer
+and both management capabilities. Ordinary owner, browser and worker credentials
+are refused, and unavailable authentication or storage is an HTTP error. A caller
+must never treat that error as `unknown` or reuse a negative result as a cache.

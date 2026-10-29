@@ -43,6 +43,7 @@ pub(crate) mod test_resources;
 mod token;
 mod tokens;
 mod verification_error;
+mod worker_credentials;
 
 pub use flow::router;
 pub use middleware::attach_subject;

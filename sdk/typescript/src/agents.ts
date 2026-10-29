@@ -74,6 +74,7 @@ import {
 } from './agents/lifecycle.js';
 import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
+import { listAgentProviderAssociations } from './agents/provider-associations.js';
 import { readAgentChannelUsage, listAgentChannelUsageHistory } from './agents/channel-usage.js';
 import {
   listAgentArtifacts,
@@ -220,10 +221,16 @@ export class Agents {
     );
   }
 
-  /** Explicit active/historical channel facts under current resource visibility. */
+  /** Legacy Bridge usage projection; provider admissions require providerAssociations(). */
   channelUsage(id: string, options: OperationOptions = {}) {
     return readAgentChannelUsage(this.config, id, options);
   }
+
+  /** Read retained provider memberships under current Agent management authority. */
+  providerAssociations(id: string, options: PageOptions = {}) {
+    return listAgentProviderAssociations(this.config, id, options);
+  }
+
   /** Current bridge managers can page retained channel binding history. */
   channelUsageHistory(id: string, options: PageOptions = {}) {
     return listAgentChannelUsageHistory(this.config, id, options);

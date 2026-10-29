@@ -3,6 +3,8 @@ use crate::{Client, Result, http::Request};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
+mod worker_credentials;
+pub use worker_credentials::*;
 mod preparation;
 pub use preparation::*;
 mod media;

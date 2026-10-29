@@ -40,7 +40,11 @@ pub async fn audit_routing(
     // report still runs without one; that clear then stops as
     // "provider configuration unavailable".
     let providers = match providers::ProviderClient::from_config(&config) {
-        Ok(client) => Some(client.with_service_auth(service_auth)),
+        Ok(client) => Some(
+            client
+                .with_service_auth(service_auth)
+                .with_worker_credentials(records.worker_credentials()),
+        ),
         Err(_) => {
             tracing::warn!("provider client unavailable; the audit cannot remove bindings");
             None
