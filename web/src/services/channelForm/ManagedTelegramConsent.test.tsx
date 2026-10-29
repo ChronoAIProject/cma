@@ -12,6 +12,7 @@ const available: RelayDiscovery = {
   authoring: {
     native_telegram_message_events_enabled: true,
     native_telegram_topic_lifecycle_enabled: true,
+    native_telegram_topic_creation_enabled: true,
     dynamic_sources_writes_enabled: false,
     relay_raw_verification_writes_enabled: false,
     multi_consumer_writes_enabled: true,
@@ -79,6 +80,7 @@ it('saves managed Telegram consent on its exact source without credential or ide
   expect(screen.getByText(/managed by this connection/)).toHaveTextContent('88 (@managed_bot)');
   for (const name of [
     'Manage the original forum topic',
+    'Create new forum topics',
     'Receive message edits and reactions',
     'Receive channel posts and edits',
   ])
@@ -94,6 +96,7 @@ it('saves managed Telegram consent on its exact source without credential or ide
       {
         ...object(channel.definition.sources[0]),
         topic_lifecycle: true,
+        topic_creation: true,
         message_events: true,
         channel_posts: true,
       },
