@@ -27,11 +27,25 @@ impl InteractionStore {
     }
 
     /// Caller holds the shared exact-message mutation fence. Original TTL is immutable.
+    #[cfg(test)]
     pub(crate) async fn replace_native_lark(
         &self,
         channel: &ResolvedChannel,
         reference: &MessageRefPayload,
         message: &OutboundMessage,
+    ) -> Result<PreparedCard, Error> {
+        self.replace_native_lark_images(channel, reference, message, None)
+            .await
+    }
+
+    /// Replacement image keys must come from validated uploads to this exact
+    /// retained native app/destination. One image keeps the legacy scalar shape.
+    pub(crate) async fn replace_native_lark_images(
+        &self,
+        channel: &ResolvedChannel,
+        reference: &MessageRefPayload,
+        message: &OutboundMessage,
+        replacement_images: Option<Vec<super::Image>>,
     ) -> Result<PreparedCard, Error> {
         let (mut old, version) = self.native_lark_reference(channel, reference).await?;
         if old.superseded
@@ -45,13 +59,23 @@ impl InteractionStore {
         if super::super::lark_form::requested(message) != form {
             return Err(Error::Denied);
         }
+        let authority = old.native_lark.as_ref().ok_or(Error::Denied)?;
+        let original_images = authority.images()?;
+        if replacement_images.as_ref().is_some_and(|images| {
+            original_images.is_empty()
+                || form
+                || images.is_empty()
+                || images.len() > cmaeg_core::message::MAX_NATIVE_ATTACHMENTS
+        }) {
+            return Err(Error::Denied);
+        }
         let revision = old.revision.checked_add(1).ok_or(Error::Denied)?;
         super::render_with_images(
             message,
             &old.id,
             revision,
             form,
-            old.native_lark.as_ref().ok_or(Error::Denied)?.images()?,
+            replacement_images.as_deref().unwrap_or(original_images),
         )?;
         old.superseded = true;
         self.save(&old, Some(version)).await?;
@@ -64,6 +88,15 @@ impl InteractionStore {
         card.reference = None;
         card.consumed = None;
         let a = card.native_lark.as_mut().unwrap();
+        if let Some(mut images) = replacement_images {
+            a.image = None;
+            a.images = None;
+            if images.len() == 1 {
+                a.image = images.pop();
+            } else {
+                a.images = Some(images);
+            }
+        }
         a.pending = None;
         a.destination = None;
         a.replacement = Some(Patch {

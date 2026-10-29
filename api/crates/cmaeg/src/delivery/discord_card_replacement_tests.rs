@@ -321,7 +321,7 @@ async fn discord_media_card_replacement_pending_cas_cannot_issue_authority_and_p
         .begin_discord_media_replacement(
             *first,
             &request,
-            Replacement::prepare(&request, &files[0]).unwrap(),
+            Replacement::prepare(&request, std::slice::from_ref(&files[0])).unwrap(),
         )
         .await
         .unwrap();
@@ -330,7 +330,7 @@ async fn discord_media_card_replacement_pending_cas_cannot_issue_authority_and_p
         .begin_discord_media_replacement(
             *racing,
             &request,
-            Replacement::prepare(&request, &files[0]).unwrap()
+            Replacement::prepare(&request, std::slice::from_ref(&files[0])).unwrap()
         )
         .await
         .is_err());
@@ -439,7 +439,7 @@ async fn discord_media_card_replacement_replay_never_refetches_expired_source_ur
         .begin_discord_media_replacement(
             *candidate,
             &request,
-            Replacement::prepare(&request, &files[0]).unwrap(),
+            Replacement::prepare(&request, std::slice::from_ref(&files[0])).unwrap(),
         )
         .await
         .unwrap();

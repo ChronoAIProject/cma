@@ -17,6 +17,16 @@ impl Default for Symbols {
                     Value::String(uuid::Uuid::new_v4().simple().to_string()),
                 ),
                 (
+                    "recent_admission".into(),
+                    Value::from(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            - 1,
+                    ),
+                ),
+                (
                     "interaction_expiry".into(),
                     Value::from(
                         std::time::SystemTime::now()

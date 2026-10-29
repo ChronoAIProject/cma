@@ -102,6 +102,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "owned_workspace_cleanup_tombstones_v1",
     "platform_settings",
     "provider_bindings",
+    "provider_binding_preparations",
     "provider_tool_opens",
     "resource_policies",
     "resource_share_commands",

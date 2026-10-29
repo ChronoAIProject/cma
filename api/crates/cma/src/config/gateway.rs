@@ -4,16 +4,27 @@ pub(crate) struct GatewayConfig {
     pub base_url: String,
     pub public_url: String,
     pub public_api_url: String,
+    /// Writers stay off until both services and rollback readers are compatible.
+    pub binding_preparation_enabled: bool,
 }
 impl GatewayConfig {
     pub(super) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Option<Self>, String> {
+        let binding_preparation_enabled = match lookup("CHRONO_CMAEG_BINDING_PREPARATION_ENABLED")?
+            .as_deref()
+        {
+            None | Some("false") => false,
+            Some("true") => true,
+            _ => {
+                return Err("CHRONO_CMAEG_BINDING_PREPARATION_ENABLED must be true or false".into())
+            }
+        };
         let base = lookup("CHRONO_CMAEG_BASE_URL")?.filter(|s| !s.is_empty());
         let public = lookup("CHRONO_CMAEG_PUBLIC_URL")?.filter(|s| !s.is_empty());
         let public_api = lookup("CHRONO_CMAEG_PUBLIC_API_URL")?.filter(|s| !s.is_empty());
         match (base, public) {
-            (None, None) if public_api.is_none() => Ok(None),
+            (None, None) if public_api.is_none() && !binding_preparation_enabled => Ok(None),
             (Some(base_url), Some(public_url)) => {
                 for (key, value) in [
                     ("CHRONO_CMAEG_BASE_URL", &base_url),
@@ -29,6 +40,7 @@ impl GatewayConfig {
                     base_url,
                     public_url,
                     public_api_url,
+                    binding_preparation_enabled,
                 }))
             }
             _ => Err(
@@ -78,6 +90,31 @@ fn validate_public_api_url(value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod public_api_tests {
     use super::*;
+    #[test]
+    fn binding_preparation_writers_are_explicit_and_default_off() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let config = GatewayConfig::from_lookup(&mut |key| {
+                Ok(match key {
+                    "CHRONO_CMAEG_BASE_URL" | "CHRONO_CMAEG_PUBLIC_URL" => {
+                        Some("https://gateway.example".into())
+                    }
+                    "CHRONO_CMAEG_BINDING_PREPARATION_ENABLED" => value.map(str::to_owned),
+                    _ => None,
+                })
+            })
+            .unwrap()
+            .unwrap();
+            assert_eq!(config.binding_preparation_enabled, expected);
+        }
+        assert!(GatewayConfig::from_lookup(&mut |key| Ok((key
+            == "CHRONO_CMAEG_BINDING_PREPARATION_ENABLED")
+            .then(|| "true".into())))
+        .is_err());
+        assert!(GatewayConfig::from_lookup(&mut |key| Ok((key
+            == "CHRONO_CMAEG_BINDING_PREPARATION_ENABLED")
+            .then(|| "1".into())))
+        .is_err());
+    }
     #[test]
     fn public_api_base_requires_a_clean_canonical_namespace() {
         for valid in [

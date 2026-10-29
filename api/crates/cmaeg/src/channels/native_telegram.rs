@@ -29,6 +29,35 @@ pub(super) fn retains_opt_in(current: &ChannelDefinition, source: &Source) -> bo
         .any(|old| crate::telegram::messaging_source(old) == before)
 }
 
+/// Removing message-event access does not require reauthorizing retained topics.
+pub(super) fn retains_topic_opt_in(current: &ChannelDefinition, source: &Source) -> bool {
+    let Source::Telegram {
+        message_events,
+        channel_posts,
+        ..
+    } = source
+    else {
+        return false;
+    };
+    current.sources.iter().any(|old| {
+        let mut retained = old.clone();
+        let Source::Telegram {
+            message_events: old_events,
+            channel_posts: old_posts,
+            ..
+        } = &mut retained
+        else {
+            return false;
+        };
+        if (*message_events && !*old_events) || (*channel_posts && !*old_posts) {
+            return false;
+        }
+        *old_events = *message_events;
+        *old_posts = *channel_posts;
+        retained == *source
+    })
+}
+
 pub(super) fn initialize(
     state: &ManagementState,
     current: Option<&ChannelDefinition>,

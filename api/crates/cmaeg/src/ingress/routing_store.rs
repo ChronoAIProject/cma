@@ -9,6 +9,7 @@
 //! future dispatcher. Delivery isolation and fenced scheduling are still absent.
 mod candidate;
 mod codec;
+mod preparation_source;
 mod recovery;
 mod store;
 mod types;

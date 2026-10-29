@@ -56,6 +56,24 @@ impl BindingEventRouter for CmaEventRouter {
         caller: &AuthenticatedResourceCaller,
         event: &mut ExternalEventContext,
     ) -> Result<Option<AgentId>, BindingRouteError> {
+        self.route_inner(caller, event, None).await
+    }
+    async fn route_at_generation(
+        &self,
+        caller: &AuthenticatedResourceCaller,
+        event: &mut ExternalEventContext,
+        generation: u64,
+    ) -> Result<Option<AgentId>, BindingRouteError> {
+        self.route_inner(caller, event, Some(generation)).await
+    }
+}
+impl CmaEventRouter {
+    async fn route_inner(
+        &self,
+        caller: &AuthenticatedResourceCaller,
+        event: &mut ExternalEventContext,
+        generation: Option<u64>,
+    ) -> Result<Option<AgentId>, BindingRouteError> {
         use BindingRouteError as E;
         let binding = self
             .store
@@ -63,6 +81,9 @@ impl BindingEventRouter for CmaEventRouter {
             .await
             .map_err(|_| E::Unavailable)?
             .ok_or(E::Forbidden)?;
+        binding
+            .require_generation(generation)
+            .map_err(|_| E::Forbidden)?;
         let manager = Caller::new(
             binding.manager.clone(),
             Authorization::new([
@@ -73,10 +94,11 @@ impl BindingEventRouter for CmaEventRouter {
         if let Some(target) = &binding.existing_agent {
             let (conversation, _) = self
                 .bindings
-                .ensure_conversation(
+                .ensure_conversation_at_generation(
                     &manager,
                     &binding.binding_id,
                     layer2_core::sandbox::binding::EXISTING_AGENT_CONVERSATION,
+                    Some(binding.generation),
                 )
                 .await
                 .map_err(|_| E::Unavailable)?;
@@ -103,7 +125,12 @@ impl BindingEventRouter for CmaEventRouter {
         let session = source_user_session(&binding.binding_id, binding.generation, &activity)?;
         let (conversation, _) = self
             .bindings
-            .ensure_conversation(&manager, &binding.binding_id, &session)
+            .ensure_conversation_at_generation(
+                &manager,
+                &binding.binding_id,
+                &session,
+                Some(binding.generation),
+            )
             .await
             .map_err(|_| E::Unavailable)?;
         match conversation.state {

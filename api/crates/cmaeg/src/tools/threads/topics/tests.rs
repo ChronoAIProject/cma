@@ -13,6 +13,8 @@ use reqwest::{header::HeaderMap, StatusCode, Url};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Mutex, time::Duration};
 
+#[path = "general_tests.rs"]
+mod general;
 #[path = "rename_tests.rs"]
 mod rename;
 
@@ -58,7 +60,12 @@ impl TelegramTransport for Telegram {
                     "getChatMember" => {
                         json!({"user":{"id":77,"is_bot":true},"status":"administrator","can_manage_topics":true})
                     }
-                    "closeForumTopic" | "reopenForumTopic" | "editForumTopic" => json!(true),
+                    "closeForumTopic"
+                    | "reopenForumTopic"
+                    | "editForumTopic"
+                    | "closeGeneralForumTopic"
+                    | "reopenGeneralForumTopic"
+                    | "editGeneralForumTopic" => json!(true),
                     other => panic!("unexpected native method {other}"),
                 };
                 let (status, value) = memory
@@ -106,6 +113,17 @@ async fn fixture_with_consent(
     topic: i64,
     consent: bool,
 ) -> (App, Arc<Telegram>) {
+    let raw = json!({"update_id":101,"message":{"message_id":800,"date":now()-5,
+        "chat":{"id":chat,"type":if chat<0 {"supergroup"} else {"private"}},"from":{"id":51,"is_bot":false,"first_name":"Alice"},
+        "text":"Please finish this topic","is_topic_message":true,"message_thread_id":topic}});
+    fixture_with_native_message(named, consent, raw, false).await
+}
+async fn fixture_with_native_message(
+    named: bool,
+    consent: bool,
+    raw: Value,
+    general_enabled: bool,
+) -> (App, Arc<Telegram>) {
     let mut app = App::new(None, named).await;
     app.definition.sources = vec![serde_json::from_value(
         json!({"type":"telegram","bot_id":"77","admission":{"type":"all"},"topic_lifecycle":consent}),
@@ -121,9 +139,6 @@ async fn fixture_with_consent(
         .resolve_current(app.event.channel_id.as_str())
         .await
         .unwrap();
-    let raw = json!({"update_id":101,"message":{"message_id":800,"date":now()-5,
-        "chat":{"id":chat,"type":if chat<0 {"supergroup"} else {"private"}},"from":{"id":51,"is_bot":false,"first_name":"Alice"},
-        "text":"Please finish this topic","is_topic_message":true,"message_thread_id":topic}});
     let crate::ingress::telegram::Outcome::Admitted(observed) =
         crate::ingress::telegram::observe(raw.clone(), "77", None, false, false).unwrap()
     else {
@@ -151,11 +166,14 @@ async fn fixture_with_consent(
     .await;
     app.source_body = raw;
     let telegram = Arc::new(Telegram::default());
-    app.state.telegram_topics = Some(Arc::new(TelegramTopics::new(Arc::new(
-        TelegramClient::production(Duration::from_secs(1))
-            .unwrap()
-            .with_transport(telegram.clone()),
-    ))));
+    app.state.telegram_topics = Some(Arc::new(
+        TelegramTopics::new(Arc::new(
+            TelegramClient::production(Duration::from_secs(1))
+                .unwrap()
+                .with_transport(telegram.clone()),
+        ))
+        .with_general_topics(general_enabled),
+    ));
     app.state.discord_threads = None;
     app.mount().await;
     (app, telegram)
