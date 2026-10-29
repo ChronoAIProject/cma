@@ -95,7 +95,7 @@ async fn media_manager(State(requests): State<Requests>, request: Request) -> Re
 async fn media_worker_restart_after_original_completion_delivers_late_transcript_without_original_replay(
 ) {
     let waiters = Arc::new(SyncRegistry::default());
-    let (waiter_id, waiter) = waiters.register().unwrap();
+    let (waiter_id, waiter) = waiters.register_with_media_responses(true).unwrap();
     let custom = CustomDelivery::new("https://gateway.example".into(), waiters);
     let original_bytes = b"RIFF\x10\x00\x00\x00WAVEfmt \x00\x00\x00\x00";
     let mut activity = fixture::custom(None);
