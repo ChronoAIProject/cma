@@ -70,7 +70,10 @@ impl BindingService {
         if binding.existing_agent.is_some() || binding.state == BindingState::Retired {
             return Err(BindingError::Conflict);
         }
-        if !matches!(binding.state, BindingState::Failed { .. }) {
+        if !matches!(
+            binding.state,
+            BindingState::Ready | BindingState::Failed { .. }
+        ) {
             super::readiness::validate(self.store.as_ref(), &binding).await?;
             return Ok(BindingPreparationInspection::Current {
                 binding_id: binding.binding_id,
@@ -96,6 +99,7 @@ impl BindingService {
         }
         // Recoverable originals remain on the existing background recovery path.
         if sandbox.status != crate::sandbox::SandboxStatus::Retired {
+            super::readiness::validate(self.store.as_ref(), &binding).await?;
             return Ok(BindingPreparationInspection::Current {
                 binding_id: binding.binding_id,
                 generation: binding.generation,
