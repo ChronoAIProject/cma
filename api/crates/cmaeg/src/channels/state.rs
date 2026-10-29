@@ -10,7 +10,11 @@ use cmaeg_core::{
     seal::{ChannelPointer, MasterKeyRing},
     ValidationError,
 };
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
@@ -42,6 +46,10 @@ pub struct ManagementState {
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
+    /// Writer gate only; retained opt-ins continue through the durable reader.
+    pub custom_durable_execution_enabled: bool,
+    /// Providers whose existing-Agent original-media continuation path is ready.
+    pub custom_existing_agent_media_providers: BTreeSet<String>,
     pub multi_consumer_writes_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
@@ -88,6 +96,7 @@ pub(crate) struct CachedResponse {
 impl ManagementState {
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
+            durable_custom_execution: self.custom_durable_execution_enabled,
             native_lark: self.native_lark_writes_enabled,
             native_whatsapp_message_events: self.native_whatsapp_message_events_enabled
                 && self.native_whatsapp_admission_enabled,
@@ -176,6 +185,8 @@ impl ManagementState {
             native_bot_mentions_writes_enabled: false,
             thread_contract_writes_enabled: false,
             media_enabled: false,
+            custom_durable_execution_enabled: false,
+            custom_existing_agent_media_providers: BTreeSet::new(),
             multi_consumer_writes_enabled: false,
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,

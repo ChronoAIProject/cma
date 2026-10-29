@@ -1,6 +1,7 @@
 //! NyxID relay transport. A lost response never proves that nothing was sent.
 #[path = "relay_wire.rs"]
 mod wire;
+pub(super) use wire::unknown;
 use wire::{credential_secret, headers, retry_after, serialize_reply, valid_id};
 mod discord;
 mod initiated;
@@ -127,6 +128,8 @@ pub struct RelayClient {
     pub(super) native_media_presentations: bool,
     pub(super) native_discord_voice: bool,
     pub(super) discord_voice_decoder: Option<crate::discord::voice::Decoder>,
+    pub(super) native_telegram_structured_replies: bool,
+    pub(super) native_whatsapp_structured_replies: bool,
     pub(super) native_telegram_albums: bool,
     pub(super) native_lark_thread_start: bool,
     pub(super) native_lark_forms: bool,
@@ -268,6 +271,8 @@ impl RelayClient {
             native_media_presentations: false,
             native_discord_voice: false,
             discord_voice_decoder: None,
+            native_telegram_structured_replies: false,
+            native_whatsapp_structured_replies: false,
             native_telegram_albums: false,
             native_lark_thread_start: false,
             native_lark_forms: false,
@@ -490,10 +495,5 @@ impl RelayClient {
             },
             Some(receipt.message_id),
         )
-    }
-}
-pub(super) fn unknown(reason: &str) -> DeliveryOutcome {
-    DeliveryOutcome::Unknown {
-        reason: reason.into(),
     }
 }

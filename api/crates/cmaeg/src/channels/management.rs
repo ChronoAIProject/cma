@@ -74,6 +74,8 @@ pub async fn create(
         state.write_flags(),
     )
     .map_err(ManagementError::Invalid)?;
+    super::custom_execution::validate_providers(&state.providers, &definition)?;
+    super::custom_execution::validate_media(state, None, &definition)?;
     super::native_telegram::initialize(state, None, &mut definition)?;
     let pointer =
         channel_pointer(&state.cma_base_url, &record_id).map_err(ManagementError::Invalid)?;
@@ -268,6 +270,8 @@ pub async fn update(
     let mut definition = build_update(&request, &current.definition, state.write_flags())
         .map_err(ManagementError::Invalid)?;
     super::native_telegram::initialize(state, Some(&current.definition), &mut definition)?;
+    super::custom_execution::validate_providers(&state.providers, &definition)?;
+    super::custom_execution::validate_media(state, Some(&current.definition), &definition)?;
     definition.version = current.record.version;
     if definition.routing.is_none()
         || definition.secrets.whatsapp != current.definition.secrets.whatsapp

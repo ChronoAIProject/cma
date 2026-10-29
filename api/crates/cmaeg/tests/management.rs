@@ -201,6 +201,9 @@ mod creation;
 #[path = "management/reconciliation.rs"]
 mod reconciliation;
 
+#[path = "management/reconfiguration.rs"]
+mod reconfiguration;
+
 #[path = "management/targets.rs"]
 mod targets;
 
@@ -261,3 +264,6 @@ mod native_telegram;
 
 #[path = "management/native_lark.rs"]
 mod native_lark;
+
+#[path = "management/custom_execution.rs"]
+mod custom_execution;

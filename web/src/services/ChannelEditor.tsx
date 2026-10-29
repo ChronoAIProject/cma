@@ -21,6 +21,7 @@ import {
   type EditorSection,
   type Fields,
 } from './channelForm/model';
+import { customExecutionRequest, customExecutionWaiting } from './channelForm/customExecution';
 export type { EditorSection } from './channelForm/model';
 export interface Channel {
   native_discord_activation?: {
@@ -51,6 +52,7 @@ export interface Channel {
     reply?: unknown;
     routing?: unknown;
     connection_ref?: string;
+    durable_custom_execution?: boolean;
   };
   endpoints: {
     custom_event_url: string;
@@ -108,6 +110,7 @@ export function ChannelEditor({
   const [notice, setNotice] = useState<string>();
   const [busy, setBusy] = useState(false);
   const create = !baseline;
+  const checkingCustomSupport = create && customExecutionWaiting(discovery, draft);
   const additional = section.kind === 'consumer' && section.id !== 'default';
   async function send(request: Pending) {
     setBusy(true);
@@ -177,7 +180,7 @@ export function ChannelEditor({
           baseline ? channelDraft(baseline) : undefined,
           selectedCredentials,
         );
-      const body =
+      const body: Fields =
         kind === 'routing'
           ? {
               expected_version: baseline?.version,
@@ -191,7 +194,10 @@ export function ChannelEditor({
                 ),
               ),
             }
-          : channelRequest(projected, selectedCredentials, baseline, record);
+          : {
+              ...channelRequest(projected, selectedCredentials, baseline, record),
+              ...(!baseline ? customExecutionRequest(discovery, projected) : {}),
+            };
       const request: Pending = {
         key: crypto.randomUUID(),
         body: JSON.stringify(body),
@@ -259,18 +265,23 @@ export function ChannelEditor({
               section={section}
               create={create}
               sourceCount={baseline?.definition.sources.length ?? 0}
+              savedCustomExecution={baseline?.definition.durable_custom_execution}
               denied={denied}
             />
           </fieldset>
           {!pending ? (
-            <Button type="submit" variant="primary" disabled={busy}>
-              {create
-                ? 'Create channel'
-                : section.kind === 'producer'
-                  ? 'Save producer'
-                  : section.kind === 'consumer'
-                    ? 'Save agent settings'
-                    : 'Save channel'}
+            <Button type="submit" variant="primary" disabled={busy || checkingCustomSupport}>
+              {checkingCustomSupport
+                ? discovery.status === 'loading'
+                  ? 'Checking support…'
+                  : 'Check support to continue'
+                : create
+                  ? 'Create channel'
+                  : section.kind === 'producer'
+                    ? 'Save producer'
+                    : section.kind === 'consumer'
+                      ? 'Save agent settings'
+                      : 'Save channel'}
             </Button>
           ) : null}
         </form>

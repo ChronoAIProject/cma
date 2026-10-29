@@ -56,6 +56,9 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// Exclusive static structured reply kinds supported for this exact retained event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_replies: Option<Vec<String>>,
     /// Resend this event's received native Lark sticker to its original conversation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_with_received_sticker: Option<bool>,
@@ -233,6 +236,7 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        structured_replies: None,
         reply_with_received_sticker: None,
         native_thread_start: (state.native_lark_thread_start_enabled
             && activity_verified

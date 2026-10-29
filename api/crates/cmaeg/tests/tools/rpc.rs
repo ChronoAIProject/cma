@@ -152,6 +152,27 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
         .iter_mut()
         .zip(golden["tools"].as_array().unwrap())
     {
+        let structured = tool["inputSchema"]["$defs"]
+            .as_object_mut()
+            .unwrap()
+            .remove("StructuredContent")
+            .unwrap();
+        assert_eq!(
+            structured,
+            serde_json::from_str::<Value>(include_str!(
+                "../fixtures/structured-content-schema.json"
+            ))
+            .unwrap()
+        );
+        let selector = tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("structured_content")
+            .unwrap();
+        assert_eq!(
+            selector,
+            json!({"$ref":"#/$defs/StructuredContent", "description":"Exclusive contact card, static location or venue; only when advertised for the original event."})
+        );
         let mut context = tool["inputSchema"]["$defs"]
             .as_object_mut()
             .unwrap()

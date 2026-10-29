@@ -245,6 +245,7 @@ impl TurnRunner {
         };
         let retry_deadline = Instant::now() + self.config.busy_retry_max;
         let mut ensured = false;
+        let mut ensure_pending = false;
         let mut change = crate::activity::Change::state(
             consumer.id.as_str(),
             crate::activity::ConsumerState::Dispatching,
@@ -261,21 +262,35 @@ impl TurnRunner {
             )
             .await;
         loop {
-            match self
-                .providers
-                .start_turn_immediate(&consumer.provider.slug, request.clone())
-                .await
-            {
+            let result = if ensure_pending {
+                match self
+                    .providers
+                    .ensure_conversation(
+                        &consumer.provider.slug,
+                        &consumer.provider.binding_id,
+                        &turn.conversation_id,
+                        credential,
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        ensure_pending = false;
+                        continue;
+                    }
+                    // Keep the same pending conversation and event while the
+                    // provider explicitly asks us to wait before admission.
+                    Err(error @ ProviderError::Busy { .. }) => Err(error),
+                    Err(error) => return Err(error),
+                }
+            } else {
+                self.providers
+                    .start_turn_immediate(&consumer.provider.slug, request.clone())
+                    .await
+            };
+            match result {
                 Err(ProviderError::ConversationMissing) if !ensured => {
                     ensured = true;
-                    self.providers
-                        .ensure_conversation(
-                            &consumer.provider.slug,
-                            &consumer.provider.binding_id,
-                            &turn.conversation_id,
-                            credential,
-                        )
-                        .await?;
+                    ensure_pending = true;
                 }
                 Err(ProviderError::Busy { retry_after }) => {
                     let remaining = retry_deadline.saturating_duration_since(Instant::now());

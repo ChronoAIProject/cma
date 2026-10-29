@@ -35,6 +35,13 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
+            if message.structured_content.is_some() {
+                return Err(Problem::new(
+                    ProblemCode::InvalidRequest,
+                    400,
+                    "structured_content_requires_replyToEvent",
+                ));
+            }
             if message.reply_with_received_sticker {
                 return Err(Problem::new(
                     ProblemCode::InvalidRequest,

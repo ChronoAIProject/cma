@@ -12,6 +12,7 @@ mod reaction;
 pub mod receipts;
 pub(crate) mod shared_facts;
 pub(crate) mod status;
+pub(crate) mod structured;
 pub(crate) mod templates;
 mod typing;
 pub mod webhook;
@@ -110,3 +111,6 @@ pub(crate) fn without_message_events(
 
 #[cfg(test)]
 pub(crate) mod message_changes_tests;
+
+#[cfg(test)]
+pub(crate) mod structured_tests;

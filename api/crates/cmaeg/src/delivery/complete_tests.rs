@@ -133,6 +133,7 @@ fn setup() -> (
 fn message(text: String) -> OutboundMessage {
     OutboundMessage {
         whatsapp_template: None,
+        structured_content: None,
         reply_with_received_sticker: false,
         clear_native_attachments: false,
         native_media_update: None,
