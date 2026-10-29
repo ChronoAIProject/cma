@@ -13,6 +13,20 @@ pub(crate) enum Mutation<'a> {
     Rename { name: &'a str },
 }
 
+/// General is proven from the retained native forum envelope, never a missing ID alone.
+pub(crate) enum Scope {
+    Numbered(String),
+    General,
+}
+impl Scope {
+    pub(crate) fn id(&self) -> &str {
+        match self {
+            Self::Numbered(id) => id,
+            Self::General => "1",
+        }
+    }
+}
+
 impl TelegramClient {
     /// Requires administrator rights even for a creator-owned topic.
     /// Reads are completed before the shared tool performs its final custody check.
@@ -64,17 +78,25 @@ impl TelegramClient {
         token: &Secret,
         bot: &str,
         chat: &str,
-        topic: &str,
+        topic: &Scope,
         action: Mutation<'_>,
     ) -> Result<(), Error> {
-        if !super::media_token_matches(token, bot) || !valid_chat(chat) || !valid_topic(topic) {
+        if !super::media_token_matches(token, bot)
+            || !valid_chat(chat)
+            || matches!(topic, Scope::Numbered(id) if !valid_topic(id))
+        {
             return Err(Error::Rejected);
         }
-        let mut body = json!({"chat_id":chat,"message_thread_id":topic.parse::<i64>().map_err(|_| Error::Rejected)?});
-        let method = match action {
-            Mutation::Close => "closeForumTopic",
-            Mutation::Reopen => "reopenForumTopic",
-            Mutation::Rename { name } => {
+        let mut body = json!({"chat_id":chat});
+        if let Scope::Numbered(id) = topic {
+            body["message_thread_id"] = json!(id.parse::<i64>().map_err(|_| Error::Rejected)?);
+        }
+        let method = match (action, topic) {
+            (Mutation::Close, Scope::General) => "closeGeneralForumTopic",
+            (Mutation::Reopen, Scope::General) => "reopenGeneralForumTopic",
+            (Mutation::Close, Scope::Numbered(_)) => "closeForumTopic",
+            (Mutation::Reopen, Scope::Numbered(_)) => "reopenForumTopic",
+            (Mutation::Rename { name }, scope) => {
                 // Telegram accepts 128 characters; the shared public contract is 100.
                 if name.trim().is_empty()
                     || name.chars().count() > 100
@@ -83,7 +105,10 @@ impl TelegramClient {
                     return Err(Error::Rejected);
                 }
                 body["name"] = json!(name);
-                "editForumTopic"
+                match scope {
+                    Scope::General => "editGeneralForumTopic",
+                    Scope::Numbered(_) => "editForumTopic",
+                }
             }
         };
         let result = self.call(token, method, &body).await?;

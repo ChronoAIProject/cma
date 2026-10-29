@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { NativeMediaCapabilitiesSchema } from '../src/cmaeg/types/messages.js';
+import {
+  NativeMediaCapabilitiesSchema,
+  OutboundMessageSchema,
+} from '../src/cmaeg/types/messages.js';
 
 describe('native media/control discovery', () => {
   const legacy = {
@@ -76,6 +79,34 @@ describe('native media/control discovery', () => {
       },
     };
     expect(NativeMediaCapabilitiesSchema(value)).toEqual(value);
+  });
+  it('keeps explicit Lark replacement authority separate from new-card issuance count', () => {
+    const capabilities = {
+      ...legacy,
+      controls: {
+        kinds: ['image'],
+        max_attachments: 1,
+        buttons: true,
+        choices: true,
+        caption_max_chars: 0,
+        update: true,
+        replace_media: true,
+      },
+    };
+    expect(NativeMediaCapabilitiesSchema(capabilities)).toEqual(capabilities);
+    for (const count of [1, 4]) {
+      const request = {
+        text: 'Replacement images',
+        blocks: [{ type: 'buttons', id: 'approval', options: [{ id: 'yes', label: 'Yes' }] }],
+        native_attachments: Array.from({ length: count }, (_, index) => ({
+          kind: 'image',
+          source: { type: 'base64', data: 'cG5n' },
+          filename: `replacement-${index}.png`,
+          mime_type: 'image/png',
+        })),
+      };
+      expect(OutboundMessageSchema(request)).toEqual(request);
+    }
   });
   it('keeps legacy capability bytes without inventing combined delivery', () => {
     expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);

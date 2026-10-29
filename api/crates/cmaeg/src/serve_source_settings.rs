@@ -100,6 +100,9 @@ pub(super) async fn configure(
     state.native_telegram_topic_lifecycle_enabled = config.native_telegram_topic_lifecycle_enabled
         && state.native_telegram_durable_admission_enabled
         && state.records.thread_fences_ready().await;
+    state.native_telegram_general_topic_lifecycle_enabled = config
+        .native_telegram_general_topic_lifecycle_enabled
+        && state.native_telegram_topic_lifecycle_enabled;
     state.native_discord_thread_lifecycle_enabled =
         config.native_discord_thread_lifecycle_enabled && state.records.thread_fences_ready().await;
     state.native_lark_conversation_history_enabled =
@@ -113,6 +116,23 @@ pub(super) async fn configure(
 }
 
 impl crate::delivery::relay_client::RelayClient {
+    pub(super) fn with_native_lark_config(
+        self,
+        config: &Config,
+        controls: bool,
+        thread_start: bool,
+    ) -> Self {
+        self.with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
+            .with_native_lark_effects(config.native_lark_message_effects_enabled)
+            .with_native_lark_controls(controls, config.native_lark_forms_enabled)
+            .with_native_lark_media_controls(config.native_lark_media_controls_enabled)
+            .with_native_lark_multi_image_controls(config.native_lark_multi_image_controls_enabled)
+            .with_native_lark_media_card_replacements(
+                config.native_lark_media_card_replacements_enabled,
+            )
+            .with_native_lark_thread_start(thread_start)
+    }
+
     pub(super) fn with_native_whatsapp_config(self, config: &Config) -> Self {
         self.with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
             .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
@@ -120,4 +140,17 @@ impl crate::delivery::relay_client::RelayClient {
             .with_native_whatsapp_media_controls(config.native_whatsapp_media_controls_enabled)
             .with_native_whatsapp_groups(config.native_whatsapp_groups_enabled)
     }
+}
+
+/// Compose topic execution only after the effective persistent-store gates are set.
+pub(super) fn telegram_topics(
+    state: &ManagementState,
+    api: Arc<crate::telegram::TelegramClient>,
+) -> Option<Arc<crate::tools::TelegramTopics>> {
+    state.native_telegram_topic_lifecycle_enabled.then(|| {
+        Arc::new(
+            crate::tools::TelegramTopics::new(api)
+                .with_general_topics(state.native_telegram_general_topic_lifecycle_enabled),
+        )
+    })
 }

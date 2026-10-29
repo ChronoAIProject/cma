@@ -92,6 +92,7 @@ pub fn frozen(
         .unwrap();
     FrozenTurn {
         conversation_id: target.launch.event.conversation_id.clone(),
+        binding_generation: None,
         idempotency_key: target.launch.idempotency_key.clone(),
         input: vec![json!({"role":"user","content":"x".repeat(size)})],
         metadata: std::collections::BTreeMap::new(),

@@ -134,3 +134,38 @@ async fn capability_and_owned_connection_discovery_require_authentication() {
     }
     server.abort();
 }
+
+#[tokio::test]
+async fn telegram_general_capability_requires_its_gate_and_all_topic_prerequisites() {
+    let fixture = Fixture::new().await;
+    assert!(
+        !fixture
+            .service()
+            .management
+            .native_telegram_general_topic_lifecycle_enabled
+    );
+    for bits in 0..16 {
+        let mut service = fixture.service();
+        service
+            .management
+            .native_telegram_general_topic_lifecycle_enabled = bits & 1 != 0;
+        service.management.native_telegram_topic_lifecycle_enabled = bits & 2 != 0;
+        service.management.native_telegram_durable_admission_enabled = bits & 4 != 0;
+        service.management.multi_consumer_writes_enabled = bits & 8 != 0;
+        let response =
+            crate::http::connections::capabilities(State(service), owner("alice", false)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            value["relay_authoring"]["native_telegram_general_topic_lifecycle_enabled"],
+            bits == 15
+        );
+        assert_eq!(
+            value["relay_authoring"]["native_telegram_topic_lifecycle_enabled"],
+            bits & 14 == 14
+        );
+    }
+}

@@ -34,6 +34,9 @@ pub(super) fn worktree_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        IndexModel::builder()
+            .keys(doc! { "record.sandbox_id": 1 })
+            .build(),
     ]
 }
 
