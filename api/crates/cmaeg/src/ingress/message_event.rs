@@ -180,3 +180,13 @@ impl super::IngressState {
         self.launch_retained_message_event(verified, hold).await
     }
 }
+
+#[cfg(test)]
+pub(crate) fn bind_for_generation_test(
+    request: LaunchRequest,
+    original: &AdmittedPlan,
+    keys: &MasterKeyRing,
+    now: i64,
+) -> Result<(LaunchRequest, RoutedPlan), PlanError> {
+    bind(request, original, keys, now)
+}

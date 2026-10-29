@@ -184,8 +184,39 @@ impl ProviderClient {
         conversation_id: &ConversationId,
         agent_key: &Secret,
     ) -> Result<(), ProviderError> {
-        self.conversation_request(provider, binding_id, conversation_id, agent_key, false)
-            .await
+        self.conversation_request(
+            provider,
+            binding_id,
+            conversation_id,
+            agent_key,
+            false,
+            None,
+        )
+        .await
+    }
+
+    pub async fn ensure_conversation_at_generation(
+        &self,
+        provider: &ProviderSlug,
+        binding_id: &BindingId,
+        conversation_id: &ConversationId,
+        agent_key: &Secret,
+        generation: Option<u64>,
+    ) -> Result<(), ProviderError> {
+        if generation == Some(0) {
+            return Err(ProviderError::InvalidRequest(
+                "invalid binding generation".into(),
+            ));
+        }
+        self.conversation_request(
+            provider,
+            binding_id,
+            conversation_id,
+            agent_key,
+            false,
+            generation,
+        )
+        .await
     }
 
     pub async fn delete_conversation(
@@ -195,7 +226,7 @@ impl ProviderClient {
         conversation_id: &ConversationId,
         agent_key: &Secret,
     ) -> Result<(), ProviderError> {
-        self.conversation_request(provider, binding_id, conversation_id, agent_key, true)
+        self.conversation_request(provider, binding_id, conversation_id, agent_key, true, None)
             .await
     }
 
@@ -206,6 +237,7 @@ impl ProviderClient {
         conversation_id: &ConversationId,
         agent_key: &Secret,
         delete: bool,
+        generation: Option<u64>,
     ) -> Result<(), ProviderError> {
         let handle = self.handle(provider)?;
         let _permit = acquire(&handle.inflight).await?;
@@ -220,20 +252,16 @@ impl ProviderClient {
             )
             .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
         let bearer = self.management_bearer(provider, &url, agent_key).await?;
-        let request = if delete {
-            handle
-                .client
-                .delete(url)
-                .bearer_auth(bearer.as_str())
-                .send()
+        let mut request = if delete {
+            handle.client.delete(url)
         } else {
-            handle
-                .client
-                .put(url)
-                .bearer_auth(bearer.as_str())
-                .json(&json!({}))
-                .send()
+            handle.client.put(url).json(&json!({}))
         };
+        request = request.bearer_auth(bearer.as_str());
+        if let Some(generation) = generation {
+            request = request.header("x-cma-binding-generation", generation);
+        }
+        let request = request.send();
         let response = tokio::time::timeout(self.request_timeout, request)
             .await
             .map_err(|_| ProviderError::Unavailable("provider request timed out".into()))?
@@ -357,7 +385,7 @@ impl ProviderClient {
             .ok_or_else(|| ProviderError::UnknownProvider(provider.to_string()))
     }
 
-    async fn success_or_error(
+    pub(super) async fn success_or_error(
         &self,
         response: reqwest::Response,
     ) -> Result<reqwest::Response, ProviderError> {

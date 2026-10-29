@@ -151,6 +151,14 @@ impl BindingCredentialCustody for MongoBindingCredentials {
         self.retry_recovered(binding, None).await
     }
 
+    async fn prepare_retired_binding(
+        &self,
+        intent: &layer2_core::sandbox::binding::BindingPreparationIntent,
+        credential: &ProvidedCredential,
+    ) -> Result<layer2_core::sandbox::binding::BindingPreparationReceipt, CoreError> {
+        self.prepare_retired(intent, credential).await
+    }
+
     async fn forget_binding(
         &self,
         binding: &ProviderBinding,

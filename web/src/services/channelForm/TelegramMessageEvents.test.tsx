@@ -145,3 +145,33 @@ it('keeps topic management independent, preserves saved opt-in and supports opt-
     ),
   ).not.toThrow();
 });
+
+it('discloses General availability and reopen visibility only when separately enabled', () => {
+  const onChange = vi.fn();
+  const view = render(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={source} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  expect(screen.getByText(/General topics are unavailable/)).toBeInTheDocument();
+  view.rerender(
+    <RelayCapabilitiesContext
+      value={{
+        ...available,
+        authoring: {
+          ...available.authoring!,
+          native_telegram_topic_lifecycle_enabled: true,
+          native_telegram_general_topic_lifecycle_enabled: true,
+        },
+      }}
+    >
+      <SourceFields value={source} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  expect(
+    screen.getByText(/General topics are included; reopening General also makes it visible/),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/General topics are unavailable/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('Manage the original forum topic'));
+  expect(onChange).toHaveBeenLastCalledWith({ ...source, topic_lifecycle: true });
+});

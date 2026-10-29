@@ -6,12 +6,14 @@ use crate::{
 };
 use reqwest::Method;
 use serde_json::Value;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 pub(super) type Call = (Method, Url, HeaderMap, Vec<u8>);
 pub(super) struct Api {
     pub calls: Mutex<Vec<Call>>,
     pub fault: AtomicU8,
+    pub upload_fault_at: AtomicU8,
+    pub unique_images: AtomicBool,
     pub after_upload: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub memory: Arc<Memory>,
     thread: bool,
@@ -44,15 +46,29 @@ impl native_lark::Transport for Api {
                 .any(|(_, url, _, _)| url.path().ends_with("/images"));
             json!({"code":0,"bot":{"open_id":if fault == 6 && uploaded { "ou_replaced_bot" } else { "ou_native_bot" }}})
         } else if url.path().ends_with("/images") {
+            let index = self
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, u, _, _)| u.path().ends_with("/images"))
+                .count();
+            let at = self.upload_fault_at.load(Ordering::SeqCst);
+            let applies = at == 0 || usize::from(at) == index;
             if let Some(callback) = self.after_upload.lock().unwrap().take() {
                 callback();
             }
-            if fault == 1 {
+            if fault == 1 && applies {
                 json!({"code":0,"data":{"file_key":"file_wrong"}})
-            } else if fault == 2 {
+            } else if fault == 2 && applies {
                 json!({"code":999,"msg":"rejected"})
             } else {
-                json!({"code":0,"data":{"image_key":"img_confirmed_card"}})
+                let key = if self.unique_images.load(Ordering::SeqCst) {
+                    format!("img_confirmed_card_{index}")
+                } else {
+                    "img_confirmed_card".into()
+                };
+                json!({"code":0,"data":{"image_key":key}})
             }
         } else if method == Method::GET {
             json!({"code":0,"data":{"items":[row]}})
@@ -80,6 +96,8 @@ pub(super) fn sender(f: &Fixture) -> (Sender, Arc<Api>) {
     let api = Arc::new(Api {
         calls: Mutex::default(),
         fault: AtomicU8::new(0),
+        upload_fault_at: AtomicU8::new(0),
+        unique_images: AtomicBool::new(false),
         after_upload: Mutex::default(),
         memory: f.server.memory.clone(),
         thread: f.context.activity.conversation.thread_id.is_some(),

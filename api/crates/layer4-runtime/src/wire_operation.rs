@@ -15,6 +15,7 @@ pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
         "install" => WireOperation::Install,
         "bootstrap_restore" => WireOperation::BootstrapRestore,
         "prepare_workspace" => WireOperation::PrepareWorkspace,
+        "recover_workspace_prepare" => WireOperation::RecoverWorkspacePrepare,
         "workspace_setup" => WireOperation::WorkspaceSetup,
         "remove_workspace" => WireOperation::RemoveWorkspace,
         "add_worktree" => WireOperation::AddWorktree,
@@ -33,4 +34,51 @@ pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
         "resources" => WireOperation::Resources,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use layer3_adapter::wire::RequestFrame;
+    use serde::de::{value::MapDeserializer, Error};
+    use serde::Deserialize;
+
+    #[derive(Debug)]
+    struct Tags(Option<&'static [&'static str]>);
+
+    impl std::fmt::Display for Tags {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("collect the shared request tags")
+        }
+    }
+
+    impl std::error::Error for Tags {}
+
+    impl Error for Tags {
+        fn custom<T: std::fmt::Display>(_message: T) -> Self {
+            Self(None)
+        }
+
+        fn unknown_variant(_variant: &str, expected: &'static [&'static str]) -> Self {
+            Self(Some(expected))
+        }
+    }
+
+    #[test]
+    fn every_shared_request_tag_has_the_exact_http_operation() {
+        // Ask the shared deserializer for its actual variants, so a new frame
+        // cannot silently bypass this guard by being omitted from a test list.
+        let unknown = MapDeserializer::<_, Tags>::new([("t", "unknown_control_tag")].into_iter());
+        let tags = RequestFrame::deserialize(unknown).unwrap_err().0.unwrap();
+        assert!(!tags.is_empty());
+        for tag in tags {
+            let operation = serde_json::from_value::<WireOperation>((*tag).into()).unwrap();
+            assert_eq!(
+                for_tag(tag),
+                Some(operation),
+                "unrecognized shared tag {tag}"
+            );
+        }
+        assert_eq!(for_tag("unknown_control_tag"), None);
+    }
 }

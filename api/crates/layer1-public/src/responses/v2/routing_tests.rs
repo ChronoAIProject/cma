@@ -118,3 +118,69 @@ fn callers_cannot_inject_provider_session_selection_into_transport_context() {
     value["provider_conversation_id"] = "conversation-external".into();
     assert!(super::event_context::parse(value).is_err());
 }
+
+#[tokio::test]
+async fn stale_provider_generation_is_rejected_before_source_user_routing_or_command_admission() {
+    struct MustNotRoute;
+    #[async_trait::async_trait]
+    impl BindingEventRouter for MustNotRoute {
+        async fn route(
+            &self,
+            _: &crate::AuthenticatedResourceCaller,
+            _: &mut ExternalEventContext,
+        ) -> Result<Option<AgentId>, BindingRouteError> {
+            panic!("stale generation must not select or create a source-user Agent")
+        }
+    }
+    let (app, _, _, principal) = binding_tests::fixture_for_owner_with_router(
+        BindingConversationState::Ready,
+        false,
+        "human",
+        Some(Arc::new(MustNotRoute)),
+    )
+    .await;
+    let response = app.oneshot(binding_tests::request("/api/v2/responses", &principal,
+        json!({"conversation":"source-chat", "stream":true, "input":"stale",
+            "binding_generation":principal.generation()+1, "event_context":payload("source-chat", "stale-event")})))
+        .await.unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(response.headers().get("x-cma-response-id").is_none());
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(body["error"]["code"], "binding_generation_changed");
+}
+
+#[tokio::test]
+async fn current_provider_generation_keeps_source_user_submission_and_replay() {
+    let (app, _, _, principal) = binding_tests::fixture_for_owner_with_router(
+        BindingConversationState::Ready,
+        false,
+        "human",
+        Some(Arc::new(ProviderSelection)),
+    )
+    .await;
+    let body = json!({"conversation":"source-chat", "stream":true,"input":"hello",
+        "binding_generation":principal.generation(), "event_context":payload("source-chat", "fresh-event")});
+    let first = app
+        .clone()
+        .oneshot(binding_tests::request(
+            "/api/v2/responses",
+            &principal,
+            body.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let response_id = first.headers()["x-cma-response-id"].clone();
+    drop(first);
+    let replay = app
+        .oneshot(binding_tests::request(
+            "/api/v2/responses",
+            &principal,
+            body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(replay.headers()["x-cma-response-id"], response_id);
+}

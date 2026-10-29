@@ -3,6 +3,8 @@ mod attachment_compose;
 mod attachment_view;
 mod attachments;
 mod context;
+mod native_typing;
+pub use native_typing::NativeTyping;
 mod form_preparation;
 pub use crate::whatsapp::forms::service::{
     FormCustomerMessage, FormPreparationReceipt, FormPreparationState,
