@@ -15,6 +15,9 @@ mod tools;
 pub mod types;
 use crate::{Client, ClientBuilder, Result};
 pub use events::{EventOptions, GatewayEvent, GatewayStream, TextDelta, TurnResult, WebhookAuth};
+pub use events::{
+    GatewayMediaEvent, GatewayMediaStream, MediaResponse, MediaTurnResult, OriginalMediaResponse,
+};
 pub use signing::{WebhookHeaders, sign_webhook};
 use std::time::Duration;
 
