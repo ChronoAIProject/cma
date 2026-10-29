@@ -132,7 +132,7 @@ data:
   # manual/daily updates. Prewarm this exact image before release promotion.
   # Active work finishes before an admitted update; deployment never rotates it.
   # API/Web rollback retains this runtime pointer and the original user PVCs.
-  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:a431fc69c34e0f304b15136382a91403153d7506fc24d6a934ef705dd3c43c33"
+  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:a8f9bd81ef1d9a79eacbd2b91bebc51c0dbd8d8399462229d50a938327eb1f9e"
   # Keep empty until the separately built RUNTIME_DESKTOP=1 image is published
   # and its immutable digest has passed the desktop runtime acceptance checks.
   CHRONO_MACHINE_SANDBOX_IMAGE: ""
