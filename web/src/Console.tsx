@@ -154,8 +154,14 @@ function ConsoleContent({
     !accessUncertain,
   );
   const canUse = !accessUncertain && user.capabilities.includes('use_own_sandboxes');
-  const canCreate = !user.visitor && canUse && onCreate !== undefined;
-  const canCreateInScope = canCreate && navigationScope === '' && scopeReady;
+  // A new Agent starts in a new Sandbox, so it depends only on the signed-in
+  // person's capability, never on the access check of the Agent being viewed.
+  // Gating it on that check hid the button on every switch between Agents.
+  const canStartNewAgent =
+    !user.visitor && user.capabilities.includes('use_own_sandboxes') && onCreate !== undefined;
+  // Creating inside the viewed hierarchy still waits for that access check.
+  const canCreate = canStartNewAgent && canUse;
+  const canCreateInScope = canStartNewAgent && navigationScope === '' && scopeReady;
   const newAgentUnavailable = !scopeReady
     ? 'Checking your access.'
     : navigationScope !== ''
@@ -405,7 +411,7 @@ function ConsoleContent({
             (onServiceNavigate ?? onNavigate)(next);
           }}
           newAgent={
-            canCreate
+            canStartNewAgent
               ? {
                   onCreate: () => onCreate?.({ kind: 'new_agent' }),
                   unavailableReason: newAgentUnavailable,
