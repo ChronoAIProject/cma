@@ -291,11 +291,8 @@ pub(super) fn asset_metadata(value: &Value) -> Result<Option<Value>, RestError> 
     ] {
         if let Some(value) = value.get(key).filter(|v| !v.is_null()) {
             match key {
-                "title" | "placeholder" => {
-                    if !string(value, 4096)? {
-                        return Err(RestError::Unknown);
-                    }
-                }
+                "title" | "placeholder" if !string(value, 4096)? => return Err(RestError::Unknown),
+                "title" | "placeholder" => {}
                 "placeholder_version" if value.as_u64().is_none() => {
                     return Err(RestError::Unknown)
                 }

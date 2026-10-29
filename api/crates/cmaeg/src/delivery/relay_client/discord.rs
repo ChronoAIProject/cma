@@ -2,6 +2,10 @@
 use super::RelayClient;
 
 impl RelayClient {
+    pub fn with_discord_media_card_sets(mut self, enabled: bool) -> Self {
+        self.discord_media_card_sets = enabled;
+        self
+    }
     pub fn with_discord_reactions(mut self, enabled: bool) -> Self {
         self.discord_reactions = enabled;
         self

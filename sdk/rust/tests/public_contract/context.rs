@@ -111,6 +111,15 @@ pub fn load() -> Vec<Case> {
         for case in &mut corpus.cases {
             let _ = case.request.expanded_raw_body();
             let symbols = scenes.entry(case.scenario.clone()).or_default();
+            symbols.entry("recent_admission".into()).or_insert_with(|| {
+                serde_json::json!(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        - 1
+                )
+            });
             symbols
                 .entry("interaction_expiry".into())
                 .or_insert_with(|| {

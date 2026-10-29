@@ -15,6 +15,9 @@ data:
   # Keep recovery and selected records after stopping admission, until retained work expires.
   CMAEG_ROUTED_RECOVERY_ENABLED: "true"
   CMAEG_ROUTED_ADMISSION_ENABLED: "true"
+  # Reader-first preparation; no binding can be replaced without explicit enrollment.
+  CMAEG_BINDING_PREPARATION_ENABLED: "false"
+  CMAEG_BINDING_REPLACEMENT_BINDINGS: ""
   CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED: "true"
   # Compatible readers are deployed; each delivery still requires owner commit.
   CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED: "true"
@@ -46,9 +49,11 @@ data:
   CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED: "false"
   # Retained exact file proofs allow content/control edits without replacing media.
   CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_MEDIA_CARD_SETS_ENABLED: "false"
   CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED: "false"
   # Requires separately migrated persistent fence storage and runtime grants.
   CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED: "false"
   CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED: "false"
   # Bounded original Discord history is enabled; source consent remains required.
   CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED: "true"
@@ -59,11 +64,14 @@ data:
   CMAEG_NATIVE_LARK_CONTROLS_ENABLED: "true"
   CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED: "false"
   CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED: "false"
+  CMAEG_NATIVE_LARK_MEDIA_CARD_REPLACEMENTS_ENABLED: "false"
   CMAEG_NATIVE_LARK_THREAD_START_ENABLED: "false"
   # Native Lark/Feishu forms require the native controls gate and source consent.
   CMAEG_NATIVE_LARK_FORMS_ENABLED: "true"
   CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED: "true"
   CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED: "true"
+  # Explicit Discord/WhatsApp sendTyping; WhatsApp also marks the original message read.
+  CMAEG_NATIVE_TYPING_ENABLED: "false"
   # Compatible readers and Custom acceptance verified; enable owner Meta setup/testing.
   CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "true"
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "true"

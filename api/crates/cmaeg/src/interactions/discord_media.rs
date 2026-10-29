@@ -29,7 +29,11 @@ struct Confirmed {
     snapshot_sha256: String,
 }
 impl Media {
-    pub(super) fn prepare(message: &OutboundMessage, file: &PreparedFile) -> Result<Self, Error> {
+    pub(super) fn prepare_item(
+        message: &OutboundMessage,
+        index: usize,
+        file: &PreparedFile,
+    ) -> Result<Self, Error> {
         message.validate().map_err(|_| Error::Denied)?;
         if message
             .blocks
@@ -38,9 +42,7 @@ impl Media {
         {
             return Err(Error::Denied);
         }
-        let [item] = message.native_attachments.as_slice() else {
-            return Err(Error::Denied);
-        };
+        let item = message.native_attachments.get(index).ok_or(Error::Denied)?;
         let value = Self {
             kind: item.kind,
             sha256: format!("{:x}", Sha256::digest(&file.bytes)),
@@ -52,7 +54,11 @@ impl Media {
             pending_replacement: false,
         };
         if !value.valid()
-            || value.filename != item.filename.as_deref().unwrap_or("attachment-0")
+            || value.filename
+                != item
+                    .filename
+                    .as_deref()
+                    .unwrap_or(&format!("attachment-{index}"))
             || value.mime_type
                 != item
                     .mime_type
@@ -97,15 +103,6 @@ impl Media {
 }
 
 impl Media {
-    pub(super) fn replacement(
-        message: &OutboundMessage,
-        file: &PreparedFile,
-    ) -> Result<Self, Error> {
-        let mut media = Self::prepare(message, file)?;
-        media.pending_replacement = true;
-        Ok(media)
-    }
-
     pub(super) fn valid_for(&self, card: &super::Card) -> bool {
         self.valid()
             && (if self.pending_replacement {

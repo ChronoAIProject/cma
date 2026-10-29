@@ -3,6 +3,9 @@ use crate::{Client, Result, http::Request};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
+mod preparation;
+pub use preparation::*;
+
 /// Provider target selection. Omission preserves profile provisioning.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

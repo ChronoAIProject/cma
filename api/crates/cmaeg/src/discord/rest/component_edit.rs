@@ -72,7 +72,7 @@ impl DiscordRest {
 }
 /// Discord may add numeric component IDs and omit false defaults. Match every
 /// authored field and every array member, rejecting disabled/retargeted controls.
-fn matches_components(expected: &Value, actual: &Value) -> bool {
+pub(super) fn matches_components(expected: &Value, actual: &Value) -> bool {
     match expected {
         Value::Array(values) => actual.as_array().is_some_and(|seen| {
             values.len() == seen.len()

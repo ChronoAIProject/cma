@@ -98,6 +98,7 @@ export function NodeFields({
                 ) : null}
                 <SourceFields
                   value={source}
+                  managedIdentity={Boolean(draft.connection_ref)}
                   onChange={(next) =>
                     set(
                       'sources',
@@ -119,7 +120,9 @@ export function NodeFields({
                     create={create}
                   />
                 ) : null}
-                {!create && !['whatsapp', 'native_lark'].includes(String(source.type)) ? (
+                {!create &&
+                !draft.connection_ref &&
+                !['whatsapp', 'native_lark'].includes(String(source.type)) ? (
                   <CredentialsFields
                     value={credentials}
                     onChange={onCredentials}
@@ -193,6 +196,7 @@ export function NodeFields({
   );
 }
 export function nodeCredentials(values: Fields, section: EditorSection, draft: Fields): Fields {
+  if (section.kind === 'producer' && draft.connection_ref) return {};
   const keys =
     section.kind === 'consumer'
       ? ['agent_key']

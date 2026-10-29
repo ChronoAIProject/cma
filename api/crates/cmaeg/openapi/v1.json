@@ -4172,6 +4172,13 @@
           "choices": {
             "type": "boolean"
           },
+          "clear_media": {
+            "description": "Explicit clear_native_attachments removes every upload on a confirmed card.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "kinds": {
             "description": "Exact attachment kinds supported with controls; absent means the parent kinds apply.",
             "items": {
@@ -4187,7 +4194,7 @@
             "type": "integer"
           },
           "replace_media": {
-            "description": "Replace one upload on the same durable card through a confirmed native PATCH.",
+            "description": "Replace the supported upload set on the same durable card through a confirmed PATCH.",
             "type": [
               "boolean",
               "null"
@@ -4947,6 +4954,10 @@
               "$ref": "#/components/schemas/Block"
             },
             "type": "array"
+          },
+          "clear_native_attachments": {
+            "description": "Explicitly remove every native attachment; updateMessage only when advertised.",
+            "type": "boolean"
           },
           "native_attachments": {
             "description": "Explicit native media delivery. Legacy attachment blocks remain links.",
@@ -5888,6 +5899,13 @@
           },
           "native_media_writes_enabled": {
             "description": "The configured relay accepts new native attachments; platform limits still apply.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_telegram_general_topic_lifecycle_enabled": {
+            "description": "General-topic execution additionally requires the original native forum envelope.",
             "type": [
               "boolean",
               "null"

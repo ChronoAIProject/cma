@@ -30,8 +30,12 @@ impl RelayClient {
         message
             .validate()
             .map_err(|_| invalid("outbound_message_invalid"))?;
-        if message.native_media_update.is_some() {
-            return Err(invalid("native_media_update_requires_updateMessage"));
+        if message.native_media_update.is_some() || message.clear_native_attachments {
+            return Err(invalid(if message.clear_native_attachments {
+                "native_attachment_clear_requires_updateMessage"
+            } else {
+                "native_media_update_requires_updateMessage"
+            }));
         }
         if message.thread_reply || message.reply_to.is_some() {
             return Err(invalid(
