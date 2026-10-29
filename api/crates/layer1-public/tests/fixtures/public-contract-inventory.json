@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 232,
+  "openapi_operations": 233,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -3300,6 +3300,29 @@
         "binding_not_ready",
         "binding_unavailable"
       ]
+    },
+    "POST /api/v1/agents/{id}/recover-worktree": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# Owner or administrator recovery preserves the never-ready Agent and retained failed worktree under exact durable admission.",
+      "required_problems": [
+        "forbidden",
+        "instance_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "agent_not_found",
+        "agent_worktree_recovery_conflict",
+        "agent_limit_reached"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# This bodyless command has no RequestBody or Json extractor and calls required_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# This bodyless command has no RequestBody or Json extractor and calls required_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# This bodyless command has no RequestBody or Json extractor and calls required_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
     }
   }
 }
