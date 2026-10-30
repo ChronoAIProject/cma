@@ -1,6 +1,23 @@
 import { integer, nullable, object, optional, text, type Output } from '../../schema.js';
 import { ConformanceLevelSchema } from './primitives.js';
 
+export const ConversationInspectionSchema = object({
+  binding_id: text,
+  generation: integer,
+  conversation_id: text,
+  agent_id: text,
+  state: text,
+  agent_status: optional(nullable(text)),
+});
+export type ConversationInspection = Output<typeof ConversationInspectionSchema>;
+
+export const PartitionInspectionSchema = object({
+  consumer_id: text,
+  transport_conversation_id: text,
+  mapping: ConversationInspectionSchema,
+});
+export type PartitionInspection = Output<typeof PartitionInspectionSchema>;
+
 export const EndpointResponseSchema = object({
   native_lark_webhook_url: optional(nullable(text)),
   whatsapp_webhook_url: optional(nullable(text)),

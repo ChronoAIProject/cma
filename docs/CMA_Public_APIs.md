@@ -240,6 +240,7 @@ of the public contract.
 | `POST /api/v1/cmaeg/bindings/{binding_id}/preparations` |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` |
 
 ### resource access

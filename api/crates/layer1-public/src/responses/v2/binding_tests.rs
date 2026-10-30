@@ -376,3 +376,86 @@ async fn binding_aliases_and_agent_ids_share_receipts_and_conceal_foreign_conver
         assert_eq!(body["error"]["code"], "conversation_not_found");
     }
 }
+
+#[tokio::test]
+async fn retained_partition_with_no_agent_is_gone_without_reserving_a_response() {
+    let (app, store, _, principal) = fixture().await;
+    let binding = store
+        .binding(principal.binding_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut conversation = BindingConversation::new(
+        &binding,
+        "conversation-missing-agent".into(),
+        layer2_core::now_rfc3339(),
+    )
+    .unwrap();
+    store
+        .save_binding_conversation(binding.revision, None, conversation.clone())
+        .await
+        .unwrap();
+    conversation.state = BindingConversationState::Ready;
+    conversation.revision += 1;
+    store
+        .save_binding_conversation(binding.revision, Some(1), conversation.clone())
+        .await
+        .unwrap();
+    let response = app
+        .oneshot(request(
+            "/api/v2/responses",
+            &principal,
+            json!({"conversation":conversation.conversation_id,"stream":true,"input":"alert"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::GONE);
+    assert!(response.headers().get("retry-after").is_none());
+    assert!(response.headers().get("x-cma-response-id").is_none());
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["code"], "partition_agent_missing");
+    assert!(store
+        .get_agent(&conversation.agent_id)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn stopped_and_deleted_partition_agents_are_explicit_permanent_refusals() {
+    let (app, store, _, principal) = fixture().await;
+    let mut agent = store
+        .get_agent(&layer2_core::AgentId("agt_fixture".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    for status in [AgentStatus::Stopped, AgentStatus::Deleted] {
+        let revision = agent.revision;
+        let reason = (status == AgentStatus::Stopped)
+            .then_some(layer2_core::sandbox::AgentStopReason::Owner);
+        agent
+            .transition(status, layer2_core::now_rfc3339(), reason)
+            .unwrap();
+        store.save_agent(revision, agent.clone()).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(request(
+                "/api/v2/responses",
+                &principal,
+                json!({"conversation":"conversation-external","stream":true,"input":"alert"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(response.headers().get("retry-after").is_none());
+        assert!(response.headers().get("x-cma-response-id").is_none());
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["code"], "partition_agent_unavailable");
+    }
+}

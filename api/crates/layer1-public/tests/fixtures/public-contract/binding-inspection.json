@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "binding-inspection-mapped",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+      "scenario": "binding_management_conversation",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "binding_id": "binding-contract",
+          "generation": 1,
+          "conversation_id": "conversation-contract",
+          "agent_id": "agt_contract",
+          "state": "provisioning",
+          "agent_status": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "agent_id": "/agent_id"
+      }
+    },
+    {
+      "id": "binding-inspection-missing",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+      "scenario": "binding_management_ready",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_found",
+          "title": "binding_not_found",
+          "status": 404,
+          "detail": "binding not found",
+          "code": "binding_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-inspection-anonymous",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+      "scenario": "binding_management_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-inspection-forbidden",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+      "scenario": "binding_management_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "forbidden",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-inspection-invalid",
+      "operation": "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+      "scenario": "binding_management_ready",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/cmaeg/bindings/binding-contract/conversations/bad",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_binding",
+          "title": "invalid_binding",
+          "status": 400,
+          "detail": "invalid binding request: invalid conversation identifier",
+          "code": "invalid_binding"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

@@ -38,6 +38,23 @@ impl Cmaeg {
         request.root = true;
         self.client.request(request).await
     }
+    /// Inspect a partition without creating or rebinding its conversation.
+    pub async fn inspect_channel_partition(
+        &self,
+        id: &str,
+        partition_key: &str,
+        consumer_id: Option<&str>,
+    ) -> Result<PartitionInspection> {
+        let segments = ["v1", "channels", id, "partition"];
+        let mut query = vec![("partition_key", partition_key.to_owned())];
+        if let Some(consumer) = consumer_id {
+            query.push(("consumer_id", consumer.to_owned()));
+        }
+        let mut request = Request::get(&segments);
+        request.root = true;
+        request.query = &query;
+        self.client.request(request).await
+    }
     /// Recover the exact channel after an uncertain reserved-record creation.
     pub async fn recover_channel(&self, record_id: &str) -> Result<ChannelResponse> {
         let segments = ["v1", "channel-records", record_id];
