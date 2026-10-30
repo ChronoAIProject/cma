@@ -1,6 +1,7 @@
 #!/bin/bash
 # A genuine Omarchy desktop nested into CMA's existing shared X11 transport.
 set -euo pipefail
+ulimit -c 0
 export DISPLAY=:99 OMARCHY_PATH=/usr/share/omarchy
 export XDG_RUNTIME_DIR=/tmp/cma-desktop-runtime
 if [[ ${1:-} == --browser ]]; then
@@ -39,7 +40,9 @@ children=()
 stop() {
   local status=$?
   trap - EXIT INT TERM
-  if ((status != 0)); then tail -c 6000 /tmp/cma-*.log >&2 2>/dev/null || true; fi
+  if ((status != 0)); then
+    tail -c 10000 /tmp/cma-*.log "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log >&2 2>/dev/null || true
+  fi
   kill "${children[@]}" 2>/dev/null || true
   wait "${children[@]}" 2>/dev/null || true
 }
