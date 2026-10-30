@@ -10,6 +10,7 @@ type Connection = EventTarget & {
   painted: boolean;
   focus: () => void;
   blur: () => void;
+  canvas: HTMLCanvasElement;
 };
 const { connections } = vi.hoisted(() => ({ connections: [] as Connection[] }));
 vi.mock('@novnc/novnc', () => ({
@@ -186,5 +187,43 @@ it('offers recovery after a missing first frame and cancels the old loading time
   expect(screen.getByRole('status')).toHaveTextContent('Connected');
   expect(next.viewOnly).toBe(true);
   view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('restores a lost display with input revoked and bounds automatic recovery', async () => {
+  vi.useFakeTimers();
+  const view = render(<DesktopPanel agentId="agt_demo" running={false} onClose={vi.fn()} />);
+  await act(async () => {});
+  const first = connectionAt(0);
+  act(() => first.dispatchEvent(new Event('connect')));
+  fireEvent.click(screen.getByRole('button', { name: 'Control desktop' }));
+  expect(first.viewOnly).toBe(false);
+  act(() => first.canvas.dispatchEvent(new Event('contextlost')));
+  expect(first.viewOnly).toBe(true);
+  expect(screen.getByRole('status')).toHaveTextContent('Restoring the desktop display');
+  expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
+  await act(async () => vi.advanceTimersByTime(750));
+  const second = connectionAt(1);
+  act(() => second.dispatchEvent(new Event('connect')));
+  expect(screen.getByRole('status')).toHaveTextContent('Connected');
+  expect(second.viewOnly).toBe(true);
+  act(() => first.dispatchEvent(new Event('disconnect')));
+  expect(screen.getByRole('status')).toHaveTextContent('Connected');
+  act(() => second.canvas.dispatchEvent(new Event('contextlost')));
+  await act(async () => vi.advanceTimersByTime(750));
+  const third = connectionAt(2);
+  act(() => third.dispatchEvent(new Event('connect')));
+  act(() => third.canvas.dispatchEvent(new Event('contextlost')));
+  expect(screen.getByRole('status')).toHaveTextContent('could not be restored');
+  await act(async () => vi.advanceTimersByTime(30_000));
+  expect(connections).toHaveLength(3);
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Reconnect' })));
+  const manual = connectionAt(3);
+  act(() => manual.dispatchEvent(new Event('connect')));
+  act(() => manual.canvas.dispatchEvent(new Event('contextlost')));
+  expect(screen.getByRole('status')).toHaveTextContent('Restoring the desktop display');
+  view.unmount();
+  await act(async () => vi.advanceTimersByTime(30_000));
+  expect(connections).toHaveLength(4);
   expect(vi.getTimerCount()).toBe(0);
 });

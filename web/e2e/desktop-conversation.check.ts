@@ -3,6 +3,71 @@ import { binding, cursor, LocalAgentV2 } from './agent-v2.fixture';
 
 import { desktopBoundary } from './desktop-rfb.fixture';
 
+test('LOCAL restores a cleared desktop without losing the conversation or granting input', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalAgentV2();
+  fixture.boundary.agent = { ...fixture.boundary.agent, desktop: true };
+  try {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await fixture.route(page, baseURL!);
+    const stream = await desktopBoundary(page);
+    await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.agent.event_head',
+          schema_version: 1,
+          agent_id: 'agt_contract',
+          incarnation: 'a'.repeat(64),
+          through_cursor: cursor(fixture.items.length),
+          active_turn: null,
+        },
+      }),
+    );
+    await page.goto('/agents/agt_contract');
+    const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
+    const message = page.getByRole('textbox', { name: 'Message', exact: true });
+    await expect(desktop.getByRole('status')).toContainText('Connected');
+    await message.fill('Keep this unsent draft while restoring the display.');
+    const originalComposer = await message.elementHandle();
+    await desktop.getByRole('button', { name: 'Control desktop', exact: true }).click();
+    const originalCanvas = await desktop.locator('canvas').elementHandle();
+    // A real browser drawing-buffer reset leaves a transparent canvas while
+    // the WebSocket remains open, matching the reported connected/blank state.
+    await desktop.locator('canvas').evaluate((canvas: HTMLCanvasElement) => {
+      canvas.getContext('2d')?.reset();
+    });
+    await expect(desktop.getByRole('status')).toContainText('Restoring', { timeout: 6_000 });
+    await expect(
+      desktop.getByRole('button', { name: 'Control desktop', exact: true }),
+    ).toBeDisabled();
+    await expect.poll(() => stream.connections.length).toBe(2);
+    await expect(desktop.getByRole('status')).toContainText('Connected');
+    await expect(desktop.getByRole('status')).toContainText('Ask the Agent');
+    expect(
+      await desktop
+        .locator('canvas')
+        .evaluate((node, previous) => node === previous, originalCanvas),
+    ).toBe(false);
+    expect(
+      await desktop
+        .locator('canvas')
+        .evaluate(
+          (node: HTMLCanvasElement) => node.getContext('2d')?.getImageData(0, 0, 1, 1).data[3],
+        ),
+    ).toBe(255);
+    expect(await message.evaluate((node, previous) => node === previous, originalComposer)).toBe(
+      true,
+    );
+    await expect(message).toHaveValue('Keep this unsent draft while restoring the display.');
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.boundary.writes).toEqual([]);
+  } finally {
+    await fixture.close(page);
+  }
+});
+
 for (const width of [1600, 1024, 390]) {
   for (const theme of ['light', 'dark']) {
     test(`LOCAL desktop and live conversation coexist at ${width}px in ${theme}`, async ({
@@ -39,6 +104,18 @@ for (const width of [1600, 1024, 390]) {
         await expect(
           desktop.getByRole('button', { name: 'Control desktop', exact: true }),
         ).toBeEnabled();
+        const expectPaintedDesktop = async () => {
+          await expect
+            .poll(() =>
+              desktop.locator('canvas').evaluate((canvas: HTMLCanvasElement) => {
+                const bounds = canvas.getBoundingClientRect();
+                const alpha = canvas.getContext('2d')?.getImageData(0, 0, 1, 1).data[3];
+                return bounds.width > 100 && bounds.height > 60 && alpha === 255;
+              }),
+            )
+            .toBe(true);
+        };
+        await expectPaintedDesktop();
         await message.fill('Open a terminal and run pwd where I can see it.');
         const field = await message.elementHandle();
         await expect
@@ -66,6 +143,7 @@ for (const width of [1600, 1024, 390]) {
           desktop.getByRole('button', { name: 'Exit full screen', exact: true }),
         ).toBeVisible();
         await desktop.getByRole('button', { name: 'Exit full screen', exact: true }).click();
+        await expectPaintedDesktop();
         expect(connections).toHaveLength(1);
         expect(await message.evaluate((node, original) => node === original, field)).toBe(true);
         await page.getByRole('button', { name: 'Hide machine desktop', exact: true }).click();
@@ -84,6 +162,13 @@ for (const width of [1600, 1024, 390]) {
         await expect(
           page.getByText('Opening the terminal on your desktop.', { exact: true }),
         ).toBeVisible();
+        fixture.append({ type: 'turn_completed', turn_sequence: 1 });
+        await expect(desktop.getByRole('status')).toContainText('Ask the Agent');
+        await expectPaintedDesktop();
+        await page.getByRole('button', { name: 'Show files', exact: true }).click();
+        await expectPaintedDesktop();
+        await page.getByRole('button', { name: 'Close files', exact: true }).click();
+        await expectPaintedDesktop();
         expect(fixture.writes).toEqual([]);
         expect(fixture.boundary.writes).toEqual([]);
       } finally {
