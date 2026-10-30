@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { desktopSeccomp } from './desktop-seccomp.mjs';
@@ -17,10 +17,12 @@ const result = { scope: 'isolated-docker-offline-model', revision, result: 'fail
 const devices = [];
 if (process.env.CMA_OMARCHY_TEST_DRM === '1') {
   for (const entry of readdirSync('/dev/dri').filter(x => /^(card|renderD)[0-9]+$/.test(x))) {
+    if (!realpathSync('/sys/class/drm/' + entry + '/device/driver').endsWith('/vkms')) continue;
     const path = '/dev/dri/' + entry;
     devices.push('--device', path, '--group-add', String(statSync(path).gid));
   }
   assert(devices.length > 0);
+  result.graphicsDriver = 'vkms';
 }
 result.graphicsDevices = devices.filter(x => x.startsWith('/dev/dri/'));
 const run = (command, extra = []) => docker(['exec', '--env', 'DISPLAY=:99',
@@ -35,7 +37,7 @@ async function ready() {
   throw new Error('runtime desktop startup exceeded 90 seconds');
 }
 function screenshot(label) {
-  run(['scrot', '/tmp/omarchy-proof.png']);
+  run(['scrot', '--overwrite', '/tmp/omarchy-proof.png']);
   writeFileSync(resolve(destination, label + '.png'), execFileSync('docker', ['exec', name, 'cat', '/tmp/omarchy-proof.png'], { maxBuffer: 8 * 1024 * 1024 }));
 }
 try {
@@ -69,6 +71,7 @@ try {
   run(['python', '-c', 'import urllib.request,urllib.error\ntry: urllib.request.urlopen("http://127.0.0.1:9090/runtime/desktop")\nexcept urllib.error.HTTPError as e: assert e.code==401\nelse: raise AssertionError("desktop bypassed authentication")']);
   run(['python', '-c', 'from pathlib import Path\nfor row in Path("/proc/net/tcp").read_text().splitlines()[1:]:\n a=row.split()[1]; port=int(a.split(":")[1],16)\n if port in (5900,6080): assert a.split(":")[0]=="0100007F"']);
   result.first = JSON.parse(run(['node', '/opt/probes/omarchy-native-probe.cjs'], ['--env', `CMA_DESKTOP_TEST_TOKEN=${token}`]));
+  writeFileSync(resolve(destination, 'agent-terminal.png'), execFileSync('docker', ['exec', name, 'cat', '/tmp/cma-omarchy-terminal-proof.png'], { maxBuffer: 8 * 1024 * 1024 }));
   screenshot('agent-and-user-input');
   // Close Chromium cleanly to persist the profile and prove the desktop survives.
   run(['xdotool', 'key', '--clearmodifiers', 'ctrl+shift+q']);

@@ -12,9 +12,12 @@ const directory = mkdtempSync('/tmp/cma-desktop-proof-');
 const home = directory + '/home';
 mkdirSync(home);
 const screenshot = directory + '/screen.png';
+const terminalScreenshot = '/tmp/cma-omarchy-terminal-proof.png';
+const terminalMarker = directory + '/terminal-result';
 const calls = [];
 let failure;
 let command;
+let terminalCommand;
 let retainedProfile;
 function captureFailureScreen() {
   const path = '/tmp/cma-desktop-failed-screen.png';
@@ -59,15 +62,21 @@ const server = createServer(async (request, response) => {
     calls.push(value);
     const index = calls.length;
     let item;
-    if (index === 1) item = call(value, index, 'exec_command', { cmd: command, yield_time_ms: 10000, max_output_tokens: 2000 });
+    if (index === 1) item = call(value, index, 'exec_command', { cmd: terminalCommand, yield_time_ms: 10000, max_output_tokens: 2000 });
     else if (index === 2) {
+      assert.equal(readFileSync(terminalMarker, 'utf8'), 'CMA terminal control verified\n');
+      item = call(value, index, 'view_image', { path: terminalScreenshot });
+    } else if (index === 3) {
+      assert(JSON.stringify(value.input).includes('data:image/'), 'terminal screenshot was not returned to the model');
+      item = call(value, index, 'exec_command', { cmd: command, yield_time_ms: 10000, max_output_tokens: 2000 });
+    } else if (index === 4) {
       // The command fits within one native tool wait; prove its screen interaction
       // before asking the model to view the resulting image.
       const title = execFileSync('python3', ['/opt/probes/omarchy-active-title.py'], { encoding: 'utf8' }).trim();
       assert(title.startsWith('cma-ui:cma-codex'), 'desktop click/type did not update the browser title: ' + title);
       item = call(value, index, 'view_image', { path: screenshot });
     } else {
-      assert.equal(index, 3);
+      assert.equal(index, 5);
       assert(JSON.stringify(value.input).includes('data:image/'), 'screenshot was not returned to the model');
       item = { type: 'message', id: 'msg_desktop', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Desktop fixture passed.', annotations: [] }] };
     }
@@ -108,10 +117,25 @@ const server = createServer(async (request, response) => {
   ].join('\n'));
   const window = execFileSync('xdotool', ['search', '--onlyvisible', '--name', '^CMA-Omarchy-Transport$'], { encoding: 'utf8' }).trim().split('\n')[0];
   assert(/^\d+$/.test(window));
+  terminalCommand = [
+    'set -e', 'export DISPLAY=:99',
+    'xdotool windowfocus --sync ' + window,
+    'xdotool key --clearmodifiers ctrl+alt+t',
+    "for i in $(seq 1 40); do python3 /opt/probes/omarchy-active-title.py --class | grep -qi foot && break; sleep 0.1; done",
+    'python3 /opt/probes/omarchy-active-title.py --class | grep -qi foot',
+    'sleep 0.3',
+    // This command reaches the shell only through keyboard events in Foot.
+    "xdotool type --clearmodifiers --delay 2 'echo \"CMA terminal control verified\" | tee " + terminalMarker + "'",
+    'xdotool key Return',
+    'for i in $(seq 1 30); do test -s ' + terminalMarker + ' && break; sleep 0.1; done',
+    'test -s ' + terminalMarker, 'sleep 0.3',
+    'scrot --overwrite ' + terminalScreenshot,
+  ].join('\n');
   command = [
     'set -e',
     'export DISPLAY=:99',
     'xdotool windowfocus --sync ' + window,
+    'xdotool key --clearmodifiers ctrl+d', 'sleep 0.3',
     'xdotool key --clearmodifiers ctrl+l',
     "xdotool type --clearmodifiers '" + origin + "/desktop-test'",
     'xdotool key Return',
@@ -131,9 +155,9 @@ const server = createServer(async (request, response) => {
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
     const { sessionId } = await bridge.call('session/new', { cwd: directory, mcpServers: [] });
     await bridge.call('session/set_mode', { sessionId, modeId: 'agent-full-access' });
-    await bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Use the desktop, enter cma-codex, click Verify input, then inspect a screenshot.' }] });
+    await bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Open a desktop terminal, run a command and inspect its screenshot. Then use the browser, enter cma-codex, click Verify input, and inspect a screenshot.' }] });
     if (failure) throw failure;
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 5);
     for (let i = 0; retainedProfile === undefined && i < 30; i++) await delay(100);
     assert.equal(retainedProfile, process.env.CMA_DESKTOP_EXPECT_RETAINED === '1' ? 'cma-user' : '');
     const bytes = readFileSync(screenshot);
@@ -153,7 +177,7 @@ const server = createServer(async (request, response) => {
       await delay(100);
     }
     assert(title.startsWith('cma-ui:cma-user'), 'user input did not reach the same browser: ' + title);
-    console.log(JSON.stringify({ checks: ['codex-shell-click-type', 'codex-view-image', 'authenticated-framebuffer', 'shared-browser-user-input'], screenshotSha256: createHash('sha256').update(bytes).digest('hex') }));
+    console.log(JSON.stringify({ checks: ['codex-open-terminal', 'codex-type-run-terminal-command', 'codex-terminal-view-image', 'codex-shell-click-type', 'codex-view-image', 'authenticated-framebuffer', 'shared-browser-user-input'], screenshotSha256: createHash('sha256').update(bytes).digest('hex'), terminalScreenshotSha256: createHash('sha256').update(readFileSync(terminalScreenshot)).digest('hex') }));
   } finally {
     await bridge.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }
