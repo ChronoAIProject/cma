@@ -1,8 +1,8 @@
 // Real desktop and native Codex processes; model responses are offline fixtures.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { desktopSeccomp } from './desktop-seccomp.mjs';
@@ -14,6 +14,15 @@ const name = 'cma-omarchy-test-' + randomUUID();
 const token = randomBytes(32).toString('hex');
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
 const result = { scope: 'isolated-docker-offline-model', revision, result: 'fail', cleanup: false };
+const devices = [];
+if (process.env.CMA_OMARCHY_TEST_DRM === '1') {
+  for (const entry of readdirSync('/dev/dri').filter(x => /^(card|renderD)[0-9]+$/.test(x))) {
+    const path = '/dev/dri/' + entry;
+    devices.push('--device', path, '--group-add', String(statSync(path).gid));
+  }
+  assert(devices.length > 0);
+}
+result.graphicsDevices = devices.filter(x => x.startsWith('/dev/dri/'));
 const run = (command, extra = []) => docker(['exec', '--env', 'DISPLAY=:99',
   '--env', 'XDG_RUNTIME_DIR=/tmp/cma-desktop-runtime', ...extra, name, ...command]);
 async function ready() {
@@ -48,6 +57,7 @@ try {
     '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700',
     '--env', `CHRONO_SANDBOX_ID=${name}`, '--env', 'CMA_MACHINE_INCLUDED=1',
     '--env', `CHRONO_RUNTIME_CONTROL_TOKEN=${token}`,
+    ...devices,
     '--mount', `type=bind,source=${resolve('.github/scripts')},target=/opt/probes,readonly`,
     '--mount', `type=bind,source=${resolve('api/crates/layer3-adapter/src/codex')},target=/opt/codex-fixtures,readonly`, image.Id]);
   docker(['start', name]);
@@ -75,7 +85,8 @@ try {
   result.error = String(error.message).replaceAll(token, '[fixture-token]').slice(0, 4000);
   try { screenshot('failed'); } catch {}
   try {
-    const log = docker(['logs', name]) + run(['sh', '-c', 'tail -c 16000 /tmp/cma-*.log 2>/dev/null || true']);
+    const captured = spawnSync('docker', ['logs', name], { encoding: 'utf8', timeout: 10000 });
+    const log = captured.stdout + captured.stderr;
     writeFileSync(resolve(destination, 'diagnostics.txt'), log.replaceAll(token, '[fixture-token]'));
   } catch {
     try { writeFileSync(resolve(destination, 'diagnostics.txt'), docker(['logs', name]).replaceAll(token, '[fixture-token]')); } catch {}
