@@ -73,50 +73,52 @@ export function useMessageFeedback(
     return () => request.abort();
   }, [scope, supported, client, agentId, revision]);
 
-  if (!supported) return undefined;
-  const current: Pick<MessageFeedbackControls, 'ready' | 'rows' | 'error'> =
-    state.scope === scope ? state : { ready: false, rows: {} };
-  return {
-    ...current,
-    reload: () => setRevision((value) => value + 1),
-    setVote: (messageId, vote) => {
-      if (active.current !== scope || !current.ready || pending.current.has(messageId)) return;
-      const retained = current.rows[messageId];
-      if (retained?.error && vote !== retained.retryVote) return;
-      const request = new AbortController();
-      pending.current.set(messageId, request);
-      setState((previous) => ({
-        ...previous,
-        rows: {
-          ...previous.rows,
-          [messageId]: { vote: previous.rows[messageId]?.vote ?? null, pending: true },
-        },
-      }));
-      void client.setMessageFeedback!(agentId, messageId, vote, { signal: request.signal })
-        .then((result) => {
-          if (request.signal.aborted || active.current !== scope) return;
-          setState((previous) => ({
-            ...previous,
-            rows: { ...previous.rows, [messageId]: { vote: result.vote } },
-          }));
-        })
-        .catch((cause: unknown) => {
-          if (request.signal.aborted || active.current !== scope) return;
-          setState((previous) => ({
-            ...previous,
-            rows: {
-              ...previous.rows,
-              [messageId]: {
-                vote: previous.rows[messageId]?.vote ?? null,
-                error: cause instanceof Error ? cause.message : 'Your vote could not be saved.',
-                retryVote: vote,
+  return useMemo(() => {
+    if (!supported) return undefined;
+    const current: Pick<MessageFeedbackControls, 'ready' | 'rows' | 'error'> =
+      state.scope === scope ? state : { ready: false, rows: {} };
+    return {
+      ...current,
+      reload: () => setRevision((value) => value + 1),
+      setVote: (messageId, vote) => {
+        if (active.current !== scope || !current.ready || pending.current.has(messageId)) return;
+        const retained = current.rows[messageId];
+        if (retained?.error && vote !== retained.retryVote) return;
+        const request = new AbortController();
+        pending.current.set(messageId, request);
+        setState((previous) => ({
+          ...previous,
+          rows: {
+            ...previous.rows,
+            [messageId]: { vote: previous.rows[messageId]?.vote ?? null, pending: true },
+          },
+        }));
+        void client.setMessageFeedback!(agentId, messageId, vote, { signal: request.signal })
+          .then((result) => {
+            if (request.signal.aborted || active.current !== scope) return;
+            setState((previous) => ({
+              ...previous,
+              rows: { ...previous.rows, [messageId]: { vote: result.vote } },
+            }));
+          })
+          .catch((cause: unknown) => {
+            if (request.signal.aborted || active.current !== scope) return;
+            setState((previous) => ({
+              ...previous,
+              rows: {
+                ...previous.rows,
+                [messageId]: {
+                  vote: previous.rows[messageId]?.vote ?? null,
+                  error: cause instanceof Error ? cause.message : 'Your vote could not be saved.',
+                  retryVote: vote,
+                },
               },
-            },
-          }));
-        })
-        .finally(() => {
-          if (pending.current.get(messageId) === request) pending.current.delete(messageId);
-        });
-    },
-  };
+            }));
+          })
+          .finally(() => {
+            if (pending.current.get(messageId) === request) pending.current.delete(messageId);
+          });
+      },
+    };
+  }, [supported, state, scope, client, agentId]);
 }

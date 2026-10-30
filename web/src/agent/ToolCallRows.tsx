@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { memo, useId, useState } from 'react';
 import type { ToolCall } from './model';
 import { StateDot, type StateDotState } from '../ui/StateDot';
 import { IconChevronDownOutline14, IconChevronRightOutline14 } from '../ui/icons';
@@ -63,7 +63,7 @@ export function ToolCallRow({
   );
 }
 
-export function ToolCallGroup({
+export const ToolCallGroup = memo(function ToolCallGroup({
   group,
   activeRunId,
 }: {
@@ -115,4 +115,4 @@ export function ToolCallGroup({
       ) : null}
     </div>
   );
-}
+});
