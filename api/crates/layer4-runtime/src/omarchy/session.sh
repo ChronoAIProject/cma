@@ -41,7 +41,12 @@ stop() {
   local status=$?
   trap - EXIT INT TERM
   if ((status != 0)); then
-    tail -c 10000 /tmp/cma-*.log "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log >&2 2>/dev/null || true
+    for log in /tmp/cma-*.log "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log; do
+      [[ -f "$log" ]] || continue
+      printf '\nDesktop diagnostic: %s\n' "$log" >&2
+      head -c 5000 "$log" >&2 || true
+      tail -c 15000 "$log" >&2 || true
+    done
   fi
   kill "${children[@]}" 2>/dev/null || true
   wait "${children[@]}" 2>/dev/null || true
