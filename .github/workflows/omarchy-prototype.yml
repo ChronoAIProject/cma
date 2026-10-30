@@ -30,6 +30,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/omarchy-base.py /tmp/cma-base
       - name: Build isolated Omarchy image
+        id: build
         run: |
           docker build --target omarchy --build-arg OMARCHY_CMA_BASE=cma-omarchy-base:verified \
             --build-arg CHRONO_BUILD_SHA="$GITHUB_SHA" \
@@ -43,8 +44,11 @@ jobs:
           modinfo vkms || true
           modinfo vgem || true
       - name: Verify desktop and native agent controls
+        id: desktop
         run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence
       - name: Scan experimental image
+        id: scan
+        if: always() && steps.build.outcome == 'success'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: cma-runtime-omarchy:ci
@@ -54,12 +58,17 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
       - name: Export candidate with immutable identity
+        if: always() && steps.build.outcome == 'success'
+        env:
+          DESKTOP_OUTCOME: ${{ steps.desktop.outcome }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
         run: |
-          python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" /tmp/omarchy-image
+          python3 .github/scripts/omarchy-export.py "$GITHUB_SHA" /tmp/omarchy-image /tmp/omarchy-evidence
       - name: Retain candidate image
+        if: always() && steps.build.outcome == 'success'
         uses: actions/upload-artifact@v5
         with:
-          name: omarchy-runtime-image-${{ github.sha }}
+          name: omarchy-runtime-candidate-${{ github.sha }}
           path: /tmp/omarchy-image/
           compression-level: 0
           retention-days: 7
