@@ -447,7 +447,8 @@ FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
 FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
 RUN bash /tmp/install-omarchy.sh && rm /tmp/install-omarchy.sh
-COPY --from=omarchy-cma /usr/local/ /usr/local/
+COPY --from=omarchy-cma /usr/local/bin/ /usr/local/bin/
+COPY --from=omarchy-cma /usr/local/lib/ /usr/local/lib/
 COPY --from=omarchy-cma /etc/codex/ /etc/codex/
 COPY --from=omarchy-cma /usr/share/cma-runtime-home/ /usr/share/cma-runtime-home/
 COPY --from=omarchy-cma /usr/share/cma-desktop/ /usr/share/cma-desktop/
