@@ -41,6 +41,7 @@ jobs:
           uname -r
           ls -l /dev/dri || true
           modinfo vkms || true
+          modinfo vgem || true
       - name: Verify desktop and native agent controls
         run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence
       - name: Scan experimental image
