@@ -97,16 +97,55 @@ async fn cold_binding_keeps_the_first_custom_event_and_admits_it_once() {
 
 #[tokio::test]
 async fn cold_binding_only_retries_the_exact_cma_preparation_refusal() {
-    for (provider, statuses) in [
-        ("cma_codex", vec![(409, "binding_resources_unavailable")]),
-        ("cma_codex", vec![(409, "binding_generation_changed")]),
-        ("cma_codex", vec![(401, "binding_not_ready")]),
-        ("cma_codex", vec![(403, "binding_not_ready")]),
-        ("cma_codex", vec![(503, "binding_not_ready")]),
-        ("nyxbot", vec![(409, "binding_not_ready")]),
+    for (provider, statuses, status, code, detail) in [
+        (
+            "cma_codex",
+            vec![(409, "binding_resources_unavailable")],
+            409,
+            "provider_rejected",
+            "binding_resources_unavailable",
+        ),
+        (
+            "cma_codex",
+            vec![(409, "binding_generation_changed")],
+            502,
+            "provider_rejected",
+            "provider_rejected",
+        ),
+        (
+            "cma_codex",
+            vec![(401, "binding_not_ready")],
+            502,
+            "provider_rejected",
+            "provider_rejected",
+        ),
+        (
+            "cma_codex",
+            vec![(403, "binding_not_ready")],
+            502,
+            "provider_rejected",
+            "provider_rejected",
+        ),
+        (
+            "cma_codex",
+            vec![(503, "binding_not_ready")],
+            503,
+            "provider_unavailable",
+            "provider_unavailable",
+        ),
+        (
+            "nyxbot",
+            vec![(409, "binding_not_ready")],
+            409,
+            "provider_rejected",
+            "binding_not_ready",
+        ),
         (
             "cma_codex",
             vec![(409, "binding_not_ready"), (503, "binding_unavailable")],
+            503,
+            "provider_unavailable",
+            "provider_unavailable",
         ),
     ] {
         let mut app = App::new(
@@ -124,11 +163,10 @@ async fn cold_binding_only_retries_the_exact_cma_preparation_refusal() {
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), 503, "{provider}: {statuses:?}");
-        assert_eq!(
-            response.json::<Value>().await.unwrap()["code"],
-            "provider_unavailable"
-        );
+        assert_eq!(response.status(), status, "{provider}: {statuses:?}");
+        let problem = response.json::<Value>().await.unwrap();
+        assert_eq!(problem["code"], code);
+        assert_eq!(problem["detail"], detail);
         app.drain().await;
         let requests = app.provider.requests();
         assert_eq!(requests.iter().filter(|r| r.method == "POST").count(), 1);
