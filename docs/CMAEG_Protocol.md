@@ -447,7 +447,7 @@ branch on `code` and HTTP status, never on diagnostic prose. The full code set i
 | `channel_restore_unavailable` | Cold restore cannot complete; 503 |
 | `channel_invalid` | Restored record is corrupt or fails validation; 503 |
 | `provider_unavailable` | Provider/authentication backend unavailable; usually 503 |
-| `provider_rejected` | Provider rejected setup or a turn; 502 |
+| `provider_rejected` | Provider rejected setup or a turn; recognized refusals preserve 400/403/404/409/410/422, unknown refusals use 502 |
 | `provider_busy` | Provider/local turn capacity exhausted; 503 |
 | `draining` | Instance is refusing new work during shutdown; 503 |
 | `event_ref_invalid` | Invalid sealed reference; 400 |
@@ -455,12 +455,25 @@ branch on `code` and HTTP status, never on diagnostic prose. The full code set i
 | `callback_invalid` | Callback signature, claims, headers or binding invalid; 401 |
 | `admission_refused` | Admission refused outside the relay refusal envelope |
 | `rate_limited` | Ingress/restore capacity exceeded; 429 |
-| `conflict` | Version or idempotency conflict; 409 |
+| `conflict` | Version or idempotency conflict, or incomplete channel creation; 409 |
 | `payload_too_large` | Body exceeds ingress limit; 413 |
 | `unsupported_media_type` | Unsupported ingress content type; 415 |
 | `internal` | Internal processing failure; 500 |
 | `attachment_not_found` | The event has no attachment at the requested index; 404 |
 | `media_unavailable` | Inbound media is disabled, a media read's `event_ref` sealed no activity digest, or a media download is spent, expired or temporarily unavailable; 503, or 410 for a spent or expired link |
+
+A retained CMA partition whose Agent is absent returns 410 `provider_rejected`
+with diagnostic detail `partition_agent_missing`. An Agent that cannot accept
+input returns 409 with detail `partition_agent_unavailable`. These refusals do
+not carry `Retry-After`; inspect the mapping and Agent lifecycle before retrying.
+Transient provider capacity and transport failures retain their 503 behavior.
+Provider response bodies are not forwarded; only recognized safe reason codes
+are retained in diagnostic detail.
+
+A persisted channel whose original creation has not completed returns 409
+`conflict` with detail beginning `channel_creation_pending`. The owner must
+complete the original creation request using its exact reserved `record_id`
+and original policy/credentials. Repeated event delivery cannot finish creation.
 
 ## 4. Opaque references
 
@@ -628,6 +641,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
+| `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
@@ -654,6 +668,24 @@ credentials or unknown providers; 401 `not_authenticated`; 404
 backend failures; 500 `internal`. Body extraction failures are reported as
 400. Authentication precedes mutation; no operation grants access based on a
 caller-supplied owner alone.
+
+Partition inspection is an owner-authorized, `Cache-Control: no-store` GET for
+the `cma_codex` provider. Supply the exact raw partition key: with
+`partition.key=event_subject`, use the CloudEvent `subject` such as `oracle`.
+For other rules use the normalized partition key defined in §7, URL-encoded as
+a query value. An optional `consumer_id` selects that consumer's binding and
+conversation derivation. Pending consumers and `source_user` affinity are not
+supported by this transport-partition lookup.
+
+The result contains `consumer_id`, `transport_conversation_id`, and `mapping`
+with `binding_id`, `generation`, canonical `conversation_id`, `agent_id`,
+conversation `state`, and nullable `agent_status`. A null Agent status means
+the retained mapping has no Agent record; `deleted` means a tombstone remains.
+An `existing_agent` target resolves its canonical shared conversation alias.
+Inspection never reserves, recreates, deletes, or rebinds an Agent. A 404 can
+mean no mapping exists in the current binding generation. Provider managers
+can also inspect the canonical mapping directly through
+`GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` on CMA.
 
 Native WhatsApp status callbacks annotate existing Channel Activity delivery
 rows without admitting a turn. The additive `platform_status` step reports
@@ -2832,6 +2864,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
+| `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
 | `GET /v1/channels/{channel_id}/activity/stream` | `streamChannelActivity` |
 | `GET /v1/channels/{channel_id}/events/{event_id}/media-responses` | `getEventMediaResponses` |

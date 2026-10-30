@@ -12,6 +12,7 @@ use layer2_core::{Authorization, Capability, CoreError, SandboxId, ServiceId, Su
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
+mod inspection;
 mod preparation;
 pub(super) mod preparation_contract;
 mod readiness;
