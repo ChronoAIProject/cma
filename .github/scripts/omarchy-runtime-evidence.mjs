@@ -95,6 +95,12 @@ try {
     try { writeFileSync(resolve(destination, 'diagnostics.txt'), docker(['logs', name]).replaceAll(token, '[fixture-token]')); } catch {}
   }
 } finally {
+  // A later interaction failure leaves the compositor alive. Preserve its logs
+  // too, before disposing of the test's exact container and home volume.
+  try {
+    const logs = run(['python3', '-c', 'from pathlib import Path\nfor p in sorted(Path("/tmp").glob("cma-*.log")):\n print("\\n" + str(p) + "\\n" + p.read_text(errors="replace")[-20000:])']);
+    writeFileSync(resolve(destination, 'desktop-processes.txt'), logs.replaceAll(token, '[fixture-token]'));
+  } catch {}
   try { docker(['rm', '--force', name]); docker(['volume', 'rm', name]); result.cleanup = true; } catch {}
   writeFileSync(resolve(destination, 'verification.json'), JSON.stringify(result, null, 2));
 }
