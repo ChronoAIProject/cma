@@ -5687,6 +5687,13 @@
   "ConversationId": [
     "fixture"
   ],
+  "ConversationInspection": [
+    {
+      "binding_id": "binding-fixture", "generation": 1,
+      "conversation_id": "conversation-fixture", "agent_id": "agt_fixture",
+      "state": "ready", "agent_status": "deleted"
+    }
+  ],
   "ConversationKind": [
     "private",
     "group",
@@ -6272,6 +6279,16 @@
         "address": "Singapore"
       },
       "blocks": []
+    }
+  ],
+  "PartitionInspection": [
+    {
+      "consumer_id": "default", "transport_conversation_id": "conversation-fixture",
+      "mapping": {
+        "binding_id": "binding-fixture", "generation": 1,
+        "conversation_id": "conversation-fixture", "agent_id": "agt_fixture",
+        "state": "ready", "agent_status": null
+      }
     }
   ],
   "PartitionKey": [

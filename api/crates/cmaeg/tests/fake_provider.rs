@@ -25,6 +25,8 @@ use tokio::{
 
 #[derive(Debug, Clone)]
 pub struct FakeProviderConfig {
+    pub response_refusal: Option<(u16, String)>,
+    pub inspection_agent: Option<(String, String)>,
     pub response_delay: Duration,
     pub terminal_delay: Duration,
     pub header_delay: Duration,
@@ -63,6 +65,8 @@ pub struct FakeProviderConfig {
 impl Default for FakeProviderConfig {
     fn default() -> Self {
         Self {
+            response_refusal: None,
+            inspection_agent: None,
             response_delay: Duration::ZERO,
             terminal_delay: Duration::ZERO,
             header_delay: Duration::ZERO,
@@ -147,7 +151,7 @@ impl FakeProvider {
             )
             .route(
                 "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
-                put(ensure_conversation).delete(delete_conversation),
+                put(ensure_conversation).delete(delete_conversation).get(inspect_conversation),
             )
             .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}", get(event_context))
             .route("/api/v2/responses", post(responses))
@@ -323,6 +327,13 @@ async fn responses(
     let attachments = String::from_utf8_lossy(&body).contains("[Attachments:");
     let candidate = received("POST", "/api/v2/responses".into(), &headers, &body);
     record(&state, "POST", "/api/v2/responses".into(), headers, body);
+    if let Some((status, code)) = &state.config.response_refusal {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(json!({"error":{"code":code}})),
+        )
+            .into_response();
+    }
     if attachments {
         if let Some(gate) = &state.config.attachment_gate {
             gate.acquire().await.unwrap().forget();
@@ -417,6 +428,25 @@ async fn responses(
         .header("content-type", "text/event-stream")
         .body(Body::from_stream(stream))
         .unwrap()
+}
+
+async fn inspect_conversation(
+    State(state): State<Arc<StateData>>,
+    Path((binding, conversation)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    record(
+        &state,
+        "GET",
+        format!("/api/v1/cmaeg/bindings/{binding}/conversations/{conversation}"),
+        headers,
+        Bytes::new(),
+    );
+    match &state.config.inspection_agent {
+        Some((agent_id, status)) => Json(json!({"binding_id":binding, "generation":1,
+            "conversation_id":conversation,"agent_id":agent_id,"state":"ready","agent_status":status})).into_response(),
+        None => (StatusCode::NOT_FOUND, Json(json!({"code":"binding_not_found"}))).into_response(),
+    }
 }
 
 fn record(state: &StateData, method: &str, path: String, headers: HeaderMap, body: Bytes) {

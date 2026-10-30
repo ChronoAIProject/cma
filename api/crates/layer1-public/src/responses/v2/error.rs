@@ -60,6 +60,32 @@ pub(super) fn unavailable() -> Response {
 }
 
 pub(super) fn binding_admission(value: CommandAdmissionError) -> Response {
+    if matches!(
+        value,
+        CommandAdmissionError::Ledger(CommandLedgerError::NotFound)
+            | CommandAdmissionError::Access(ResourceAccessError::Access(AccessError::NotFound))
+            | CommandAdmissionError::Access(ResourceAccessError::Store(
+                ResourceAccessStoreError::NotFound
+            ))
+    ) {
+        return error(
+            StatusCode::GONE,
+            "partition_agent_missing",
+            "The binding conversation's Agent is missing. Inspect the binding conversation mapping before reconnecting the channel.",
+            Some("conversation"),
+        );
+    }
+    if matches!(
+        value,
+        CommandAdmissionError::Ledger(CommandLedgerError::NotAdmissible)
+    ) {
+        return error(
+            StatusCode::CONFLICT,
+            "partition_agent_unavailable",
+            "The binding conversation's Agent cannot accept input. Inspect its lifecycle state before retrying.",
+            Some("conversation"),
+        );
+    }
     // A concurrent Agent/lifecycle write invalidates the reservation snapshot.
     // Binding clients retry 429 with the same event and key under their bounded
     // provider retry policy; permanent input and admissibility refusals remain
