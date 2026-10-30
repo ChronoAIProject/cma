@@ -157,12 +157,7 @@ impl TurnRunner {
                     .map(Some);
                 return Ok(custom_replay::answer(replay, &mut admitted).unwrap());
             }
-            let stream = started.map_err(|error| match error {
-                ProviderError::Capacity | ProviderError::Busy { .. } => {
-                    (ProblemCode::ProviderBusy, "provider_busy")
-                }
-                _ => (ProblemCode::ProviderUnavailable, "provider_unavailable"),
-            })?;
+            let stream = started.map_err(super::refusal::classify)?;
             consume::consume(
                 stream,
                 turn.clone(),
@@ -172,7 +167,7 @@ impl TurnRunner {
                 &mut admitted,
             )
             .await
-            .map_err(|reason| (ProblemCode::ProviderUnavailable, reason))
+            .map_err(|reason| (ProblemCode::ProviderUnavailable, reason, 503))
         })
         .await;
         let error = match result {
@@ -184,11 +179,15 @@ impl TurnRunner {
                 return;
             }
             Ok(Err(error)) => error,
-            Err(_) => (ProblemCode::ProviderUnavailable, "turn_timeout"),
+            Err(_) => (ProblemCode::ProviderUnavailable, "turn_timeout", 503),
         };
         observation.finish(error.1);
         provider_error(&provider, error.1);
-        consume::refuse(&mut admitted, error.0, error.1);
+        if let Some(sender) = admitted.take() {
+            let _ = sender.send(LaunchOutcome::Refused(Problem::new(
+                error.0, error.2, error.1,
+            )));
+        }
         self.delivery.terminal(
             turn,
             TurnOutcome::Failed {
