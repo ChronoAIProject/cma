@@ -14,6 +14,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+      - name: Reserve space on the disposable runner
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
       - uses: actions/setup-node@v6
         with:
           node-version: 24.15.0
@@ -36,7 +41,18 @@ jobs:
             --build-arg CHRONO_BUILD_SHA="$GITHUB_SHA" \
             --build-arg CHRONO_BUILD=omarchy-prototype \
             --progress=plain -t cma-runtime-omarchy:ci -f infra/runtime/Dockerfile .
+      - name: Release build-only layers before scanning
+        run: |
+          image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
+          docker builder prune --all --force
+          docker image rm cma-omarchy-base:verified
+          test "$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')" = "$image_id"
+          df -h /
+      - name: Verify CMA runtime contract on Arch
+        id: contract
+        run: node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" /tmp/omarchy-evidence/runtime-contract.json
       - name: Docker host Chromium namespace prerequisite
+        if: always() && steps.build.outcome == 'success'
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           uname -r
@@ -45,7 +61,24 @@ jobs:
           modinfo vgem || true
       - name: Verify desktop and native agent controls
         id: desktop
+        if: always() && steps.build.outcome == 'success'
         run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence
+      - name: Compare with a virtual graphics device on this disposable runner
+        id: graphics
+        if: always() && steps.build.outcome == 'success'
+        env:
+          CMA_OMARCHY_TEST_DRM: '1'
+        run: |
+          sudo modprobe vgem
+          ls -l /dev/dri
+          node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence/virtual-drm
+      - name: Retain startup results before the full image scan
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v5
+        with:
+          name: omarchy-startup-${{ github.sha }}
+          path: /tmp/omarchy-evidence/
+          retention-days: 7
       - name: Scan experimental image
         id: scan
         if: always() && steps.build.outcome == 'success'
@@ -62,6 +95,8 @@ jobs:
         env:
           DESKTOP_OUTCOME: ${{ steps.desktop.outcome }}
           SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          CONTRACT_OUTCOME: ${{ steps.contract.outcome }}
+          GRAPHICS_OUTCOME: ${{ steps.graphics.outcome }}
         run: |
           python3 .github/scripts/omarchy-export.py "$GITHUB_SHA" /tmp/omarchy-image /tmp/omarchy-evidence
       - name: Retain candidate image
