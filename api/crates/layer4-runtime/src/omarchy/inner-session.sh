@@ -47,10 +47,22 @@ labwc --config-dir /tmp/cma-labwc --debug >/tmp/cma-labwc.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]] && break; sleep 0.1; done
 [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]]
+find_host_window() {
+  local candidate
+  # wlroots publishes _NET_WM_NAME only; xdotool searches legacy WM_NAME.
+  # Inspect all visible candidates and require the exact modern title.
+  for candidate in $(xdotool search --onlyvisible --name '.*'); do
+    if [[ $(xprop -id "$candidate" -notype _NET_WM_NAME 2>/dev/null) == '_NET_WM_NAME = "wlroots - X11-1"' ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+  return 1
+}
 for ((i=0;i<100;i++)); do
   # labwc's --title applies only to its Wayland backend. The X11 backend
   # publishes wlroots' fixed output title; assign our stable title afterwards.
-  window=$(xdotool search --onlyvisible --name '^wlroots - X11-1$' | head -1 || true)
+  window=$(find_host_window || true)
   [[ -z "$window" ]] || break
   kill -0 "${children[0]}"
   sleep 0.1
