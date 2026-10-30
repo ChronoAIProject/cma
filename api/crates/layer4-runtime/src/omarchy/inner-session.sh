@@ -31,6 +31,16 @@ for device in /dev/dri/renderD*; do
     break
   fi
 done
+# VKMS has a primary node only. Its dumb buffers are supported by Mesa's
+# software renderer; vgem's render node denies MODE_CREATE_DUMB.
+for device in /dev/dri/card*; do
+  [[ -r "$device" && -w "$device" ]] || continue
+  driver=$(readlink -f "/sys/class/drm/${device##*/}/device/driver" || true)
+  if [[ ${driver##*/} == vkms ]]; then
+    export WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE="$device"
+    break
+  fi
+done
 # The host only transports the actual Hyprland desktop. No host keybindings
 # intercept the owner's input; every inner window occupies the whole output.
 mkdir -p /tmp/cma-labwc
