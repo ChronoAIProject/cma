@@ -18,11 +18,16 @@ PY
 fi
 if [[ ! -s "$HOME/.local/state/omarchy/current/theme.name" ]]; then
   OMARCHY_THEME_HEADLESS=1 omarchy-theme-set 'Tokyo Night'
+  ln -snf /usr/share/cma-desktop/wallpaper.png "$HOME/.local/state/omarchy/current/background"
 fi
 children=()
 stop() { trap - EXIT INT TERM; kill "${children[@]}" 2>/dev/null || true; wait "${children[@]}" 2>/dev/null || true; }
 trap stop EXIT INT TERM
-weston --backend=x11 --renderer=pixman --shell=kiosk-shell.so --width=1280 --height=800 --socket=cma-host --idle-time=0 >/tmp/cma-weston.log 2>&1 &
+renderer=pixman
+for device in /dev/dri/renderD*; do
+  if [[ -r "$device" && -w "$device" ]]; then renderer=gl; break; fi
+done
+weston --backend=x11 --renderer="$renderer" --shell=kiosk-shell.so --width=1280 --height=800 --socket=cma-host --idle-time=0 >/tmp/cma-weston.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do [[ -S "$XDG_RUNTIME_DIR/cma-host" ]] && break; sleep 0.1; done
 [[ -S "$XDG_RUNTIME_DIR/cma-host" ]]
