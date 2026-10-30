@@ -106,7 +106,7 @@ const server = createServer(async (request, response) => {
     '[model_providers.fixture]', 'name="Offline desktop acceptance"',
     'base_url="' + origin + '/v1"', 'wire_api="responses"', 'requires_openai_auth=false',
   ].join('\n'));
-  const window = execFileSync('xdotool', ['search', '--onlyvisible', '--class', 'weston'], { encoding: 'utf8' }).trim().split('\n')[0];
+  const window = execFileSync('xdotool', ['search', '--onlyvisible', '--name', '^CMA-Omarchy-Transport$'], { encoding: 'utf8' }).trim().split('\n')[0];
   assert(/^\d+$/.test(window));
   command = [
     'set -e',
