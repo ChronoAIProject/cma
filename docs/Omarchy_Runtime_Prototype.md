@@ -36,7 +36,9 @@ execution, a native Wayland Chromium window, authenticated framebuffer and
 user input, browser-close survival, and retained browser state across restart.
 Model replies use a local deterministic fixture; no customer agent or live
 model is used. Screenshots, package manifests, source identity and a vulnerability
-scan accompany the image archive. A failed check prevents image export.
+scan accompany the image archive. Failed checks remain failing workflow gates.
+The diagnostic image archive is retained even after a failed desktop check,
+with `admission: blocked` in its metadata; its presence is not a readiness claim.
 
 A passing Docker campaign does not establish deployment compatibility with
 the production Kata runtime or browser integration through CMA's public API.
