@@ -74,7 +74,7 @@ jobs:
         env:
           CMA_OMARCHY_TEST_DRM: '1'
         run: |
-          sudo modprobe vgem
+          sudo modprobe vkms
           ls -l /dev/dri
           node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence/virtual-drm
       - name: Retain startup results before the full image scan
