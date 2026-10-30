@@ -6,6 +6,7 @@ import { ToolCallRow } from './ToolCallRows';
 import { PlanCard } from './PlanCard';
 import { ApprovalCard } from './ApprovalCard';
 import { UserMessage } from './UserMessage';
+import { visibleUserMessage } from './externalEventMessage';
 import { TurnUsage } from './TurnUsage';
 import type { AgentUsage } from '../api/types';
 import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
@@ -44,6 +45,7 @@ function StreamEntryView({
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
+    const content = message.role === 'user' ? visibleUserMessage(message.content) : message.content;
     const identity = messageIdentity(message.role, user, unknownUserName);
     return (
       <article
@@ -56,7 +58,7 @@ function StreamEntryView({
         <div className="message__body">
           {continued ? null : <span className="message__role">{identity.name}</span>}
           {message.role === 'user' ? (
-            <UserMessage content={message.content} />
+            <UserMessage content={content} />
           ) : (
             <MessageContent content={message.content} streaming={message.status === 'streaming'} />
           )}
@@ -75,7 +77,7 @@ function StreamEntryView({
             id={message.id}
             canVote={message.role === 'assistant'}
             at={message.at}
-            content={message.content}
+            content={content}
             committed={
               !message.liveOnly &&
               message.status !== 'streaming' &&
