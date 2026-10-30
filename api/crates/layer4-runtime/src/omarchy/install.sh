@@ -20,7 +20,7 @@ pacman -Syu --disable-sandbox --noconfirm --needed \
     bash bubblewrap ca-certificates curl git python python-pillow python-numpy \
     ripgrep unzip xz zstd openssl dbus glibc libunwind icu krb5 gmp \
     hyprland quickshell foot chromium nautilus grim slurp wl-clipboard wtype \
-    xorg-server-xvfb xorg-xdpyinfo xorg-xset xorg-xrandr xorg-xwininfo xdotool \
+    xorg-server-xvfb xorg-xdpyinfo xorg-xset xorg-xrandr xorg-xwininfo xorg-xprop xdotool \
     x11vnc python-pip scrot labwc mesa libglvnd xorg-xwayland \
     qt6-imageformats qt6-multimedia qt6-svg qt6-wayland \
     noto-fonts noto-fonts-emoji ttf-jetbrains-mono-nerd-basic yaru-icon-theme \
