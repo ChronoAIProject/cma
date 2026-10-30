@@ -3875,3 +3875,14 @@ the user explicitly chooses Control desktop again. Reconnect also resets input.
 Reduced motion removes fades and shimmer while preserving all status text.
 
 | 2026-10-30 | Animate actual desktop loading and five-second control handoff feedback, keep one persistent accessible status, preserve first-frame readiness, and require explicit input takeover after Agent work or reconnect. |
+
+A connected Machine viewer must retain a visibly sized, painted desktop. Browser
+canvas context loss or a persistently transparent/missing display revokes user
+input and shows **Restoring the desktop display…** using the existing loading
+skeleton. Reconnect only the viewer, at most twice before showing a persistent
+recovery message with Reconnect available. Preserve the Machine, Agent turn,
+conversation and unsent draft; restored viewers return to Watching. Hidden panes
+and browser tabs do not trigger recovery. Opaque black and unchanged desktops
+remain valid; a temporary resize may finish repainting before recovery starts.
+
+| 2026-10-30 | Recover lost Machine viewer canvases with bounded retries and the existing loading surface; preserve conversations and require explicit input takeover after restoration. |
