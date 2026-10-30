@@ -13,7 +13,9 @@ mkdir -p /usr/share/omarchy /usr/share/cma-omarchy
 tar -xzf /tmp/omarchy.tar.gz -C /usr/share/omarchy --strip-components=1
 cp /usr/share/omarchy/default/pacman/pacman-stable.conf /etc/pacman.conf
 cp /usr/share/omarchy/default/pacman/mirrorlist-stable /etc/pacman.d/mirrorlist
-pacman -Syu --noconfirm --needed \
+# Docker build already isolates this step; its seccomp profile denies Landlock.
+# This flag affects only the build-time downloader, not package signatures.
+pacman -Syu --disable-sandbox --noconfirm --needed \
     bash bubblewrap ca-certificates curl git python python-pillow python-numpy \
     ripgrep unzip xz zstd openssl dbus glibc libunwind icu krb5 gmp \
     hyprland quickshell foot chromium nautilus grim slurp wl-clipboard wtype \

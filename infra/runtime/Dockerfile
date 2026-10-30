@@ -479,3 +479,8 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.omarchy-revision="237f1b4071a0bff2296c6d740ba2b9fd695ebfa0"
 
 FROM runtime AS default-runtime
+ARG CHRONO_BUILD_SHA=local-unpinned
+ARG CHRONO_BUILD=development
+LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+      org.opencontainers.image.version="${CHRONO_BUILD}"
