@@ -16,6 +16,7 @@ use crate::{
 
 pub(super) const PROTOCOL_VERSION: u32 = 1;
 pub(super) const CALL_DEADLINE: Duration = Duration::from_secs(30);
+pub(super) const RESUME_IDLE_DEADLINE: Duration = Duration::from_secs(5 * 60);
 pub(super) const SIGN_IN_DEADLINE: Duration = Duration::from_secs(16 * 60);
 const DECLARATION_DEADLINE: Duration = Duration::from_secs(10);
 const INPUT_BUFFER: usize = 1;

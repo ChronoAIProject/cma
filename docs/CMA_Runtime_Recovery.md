@@ -8,6 +8,17 @@ and the latter can discard an unflushed conversation tail.
 
 ## Preventing and recovering lost confirmation
 
+Reopening a retained conversation can spend more than 30 seconds initializing
+the bridge or loading its history before producing output. Recovery `initialize`
+and `session/load` calls therefore allow five minutes without durable output
+progress on the same socket. Acknowledged replay output renews that idle window;
+each call still has its existing sixteen-minute absolute bound. New-conversation
+initialization and ordinary control calls retain their thirty-second deadlines.
+An initialized bridge can rejoin the recorded conversation without issuing a
+second load. Its exact initialized response and any required tool-completion
+proofs remain mandatory. A disconnected or stalled bridge still returns a
+retryable failure through the existing lifecycle recovery path.
+
 The open runner retains its original channel and immutable binding while retrying
 only confirmation. Each source allows three attempts bounded by five seconds per
 attempt and fifteen seconds overall. Changed authority stops the operation.

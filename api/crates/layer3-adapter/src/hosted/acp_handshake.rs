@@ -1,4 +1,4 @@
-use super::acp::{Bridge, CALL_DEADLINE, PROTOCOL_VERSION, SIGN_IN_DEADLINE};
+use super::acp::{Bridge, CALL_DEADLINE, PROTOCOL_VERSION, RESUME_IDLE_DEADLINE, SIGN_IN_DEADLINE};
 use super::update_relay::UpdateRelay;
 use super::HostedAgentOpenSettings;
 use crate::AdapterError;
@@ -39,6 +39,11 @@ impl Bridge {
     ) -> crate::Result<()> {
         validate_settings(&cwd, &settings)?;
         let mut timing = super::startup_timing::StartupTiming::new();
+        let initialize_deadline = if resume.is_some() {
+            RESUME_IDLE_DEADLINE
+        } else {
+            CALL_DEADLINE
+        };
         let greeting = self
             .greet(serde_json::json!({
                 "protocolVersion": PROTOCOL_VERSION,
@@ -51,7 +56,7 @@ impl Bridge {
                         "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
                     },
                 },
-            }), settings.already_initialized_error.as_ref())
+            }), settings.already_initialized_error.as_ref(), initialize_deadline)
             .await?;
         timing.completed("protocol_initialize");
 
@@ -170,13 +175,14 @@ impl Bridge {
         let session = match (greeting, resume) {
             (Greeting::Fresh(_), Some(conversation)) => {
                 self.activate_session(conversation.clone(), updates).await?;
-                self.call(
+                self.call_within(
                     "session/load",
                     serde_json::json!({
                         "sessionId": conversation,
                         "cwd": cwd,
                         "mcpServers": tool_servers,
                     }),
+                    RESUME_IDLE_DEADLINE,
                 )
                 .await
                 .map_err(|error| error.context("could not resume conversation"))?;
@@ -223,13 +229,14 @@ impl Bridge {
                     )
                     .await?;
                     self.activate_session(conversation.clone(), updates).await?;
-                    self.call(
+                    self.call_within(
                         "session/load",
                         serde_json::json!({
                             "sessionId": conversation,
                             "cwd": cwd,
                             "mcpServers": tool_servers,
                         }),
+                        RESUME_IDLE_DEADLINE,
                     )
                     .await
                     .map_err(|error| error.context("could not bind prepared conversation"))?;
@@ -324,9 +331,10 @@ impl Bridge {
         &self,
         params: serde_json::Value,
         already_initialized_error: Option<&serde_json::Value>,
+        deadline: std::time::Duration,
     ) -> crate::Result<Greeting> {
         let frame = self
-            .call_frame_within("initialize", params, CALL_DEADLINE)
+            .call_frame_within("initialize", params, deadline)
             .await?;
         if already_initialized_error.is_some_and(|expected| frame.get("error") == Some(expected)) {
             tracing::info!("runtime bridge was already initialized");
