@@ -26,8 +26,26 @@ with tempfile.TemporaryDirectory(prefix='cma-base-transfer-') as directory:
     for attempt in range(3):
         try:
             with archive.open('wb') as target:
-                subprocess.run(['gh', 'api', endpoint + '/zip'], stdout=target,
-                               check=True, timeout=180)
+                process = subprocess.Popen(['gh', 'api', endpoint + '/zip'], stdout=target)
+                started = time.monotonic()
+                previous_size, progress_at = 0, started
+                try:
+                    while process.poll() is None:
+                        time.sleep(5)
+                        size = archive.stat().st_size
+                        now = time.monotonic()
+                        if size != previous_size:
+                            progress_at = now
+                            previous_size = size
+                        print('Base artifact downloaded bytes:', size, flush=True)
+                        if now - progress_at > 180 or now - started > 900:
+                            raise subprocess.TimeoutExpired('base artifact transfer', int(now - started))
+                    if process.returncode:
+                        raise subprocess.CalledProcessError(process.returncode, 'base artifact transfer')
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
             with archive.open('rb') as source:
                 assert hashlib.file_digest(source, 'sha256').hexdigest() == digest
             break
