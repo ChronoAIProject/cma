@@ -56,6 +56,22 @@ Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -ac -noreset -s 0 >/tmp/cma-xvfb.lo
 children+=("$!")
 for ((i=0;i<100;i++)); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
 xdpyinfo >/dev/null
+# wlroots' nested X11 backend looks up these names with only_if_exists.
+# A bare Xvfb server has no window manager to initialize them.
+python3 - <<'PY'
+import ctypes
+x = ctypes.CDLL('libX11.so.6')
+x.XOpenDisplay.argtypes = [ctypes.c_char_p]
+x.XOpenDisplay.restype = ctypes.c_void_p
+x.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+x.XInternAtom.restype = ctypes.c_ulong
+x.XCloseDisplay.argtypes = [ctypes.c_void_p]
+d = x.XOpenDisplay(b':99')
+assert d
+for name in ('WM_PROTOCOLS', 'WM_DELETE_WINDOW', '_NET_WM_NAME', 'UTF8_STRING', '_VARIABLE_REFRESH'):
+    assert x.XInternAtom(d, name.encode(), 0)
+x.XCloseDisplay(d)
+PY
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe LP_NUM_THREADS=2
 dbus-run-session -- /usr/local/bin/cma-omarchy-inner-session >/tmp/cma-omarchy.log 2>&1 &
 children+=("$!")
