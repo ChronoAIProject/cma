@@ -21,7 +21,7 @@ pacman -Syu --disable-sandbox --noconfirm --needed \
     ripgrep unzip xz zstd openssl dbus glibc libunwind icu krb5 gmp \
     hyprland quickshell foot chromium nautilus grim slurp wl-clipboard wtype \
     xorg-server-xvfb xorg-xdpyinfo xorg-xset xorg-xrandr xorg-xwininfo xdotool \
-    x11vnc python-pip scrot weston mesa libglvnd xorg-xwayland \
+    x11vnc python-pip scrot labwc mesa libglvnd xorg-xwayland \
     qt6-imageformats qt6-multimedia qt6-svg qt6-wayland \
     noto-fonts noto-fonts-emoji ttf-jetbrains-mono-nerd-basic yaru-icon-theme \
     jq gum imagemagick inotify-tools libnotify procps-ng util-linux which \

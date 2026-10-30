@@ -2,9 +2,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { combineProofs, pins, validateImage } from './runtime-image-evidence.mjs';
+import { prepareProbe } from './omarchy-contract-source.mjs';
 
 const [revision, destination] = process.argv.slice(2);
 const source = readFileSync('infra/runtime/Dockerfile', 'utf8');
@@ -17,13 +18,17 @@ for (const key of ['CODEX_VERSION', 'CODEX_NATIVE_SHA256_AMD64', 'CODEX_LAUNCHER
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', timeout: 180000, maxBuffer: 2 * 1024 * 1024 });
 const name = 'cma-omarchy-contract-' + randomUUID();
 const result = { revision, result: 'fail', cleanup: false };
+const probe = resolve('/tmp', name + '.mjs');
+prepareProbe(probe);
+mkdirSync(resolve(destination, '..'), { recursive: true });
 try {
   const image = JSON.parse(docker(['image', 'inspect', 'cma-runtime-omarchy:ci']))[0];
   validateImage(image, revision);
   result.image = image.Id;
   docker(['volume', 'create', '--label', `dev.chrono.cma.omarchy-test=${name}`, name]);
-  const mounts = ['runtime-image-probe.mjs', 'runtime-github-probe.mjs', 'runtime-bootstrap-probe.mjs']
+  const mounts = ['omarchy-codex-aliases.mjs', 'runtime-github-probe.mjs', 'runtime-bootstrap-probe.mjs']
     .flatMap(file => ['--mount', `type=bind,source=${resolve('.github/scripts', file)},target=/opt/${file},readonly`]);
+  mounts.push('--mount', `type=bind,source=${probe},target=/opt/runtime-image-probe.mjs,readonly`);
   docker(['create', '--name', name, '--network', 'none', '--read-only', '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2',
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777',

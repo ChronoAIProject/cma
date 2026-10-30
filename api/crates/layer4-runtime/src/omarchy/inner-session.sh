@@ -23,15 +23,31 @@ fi
 children=()
 stop() { trap - EXIT INT TERM; kill "${children[@]}" 2>/dev/null || true; wait "${children[@]}" 2>/dev/null || true; }
 trap stop EXIT INT TERM
-renderer=pixman
+export WLR_BACKENDS=x11 WLR_RENDERER=pixman
+export WLR_RENDERER_ALLOW_SOFTWARE=1 WLR_RENDERER_FORCE_SOFTWARE=1
 for device in /dev/dri/renderD*; do
-  if [[ -r "$device" && -w "$device" ]]; then renderer=gl; break; fi
+  if [[ -r "$device" && -w "$device" ]]; then
+    export WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE="$device"
+    break
+  fi
 done
-weston --backend=x11 --renderer="$renderer" --shell=kiosk-shell.so --width=1280 --height=800 --socket=cma-host --idle-time=0 >/tmp/cma-weston.log 2>&1 &
+# The host only transports the actual Hyprland desktop. No host keybindings
+# intercept the owner's input; every inner window occupies the whole output.
+mkdir -p /tmp/cma-labwc
+cat > /tmp/cma-labwc/rc.xml <<'XML'
+<labwc_config>
+  <windowRules><windowRule identifier="*" serverDecoration="no">
+    <action name="ToggleFullscreen" />
+  </windowRule></windowRules>
+</labwc_config>
+XML
+labwc --config-dir /tmp/cma-labwc --title CMA-Omarchy-Transport --debug >/tmp/cma-labwc.log 2>&1 &
 children+=("$!")
-for ((i=0;i<100;i++)); do [[ -S "$XDG_RUNTIME_DIR/cma-host" ]] && break; sleep 0.1; done
-[[ -S "$XDG_RUNTIME_DIR/cma-host" ]]
-export WAYLAND_DISPLAY=cma-host
+for ((i=0;i<100;i++)); do [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]] && break; sleep 0.1; done
+[[ -S "$XDG_RUNTIME_DIR/wayland-0" ]]
+window=$(xdotool search --onlyvisible --name '^CMA-Omarchy-Transport$' | head -1)
+xdotool windowsize "$window" 1280 800 windowmove "$window" 0 0
+export WAYLAND_DISPLAY=wayland-0
 Hyprland --config /usr/share/cma-omarchy/hyprland.lua >/tmp/cma-hyprland.log 2>&1 &
 children+=("$!")
 for ((i=0;i<300;i++)); do
@@ -49,7 +65,6 @@ for ((i=0;i<300;i++)); do
   sleep 0.1
 done
 hyprctl -j clients | jq -e 'any(.[]; .class | ascii_downcase | contains("chromium"))' >/dev/null
-window=$(xdotool search --onlyvisible --class weston | head -1)
 xdotool windowfocus --sync "$window"
 touch /tmp/cma-omarchy-ready
 wait -n "${children[@]}"

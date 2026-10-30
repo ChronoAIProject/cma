@@ -13,9 +13,10 @@ exact built candidate. Rebuilding later may select different signed packages.
 
 ## Display integration
 
-Hyprland runs as a native Wayland compositor nested in Weston, which renders
-into the existing Xvfb display. Mesa software rendering avoids a GPU-device
-requirement. The real Omarchy shell owns the bar, wallpaper and menus.
+Hyprland runs as a native Wayland compositor nested in labwc, which renders
+into the existing Xvfb display. Acceptance compares no-device software rendering
+with a virtual DRM device on a disposable runner; GPU-free operation has not
+been established. The real Omarchy shell owns the bar, wallpaper and menus.
 Chromium and Foot use native Wayland. User and agent pointer and keyboard
 events enter the same outer display; the existing authenticated VNC transport
 streams those pixels. There is no replacement computer-use service.
