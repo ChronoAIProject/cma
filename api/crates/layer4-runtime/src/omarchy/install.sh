@@ -20,11 +20,17 @@ pacman -Syu --disable-sandbox --noconfirm --needed \
     ripgrep unzip xz zstd openssl dbus glibc libunwind icu krb5 gmp \
     hyprland quickshell foot chromium nautilus grim slurp wl-clipboard wtype \
     xorg-server-xvfb xorg-xdpyinfo xorg-xset xorg-xrandr xorg-xwininfo xdotool \
-    x11vnc python-websockify scrot weston mesa libglvnd xorg-xwayland \
+    x11vnc python-pip scrot weston mesa libglvnd xorg-xwayland \
     qt6-imageformats qt6-multimedia qt6-svg qt6-wayland \
     noto-fonts noto-fonts-emoji ttf-jetbrains-mono-nerd-basic yaru-icon-theme \
     jq gum imagemagick inotify-tools libnotify procps-ng util-linux which \
     xdg-utils xdg-desktop-portal-hyprland python-gobject pipewire wireplumber
+curl -fsSL https://files.pythonhosted.org/packages/19/e8/6476cd85a71f7cfb04ca1e199809b75bc8580d075d4338ffcde4c761d620/websockify-0.13.0-py3-none-any.whl -o /tmp/websockify-0.13.0-py3-none-any.whl
+echo 'ac497a8dafc7f51d28ca989f01cdf5f8add663a497d425a56b159dcb8d6a314c  /tmp/websockify-0.13.0-py3-none-any.whl' | sha256sum -c -
+python -m venv --system-site-packages /opt/cma-stream
+/opt/cma-stream/bin/pip install --no-deps --no-index /tmp/websockify-0.13.0-py3-none-any.whl
+ln -s /opt/cma-stream/bin/websockify /usr/local/bin/websockify
+rm /tmp/websockify-0.13.0-py3-none-any.whl
 pacman -Q > /usr/share/cma-omarchy/packages.txt
 find /var/cache/pacman/pkg -type f -name '*.pkg.tar.*' ! -name '*.sig' -exec sha256sum {} + > /usr/share/cma-omarchy/package-sha256.txt
 Hyprland --version > /usr/share/cma-omarchy/hyprland-version.txt
