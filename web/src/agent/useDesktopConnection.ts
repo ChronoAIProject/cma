@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type RFB from '@novnc/novnc';
 import { desktopInput } from './desktopInput';
+import { watchDesktopDisplay } from './desktopDisplay';
 
-export type DesktopPhase = 'connecting' | 'loading' | 'ready' | 'error';
+export type DesktopPhase = 'connecting' | 'loading' | 'recovering' | 'ready' | 'error';
 
-/** Observe only the initial screen; stop all pixel reads as soon as it arrives. */
+/** Poll the first frame quickly; the settled display uses a separate sparse monitor. */
 export function waitForDesktopFrame(target: HTMLElement, ready: () => void) {
   let timer: number | undefined;
   const check = () => {
@@ -32,11 +33,13 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
   const input = useRef<ReturnType<typeof desktopInput>>(undefined);
   const [phase, setPhase] = useState<DesktopPhase>('connecting');
   const [error, setError] = useState('');
+  const [recovery, setRecovery] = useState(0);
   const [generation, setGeneration] = useState({ agentId, attempt });
   if (generation.agentId !== agentId || generation.attempt !== attempt) {
     setGeneration({ agentId, attempt });
     setPhase('connecting');
     setError('');
+    setRecovery(0);
   }
   useLayoutEffect(() => {
     const current = connection.current;
@@ -51,15 +54,37 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
     let failed = false;
     let rfb: RFB | undefined;
     let stopWaiting: (() => void) | undefined;
+    let stopWatching: (() => void) | undefined;
+    let retry: number | undefined;
     const fail = (message: string) => {
       if (disposed || failed) return;
       failed = true;
       window.clearTimeout(deadline);
       stopWaiting?.();
+      stopWatching?.();
       input.current?.release();
       if (rfb) rfb.viewOnly = true;
       setError(message);
       setPhase('error');
+    };
+    const recoverDisplay = () => {
+      if (disposed || failed) return;
+      if (recovery >= 2) {
+        fail('The desktop display could not be restored. Reconnect to try again.');
+        rfb?.disconnect();
+        return;
+      }
+      failed = true;
+      window.clearTimeout(deadline);
+      stopWaiting?.();
+      stopWatching?.();
+      input.current?.release();
+      if (rfb) rfb.viewOnly = true;
+      setPhase('recovering');
+      rfb?.disconnect();
+      // Release this viewer's old stream before opening another. Never restart
+      // the Machine or restore input ownership as part of display recovery.
+      retry = window.setTimeout(() => setRecovery(recovery + 1), 750);
     };
     const deadline = window.setTimeout(() => {
       fail('The screen is taking longer than expected. Reconnect to try again.');
@@ -88,6 +113,13 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
             if (disposed || failed) return;
             window.clearTimeout(deadline);
             setPhase('ready');
+            stopWatching = watchDesktopDisplay(
+              target,
+              () => {
+                if (rfb) rfb.scaleViewport = true;
+              },
+              recoverDisplay,
+            );
           });
         });
         rfb.addEventListener('disconnect', () =>
@@ -99,13 +131,15 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
     return () => {
       disposed = true;
       window.clearTimeout(deadline);
+      window.clearTimeout(retry);
       stopWaiting?.();
+      stopWatching?.();
       input.current?.dispose();
       input.current = undefined;
       connection.current = undefined;
       rfb?.disconnect();
     };
-  }, [agentId, attempt]);
+  }, [agentId, attempt, recovery]);
 
   return { screen, phase, error, focus: () => connection.current?.focus() };
 }

@@ -65,9 +65,11 @@ export function DesktopFeedback({
               <span>
                 {phase === 'connecting'
                   ? 'Connecting to your machine'
-                  : phase === 'loading'
-                    ? 'Loading your desktop'
-                    : error}
+                  : phase === 'recovering'
+                    ? 'Restoring your desktop'
+                    : phase === 'loading'
+                      ? 'Loading your desktop'
+                      : error}
               </span>
             </div>
           </div>
