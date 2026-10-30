@@ -23,7 +23,7 @@ fi
 children=()
 stop() { trap - EXIT INT TERM; kill "${children[@]}" 2>/dev/null || true; wait "${children[@]}" 2>/dev/null || true; }
 trap stop EXIT INT TERM
-export WLR_BACKENDS=x11 WLR_RENDERER=pixman
+export WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman
 export WLR_RENDERER_ALLOW_SOFTWARE=1
 for device in /dev/dri/renderD*; do
   if [[ -r "$device" && -w "$device" ]]; then
@@ -47,24 +47,26 @@ labwc --config-dir /tmp/cma-labwc --debug >/tmp/cma-labwc.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]] && break; sleep 0.1; done
 [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]]
-find_host_window() {
-  local candidate
-  # wlroots publishes _NET_WM_NAME only; xdotool searches legacy WM_NAME.
-  # Inspect all visible candidates and require the exact modern title.
-  for candidate in $(xdotool search --onlyvisible --name '.*'); do
-    if [[ $(xprop -id "$candidate" -notype _NET_WM_NAME 2>/dev/null) == '_NET_WM_NAME = "wlroots - X11-1"' ]]; then
-      printf '%s\n' "$candidate"
-      return
-    fi
-  done
-  return 1
-}
+export WAYLAND_DISPLAY=wayland-0
+wlr-randr --output HEADLESS-1 --custom-mode 1280x800@30Hz
+# Capture the Wayland output directly. CMA's authenticated relay is its only
+# remote entry point; the X11 viewer is an in-Sandbox adapter for native tools.
+wayvnc --config /dev/null --output HEADLESS-1 --max-fps 30 127.0.0.1 5900 >/tmp/cma-wayvnc.log 2>&1 &
+children+=("$!")
 for ((i=0;i<100;i++)); do
-  # labwc's --title applies only to its Wayland backend. The X11 backend
-  # publishes wlroots' fixed output title; assign our stable title afterwards.
-  window=$(find_host_window || true)
+  if python3 -c 'import socket; s=socket.create_connection(("127.0.0.1",5900),.1); s.close()' 2>/dev/null; then break; fi
+  kill -0 "${children[1]}"
+  sleep 0.1
+done
+# FLTK must use X11 even though the compositor's client environment is Wayland.
+env -u WAYLAND_DISPLAY vncviewer -Shared -SecurityTypes None -FullScreen \
+  -RemoteResize=0 -MenuKey F35 -AcceptClipboard=0 -SendClipboard=0 \
+  -geometry 1280x800+0+0 127.0.0.1:5900 >/tmp/cma-vncviewer.log 2>&1 &
+children+=("$!")
+for ((i=0;i<100;i++)); do
+  window=$(xdotool search --onlyvisible --class 'Vncviewer' | head -1 || true)
   [[ -z "$window" ]] || break
-  kill -0 "${children[0]}"
+  kill -0 "${children[2]}"
   sleep 0.1
 done
 [[ -n "$window" ]]
@@ -73,10 +75,11 @@ xdotool windowsize "$window" 1280 800 windowmove "$window" 0 0
 export WAYLAND_DISPLAY=wayland-0
 Hyprland --config /usr/share/cma-omarchy/hyprland.lua >/tmp/cma-hyprland.log 2>&1 &
 children+=("$!")
+hypr_pid=$!
 for ((i=0;i<300;i++)); do
   instance=$(hyprctl instances -j 2>/dev/null | jq -r '.[0].instance // empty' || true)
   [[ -z "$instance" ]] || break
-  kill -0 "${children[1]}"
+  kill -0 "$hypr_pid"
   sleep 0.1
 done
 [[ -n "$instance" ]]
@@ -84,7 +87,7 @@ export HYPRLAND_INSTANCE_SIGNATURE="$instance"
 printf '%s\n' "$instance" > "$XDG_RUNTIME_DIR/cma-hyprland-instance"
 for ((i=0;i<300;i++)); do
   hyprctl -j clients 2>/dev/null | jq -e 'any(.[]; .class | ascii_downcase | contains("chromium"))' >/dev/null && break
-  kill -0 "${children[1]}"
+  kill -0 "$hypr_pid"
   sleep 0.1
 done
 hyprctl -j clients | jq -e 'any(.[]; .class | ascii_downcase | contains("chromium"))' >/dev/null
