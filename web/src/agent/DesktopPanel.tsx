@@ -69,11 +69,13 @@ export function DesktopPanel({
           <p role="status">
             {phase === 'connecting'
               ? 'Connecting to your machine…'
-              : phase === 'loading'
-                ? 'Loading the desktop screen…'
-                : phase === 'error'
-                  ? error
-                  : 'Connected'}
+              : phase === 'recovering'
+                ? 'Restoring the desktop display…'
+                : phase === 'loading'
+                  ? 'Loading the desktop screen…'
+                  : phase === 'error'
+                    ? error
+                    : 'Connected'}
             {ready &&
               (running
                 ? ' · Agent is working. Watch its actions here.'
