@@ -84,6 +84,24 @@ async fn management_and_tools_emit_exact_methods_versions_credentials_and_opaque
         client.get_channel(id).await.unwrap(),
         sample("ChannelResponse"),
     );
+    let inspection = json!({"consumer_id":"default", "transport_conversation_id":"conversation-partition",
+        "mapping":{"binding_id":"binding-partition","generation":1,
+        "conversation_id":"conversation-partition","agent_id":"agt_missing","state":"ready","agent_status":null}});
+    server.expect(wire::json(
+        "GET",
+        &format!("{path}/partition?partition_key=oracle%2F%2B%3F&consumer_id=default"),
+        None,
+        200,
+        inspection.clone(),
+        true,
+    ));
+    same(
+        client
+            .inspect_channel_partition(id, "oracle/+?", Some("default"))
+            .await
+            .unwrap(),
+        inspection,
+    );
     server.expect(wire::json(
         "GET",
         "/v1/channel-records/record",
@@ -186,7 +204,7 @@ async fn management_and_tools_emit_exact_methods_versions_credentials_and_opaque
     server.expect(request);
     client.delete_channel(id, 42).await.unwrap();
     server.assert_drained();
-    assert_eq!(server.request_count(), 11);
+    assert_eq!(server.request_count(), 12);
 }
 
 #[tokio::test]

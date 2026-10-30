@@ -14,6 +14,7 @@ use layer2_core::sandbox::binding::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
+pub(super) mod inspection;
 pub(super) mod preparation;
 
 #[derive(Deserialize, ToSchema)]
@@ -171,7 +172,9 @@ fn routes(state: BindingRouteState) -> Router {
         )
         .route(
             "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
-            put(put_conversation).delete(delete_conversation),
+            put(put_conversation)
+                .delete(delete_conversation)
+                .get(inspection::get),
         )
         .with_state(state)
         .layer(axum::middleware::from_fn(no_store))

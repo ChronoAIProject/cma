@@ -25,6 +25,10 @@ use super::problems::{no_store, problem, protocol_headers};
 pub fn management_router(state: ManagementState) -> Router {
     Router::new()
         .route(
+            "/v1/channels/{channel_id}/partition",
+            get(super::partitions::inspect),
+        )
+        .route(
             "/v1/channels/{channel_id}/activity",
             get(super::activity::latest),
         )

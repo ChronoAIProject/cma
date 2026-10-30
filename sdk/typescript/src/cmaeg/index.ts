@@ -111,6 +111,13 @@ export class Cmaeg {
   getChannel(id: string, options?: OperationOptions) {
     return this.#channels.getChannel(id, options);
   }
+  inspectChannelPartition(
+    id: string,
+    partitionKey: string,
+    options?: OperationOptions & { readonly consumerId?: string },
+  ) {
+    return this.#channels.inspectChannelPartition(id, partitionKey, options);
+  }
   getChannelActivity(id: string, options?: ChannelActivityOptions) {
     return this.#activity.getChannelActivity(id, options);
   }

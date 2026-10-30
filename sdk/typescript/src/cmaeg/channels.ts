@@ -4,6 +4,7 @@ import { requestVoid, type OperationOptions } from '../http.js';
 import { input, query, read, segment } from '../resources.js';
 import {
   ChannelPageSchema,
+  PartitionInspectionSchema,
   ChannelCreateRequestSchema,
   ChannelUpdateRequestSchema,
   ChannelResponseSchema,
@@ -53,6 +54,22 @@ export class CmaegChannels {
 
   getChannel(channelId: string, options: OperationOptions = {}) {
     return read(this.config, `/v1/channels/${segment(channelId)}`, ChannelResponseSchema, options);
+  }
+
+  inspectChannelPartition(
+    channelId: string,
+    partitionKey: string,
+    options: OperationOptions & { readonly consumerId?: string } = {},
+  ) {
+    return read(
+      this.config,
+      query(`/v1/channels/${segment(channelId)}/partition`, {
+        partition_key: partitionKey,
+        consumer_id: options.consumerId,
+      }),
+      PartitionInspectionSchema,
+      options,
+    );
   }
 
   recoverChannel(recordId: string, options: OperationOptions = {}) {

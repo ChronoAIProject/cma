@@ -4,6 +4,8 @@ mod client;
 mod client_types;
 mod context;
 mod conversation;
+mod inspection;
+pub use inspection::ConversationInspection;
 mod frozen;
 mod management_auth;
 mod media_continuations;

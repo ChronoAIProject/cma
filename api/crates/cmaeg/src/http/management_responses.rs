@@ -180,6 +180,24 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::ProviderRejected,
             "This channel's existing agent configuration is pinned. Changing its service scope, skills, prompt, model, environment, or conversation affinity through a channel update is not supported. The provider binding, credentials, and retained work have not been changed. Keep the current profile to save other channel settings, and rotate credentials separately using that profile. Retrying with the same key will not apply this change.".into(),
         ),
+        ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 404, code })
+            if code == "binding_not_found" => (
+            StatusCode::NOT_FOUND,
+            ProblemCode::ProviderRejected,
+            "The binding, conversation, or target Agent is not available to this channel owner.".into(),
+        ),
+        ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 409, code })
+            if code == "binding_not_ready" => (
+            StatusCode::CONFLICT,
+            ProblemCode::ProviderRejected,
+            "The binding or target Agent is not ready. Inspect the target's lifecycle state and the binding configuration before retrying.".into(),
+        ),
+        ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 400, code })
+            if code == "invalid_binding" => (
+            StatusCode::BAD_REQUEST,
+            ProblemCode::ProviderRejected,
+            "The provider refused the binding profile or target. Check the channel configuration before retrying.".into(),
+        ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { .. }) => (
             StatusCode::BAD_GATEWAY,
             ProblemCode::ProviderRejected,
