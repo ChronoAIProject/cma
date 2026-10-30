@@ -43,17 +43,20 @@ cat > /tmp/cma-labwc/rc.xml <<'XML'
   </windowRule></windowRules>
 </labwc_config>
 XML
-labwc --config-dir /tmp/cma-labwc --title CMA-Omarchy-Transport --debug >/tmp/cma-labwc.log 2>&1 &
+labwc --config-dir /tmp/cma-labwc --debug >/tmp/cma-labwc.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]] && break; sleep 0.1; done
 [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]]
 for ((i=0;i<100;i++)); do
-  window=$(xdotool search --onlyvisible --name '^CMA-Omarchy-Transport$' | head -1 || true)
+  # labwc's --title applies only to its Wayland backend. The X11 backend
+  # publishes wlroots' fixed output title; assign our stable title afterwards.
+  window=$(xdotool search --onlyvisible --name '^wlroots - X11-1$' | head -1 || true)
   [[ -z "$window" ]] || break
   kill -0 "${children[0]}"
   sleep 0.1
 done
 [[ -n "$window" ]]
+xdotool set_window --name CMA-Omarchy-Transport "$window"
 xdotool windowsize "$window" 1280 800 windowmove "$window" 0 0
 export WAYLAND_DISPLAY=wayland-0
 Hyprland --config /usr/share/cma-omarchy/hyprland.lua >/tmp/cma-hyprland.log 2>&1 &
