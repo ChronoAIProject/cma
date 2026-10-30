@@ -8,6 +8,8 @@ export XCURSOR_SIZE=24
 mkdir -p "$HOME/.config" "$HOME/.local/state/omarchy" "$HOME/.local/share/applications"
 if [[ ! -e "$HOME/.config/omarchy/shell.json" ]]; then
   cp -an /usr/share/omarchy/config/. "$HOME/.config/"
+  printf 'foot.desktop\n' > "$HOME/.config/xdg-terminals.list"
+  printf '[Default Applications]\nx-scheme-handler/http=chromium.desktop\nx-scheme-handler/https=chromium.desktop\ntext/html=chromium.desktop\n' > "$HOME/.config/mimeapps.list"
   python3 - <<'PY'
 import json, os
 from pathlib import Path
