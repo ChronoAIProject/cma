@@ -1,11 +1,10 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ApprovalDecision } from './controller';
 import type { ConversationState } from './conversation';
 import { StreamEntry } from './StreamEntry';
-import { groupToolCalls, type Entry } from './timeline';
+import { createStreamTimeline } from './streamTimeline';
 import { ToolCallGroup } from './ToolCallRows';
-import { isPendingTool } from './toolStatus';
 import type { OptimisticMessage } from './optimisticMessages';
 import type { AgentViewPosition } from './viewPosition';
 import { UserMessage } from './UserMessage';
@@ -49,6 +48,16 @@ export function MessageStream({
   feedback,
   media,
 }: MessageStreamProps) {
+  const [projectTimeline] = useState(createStreamTimeline);
+  const { items, finalReply, continued, previousRole } = projectTimeline(conversation);
+  const { agentId, files, workingDirectory } = media ?? {};
+  const mediaAccess = useMemo(
+    () =>
+      agentId === undefined || files === undefined
+        ? undefined
+        : { agentId, files, workingDirectory },
+    [agentId, files, workingDirectory],
+  );
   const streamRef = useMessageArrival(conversation, optimisticMessages, arrivalsEnabled);
   const identity = messageIdentity('user', user, unknownUserName);
   const endRef = useRef<HTMLDivElement>(null);
@@ -96,52 +105,15 @@ export function MessageStream({
     }
   }, [conversation, optimisticMessages]);
 
-  const entries: Entry[] = [
-    ...conversation.messages.map((item) => ({ kind: 'message' as const, item })),
-    ...conversation.toolCalls
-      .filter(
-        (item) =>
-          !isPendingTool(item) ||
-          item.runId !== conversation.activeRunId ||
-          conversation.activeRunId === undefined,
-      )
-      .map((item) => ({ kind: 'tool' as const, item })),
-    ...conversation.approvals.map((item) => ({ kind: 'approval' as const, item })),
-    // An emptied plan has nothing left to show; its slot returns if the turn reports again.
-    ...conversation.plans
-      .filter((item) => item.entries.length > 0)
-      .map((item) => ({ kind: 'plan' as const, item })),
-    ...conversation.recovery.map((item) => ({ kind: 'recovery' as const, item })),
-  ];
-  entries.sort((left, right) => (left.item.order ?? 0) - (right.item.order ?? 0));
-  const finalReply = new Map<string, string>();
-  for (const entry of entries)
-    if (
-      entry.kind === 'message' &&
-      entry.item.role === 'assistant' &&
-      entry.item.runId !== undefined &&
-      !entry.item.liveOnly
-    )
-      finalReply.set(entry.item.runId, entry.item.id);
-  // Work between two replies (tools, plans, notices) is the same author at work, so
-  // only the previous message's role decides whether a message repeats its identity.
-  const continued = new Set<string>();
-  let previousRole: 'user' | 'assistant' | undefined;
-  for (const entry of entries) {
-    if (entry.kind !== 'message') continue;
-    if (entry.item.role === previousRole) continued.add(entry.item.id);
-    previousRole = entry.item.role;
-  }
-
   return (
-    <MessageMediaContext.Provider value={media}>
+    <MessageMediaContext.Provider value={mediaAccess}>
       <div className="message-stream" aria-live="polite" ref={streamRef}>
-        {entries.length === 0 &&
+        {items.length === 0 &&
         !optimisticMessages?.length &&
         conversation.activeRunId === undefined ? (
           <p className="message-stream__empty">{emptyMessage}</p>
         ) : null}
-        {groupToolCalls(entries).map((entry) =>
+        {items.map((entry) =>
           entry.kind === 'tools' ? (
             <ToolCallGroup key={entry.id} group={entry} activeRunId={conversation.activeRunId} />
           ) : (
