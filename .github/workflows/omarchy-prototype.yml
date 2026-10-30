@@ -1,0 +1,67 @@
+name: Omarchy runtime prototype
+on:
+  push:
+    branches: [codex/omarchy-runtime-20261030]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: omarchy-prototype-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+      - name: Download previously verified CMA base
+        uses: actions/download-artifact@v5
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41005657911
+          artifact-ids: 12955388554
+          path: /tmp/cma-base
+          merge-multiple: true
+      - name: Verify base provenance and load exact image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/omarchy-base.py /tmp/cma-base
+      - name: Build isolated Omarchy image
+        run: |
+          docker build --target omarchy --build-arg OMARCHY_CMA_BASE=cma-omarchy-base:verified \
+            --build-arg CHRONO_BUILD_SHA="$GITHUB_SHA" \
+            --build-arg CHRONO_BUILD=omarchy-prototype \
+            --progress=plain -t cma-runtime-omarchy:ci -f infra/runtime/Dockerfile .
+      - name: Docker host Chromium namespace prerequisite
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Verify desktop and native agent controls
+        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence
+      - name: Scan experimental image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: cma-runtime-omarchy:ci
+          format: json
+          output: /tmp/omarchy-evidence/vulnerabilities.json
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Export candidate with immutable identity
+        run: |
+          python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" /tmp/omarchy-image
+      - name: Retain candidate image
+        uses: actions/upload-artifact@v5
+        with:
+          name: omarchy-runtime-image-${{ github.sha }}
+          path: /tmp/omarchy-image/
+          compression-level: 0
+          retention-days: 7
+      - name: Retain verification evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: omarchy-runtime-evidence-${{ github.sha }}
+          path: /tmp/omarchy-evidence/
+          retention-days: 7
