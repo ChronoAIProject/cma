@@ -39,7 +39,7 @@ def export(component, revision, destination):
     version = labels.get("org.opencontainers.image.version")
     require(isinstance(version, str) and version.strip(), "image version label required")
     runtime_contract = labels.get("dev.chrono.cma.runtime-contract")
-    if component in ("runtime", "runtime-desktop"):
+    if component in ("runtime", "runtime-desktop", "runtime-omarchy"):
         require(runtime_contract == "3", "runtime contract differs")
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     run_id = os.environ.get("GITHUB_RUN_ID", "")
@@ -91,7 +91,7 @@ def export(component, revision, destination):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("component", choices=("api", "web", "runtime", "runtime-desktop", "cmaeg", "image-manager"))
+    parser.add_argument("component", choices=("api", "web", "runtime", "runtime-desktop", "runtime-omarchy", "cmaeg", "image-manager"))
     parser.add_argument("revision")
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()
