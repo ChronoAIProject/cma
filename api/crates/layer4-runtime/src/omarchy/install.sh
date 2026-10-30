@@ -34,7 +34,8 @@ ln -s /opt/cma-stream/bin/websockify /usr/local/bin/websockify
 rm /tmp/websockify-0.13.0-py3-none-any.whl
 # pip is used only to install this pinned wheel; it is not a desktop dependency.
 pacman -Rns --noconfirm python-pip
-websockify --version
+/opt/cma-stream/bin/python -c 'from importlib.metadata import version; assert version("websockify") == "0.13.0"'
+websockify --help >/dev/null
 bash /tmp/secure-omarchy-tools.sh
 pacman -Q > /usr/share/cma-omarchy/packages.txt
 find /var/cache/pacman/pkg -type f -name '*.pkg.tar.*' ! -name '*.sig' -exec sha256sum {} + > /usr/share/cma-omarchy/package-sha256.txt
@@ -49,7 +50,18 @@ cat > /usr/local/bin/uwsm-app <<'EOF'
 [[ ${1:-} != -- ]] || shift
 exec "$@"
 EOF
-chmod 755 /usr/local/bin/omarchy-launch-shell /usr/local/bin/uwsm-app
+cat > /usr/local/bin/omarchy-launch-browser <<'EOF'
+#!/bin/bash
+set -euo pipefail
+args=()
+for argument in "$@"; do
+  [[ $argument != --private ]] || argument=--incognito
+  args+=("$argument")
+done
+exec /usr/local/bin/cma-desktop-session --browser "${args[@]}"
+EOF
+chmod 755 /usr/local/bin/omarchy-launch-shell /usr/local/bin/uwsm-app /usr/local/bin/omarchy-launch-browser
+cp /usr/share/omarchy/applications/omarchy-browser.desktop /usr/share/applications/
 printf 'en_US.UTF-8 UTF-8\n' > /etc/locale.gen
 locale-gen
 # Preserve the caller's exact managed PATH through distro profile fragments.
