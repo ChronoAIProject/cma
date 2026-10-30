@@ -48,5 +48,15 @@ EOF
 chmod 755 /usr/local/bin/omarchy-launch-shell /usr/local/bin/uwsm-app
 printf 'en_US.UTF-8 UTF-8\n' > /etc/locale.gen
 locale-gen
+# Preserve the caller's exact managed PATH through distro profile fragments.
+# The owner's own .profile still runs afterwards and can intentionally change it.
+python - <<'PY'
+from pathlib import Path
+p = Path('/etc/profile')
+original = p.read_text()
+prefix = 'cma_profile_path="${PATH:-/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games}"\n'
+suffix = '\nPATH="$cma_profile_path"\nexport PATH\nunset cma_profile_path\n'
+p.write_text(prefix + original + suffix)
+PY
 rm -f /tmp/omarchy.tar.gz /tmp/omarchy-keyring.pkg.tar.zst
 rm -rf /var/cache/pacman/pkg/*
