@@ -4,7 +4,7 @@ fn stream() -> uuid::Uuid {
     uuid::Uuid::parse_str("d99003d1-0c3c-46cd-aa47-9bbdbed50b12").unwrap()
 }
 
-async fn reliable_ready(server: &mut ServerSocket) {
+pub(super) async fn reliable_ready(server: &mut ServerSocket) {
     server
         .send(Message::Text(
             serde_json::json!({
@@ -17,7 +17,7 @@ async fn reliable_ready(server: &mut ServerSocket) {
         .unwrap();
 }
 
-async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Value) {
+pub(super) async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Value) {
     let mut bytes = vec![LANE_RETAINED_OUTPUT];
     bytes.extend_from_slice(stream().as_bytes());
     bytes.extend_from_slice(&cursor.to_be_bytes());
