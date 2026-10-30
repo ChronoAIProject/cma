@@ -36,7 +36,11 @@ jobs:
             --build-arg CHRONO_BUILD=omarchy-prototype \
             --progress=plain -t cma-runtime-omarchy:ci -f infra/runtime/Dockerfile .
       - name: Docker host Chromium namespace prerequisite
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          uname -r
+          ls -l /dev/dri || true
+          modinfo vkms || true
       - name: Verify desktop and native agent controls
         run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence
       - name: Scan experimental image
