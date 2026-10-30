@@ -24,7 +24,7 @@ children=()
 stop() { trap - EXIT INT TERM; kill "${children[@]}" 2>/dev/null || true; wait "${children[@]}" 2>/dev/null || true; }
 trap stop EXIT INT TERM
 export WLR_BACKENDS=x11 WLR_RENDERER=pixman
-export WLR_RENDERER_ALLOW_SOFTWARE=1 WLR_RENDERER_FORCE_SOFTWARE=1
+export WLR_RENDERER_ALLOW_SOFTWARE=1
 for device in /dev/dri/renderD*; do
   if [[ -r "$device" && -w "$device" ]]; then
     export WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE="$device"
@@ -36,6 +36,8 @@ done
 mkdir -p /tmp/cma-labwc
 cat > /tmp/cma-labwc/rc.xml <<'XML'
 <labwc_config>
+  <keyboard><keybind key="W-F35"><action name="None" /></keybind></keyboard>
+  <mouse><context name="Root"><mousebind button="Left" action="Press"><action name="None" /></mousebind></context></mouse>
   <windowRules><windowRule identifier="*" serverDecoration="no">
     <action name="ToggleFullscreen" />
   </windowRule></windowRules>
@@ -45,7 +47,13 @@ labwc --config-dir /tmp/cma-labwc --title CMA-Omarchy-Transport --debug >/tmp/cm
 children+=("$!")
 for ((i=0;i<100;i++)); do [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]] && break; sleep 0.1; done
 [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]]
-window=$(xdotool search --onlyvisible --name '^CMA-Omarchy-Transport$' | head -1)
+for ((i=0;i<100;i++)); do
+  window=$(xdotool search --onlyvisible --name '^CMA-Omarchy-Transport$' | head -1 || true)
+  [[ -z "$window" ]] || break
+  kill -0 "${children[0]}"
+  sleep 0.1
+done
+[[ -n "$window" ]]
 xdotool windowsize "$window" 1280 800 windowmove "$window" 0 0
 export WAYLAND_DISPLAY=wayland-0
 Hyprland --config /usr/share/cma-omarchy/hyprland.lua >/tmp/cma-hyprland.log 2>&1 &
