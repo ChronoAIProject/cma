@@ -22,7 +22,7 @@ fi
 children=()
 stop() { trap - EXIT INT TERM; kill "${children[@]}" 2>/dev/null || true; wait "${children[@]}" 2>/dev/null || true; }
 trap stop EXIT INT TERM
-weston --backend=x11 --renderer=pixman --shell=fullscreen-shell.so --width=1280 --height=800 --socket=cma-host --idle-time=0 >/tmp/cma-weston.log 2>&1 &
+weston --backend=x11 --renderer=pixman --shell=kiosk-shell.so --width=1280 --height=800 --socket=cma-host --idle-time=0 >/tmp/cma-weston.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do [[ -S "$XDG_RUNTIME_DIR/cma-host" ]] && break; sleep 0.1; done
 [[ -S "$XDG_RUNTIME_DIR/cma-host" ]]
