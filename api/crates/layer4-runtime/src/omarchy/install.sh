@@ -1,6 +1,7 @@
 #!/bin/bash
 # Build-time only: install signed packages and the pinned upstream desktop.
 set -euo pipefail
+ulimit -c 0
 pacman-key --init
 pacman-key --populate archlinux
 curl -fsSL https://pkgs.omarchy.org/stable/x86_64/omarchy-keyring-20251027-1-any.pkg.tar.zst -o /tmp/omarchy-keyring.pkg.tar.zst
@@ -24,7 +25,7 @@ pacman -Syu --disable-sandbox --noconfirm --needed \
     qt6-imageformats qt6-multimedia qt6-svg qt6-wayland \
     noto-fonts noto-fonts-emoji ttf-jetbrains-mono-nerd-basic yaru-icon-theme \
     jq gum imagemagick inotify-tools libnotify procps-ng util-linux which \
-    xdg-utils xdg-desktop-portal-hyprland python-gobject pipewire wireplumber
+    xdg-utils xdg-terminal-exec xdg-desktop-portal-hyprland python-gobject pipewire wireplumber
 curl -fsSL https://files.pythonhosted.org/packages/19/e8/6476cd85a71f7cfb04ca1e199809b75bc8580d075d4338ffcde4c761d620/websockify-0.13.0-py3-none-any.whl -o /tmp/websockify-0.13.0-py3-none-any.whl
 echo 'ac497a8dafc7f51d28ca989f01cdf5f8add663a497d425a56b159dcb8d6a314c  /tmp/websockify-0.13.0-py3-none-any.whl' | sha256sum -c -
 python -m venv --system-site-packages /opt/cma-stream
@@ -33,7 +34,7 @@ ln -s /opt/cma-stream/bin/websockify /usr/local/bin/websockify
 rm /tmp/websockify-0.13.0-py3-none-any.whl
 pacman -Q > /usr/share/cma-omarchy/packages.txt
 find /var/cache/pacman/pkg -type f -name '*.pkg.tar.*' ! -name '*.sig' -exec sha256sum {} + > /usr/share/cma-omarchy/package-sha256.txt
-Hyprland --version > /usr/share/cma-omarchy/hyprland-version.txt
+pacman -Q hyprland aquamarine > /usr/share/cma-omarchy/hyprland-version.txt
 # This is a user session supervised by CMA; no system login manager is started.
 cat > /usr/local/bin/omarchy-launch-shell <<'EOF'
 #!/bin/bash
