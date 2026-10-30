@@ -70,7 +70,7 @@ for ((i=0;i<100;i++)); do
 done
 # FLTK must use X11 even though the compositor's client environment is Wayland.
 env -u WAYLAND_DISPLAY vncviewer -Shared -SecurityTypes None -FullScreen \
-  -RemoteResize=0 -MenuKey F35 -AcceptClipboard=0 -SendClipboard=0 \
+  -RemoteResize=0 -ShortcutModifiers= -AcceptClipboard=0 -SendClipboard=0 \
   -geometry 1280x800+0+0 127.0.0.1:5900 >/tmp/cma-vncviewer.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do
