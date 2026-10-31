@@ -181,6 +181,9 @@ pub(super) async fn production_adapter(
         .with_provider_tools(provider_tools)
         .with_access_tools(access_tools);
     if let Some(image) = &config.runtime.machine_sandbox_image {
+        preparation = preparation
+            .with_native_runtime_image(crate::warm_pools::deployment_image(image.clone()))
+            .map_err(|error| format!("prepared machine runtime image is not usable: {error}"))?;
         adapter = adapter
             .with_native_runtime_image(crate::warm_pools::deployment_image(image.clone()))
             .map_err(|error| format!("machine runtime image is not usable: {error}"))?;

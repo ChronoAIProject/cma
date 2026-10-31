@@ -48,17 +48,31 @@ pub(super) async fn ensure_indexes(
 
 fn document(record: &Record) -> Result<Document, SandboxStoreError> {
     record.validate()?;
-    Ok(doc! {
+    let mut value = doc! {
         "_id": record.payload.id.as_str(), "kind":"reservation",
         "document_schema_version":DOCUMENT_SCHEMA_VERSION,
         "state":record_bson(&record.payload.state).map_err(SandboxStoreError::Corrupt)?,
         "revision":signed(record.payload.revision,"native prepared revision").map_err(SandboxStoreError::Corrupt)?,
         "record":record_bson(record).map_err(SandboxStoreError::Corrupt)?,
-    })
+    };
+    if record.plan.machine() {
+        value.insert("machine", true);
+    }
+    Ok(value)
 }
 
 fn read(document: &Document) -> Result<Record, SandboxStoreError> {
     let record: Record = read_record(document).map_err(SandboxStoreError::Corrupt)?;
+    let channel = match document.get("machine") {
+        None | Some(mongodb::bson::Bson::Boolean(false)) => false,
+        Some(mongodb::bson::Bson::Boolean(true)) => true,
+        _ => return Err(model::corrupt("invalid preparation channel")),
+    };
+    if channel != record.plan.machine() {
+        return Err(model::corrupt(
+            "preparation channel disagrees with immutable plan",
+        ));
+    }
     let expected = self::document(&record)?;
     if expected
         .iter()

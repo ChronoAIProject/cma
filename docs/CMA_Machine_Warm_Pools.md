@@ -23,6 +23,29 @@ Older binaries refuse schema 2 at startup and cannot claim those records while
 already running. Deploy this compatible reader before enabling machine
 capacity; rollback must retain this reader and both released image pins.
 
+Ready native Pods still require runtime and Agent initialization after assignment.
+For the default Create Agent journey, `CHRONO_NATIVE_PREPARED_TARGET` and
+`CHRONO_NATIVE_MACHINE_PREPARED_TARGET` independently prepare up to two complete
+Sandbox/Workspace/idle Agent hierarchies. Machines start their desktop before
+ownership transfer. Each class has its own durable target and transactional
+admission fence; retiring agent-only spares does not retire machine spares.
+Both settings default to zero. A matching native pool and a full native home
+must be available before enabling either preparation target.
+
+Machine preparations permit only the exact `CMA_MACHINE_INCLUDED=1` environment
+marker and a pinned machine image. They receive no owner credentials or user
+prompt. Ownership transfer requires matching immutable configuration, current
+released image, lifecycle image and machine selection, and all existing Agent
+readiness proofs. A custom configuration or depleted pool uses normal creation.
+The preparation worker replenishes capacity after claims; the bounded spare
+count is not a guarantee for an unlimited concurrent burst. Rollback after
+enabling machine preparation must retain the machine preparation reader;
+older readers reject its environment and cannot service those reservations.
+
+The Mongo contract CI partition includes the prepared hierarchy suite, covering
+separate caps and retirement, preserved agent-only spares during machine claims,
+prestarted runtime retention and refusal of obsolete prepared machine images.
+
 The delivery acceptance target is at most five seconds from Create Agent to a
 usable Agent for each image, including a usable desktop for Machine Included.
 A ready native member alone does not establish that latency: ownership transfer,
