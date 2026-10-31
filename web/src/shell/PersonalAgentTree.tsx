@@ -1,7 +1,7 @@
 import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
-import { attentionSignal, keyboardNavigation, lineMeta } from './treePresentation';
+import { agentSignal, keyboardNavigation, lineMeta } from './treePresentation';
 import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
 import { agentDisplayTitle } from '../agent/presentation';
 import type { AgentSummary, SandboxDetail } from '../api/types';
@@ -73,7 +73,7 @@ export function PersonalAgentTree({
             level={1}
             layout="line"
             label={agentDisplayTitle(agent)}
-            icon={attentionSignal(status)}
+            icon={agentSignal(status, agent.id, 24)}
             route={{ kind: 'agent', agentId: agent.id }}
             selected={route.kind === 'agent' && route.agentId === agent.id}
             dimmed={sandbox.status === 'paused'}

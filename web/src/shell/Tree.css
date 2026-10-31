@@ -194,19 +194,25 @@
 }
 
 /*
- * One-line rows (§10): a quiet list of titles. The signal slot is kept even
- * when empty so titles line up with each other and with the action-row labels.
+ * One-line rows (§10, §28): a quiet list of titles, each led by its Agent's
+ * 24px character. The 8px inset and 4px gap put the character's centre under
+ * the action-row glyphs and the title on the action-row labels' edge.
  */
 .tree-row[data-layout='line'] {
   gap: 4px;
   min-height: 32px;
-  padding: 0 4px 0 12px;
+  padding: 0 4px 0 8px;
 }
 
 .tree-row[data-layout='line'] .tree-row__label {
-  gap: 8px;
+  gap: 4px;
   min-height: 32px;
   padding: 0;
+}
+
+.tree-row[data-layout='line'] .tree-row__icon {
+  width: 24px;
+  height: 24px;
 }
 
 .tree-row[data-layout='line'] .tree-row__content {
