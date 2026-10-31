@@ -106,6 +106,13 @@ async fn existing_agent_shares_one_mapping_for_all_senders_and_preserves_its_res
         assert_eq!(first.conversation_id, EXISTING_AGENT_CONVERSATION);
         assert_eq!(first.agent_id, original_conversation.agent_id);
         assert_eq!(first.worktree_id, original_conversation.worktree_id);
+        let inspected = f
+            .service
+            .inspect_conversation(&f.caller, "borrowed-one", "unseen-transport-partition")
+            .await
+            .unwrap();
+        assert_eq!(inspected.conversation, first);
+        assert!(inspected.agent_status.is_some());
         // A second attached channel can borrow the same Agent without taking
         // over the original channel's native-tool association.
         let other = attach(&f, "borrowed-two", &first.agent_id, &key(), kind).await;
