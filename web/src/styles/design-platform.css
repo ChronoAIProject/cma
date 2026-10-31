@@ -48,6 +48,7 @@ body {
   --dsw-static-zinc-200: #e4e4e7;
   --dsw-static-zinc-300: #d4d4d8;
   --dsw-static-zinc-400: #a1a1aa;
+  --dsw-static-zinc-450: #8a8a93;
   --dsw-static-zinc-500: #71717a;
   --dsw-static-zinc-600: #52525b;
   --dsw-static-zinc-700: #3f3f46;
@@ -241,7 +242,7 @@ body[data-ds-dark-theme] {
   --dsw-alias-label-primary-foreground: var(--dsw-static-zinc-950);
   --dsw-alias-label-primary-inverted: var(--dsw-static-zinc-950);
   --dsw-alias-label-secondary: var(--dsw-static-zinc-400);
-  --dsw-alias-label-tertiary: var(--dsw-static-zinc-500);
+  --dsw-alias-label-tertiary: var(--dsw-static-zinc-450);
   --dsw-alias-markdown-citation: var(--dsw-static-zinc-850);
   --dsw-alias-markdown-code-block: var(--dsw-static-zinc-950);
   --dsw-alias-markdown-code-block-banner: var(--dsw-static-zinc-900);
