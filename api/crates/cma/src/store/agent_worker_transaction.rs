@@ -91,6 +91,7 @@ async fn commit_agent_work_observed(
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
 ) -> Result<(), SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
+    let _writer = store.agent_writes.lock(&mutation.agent.id).await;
     let mut last_transient = None;
     let jitter = uuid::Uuid::new_v4().as_u128() as u64;
     for attempt in 0..TRANSACTION_ATTEMPTS {

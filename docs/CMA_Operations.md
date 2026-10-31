@@ -669,6 +669,14 @@ The historical cluster context in [Sandbox Provider](Sandbox_Provider.md) is
 Confirm it is still the target before any context-pinned command. Do not change
 account/project context globally while other work may be active.
 
+Agent startup work, runtime message updates and conversation admissions share a
+per-Agent transaction queue within each API store instance. This reduces local
+write conflicts while a prepared Agent publishes its connection and first
+message. Different Agents remain independent; unused queue entries are pruned.
+The queue owns no durable authority: each operation still starts a fresh Mongo
+transaction and validates revisions, ownership and work fences. Cross-process
+writers retain the existing conflict retries and unknown-commit reconciliation.
+
 ### Image Identity
 
 All three Dockerfiles declare final-image OCI source, revision and version
