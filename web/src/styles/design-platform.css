@@ -83,6 +83,11 @@ body {
 body {
   --dsw-alias-avatar-bg: var(--dsw-static-zinc-950);
   --dsw-alias-avatar-label: var(--dsw-static-zinc-50);
+  --dsw-alias-character-brand: var(--dsw-static-lime-400);
+  --dsw-alias-character-running: var(--dsw-static-ink-800);
+  --dsw-alias-character-completed: var(--dsw-static-moss-500);
+  --dsw-alias-character-pending: var(--dsw-static-amber-300);
+  --dsw-alias-character-failed: var(--dsw-static-red-600);
   --dsw-alias-preview-light-bg: var(--dsw-static-zinc-0);
   --dsw-alias-preview-light-label: var(--dsw-static-zinc-950);
   --dsw-alias-preview-dark-bg: var(--dsw-static-zinc-925);
