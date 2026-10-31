@@ -3886,3 +3886,17 @@ and browser tabs do not trigger recovery. Opaque black and unchanged desktops
 remain valid; a temporary resize may finish repainting before recovery starts.
 
 | 2026-10-30 | Recover lost Machine viewer canvases with bounded retries and the existing loading surface; preserve conversations and require explicit input takeover after restoration. |
+
+### Plain-language failures (2026-10-31)
+
+A failed read or command shows a sentence a person can act on. A service detail
+written for people is shown as written. A server-side failure (5xx), a response
+that carried no detail, or a lost connection is replaced by a plain sentence:
+*Your sign-in has expired. Reload the page to sign in again.* (401), *Your
+account does not have access to this.* (403), *This could not be found. It may
+have been deleted or moved.* (404), *CMA is receiving too many requests. Wait a
+moment, then try again.* (429), *CMA had a problem on its side. Try again in a
+moment.* (5xx) and *CMA could not be reached. Check your connection, then try
+again.* Protocol wording such as "problem document" never reaches the page.
+
+| 2026-10-31 | Replace protocol and server-failure wording in resource, navigation and Agent errors with plain sentences that say what to do next. |
