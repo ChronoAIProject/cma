@@ -23,7 +23,8 @@ test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = v0.42.0
 go build -mod=readonly -trimpath -ldflags='-s -w -X main.Version=2.0.2' -o /usr/bin/gum .
 gum format 'CMA runtime utility check' >/dev/null
 cd "$build_dir"
-curl -fsSL https://mirrors.edge.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.78.tar.xz -o libcap.tar.xz
+curl -fsSL --connect-timeout 15 --max-time 120 --retry 3 \
+  https://cdn.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.78.tar.xz -o libcap.tar.xz
 echo '0d621e562fd932ccf67b9660fb018e468a683d7b827541df27813228c996bb11  libcap.tar.xz' | sha256sum -c -
 tar xf libcap.tar.xz
 cd libcap-2.78/goapps/captree
