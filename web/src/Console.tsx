@@ -354,6 +354,11 @@ function ConsoleContent({
             ? 'Welcome to CMA'
             : route.kind.replaceAll('_', ' ')
         }
+        description={
+          route.kind === 'home' || route.kind === 'agent_manager'
+            ? 'An Agent is an AI assistant with its own private computer. Describe a task such as research, writing, data work or code, and it works on it, asking you when it needs a decision.'
+            : undefined
+        }
         onNewAgent={
           (route.kind === 'home' || route.kind === 'agent_manager') && canCreateInScope
             ? newAgent

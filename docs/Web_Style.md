@@ -3904,3 +3904,16 @@ again.* Protocol wording such as "problem document" never reaches the page.
 | 2026-10-31 | Replace protocol and server-failure wording in resource, navigation and Agent errors with plain sentences that say what to do next. |
 | 2026-10-31 | Give the shared Workspace read failure the same titled *Workspace unavailable* section, gutter and action placement as the owner Sandbox and Workspace failures. |
 | 2026-10-31 | Rewrite New agent copy for people who do not write code: the new-Sandbox description explains a Sandbox as the Agent's private computer, the repository hint says when to paste a link, the Machine Included choice reads *Include a shared desktop* with what it is for, Agent settings explain Autonomous and where to change it, and the footer names ChronoAI models and the Ornn skill library instead of service ids. |
+
+### Saying what an Agent is for (2026-10-31)
+
+Agent Manager home keeps *Welcome to CMA* and adds one secondary line beneath
+it: *An Agent is an AI assistant with its own private computer. Describe a task such
+as research, writing, data work or code, and it works on it, asking you when it needs
+a decision.* Paragraphs in the centred plain states use 8px top margin and secondary
+label colour, and their action row sits 20px below. An owner's empty conversation
+reads *Tell the Agent what you need in your own words, for example “Compare three
+project management tools for a small team.”* in place of *Start the conversation.*;
+a shared reader's empty history still reads *No messages yet.*
+
+| 2026-10-31 | Add a one-line explanation of Agents to Agent Manager home, secondary paragraph and action spacing to the centred plain states, and an example request to the owner's empty conversation. |

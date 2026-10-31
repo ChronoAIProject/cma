@@ -28,9 +28,12 @@ export function NotFoundView() {
 
 export function WelcomeView({
   heading,
+  description,
   onNewAgent,
 }: {
   readonly heading: string;
+  /** One sentence saying what an Agent is for, on Agent Manager home. */
+  readonly description?: string;
   /** Present only when the caller can create an Agent right now. */
   readonly onNewAgent?: () => void;
 }) {
@@ -40,6 +43,7 @@ export function WelcomeView({
         <LandingCharacter autoRotate />
       </div>
       <h1 id="empty-title">{heading}</h1>
+      {description === undefined ? null : <p>{description}</p>}
       {onNewAgent === undefined ? null : (
         <div className="console__empty-actions">
           <Button variant="primary" icon={<IconNewChatOutline16 />} onClick={onNewAgent}>
