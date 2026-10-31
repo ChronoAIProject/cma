@@ -3942,3 +3942,4 @@ readings.*; the distinct written states of §13a are otherwise unchanged.
 
 | 2026-10-31 | Explain Machine resources in one line and reword its unavailable notices so they say the Agent is unaffected. |
 | 2026-10-31 | Reword the Agents inventory description and its first filter choices (*Created any way*, *With or without a chat channel*) so the filters read as questions a person asks rather than record fields; filter names are unchanged. |
+| 2026-10-31 | Cap the compact home mark at 134px, the size it rendered at beside the heading alone, so the new home explanation does not enlarge it. |
