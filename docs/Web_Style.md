@@ -3901,8 +3901,11 @@ While an Agent is Starting, observe its public detail immediately after the
 initial conversation has loaded, without reloading history on every check.
 During the first ten seconds, check 250 milliseconds
 after each completed read; longer preparation returns to the 1.5-second interval.
-When its status or parent state changes, load the complete conversation before
-publishing the observation. First-message execution retains normal history refresh.
+When its status or parent state changes, refresh the complete conversation.
+While the first message remains pending, show the fresh Agent state immediately
+and retain the current conversation until its history refresh completes. Settled
+preparation publishes the full read together. First-message execution retains
+normal history refresh.
 Failed reads retain the five-second retry delay. Reads never overlap, stop on
 departure or settled preparation, and preserve live conversation fragments.
 Faster observation never implies readiness by elapsed time.
