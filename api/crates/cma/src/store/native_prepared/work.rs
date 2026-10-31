@@ -12,10 +12,23 @@ pub(crate) struct NativePreparedClaim {
 }
 
 impl MongoSandboxStore {
+    #[cfg(test)]
     pub(crate) async fn claim_native_prepared_work(
         &self,
         at: &str,
         until: &str,
+    ) -> Result<Option<NativePreparedClaim>, SandboxStoreError> {
+        self.claim_native_prepared_work_for(at, until, [true, true])
+            .await
+    }
+
+    /// Scheduling eligibility only; the durable token still owns every effect.
+    /// The two ready-class flags select agent-only and machine health probes.
+    pub(crate) async fn claim_native_prepared_work_for(
+        &self,
+        at: &str,
+        until: &str,
+        ready_classes: [bool; 2],
     ) -> Result<Option<NativePreparedClaim>, SandboxStoreError> {
         if layer2_core::seconds_from_rfc3339(at).is_none()
             || layer2_core::seconds_from_rfc3339(until).is_none()
@@ -23,9 +36,20 @@ impl MongoSandboxStore {
         {
             return Err(SandboxStoreError::Conflict);
         }
+        let mut states = vec![doc! {"state":{"$in":["preparing","installing","retiring"]}}];
+        for (machine, allowed) in [false, true].into_iter().zip(ready_classes) {
+            if allowed {
+                let channel = if machine {
+                    Bson::Boolean(true)
+                } else {
+                    doc! {"$ne":true}.into()
+                };
+                states.push(doc! {"state":"ready","machine":channel});
+            }
+        }
         let token = uuid::Uuid::new_v4().to_string();
         self.native_prepared.find_one_and_update(
-            doc!{"kind":"reservation","state":{"$in":["preparing","installing","ready","retiring"]},"lease_until":{"$lte":at},"check_after":{"$lte":at}},
+            doc!{"kind":"reservation","$or":states,"lease_until":{"$lte":at},"check_after":{"$lte":at}},
             doc!{"$set":{"lease_token":&token,"lease_until":until}},
         ).sort(doc!{"check_after":1,"_id":1}).return_document(ReturnDocument::After).await.map_err(unavailable)?
             .as_ref().map(|value|{let record=read(value)?;let workspace_proof=super::workspace_proof::read(value,&record.payload)?;Ok(NativePreparedClaim{record:record.payload,plan:record.plan,workspace_proof,token})}).transpose()
