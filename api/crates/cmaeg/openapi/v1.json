@@ -2895,6 +2895,41 @@
       "ConversationId": {
         "type": "string"
       },
+      "ConversationInspection": {
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "agent_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "binding_id": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "generation": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_id",
+          "generation",
+          "conversation_id",
+          "agent_id",
+          "state"
+        ],
+        "type": "object"
+      },
       "ConversationKind": {
         "enum": [
           "private",
@@ -5358,6 +5393,25 @@
           "cancelled"
         ],
         "type": "string"
+      },
+      "PartitionInspection": {
+        "properties": {
+          "consumer_id": {
+            "type": "string"
+          },
+          "mapping": {
+            "$ref": "#/components/schemas/ConversationInspection"
+          },
+          "transport_conversation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "transport_conversation_id",
+          "mapping"
+        ],
+        "type": "object"
       },
       "PartitionKey": {
         "enum": [
@@ -10162,6 +10216,78 @@
         ],
         "tags": [
           "outbound messages"
+        ]
+      }
+    },
+    "/channels/{channel_id}/partition": {
+      "get": {
+        "operationId": "inspectChannelPartition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "partition_key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "consumer_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartitionInspection"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
         ]
       }
     },

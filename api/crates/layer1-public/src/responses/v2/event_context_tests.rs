@@ -252,3 +252,21 @@ fn binding_retry_mapping_preserves_permanent_refusals_and_ordinary_client_confli
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert!(response.headers().get("retry-after").is_none());
 }
+
+#[tokio::test]
+async fn binding_missing_agent_is_an_explicit_permanent_refusal() {
+    use layer2_core::sandbox::agent_io::{CommandAdmissionError, CommandLedgerError};
+    let response = super::error::binding_admission(CommandAdmissionError::Ledger(
+        CommandLedgerError::NotFound,
+    ));
+    assert_eq!(response.status(), StatusCode::GONE);
+    assert!(response.headers().get("retry-after").is_none());
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let problem: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(problem["error"]["code"], "partition_agent_missing");
+    let ordinary =
+        super::error::admission(CommandAdmissionError::Ledger(CommandLedgerError::NotFound));
+    assert_eq!(ordinary.status(), StatusCode::NOT_FOUND);
+}

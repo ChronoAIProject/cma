@@ -95,9 +95,11 @@ impl AgentModelCatalog for ChronoAgentModels {
             .current
             .as_ref()
             .ok_or_else(unavailable)?;
-        let expiry = seconds_from_rfc3339(&current.expires_at).ok_or_else(unavailable)?;
-        if SystemTime::now() >= SystemTime::UNIX_EPOCH + Duration::from_secs(expiry) {
-            return Err(unavailable());
+        if sandbox.credential.source.is_managed() {
+            let expiry = seconds_from_rfc3339(&current.expires_at).ok_or_else(unavailable)?;
+            if SystemTime::now() >= SystemTime::UNIX_EPOCH + Duration::from_secs(expiry) {
+                return Err(unavailable());
+            }
         }
         let material = self
             .credentials
