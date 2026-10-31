@@ -40,6 +40,9 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     sandbox.revision += 1;
     fixture.store.save_sandbox(revision, sandbox).await.unwrap();
     let mut agent = agents::seeded_agent("agt_contract", AgentStatus::Ready, 2, None);
+    if name == "desktop_starting" {
+        agent.status = AgentStatus::Starting;
+    }
     agent.profile.content.isolated_agent = name == "desktop_isolated";
     agents::insert_agent(&fixture.store, agent, vec![]).await;
     let service = Arc::new(DesktopService::new(

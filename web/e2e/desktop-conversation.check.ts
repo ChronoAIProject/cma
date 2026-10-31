@@ -3,6 +3,52 @@ import { binding, cursor, LocalAgentV2 } from './agent-v2.fixture';
 
 import { desktopBoundary } from './desktop-rfb.fixture';
 
+test('LOCAL a starting Machine connects when ready without a page reload', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalAgentV2();
+  const ready = { ...fixture.boundary.agent, desktop: true };
+  fixture.boundary.agent = {
+    ...ready,
+    status: 'starting',
+    sandbox: { ...ready.sandbox, status: 'installing' },
+  };
+  try {
+    await fixture.route(page, baseURL!);
+    const stream = await desktopBoundary(page);
+    await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.agent.event_head',
+          schema_version: 1,
+          agent_id: 'agt_contract',
+          incarnation: 'a'.repeat(64),
+          through_cursor: cursor(fixture.items.length),
+          active_turn: null,
+        },
+      }),
+    );
+    await page.goto('/agents/agt_contract');
+    const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
+    await expect(desktop.getByRole('status')).toContainText('Waiting for your machine');
+    await expect(desktop.getByRole('button', { name: 'Reconnect', exact: true })).toBeDisabled();
+    const surface = await page.locator('.agent-surface').elementHandle();
+    expect(stream.connections).toHaveLength(0);
+    fixture.boundary.agent = { ...ready, status: 'starting' };
+    await expect(desktop.getByRole('status')).toContainText('Connected');
+    expect(stream.connections).toHaveLength(1);
+    fixture.boundary.agent = ready;
+    expect(
+      await page.locator('.agent-surface').evaluate((node, original) => node === original, surface),
+    ).toBe(true);
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.boundary.writes).toEqual([]);
+  } finally {
+    await fixture.close(page);
+  }
+});
+
 test('LOCAL restores a cleared desktop without losing the conversation or granting input', async ({
   page,
   baseURL,
