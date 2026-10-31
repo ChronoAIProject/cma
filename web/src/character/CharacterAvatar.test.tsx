@@ -26,7 +26,7 @@ describe('CharacterAvatar', () => {
     expect(avatar).toHaveAttribute('aria-hidden', 'true');
     expect(avatar).toHaveAttribute('data-pose', 'idle');
     expect(avatar).toHaveAttribute('data-motion', 'live');
-    expect(avatar).toHaveStyle({ '--character-size': '24px' });
+    expect(avatar).toHaveStyle({ width: '24px', height: '24px' });
     expect(container.querySelector('canvas')).not.toBeNull();
   });
 
