@@ -54,7 +54,13 @@ function AgentLifecycleForm({
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const { pending, failure, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
-  const handoffTransport = useLifecycleTransport(client, operation, createdReceipt?.id, viewerId);
+  const handoffTransport = useLifecycleTransport(
+    client,
+    operation,
+    createdReceipt?.id,
+    viewerId,
+    lifecycle.intent?.body.machine_included === true,
+  );
   const admitted = useLifecycleAgent(
     client,
     operation,
