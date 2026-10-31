@@ -40,6 +40,61 @@ async fn native_http_bounds_idle_sessions_without_exhausting_request_stream_perm
     fixture.drained().await;
 }
 
+#[tokio::test]
+async fn native_http_evicts_the_least_recently_used_idle_connection_not_the_first_name() {
+    let fixture = fixture().await;
+    let RuntimeDiscovery::AgentSandbox(client) = &fixture.transport.client else {
+        unreachable!()
+    };
+    let mut handles = Vec::new();
+    for index in 0..=native_pool::MAX_HTTP_SESSIONS {
+        let name = format!("claimed-{index:02}");
+        let handle = RuntimeHandle::new(format!("agent-sandbox:{name}:{}", sandbox_uid(&name)));
+        fixture
+            .state
+            .runtimes
+            .lock()
+            .unwrap()
+            .insert(name.clone(), client.control_token(&name));
+        fixture
+            .transport
+            .bind_native_runtime(&handle, &format!("sandbox-{index}"), &"a".repeat(64))
+            .await
+            .unwrap();
+        if index == native_pool::MAX_HTTP_SESSIONS {
+            fixture
+                .transport
+                .exchange(&handles[0], RequestFrame::Resources)
+                .await
+                .unwrap();
+        }
+        fixture
+            .transport
+            .exchange(&handle, RequestFrame::Resources)
+            .await
+            .unwrap();
+        handles.push(handle);
+    }
+    let opened = native_pool::MAX_HTTP_SESSIONS + 1;
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), opened);
+    fixture
+        .transport
+        .exchange(&handles[0], RequestFrame::Resources)
+        .await
+        .unwrap();
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), opened);
+    fixture
+        .transport
+        .exchange(&handles[1], RequestFrame::Resources)
+        .await
+        .unwrap();
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), opened + 1);
+    for handle in handles {
+        fixture.transport.retire(&handle).await.unwrap();
+    }
+    fixture.drained().await;
+}
+
 async fn fixture() -> Fixture {
     let fixture = Fixture::start(Mode::Persistent, NativeRuntimeTransport::KubernetesExec).await;
     fixture
