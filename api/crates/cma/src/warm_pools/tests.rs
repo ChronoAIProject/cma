@@ -36,6 +36,7 @@ pub(crate) fn target() -> PoolTarget {
     PoolTarget {
         id: "wp_test".into(),
         activated_at: None,
+        machine: false,
         retiring: false,
         retired: false,
         document_schema_version: 1,

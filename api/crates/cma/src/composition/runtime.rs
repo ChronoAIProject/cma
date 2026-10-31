@@ -22,6 +22,11 @@ impl RuntimeServices {
                 config.runtime.agent_sandbox_home_policy.clone(),
                 config.agent_manager_sandbox_capacity,
                 config.runtime.native_warm_pool_target,
+                config
+                    .runtime
+                    .machine_sandbox_image
+                    .clone()
+                    .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
             ),
             updates: Arc::new(
                 layer2_core::sandbox::SandboxRuntimeUpdateService::new(

@@ -70,6 +70,7 @@ fn service(
             memory_mib: 8192,
         },
         1,
+        None,
     );
     (service, store)
 }
@@ -170,4 +171,35 @@ async fn current_pools_with_nondefault_resources_can_be_resized() {
         assert_eq!(*store.calls.lock().unwrap(), ["store-resize:wp_test:1:5"]);
         assert_eq!(store.target.lock().unwrap().plan, original.plan);
     }
+}
+
+#[tokio::test]
+async fn machine_pool_survives_reconciliation_beside_a_different_agent_image() {
+    let mut original = original_target();
+    original.machine = true;
+    original.document_schema_version = 2;
+    let (mut service, store) = service(original.clone(), original.plan.clone());
+    let service_mut = Arc::get_mut(&mut service).unwrap();
+    service_mut.machine = Some((service_mut.image.clone(), 2));
+    service_mut.image =
+        deployment_image(format!("registry.example/agent@sha256:{}", "b".repeat(64)));
+    assert!(service.current_plan(&original).unwrap());
+    service
+        .resize(
+            &operator(),
+            &original.id,
+            ResizeWarmPoolBody {
+                expected_revision: 1,
+                target_replicas: 2,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(*store.calls.lock().unwrap(), ["store-resize:wp_test:1:2"]);
+    let mut wrong_channel = original.clone();
+    wrong_channel.machine = false;
+    assert!(!service.current_plan(&wrong_channel).unwrap());
+    let service_mut = Arc::get_mut(&mut service).unwrap();
+    service_mut.machine = None;
+    assert!(!service.current_plan(&original).unwrap());
 }

@@ -140,6 +140,8 @@ data:
   # admission. The target is persisted by Agent Manager and reconciled through
   # SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs only.
   CHRONO_NATIVE_WARM_POOL_TARGET: "1"
+  # Independent machine capacity; promote with the verified Omarchy image pin.
+  CHRONO_NATIVE_MACHINE_WARM_POOL_TARGET: "0"
   # Native warm pools are managed by immutable image/resources/home policy.
   # Agent Manager persists the default target before serving and reconciles it
   # through SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs. Retained pools
