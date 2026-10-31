@@ -140,8 +140,9 @@ function AgentLifecycleForm({
           }
         />
         <p id="agent-repository-help" className="field__hint">
-          Your Agent receives this repository in its first message and prepares it in the empty
-          workspace. If authorization is needed, you’ll be prompted to connect your account.
+          Paste a GitHub link if the Agent should work on existing code, or leave this empty to
+          start from scratch. If the repository needs authorization, you’ll be asked to connect your
+          GitHub account.
         </p>
         {repositoryError ? (
           <p id="agent-repository-error" className="field__error" role="alert">
@@ -159,12 +160,12 @@ function AgentLifecycleForm({
             onChange={(event) => setMachineIncluded(event.target.checked)}
             aria-describedby="agent-machine-included-help"
           />
-          <span>Machine Included</span>
+          <span>Include a shared desktop</span>
         </label>
         <p id="agent-machine-included-help" className="field__hint">
           {machineIncludedAvailable
-            ? 'Add a shared Linux desktop with Chromium that you and your Agent can control.'
-            : 'Machine Included is available when creating a new Sandbox; existing Sandboxes keep their immutable runtime.'}
+            ? 'Adds a Linux desktop with the Chromium browser that you and your Agent can both see and control. Useful for work on websites.'
+            : 'A shared desktop can only be added with a new Sandbox; an existing Sandbox keeps its original setup.'}
         </p>
       </div>
       {/*
@@ -178,7 +179,8 @@ function AgentLifecycleForm({
         </span>
         <div>
           <h3 id="agent-settings-title">Agent settings</h3>
-          <p>gpt-6 · High · Autonomous</p>
+          <p>gpt-6 · High reasoning · Autonomous</p>
+          <p>The Agent works without asking first. Change this anytime from the message box.</p>
         </div>
       </section>
     </>
@@ -193,7 +195,7 @@ function AgentLifecycleForm({
             ? 'Start an Agent in the selected workspace.'
             : sandboxId !== undefined
               ? 'Start an Agent with a new workspace in this Sandbox.'
-              : 'Start an Agent in a new Sandbox with an empty workspace.'
+              : 'Your Agent gets its own Sandbox, a private computer it works in, starting with an empty Workspace.'
         }
         onClose={() => {
           if (operation?.status === 'succeeded' || operation?.status === 'failed')
@@ -237,7 +239,7 @@ function AgentLifecycleForm({
           ) : (
             <>
               <p className="agent-lifecycle-note">
-                Includes chrono-llm-public and ornn-api access.
+                Includes access to ChronoAI models and the Ornn skill library.
               </p>
               <Button disabled={pending} onClick={onClose}>
                 Cancel
