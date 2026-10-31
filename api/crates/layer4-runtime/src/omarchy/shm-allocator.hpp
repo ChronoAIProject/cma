@@ -2,6 +2,7 @@
 #pragma once
 #include <aquamarine/allocator/Allocator.hpp>
 #include <aquamarine/backend/Backend.hpp>
+#include <algorithm>
 #include <cmath>
 #include <fcntl.h>
 #include <sys/mman.h>
