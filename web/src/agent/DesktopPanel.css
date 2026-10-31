@@ -76,7 +76,6 @@
   border: 0;
   background: var(--dsw-alias-bg-layer-3);
   opacity: 0;
-  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 .agent-desktop__frame[data-ready] {
   opacity: 1;

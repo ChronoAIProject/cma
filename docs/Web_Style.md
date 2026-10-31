@@ -3857,8 +3857,10 @@ with a 16:10 outline, 12px frame radius, 8px inner window radius, and existing
 12/16/24px spacing. Its 14px/20px label names connecting or loading the first
 screen. The connection handshake alone does not mean the display is ready;
 keep input disabled until actual remote pixels are painted. A 30-second failure
-shows a persistent recovery message and leaves Reconnect available. The screen
-and placeholder use the existing 200ms opacity transition without moving chat.
+shows a persistent recovery message and leaves Reconnect available. Once the
+first remote pixels are painted, reveal the screen and remove the placeholder
+immediately without moving chat. The loading surface must not obscure a ready
+desktop with an exit animation.
 
 A 22px outlined control label beside Machine desktop states Watching, You
 control, or Agent working, using the existing 6px badge radius, 12px/18px text
@@ -3911,3 +3913,12 @@ departure or settled preparation, and preserve live conversation fragments.
 Faster observation never implies readiness by elapsed time.
 
 | 2026-11-01 | Refresh initial Agent preparation promptly, with bounded frequency and the existing slow-preparation and error backoff. |
+
+Selecting Machine Included may preload the bundled desktop viewer code while
+the creation dialog is open. This downloads only application assets; desktop
+connections still require the owned Agent and active Sandbox. A failed preload
+does not block creation, and the viewer retains its normal connection recovery.
+The first painted screen appears immediately; control handoff notices retain
+their existing Presence fades and five-second lifetime.
+
+| 2026-11-01 | Preload the desktop viewer when Machine Included is selected and reveal the first painted frame immediately, preserving input authorization and control handoff animations. |
