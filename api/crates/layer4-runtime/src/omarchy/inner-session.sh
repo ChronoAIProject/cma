@@ -86,7 +86,9 @@ env -u WAYLAND_DISPLAY FLTK_BACKEND=x11 vncviewer -display :99 -Shared -Security
   -geometry 1280x800+0+0 127.0.0.1:5900 >/tmp/cma-vncviewer.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do
-  window=$(xdotool search --onlyvisible --name ' - TigerVNC' | head -1 || true)
+  # FLTK fullscreen windows can omit WM_CLASS/title without a window manager.
+  # It always sets _NET_WM_PID, including on override-redirect windows.
+  window=$(xdotool search --onlyvisible --pid "${children[2]}" | head -1 || true)
   [[ -z "$window" ]] || break
   kill -0 "${children[2]}"
   sleep 0.1
