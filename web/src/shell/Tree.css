@@ -72,6 +72,11 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* The current row takes the active-item ground (§10), so it never reads as a hovered one. */
+.tree-row[aria-selected='true'] {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
 .tree-row[data-dimmed] .tree-row__label {
   opacity: 0.55;
 }
