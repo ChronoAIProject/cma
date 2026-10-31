@@ -53,6 +53,9 @@ device=$(python3 /usr/share/cma-omarchy/graphics-device.py)
 if [[ -n "$device" ]]; then
   export WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE="$device"
 fi
+if [[ "$WLR_RENDERER" == pixman ]]; then
+  export AQ_WL_SHM=1
+fi
 # The host only transports the actual Hyprland desktop. No host keybindings
 # intercept the owner's input; every inner window occupies the whole output.
 mkdir -p /tmp/cma-labwc

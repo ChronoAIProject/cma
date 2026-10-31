@@ -1,0 +1,95 @@
+--- a/src/render/OpenGL.cpp
++++ b/src/render/OpenGL.cpp
+@@ -158,7 +158,8 @@
+ 
+     attrs.push_back(EGL_NONE);
+ 
+-    m_eglDisplay = m_proc.eglGetPlatformDisplayEXT(gbm ? EGL_PLATFORM_GBM_KHR : EGL_PLATFORM_DEVICE_EXT, gbm ? m_gbmDevice : m_eglDevice, attrs.data());
++    m_eglDisplay = m_proc.eglGetPlatformDisplayEXT(m_drmFD < 0 ? EGL_PLATFORM_SURFACELESS_MESA : (gbm ? EGL_PLATFORM_GBM_KHR : EGL_PLATFORM_DEVICE_EXT),
++                                                   m_drmFD < 0 ? EGL_DEFAULT_DISPLAY : (gbm ? m_gbmDevice : m_eglDevice), attrs.data());
+     if (m_eglDisplay == EGL_NO_DISPLAY)
+         RASSERT(false, "EGL: failed to create a platform display");
+ 
+@@ -330,7 +331,12 @@
+     RASSERT(eglBindAPI(EGL_OPENGL_ES_API) != EGL_FALSE, "Couldn't bind to EGL's opengl ES API. This means your gpu driver f'd up. This is not a hyprland issue.");
+ 
+     bool success = false;
+-    if (EGLEXTENSIONS.contains("EXT_platform_device") || !m_proc.eglQueryDevicesEXT || !m_proc.eglQueryDeviceStringEXT) {
++    if (m_drmFD < 0 && Env::envEnabled("AQ_WL_SHM") && EGLEXTENSIONS.contains("EGL_MESA_platform_surfaceless")) {
++        initEGL(false);
++        success = true;
++        Log::logger->log(Log::INFO, "CMA: nested software rendering through wl_shm");
++    }
++    if (!success && (EGLEXTENSIONS.contains("EXT_platform_device") || !m_proc.eglQueryDevicesEXT || !m_proc.eglQueryDeviceStringEXT)) {
+         m_eglDevice = eglDeviceFromDRMFD(m_drmFD);
+ 
+         if (m_eglDevice != EGL_NO_DEVICE_EXT) {
+--- a/src/output/Monitor.cpp
++++ b/src/output/Monitor.cpp
+@@ -2644,6 +2644,8 @@
+     if (STATE.buffer) {
+         if (const auto params = STATE.buffer->dmabuf(); params.success && params.format == m_owner->m_drmFormat)
+             return;
++        if (const auto params = STATE.buffer->shm(); params.success && params.format == m_owner->m_drmFormat)
++            return;
+     }
+ 
+     // this is required for modesetting being possible and might be missing in case of first tests in the renderer
+--- a/src/render/gl/GLRenderbuffer.hpp
++++ b/src/render/gl/GLRenderbuffer.hpp
+@@ -16,5 +16,6 @@
+       private:
+         void*  m_image = nullptr;
+         GLuint m_rbo   = 0;
++        bool m_shmBound = false;
+     };
+ }
+--- a/src/render/gl/GLRenderbuffer.cpp
++++ b/src/render/gl/GLRenderbuffer.cpp
+@@ -32,6 +32,15 @@
+ }
+ 
+ CGLRenderbuffer::CGLRenderbuffer(SP<Aquamarine::IBuffer> buffer, uint32_t format) : IRenderbuffer(buffer, format) {
++    if (const auto shm = buffer->shm(); shm.success) {
++        m_framebuffer = makeShared<CGLFramebuffer>();
++        if (!m_framebuffer->alloc(buffer->size.x, buffer->size.y, shm.format))
++            return;
++        GLFB(m_framebuffer)->unbind();
++        m_listeners.destroyBuffer = buffer->events.destroy.listen([this] { g_pHyprRenderer->onRenderbufferDestroy(this); });
++        m_good = true;
++        return;
++    }
+     auto dma = buffer->dmabuf();
+ 
+     m_image = g_pHyprOpenGL->createEGLImage(dma);
+@@ -68,8 +77,30 @@
+ void CGLRenderbuffer::bind() {
+     g_pHyprOpenGL->makeEGLCurrent();
+     g_pHyprRenderer->bindFB(m_framebuffer);
++    m_shmBound = m_hlBuffer && m_hlBuffer->shm().success;
+ }
+ 
+ void CGLRenderbuffer::unbind() {
++    if (m_shmBound) {
++        m_shmBound = false;
++        auto buffer = m_hlBuffer.lock();
++        RASSERT(buffer, "CMA SHM output disappeared during rendering");
++        const auto attrs = buffer->shm();
++        auto [pixels, format, length] = buffer->beginDataPtr(0);
++        RASSERT(pixels && attrs.stride == static_cast<int>(buffer->size.x) * 4 &&
++                    length >= static_cast<size_t>(attrs.stride) * static_cast<size_t>(buffer->size.y), "Invalid CMA SHM output");
++        GLint previous = 0, alignment = 0;
++        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
++        glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
++        glBindFramebuffer(GL_READ_FRAMEBUFFER, GLFB(m_framebuffer)->getFBID());
++        glPixelStorei(GL_PACK_ALIGNMENT, 4);
++        // Match the compositor's existing SHM screenshot channel layout. The
++        // render projection already uses output coordinates, so rows stay put.
++        glReadPixels(0, 0, buffer->size.x, buffer->size.y, GL_BGRA_EXT, GL_UNSIGNED_BYTE, pixels);
++        RASSERT(glGetError() == GL_NO_ERROR, "CMA SHM framebuffer readback failed");
++        glPixelStorei(GL_PACK_ALIGNMENT, alignment);
++        glBindFramebuffer(GL_READ_FRAMEBUFFER, previous);
++        buffer->endDataPtr();
++    }
+     GLFB(m_framebuffer)->unbind();
+ }
