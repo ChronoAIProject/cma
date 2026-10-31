@@ -6,6 +6,23 @@ pub(super) enum HoldPurpose {
 }
 
 impl HostedAdapter {
+    pub(super) async fn restore_checkpoint(
+        &self,
+        handle: &RuntimeHandle,
+        request: &RestoreRequest,
+    ) -> crate::Result<()> {
+        self.known_state(handle).await?;
+        if !valid_checkpoint_reference(&request.object_reference, &request.sha256) {
+            return Err(AdapterError::Rejected(
+                "restore object reference or digest is invalid".into(),
+            ));
+        }
+        expect_ack(
+            self.exchange(handle, RequestFrame::Restore(request.clone()))
+                .await?,
+        )
+    }
+
     pub(super) async fn checkpoint_hold(
         &self,
         handle: &RuntimeHandle,
