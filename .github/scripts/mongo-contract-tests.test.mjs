@@ -12,6 +12,7 @@ const requiredPrefixes = [
   'agent_lifecycle::workspace::tests::bootstrap::',
   'warm_pools::tests::mongo::',
   'store::native_warm_pools::retirement::tests::',
+  'store::native_prepared::tests::',
   'store::sandbox_admission_mongo_integration_tests::warmup::',
   'store::auth::api_bearer_tests::',
   'store::agent_conversation_store::checkpoint_tests::',

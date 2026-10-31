@@ -303,7 +303,7 @@ fn validate_plan(record: &WarmSandbox) -> layer3_adapter::Result<()> {
     if sandbox.agent_provider != AgentProvider::Codex
         || sandbox.model_access != ModelAccess::ChronoaiManaged
         || !sandbox.software_install_commands.is_empty()
-        || !sandbox.environment_variables.is_empty()
+        || !valid_environment(sandbox)
         || !workspace.profile.content.setup_commands.is_empty()
         || !matches!(&workspace.profile.content.location, WorkspaceLocation::Directory { name } if name == "workspace")
         || workspace.profile.content.workspace_name().ok().as_deref() != Some("workspace")
@@ -315,6 +315,18 @@ fn validate_plan(record: &WarmSandbox) -> layer3_adapter::Result<()> {
         ));
     }
     Ok(())
+}
+
+pub(crate) fn valid_environment(profile: &layer2_core::profiles::SandboxProfileContent) -> bool {
+    match profile.environment_variables.as_slice() {
+        [] => true,
+        [entry] => {
+            entry.name == "CMA_MACHINE_INCLUDED"
+                && entry.value == "1"
+                && profile.runtime_image.is_some()
+        }
+        _ => false,
+    }
 }
 
 fn rejected(message: &str) -> AdapterError {

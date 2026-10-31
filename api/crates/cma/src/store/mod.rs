@@ -32,6 +32,7 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
+mod agent_write_coordination;
 mod agents;
 pub mod auth;
 mod bindings;
