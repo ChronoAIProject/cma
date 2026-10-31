@@ -10,11 +10,12 @@ use mongodb::{
     Collection, Database, IndexModel,
 };
 
-use super::{durability::majority_collection, schema};
+use super::durability::majority_collection;
 use crate::warm_pools::{PoolTarget, PoolTargetStore};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
 mod retirement;
+mod schema;
 
 const MAX_TARGETS: i64 = 1000;
 
@@ -26,7 +27,7 @@ pub(crate) struct MongoNativeWarmPools {
 
 impl MongoNativeWarmPools {
     pub async fn open(database: &Database, deployment: &str) -> Result<Self, StoreError> {
-        schema::initialize_collections(database, &[COLLECTION]).await?;
+        schema::initialize(database).await?;
         let targets = majority_collection(database, COLLECTION);
         let unique = IndexModel::builder()
             .keys(doc! {"plan.deployment":1,"plan.config_sha256":1})
@@ -44,7 +45,7 @@ impl MongoNativeWarmPools {
     }
 
     fn scope(&self) -> Document {
-        doc! {"plan.deployment":&self.deployment, "document_schema_version":1_i64}
+        doc! {"plan.deployment":&self.deployment, "document_schema_version":{"$in":[1_i64,2_i64]}}
     }
 
     async fn check_fenced_write(
@@ -63,11 +64,11 @@ impl MongoNativeWarmPools {
 fn fence(target: &PoolTarget) -> Document {
     doc! {"_id":&target.id,"revision":target.revision,"lease":target.lease.clone(),
     "lease_until":{"$gt":DateTime::now()},"plan.deployment":&target.plan.deployment,
-    "document_schema_version":1_i64,"retired":{"$ne":true}}
+    "document_schema_version":target.document_schema_version,"retired":{"$ne":true}}
 }
 
 fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
-    if target.document_schema_version != 1
+    if target.document_schema_version != if target.machine { 2 } else { 1 }
         || target.revision < 1
         || target.applied_revision < 0
         || target.applied_revision > target.revision

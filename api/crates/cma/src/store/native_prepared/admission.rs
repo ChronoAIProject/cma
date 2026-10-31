@@ -27,9 +27,16 @@ pub(in crate::store) async fn claim_ready(
     let SandboxOrigin::Lifecycle { operation_id } = &sandbox.origin else {
         return Ok(ClaimOutcome::Miss("miss_ineligible_origin"));
     };
+    let machine = sandbox
+        .profile
+        .content
+        .environment_variables
+        .iter()
+        .any(|e| e.name == "CMA_MACHINE_INCLUDED" && e.value == "1");
+    let target_id = if machine { "machine-target" } else { "target" };
     let Some(target) = store
         .native_prepared
-        .find_one(doc! {"_id":"target","target":{"$gt":0}})
+        .find_one(doc! {"_id":target_id,"target":{"$gt":0}})
         .session(&mut *session)
         .await
         .map_err(AdmissionError::Driver)?
@@ -43,10 +50,14 @@ pub(in crate::store) async fn claim_ready(
     // The preparation worker reconciles its durable target asynchronously after
     // startup. Never let that prior target override this process's released
     // runtime while new owned admissions are already being accepted.
-    if store
-        .managed_runtime_version
-        .as_ref()
-        .is_some_and(|version| version != &desired.warm.runtime_version)
+    let released = if machine {
+        store.managed_machine_runtime_version.as_ref()
+    } else {
+        store.managed_runtime_version.as_ref()
+    };
+    if desired.machine() != machine
+        || (machine && released.is_none())
+        || released.is_some_and(|version| version != &desired.warm.runtime_version)
     {
         return Ok(ClaimOutcome::Miss("miss_released_runtime_mismatch"));
     }
@@ -55,6 +66,9 @@ pub(in crate::store) async fn claim_ready(
         .find_one(doc!{"_id":operation_id,"owner":sandbox.owner.as_str(),"status":{"$in":["queued","running"]}})
         .session(&mut *session).await.map_err(AdmissionError::Driver)? else{return Ok(ClaimOutcome::Miss("miss_operation_unavailable"))};
     if operation.input.behavior != crate::store::LifecycleBehavior::PromptRepository
+        || operation.input.request.machine_included != machine
+        || (machine
+            && operation.input.resolved_image.as_ref() != Some(&desired.warm.runtime_version))
         || operation.input.request.workspace_id.is_some()
         || operation.input.request.sandbox_id.is_some()
         || operation.sandbox_id.is_some()
@@ -104,7 +118,7 @@ pub(in crate::store) async fn claim_ready(
     // Serialize with target changes/retirement. A stale selected pool cannot be consumed.
     store
         .native_prepared
-        .update_one(doc! {"_id":"target"}, doc! {"$inc":{"fence":1_i64}})
+        .update_one(doc! {"_id":target_id}, doc! {"$inc":{"fence":1_i64}})
         .session(&mut *session)
         .await
         .map_err(AdmissionError::Driver)?;
@@ -153,11 +167,16 @@ async fn ready_candidate(
 ) -> Result<Candidate, AdmissionError> {
     let now = layer2_core::seconds_from_rfc3339(observed_at)
         .ok_or_else(|| domain(SandboxStoreError::Conflict))?;
-    // The target's global cap is two. Check both before declaring a busy miss:
+    // Each class has a cap of two. Check both before declaring a busy miss:
     // one health probe must not hide another exact, available reservation.
+    let channel = if desired.machine() {
+        Bson::Boolean(true)
+    } else {
+        doc! {"$ne":true}.into()
+    };
     let mut cursor = store
         .native_prepared
-        .find(doc! {"kind":"reservation","state":"ready"})
+        .find(doc! {"kind":"reservation","state":"ready","machine":channel})
         .sort(doc! {"_id":1})
         .limit(2)
         .session(&mut *session)
