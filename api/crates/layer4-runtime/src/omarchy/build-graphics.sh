@@ -6,7 +6,7 @@ trap 'rm -rf "$build_dir"' EXIT
 test "$(pacman -Q wlroots0.20)" = 'wlroots0.20 0.20.2-1'
 test "$(pacman -Q aquamarine)" = 'aquamarine 0.15.1-1'
 pacman -Qq | sort > "$build_dir/packages-before"
-pacman -S --disable-sandbox --noconfirm --needed gcc make meson ninja glslang vulkan-headers pkgconf patch cmake hyprwayland-scanner hyprland-protocols udis86 glaze
+pacman -S --disable-sandbox --noconfirm --needed gcc make meson ninja glslang vulkan-headers pkgconf patch cmake hyprwayland-scanner hyprland-protocols glaze
 curl -fsSL https://gitlab.freedesktop.org/wlroots/wlroots/-/archive/0.20.2/wlroots-0.20.2.tar.gz -o "$build_dir/source.tar.gz"
 echo "972c7ac44b17828f4702bfae7cd8347346a3fb5b2c1076cfa2c3fcedac5ec343  $build_dir/source.tar.gz" | sha256sum -c -
 mkdir "$build_dir/source"
