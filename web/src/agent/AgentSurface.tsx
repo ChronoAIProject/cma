@@ -179,6 +179,7 @@ export function AgentSurface({
     <DesktopWorkspace
       agentId={agentId}
       open={desktopOpen}
+      preparation={{ context: lifecycleClient, owner: viewerId }}
       runtimeReady={desktopRuntimeReady(detail)}
       running={running || starting}
       onClose={() => setClosedDesktopAgentId(agentId)}

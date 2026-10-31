@@ -3936,3 +3936,14 @@ After a complete preparation snapshot refresh, restart live replay from that
 snapshot's cursor while retaining the same selected transport and input journal.
 
 | 2026-11-01 | Preserve the live replay restart at the new preparation snapshot cursor when reusing the selected transport. |
+
+After an explicitly admitted Machine Included creation names its Agent, the
+browser may begin that Agent's owner-authorized desktop connection alongside
+navigation reads. The connection transfers once to the matching personal Agent
+view, client and owner after its normal access and active-runtime checks. Until
+then it sends no desktop input and bounds buffered server greetings by size,
+count and a ten-second lifetime. Abandonment, account mismatch, hidden tabs and
+connection errors discard it; the viewer retains its normal connection fallback,
+first-frame readiness, explicit input control and display recovery.
+
+| 2026-11-01 | Overlap desktop connection setup with admitted Machine creation navigation, preserving owner checks, bounded single-use handoff and explicit desktop input control. |
