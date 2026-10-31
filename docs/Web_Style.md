@@ -4052,3 +4052,9 @@ now takes tabular numerals from the base sheet, and so does each counter. This r
 `.tabular` helper, which nothing used.
 
 | 2026-11-01 | Use tabular numerals for every time element and every changing count, and retire the unused tabular helper. |
+
+**Readable placeholders.** Field placeholders used the dimmed ink, about 2.6:1, though a
+placeholder is often the only hint of what a field takes. They now use the caption ink, as §23
+already did for the composer.
+
+| 2026-11-01 | Draw field placeholders in the caption ink instead of the dimmed ink. |
