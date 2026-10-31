@@ -95,13 +95,8 @@
  * What is written here is what everything was already getting.
  */
 .field__label {
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 10.5px;
-  font-weight: 500;
-  line-height: 1.55;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  color: var(--dsw-alias-label-caption);
+  font: var(--dsw-font-xxs-strong-12);
 }
 
 .field__hint {
@@ -231,11 +226,8 @@
 /* ── Section labels ─────────────────────────────────────────────────────── */
 
 .eyebrow {
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  color: var(--dsw-alias-label-caption);
+  font: var(--dsw-font-xxs-strong-12);
 }
 
 /* ── Semantic tone helpers, §2 ───────────────────────────────────────────
