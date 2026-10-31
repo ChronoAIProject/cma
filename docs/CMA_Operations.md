@@ -1164,6 +1164,14 @@ a successful exec exit preserves buffered response bytes for the caller.
 A lost response
 does not trigger transport-level replay or discovery of a replacement Pod.
 
+Native HTTP retains at most 16 reusable connections with a 60-second idle
+timeout. Cache pressure evicts the least recently used idle connection; active
+and queued requests are never evicted. Successful request completion updates
+recency. Sorting by runtime name previously discarded frequently used prepared
+runtimes and added another Kubernetes exec handshake during ownership transfer.
+Reuse still checks the exact current Pod and container incarnation after
+exclusive checkout; this cache retains transport connections, never authority.
+
 Enable a stream mode only after a canary using the deployment's actual remote
 identity proves control, history, long-lived WebSocket communication and cleanup
 on the configured RuntimeClass. The API server and kubelet carry this traffic;
