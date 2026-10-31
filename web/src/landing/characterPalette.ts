@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 export type CharacterState = 'brand' | 'running' | 'completed' | 'pending' | 'failed';
 
-interface CharacterPalette {
+export interface CharacterPalette {
   readonly body: THREE.Color;
   readonly lens: THREE.Color;
   readonly sky: THREE.Color;
