@@ -4058,3 +4058,9 @@ placeholder is often the only hint of what a field takes. They now use the capti
 already did for the composer.
 
 | 2026-11-01 | Draw field placeholders in the caption ink instead of the dimmed ink. |
+
+**Font rendering.** Firefox on macOS now gets the same grayscale smoothing Chromium and Safari
+already had. `text-rendering: optimizeLegibility` is gone: Geist already sets its own kerning,
+and the property makes long transcripts noticeably slower to lay out.
+
+| 2026-11-01 | Add grayscale smoothing for Firefox on macOS and drop optimizeLegibility from the body. |

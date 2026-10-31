@@ -41,7 +41,7 @@ body {
   font-size: var(--text-ui);
   line-height: var(--leading-ui);
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* §4: selected text uses the appearance's accent and its paired foreground. */
