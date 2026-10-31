@@ -86,6 +86,32 @@ it('keeps startup reads sequential, slows prolonged preparation and stops on unm
   expect(readAgent).toHaveBeenCalledTimes(3);
 });
 
+it('observes startup again without an extra idle interval after a slow successful read', async () => {
+  vi.useFakeTimers();
+  const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
+  let finishRead: ((value: typeof starting) => void) | undefined;
+  const readAgent = vi.fn(async () => {
+    if (readAgent.mock.calls.length === 1) return starting;
+    if (readAgent.mock.calls.length === 2)
+      return new Promise<typeof starting>((resolve) => {
+        finishRead = resolve;
+      });
+    return AGENT_DETAIL;
+  });
+  const client = agentClient({ readAgent });
+  const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  await act(() => vi.advanceTimersByTimeAsync(350));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  await act(async () => finishRead?.(starting));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(result.current.state.status).toBe('ready');
+  if (result.current.state.status === 'ready')
+    expect(result.current.state.detail.status).toBe('ready');
+  expect(readAgent).toHaveBeenCalledTimes(4);
+  unmount();
+});
+
 it('rejects changed startup lineage before reading history and retains error backoff', async () => {
   vi.useFakeTimers();
   const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
