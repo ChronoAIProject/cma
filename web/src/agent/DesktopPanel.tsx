@@ -73,7 +73,7 @@ export function DesktopPanel({
           </div>
           <p role="status">
             {phase === 'waiting'
-              ? 'Waiting for your Agent to be ready…'
+              ? 'Waiting for your machine to be ready…'
               : phase === 'connecting'
                 ? 'Connecting to your machine…'
                 : phase === 'recovering'
