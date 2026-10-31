@@ -99,6 +99,11 @@ function AgentLifecycleForm({
   const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
   const machineIncludedAvailable =
     workspaceId === undefined && sandboxId === undefined && canCreateSandbox;
+  useEffect(() => {
+    // Fetch static viewer code during creation; the owned Agent page opens the stream.
+    if (machineIncludedAvailable && machineIncluded)
+      void import('@novnc/novnc').catch(() => undefined);
+  }, [machineIncludedAvailable, machineIncluded]);
   const submit = () => {
     if (!canCreate) return;
     if (!repositoryValid) {
