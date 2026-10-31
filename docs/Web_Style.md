@@ -772,8 +772,8 @@ equivalence. Profile links remain independently clickable.
 
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
 fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 7. The Lumen row
-radius wins for both appearances; geometry never flips with theme. Hover is an accent wash plus
-accent ink, while a danger row uses the danger wash and danger ink.
+radius wins for both appearances; geometry never flips with theme. Hover is the neutral hover
+ground in the primary ink (§29), while a danger row uses the danger wash and danger ink.
 
 Rows are reachable by arrow keys, Home and End, and **wrap** rather than stopping dead — a list that
 stops at the last row puts the first one four presses away in a menu of five. Opening a value picker
@@ -4077,3 +4077,11 @@ approval card's warning, keep their tone. Mono stays for identifiers, where its 
 literal value — is true.
 
 | 2026-11-01 | Replace the uppercase mono label voice on eyebrows, field labels and pills with sentence-case 12/18 medium in the interface face; keep mono for identifiers. |
+
+**Lime means something.** Every menu row, every outline button and every picker caret turned lime
+on hover, so the accent flickered across chrome whenever the pointer moved and stopped meaning
+anything. §2 already says neutral interaction stays neutral. Menu rows, outline buttons and picker
+carets now hover with the neutral ground, primary ink and the level-4 border. Lime is kept for the
+one primary action, selection and the current item, live state, focus and data.
+
+| 2026-11-01 | Make menu-row, outline-button and picker-caret hovers neutral, keeping lime for primary actions, selection, live state, focus and data. |

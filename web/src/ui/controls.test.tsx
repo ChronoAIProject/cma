@@ -100,7 +100,7 @@ describe('the button', () => {
     );
     expect(css).toMatch(/\.button--outline\s*\{[^}]*var\(--dsw-alias-border-l3\)/);
     expect(css).toMatch(
-      /\.button--outline:hover:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-interactive-bg-hover-accent\)[^}]*var\(--dsw-alias-state-business-primary\)/,
+      /\.button--outline:hover:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-interactive-bg-hover\)[^}]*var\(--dsw-alias-border-l4\)/,
     );
   });
 
@@ -308,7 +308,7 @@ describe('the value picker', () => {
     const css = readFileSync(join(SRC, 'ui', 'Menu.css'), 'utf8');
     expect(css).toMatch(/\.menu__item\s*\{[^}]*min-height: 40px[^}]*border-radius: 7px/);
     expect(css).toMatch(
-      /\.menu__item:hover:not\(\[aria-disabled='true'\]\)\s*\{[^}]*color: var\(--dsw-alias-state-business-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover-accent\)/,
+      /\.menu__item:hover:not\(\[aria-disabled='true'\]\)\s*\{[^}]*color: var\(--dsw-alias-label-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover\)/,
     );
     expect(css).toMatch(
       /\.menu__item--danger:hover:not\(\[aria-disabled='true'\]\)[^{]*\{[^}]*color: var\(--dsw-alias-state-error-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)/,
