@@ -11,6 +11,8 @@ require('default.hypr.require_optional').module('omarchy.current.theme.hyprland'
 hl.monitor({ output = '', mode = '1280x800@30', position = '0x0', scale = 1 })
 hl.env('GDK_SCALE', '1')
 hl.config({ animations = { enabled = false }, debug = { enable_stdout_logs = true, disable_logs = false } })
+-- CMA owns image updates; upstream workstation release popups cannot act on them.
+hl.config({ ecosystem = { no_update_news = true } })
 o.bind('SUPER + RETURN', 'Terminal', 'foot')
 o.bind('CTRL + ALT + T', 'Terminal', 'foot')
 o.bind('SUPER + B', 'Browser', '/usr/local/bin/cma-desktop-session --browser')
