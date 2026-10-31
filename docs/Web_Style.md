@@ -815,7 +815,7 @@ the width is measured with the position.
 Every modal uses the shared Modal primitive: one centered card on layer 2,
 behind the theme's `bg-mask-1` and blur. Width is `min(700px, 60vw)` and maximum
 height is `60dvh` with a `60vh` fallback. All four card edges stay at least 20%
-inside the whole viewport, including on narrow screens. No call site overrides
+inside the whole viewport on screens wider than 480px. No call site overrides
 width, height or placement. Header and wrapping footer retain the shared style;
 long contents scroll inside the body. Radius remains 16px. The overlay portals
 to the document root and locks background scrolling. Anchored selection menus
@@ -825,8 +825,11 @@ At a viewport width of 480px or less the card takes the full width less a 16px
 gutter on each side: 60% of a 320px phone is 192px, too narrow for a form's fields
 or its footer keys. At viewport widths or heights of 480px or less, the entire card scrolls instead
 of shrinking the body between the header and footer. Content keeps its natural
-height so every field, close control and footer action remains reachable. The
-same centered card bounds, padding, radius and 20% margins still apply.
+height so every field, close control and footer action remains reachable. At a
+viewport width of 480px or less the card may also use the full height less a 16px
+gutter top and bottom (`calc(100dvh - 32px)`), so a form's primary action is on
+screen when it opens instead of below 40% of empty viewport; padding and radius are
+unchanged, and wider screens keep the 60dvh cap and 20% margins.
 Shared input wrappers may shrink to their available width without forcing a
 narrow dialog to scroll horizontally.
 
@@ -3926,3 +3929,4 @@ heading and adds one secondary sentence saying why and who can help, followed by
 Agent sharing views each name their own reason; none is shown as an error.
 
 | 2026-10-31 | Give every unavailable centre view a reason sentence and a Return to Agent Manager link. |
+| 2026-10-31 | Let phone dialogs (480px wide or less) use the full height less a 16px gutter so New agent's Create agent key is visible without scrolling the card. |

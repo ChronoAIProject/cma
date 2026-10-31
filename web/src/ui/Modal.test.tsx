@@ -171,6 +171,13 @@ describe('the dialog shell', () => {
     expect(phone).toMatch(/\.modal__card\s*\{[^}]*width: 100%[^}]*max-width: 100%/);
   });
 
+  it('lets a phone dialog use the full height less a 16px gutter', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/Modal.css'), 'utf8');
+    const phone = css.slice(css.indexOf('@media (max-width: 480px) {'));
+    expect(phone).toMatch(/\.modal\s*\{[^}]*padding-block: 16px/);
+    expect(phone).toMatch(/\.modal__card\s*\{[^}]*max-height: calc\(100dvh - 32px\)/);
+  });
+
   it.each([undefined, 'modal--wide', 'modal--widest'])(
     'uses the shared card and scrolling content for legacy placement %s',
     (placement) => {
