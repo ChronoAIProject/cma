@@ -3925,3 +3925,9 @@ their existing Presence fades and five-second lifetime.
 | 2026-11-01 | Preload the desktop viewer when Machine Included is selected and reveal the first painted frame immediately, preserving input authorization and control handoff animations. |
 
 | 2026-11-01 | Include completed authorization and read time in the short startup observation cadence, preserving sequential requests, slow-preparation backoff and access checks. |
+
+Preparation refreshes retain the Agent tab's selected conversation transport.
+They still check the current account before reading and before exposing history;
+refreshing readiness never selects a different transport or resubmits setup work.
+
+| 2026-11-01 | Refresh preparation through the Agent's existing conversation transport, retaining fresh account checks around history reads. |
