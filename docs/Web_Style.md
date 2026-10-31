@@ -480,7 +480,7 @@ stays visible because it changes what the list is; it is two text tabs at 13px w
 track: the selected one in the primary ink at weight 500, the other in the secondary ink. They
 keep their pressed-button semantics (`aria-pressed`, one Tab stop each) inside the group named
 **Navigation view**. Scope and status only narrow the list, so they sit behind the **Filter** key
-at the row's right: a 28px icon button (44px below 30rem) with the sliders glyph, named *Filter*.
+at the row's right: a 32px icon button (44px below 30rem) with the sliders glyph, named *Filter*.
 When any filter differs from its default (Personal, All statuses) a 6px accent dot sits at its
 top-right corner, and a 12px secondary summary line under the row names only the non-default
 parts, joined by ` · ` — *Shared*, *Working*, or *Shared · Working* — and serves as the key's
@@ -1193,7 +1193,7 @@ while a turn runs. On the right: the model and effort chip, the context ring, an
 the Send (or Queue/Interrupt) and Stop circles. There is no settings row and no
 usage row below the box. A chip is quiet: 12/18 secondary ink, no border, radius 8,
 an interactive hover wash, a leading icon or trailing chevron. Send is a 28px
-circle (44px below 30rem): a neutral `bg-layer-3` ground with dimmed ink while
+circle answering a 32px square (44px below 30rem): a neutral `bg-layer-3` ground with dimmed ink while
 there is nothing to send, the primary fill once the draft is ready. Below 30rem
 the permission and steering chips show only their icons and keep their names as
 accessible names; while a turn runs there the row wraps, putting the model chip,
@@ -1209,7 +1209,7 @@ with both values. It opens a popover card drawn on the body like a dropdown list
 256px wide and nudged inside the viewport, above the chip. The card holds:
 
 - the current effort word (Minimal, Low, Medium, High, Very high) as its heading,
-  14/20 semibold in the accent ink, and at the top right a 24px reset icon button,
+  14/20 semibold in the accent ink, and at the top right a 24px reset icon button answering a 32px square,
   **Reset to current settings**, which returns model and effort to the Agent's
   confirmed settings and is unavailable when they already match;
 - the model name with a `›` chevron, named *Model*, opening the shared dropdown of
@@ -4085,3 +4085,13 @@ carets now hover with the neutral ground, primary ink and the level-4 border. Li
 one primary action, selection and the current item, live state, focus and data.
 
 | 2026-11-01 | Make menu-row, outline-button and picker-caret hovers neutral, keeping lime for primary actions, selection, live state, focus and data. |
+
+**Every key answers 32px.** §15 sets a 32px minimum target, but several keys were smaller:
+Send and Stop (28px), message footer keys (28px), the modal close (28px, shrunk under the shared
+small button), the sidebar row menu (24px), the effort reset (24px), the sidebar view tabs, the
+Filter and Clear keys, and the tool-group toggle (28px). Keys whose drawn size is part of the
+layout keep it and extend their hit area with a transparent pseudo-element to a 32px square.
+Footer keys sit 4px apart, so their squares meet without overlapping. The others now draw at
+32px. The modal close is the shared 32px small icon button again.
+
+| 2026-11-01 | Give every desktop key at least a 32px target: Send, footer, row-menu and reset keys extend their hit area, while the modal close, sidebar filter keys and tool-group toggle draw at 32px. |
