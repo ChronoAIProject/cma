@@ -51,6 +51,7 @@
   outline: none;
 }
 
+/* A placeholder is often the only hint of what a field takes, so it is read, not dimmed (§29). */
 .input__control::placeholder {
-  color: var(--dsw-alias-label-dimmed);
+  color: var(--dsw-alias-label-caption);
 }
