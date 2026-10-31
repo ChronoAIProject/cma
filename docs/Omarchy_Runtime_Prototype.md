@@ -43,6 +43,15 @@ Startup without a graphics device still fails. The overall prototype workflow
 therefore does not establish device-free operation or production admission.
 The image export remains `admission: blocked`, `productionValidated: false`.
 
+The subsequent candidate at source `1e14344010d534411a85e7b7525cda8dbc345e2a`
+initializes surfaceless EGL and the nested SHM display without a DRM device, but
+aborts while destroying a cursor renderbuffer: its cleanup attempts a pixel
+copy after the underlying SHM buffer has expired. The current patch completes
+cursor and output copies before submission, and performs no copy from a
+destructor. Its complete no-device acceptance result is still pending. The
+same candidate's VKMS, runtime-contract and configured scan checks passed;
+those passes do not override its failed no-device check.
+
 ## Display integration
 
 ```mermaid
@@ -63,10 +72,11 @@ computer-use service or provider tool was added.
 VKMS supplies virtual graphics buffers, while Mesa llvmpipe renders in software.
 This does not require a physical GPU, but it does require an accessible DRM
 primary node. The disposable runner loads VKMS on its own host and maps only the
-identified node and its group into the container. Production Kata compatibility
-and the provider's device provisioning remain unverified.
+identified node and its group into the container. A disposable production
+microVM inventory found no `/dev/dri` device or available VKMS/vgem driver.
+Production acceptance therefore requires the separate device-free path.
 
-The implementation includes three targeted graphics adaptations:
+The implementation includes four targeted graphics adaptations:
 
 1. DRM driver discovery uses `DRM_IOCTL_VERSION`, including Linux 7's faux VKMS
    devices. It does not assume a particular sysfs driver symlink.
@@ -79,6 +89,10 @@ The implementation includes three targeted graphics adaptations:
    The first fixes a buffer commit before the host acknowledged its surface;
    the second negotiates the stream's size before rendering, avoiding a centered
    720-pixel output and offset pointer coordinates in an 800-pixel stream.
+4. With no DRM device, `AQ_WL_SHM=1` selects bounded, sealed memfd buffers in
+   Aquamarine and surfaceless Mesa rendering in Hyprland. Completed output and
+   cursor framebuffers are copied to the shared-memory Wayland buffers before
+   submission. This path must pass the same desktop controls and restart checks.
 
 Readiness requires a live `WAYLAND-*` monitor of the expected dimensions and a
 Chromium client. A compositor running only on its fallback headless output is
@@ -133,6 +147,8 @@ be bound to the exact candidate, alongside its runtime and desktop results.
 
 A passing VKMS Docker test does not prove compatibility with the production
 Sandbox provider or a browser journey through CMA's public API. That requires a
-separate disposable CMA Sandbox using a pinned registry digest and the required
-graphics device. Existing Agents, Sandbox images and production defaults must
-remain untouched during prototype verification.
+separate disposable microVM using the pinned registry digest without a graphics
+device, followed by the actual CMA creation and conversation journey. Promotion
+must preserve retained user runtimes and homes. Independent machine warm and
+prestarted pools are described in [Machine warm pools](CMA_Machine_Warm_Pools.md);
+their five-second acceptance remains separate from graphics readiness.
