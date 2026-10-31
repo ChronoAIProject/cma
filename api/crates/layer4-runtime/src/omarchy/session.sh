@@ -41,7 +41,7 @@ stop() {
   local status=$?
   trap - EXIT INT TERM
   if ((status != 0)); then
-    for log in /tmp/cma-*.log "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log; do
+    for log in /tmp/cma-*.log "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log "$HOME"/.cache/hyprland/hyprlandCrashReport*.txt; do
       [[ -f "$log" ]] || continue
       printf '\nDesktop diagnostic: %s\n' "$log" >&2
       head -c 5000 "$log" >&2 || true
