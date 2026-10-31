@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import markMarkup from '../assets/brand/cma-mark.svg?raw';
 import type { CharacterPose } from './poses';
 import type { CharacterHandle, CharacterOptions, CharacterTone } from './stage';
@@ -82,7 +82,7 @@ export function CharacterAvatar({
   return (
     <span
       className={className === undefined ? 'character-avatar' : `character-avatar ${className}`}
-      style={{ '--character-size': `${String(size)}px` } as CSSProperties}
+      style={{ width: size, height: size }}
       data-pose={pose}
       data-tone={tone}
       data-motion={still ? 'still' : 'live'}
