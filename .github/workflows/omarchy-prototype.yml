@@ -74,6 +74,12 @@ jobs:
           sudo modprobe vkms
           ls -l /dev/dri
           node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence/virtual-drm
+      - name: Verify desktop with the production image temporary directory
+        id: image_tmp
+        if: always() && steps.build.outcome == 'success'
+        env:
+          CMA_OMARCHY_TEST_IMAGE_TMP: '1'
+        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence/image-tmp
       - name: Retain startup results before the full image scan
         if: always() && steps.build.outcome == 'success'
         uses: actions/upload-artifact@v5
@@ -99,6 +105,7 @@ jobs:
           SCAN_OUTCOME: ${{ steps.scan.outcome }}
           CONTRACT_OUTCOME: ${{ steps.contract.outcome }}
           GRAPHICS_OUTCOME: ${{ steps.graphics.outcome }}
+          IMAGE_TMP_OUTCOME: ${{ steps.image_tmp.outcome }}
         run: |
           python3 .github/scripts/omarchy-export.py "$GITHUB_SHA" /tmp/omarchy-image /tmp/omarchy-evidence
       - name: Retain candidate image
