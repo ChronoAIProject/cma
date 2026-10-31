@@ -13,7 +13,13 @@ fi
 umask 077
 mkdir -p "$XDG_RUNTIME_DIR" "$HOME/.cma/chrome" "$HOME/Desktop" "$HOME/Documents" "$HOME/Downloads" /tmp/.X11-unix
 chmod 700 "$XDG_RUNTIME_DIR"
-chmod 1777 /tmp/.X11-unix
+# Arch supplies this directory as root:root with mode 1777. A rootless
+# runtime may use it but cannot chmod it, even to its existing mode.
+if [[ -O /tmp/.X11-unix ]]; then
+  chmod 1777 /tmp/.X11-unix
+fi
+[[ -d /tmp/.X11-unix && ! -L /tmp/.X11-unix && -w /tmp/.X11-unix && -x /tmp/.X11-unix ]]
+[[ $(stat -c '%a' /tmp/.X11-unix) == 1777 ]]
 exec 9>"$HOME/.cma/desktop.lock"
 flock -n 9
 printf '%s: 127.0.0.1:5900\n' "$CMA_DESKTOP_TOKEN" >/tmp/cma-desktop-token

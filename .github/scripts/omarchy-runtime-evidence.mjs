@@ -15,6 +15,8 @@ const token = randomBytes(32).toString('hex');
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
 const result = { scope: 'isolated-docker-offline-model', revision, result: 'fail', cleanup: false };
 const devices = [];
+const imageTemporaryDirectory = process.env.CMA_OMARCHY_TEST_IMAGE_TMP === '1';
+result.temporaryFilesystem = imageTemporaryDirectory ? 'image' : 'tmpfs';
 const run = (command, extra = []) => docker(['exec', '--env', 'DISPLAY=:99',
   '--env', 'XDG_RUNTIME_DIR=/tmp/cma-desktop-runtime', ...extra, name, ...command]);
 async function ready() {
@@ -50,19 +52,25 @@ try {
   const seccomp = resolve(destination, 'seccomp.json');
   await desktopSeccomp(seccomp);
   docker(['volume', 'create', '--label', `dev.chrono.cma.omarchy-test=${name}`, name]);
-  docker(['create', '--name', name, '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+  const creation = ['create', '--name', name, '--network', 'none',
+    ...(imageTemporaryDirectory ? [] : ['--read-only']), '--cap-drop', 'ALL',
     '--security-opt', `seccomp=${seccomp}`, '--security-opt', 'no-new-privileges=true',
     '--pids-limit', '768', '--memory', '8g', '--cpus', '2',
-    '--tmpfs', '/tmp:rw,nosuid,nodev,size=1073741824,mode=1777',
+    ...(imageTemporaryDirectory ? [] : ['--tmpfs', '/tmp:rw,nosuid,nodev,size=1073741824,mode=1777']),
     '--mount', `type=volume,source=${name},target=/home/cma`,
     '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700',
     '--env', `CHRONO_SANDBOX_ID=${name}`, '--env', 'CMA_MACHINE_INCLUDED=1',
     '--env', `CHRONO_RUNTIME_CONTROL_TOKEN=${token}`,
     ...devices,
     '--mount', `type=bind,source=${resolve('.github/scripts')},target=/opt/probes,readonly`,
-    '--mount', `type=bind,source=${resolve('api/crates/layer3-adapter/src/codex')},target=/opt/codex-fixtures,readonly`, image.Id]);
+    '--mount', `type=bind,source=${resolve('api/crates/layer3-adapter/src/codex')},target=/opt/codex-fixtures,readonly`, image.Id];
+  docker(creation);
   docker(['start', name]);
   await ready();
+  if (imageTemporaryDirectory) {
+    assert.equal(run(['stat', '-c', '%u:%g:%a', '/tmp/.X11-unix']).trim(), '0:0:1777');
+    result.rootOwnedX11Directory = true;
+  }
   result.environment = run(['sh', '-c', 'cat /etc/os-release; cat /usr/share/omarchy/version; cat /usr/share/cma-omarchy/hyprland-version.txt; pgrep -a quickshell']);
   writeFileSync(resolve(destination, 'packages.txt'), run(['cat', '/usr/share/cma-omarchy/packages.txt']));
   writeFileSync(resolve(destination, 'package-sha256.txt'), run(['cat', '/usr/share/cma-omarchy/package-sha256.txt']));
@@ -77,7 +85,16 @@ try {
   result.browserClosed = true;
   run(['pgrep', '-a', 'quickshell']);
   screenshot('desktop-browser-closed');
-  docker(['restart', '--time', '10', name]);
+  if (imageTemporaryDirectory) {
+    // Kubernetes replaces the container's writable image filesystem while
+    // retaining its home volume. Exercise that production recovery shape.
+    docker(['rm', '--force', name]);
+    docker(creation);
+    docker(['start', name]);
+    result.containerReplaced = true;
+  } else {
+    docker(['restart', '--time', '10', name]);
+  }
   await ready();
   result.retained = JSON.parse(run(['node', '/opt/probes/omarchy-native-probe.cjs'],
     ['--env', `CMA_DESKTOP_TEST_TOKEN=${token}`, '--env', 'CMA_DESKTOP_EXPECT_RETAINED=1']));
