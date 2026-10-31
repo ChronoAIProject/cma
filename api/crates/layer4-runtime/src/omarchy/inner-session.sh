@@ -23,7 +23,21 @@ if [[ ! -s "$HOME/.local/state/omarchy/current/theme.name" ]]; then
   ln -snf /usr/share/cma-desktop/wallpaper.png "$HOME/.local/state/omarchy/current/background"
 fi
 children=()
-stop() { trap - EXIT INT TERM; kill "${children[@]}" 2>/dev/null || true; wait "${children[@]}" 2>/dev/null || true; }
+stop() {
+  local status=$?
+  trap - EXIT INT TERM
+  if ((status != 0)); then
+    {
+      printf 'Viewer display: %s\n' "$DISPLAY"
+      xwininfo -root -tree || true
+      for id in $(xdotool search --name '.' 2>/dev/null || true); do
+        xprop -id "$id" WM_CLASS WM_NAME _NET_WM_NAME _NET_WM_PID || true
+      done
+    } >/tmp/cma-x11-windows.log 2>&1
+  fi
+  kill "${children[@]}" 2>/dev/null || true
+  wait "${children[@]}" 2>/dev/null || true
+}
 trap stop EXIT INT TERM
 export WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman
 export WLR_RENDERER_ALLOW_SOFTWARE=1
@@ -67,12 +81,12 @@ for ((i=0;i<100;i++)); do
   sleep 0.1
 done
 # FLTK must use X11 even though the compositor's client environment is Wayland.
-env -u WAYLAND_DISPLAY FLTK_BACKEND=x11 vncviewer -Shared -SecurityTypes None -FullScreen \
+env -u WAYLAND_DISPLAY FLTK_BACKEND=x11 vncviewer -display :99 -Shared -SecurityTypes None -FullScreen \
   -RemoteResize=0 -ShortcutModifiers= -AcceptClipboard=0 -SendClipboard=0 \
   -geometry 1280x800+0+0 127.0.0.1:5900 >/tmp/cma-vncviewer.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do
-  window=$(xdotool search --onlyvisible --class '[Vv]ncviewer' | head -1 || true)
+  window=$(xdotool search --onlyvisible --name ' - TigerVNC' | head -1 || true)
   [[ -z "$window" ]] || break
   kill -0 "${children[2]}"
   sleep 0.1

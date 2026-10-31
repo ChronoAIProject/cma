@@ -62,13 +62,13 @@ const server = createServer(async (request, response) => {
     calls.push(value);
     const index = calls.length;
     let item;
-    if (index === 1) item = call(value, index, 'exec_command', { cmd: terminalCommand, yield_time_ms: 10000, max_output_tokens: 2000 });
+    if (index === 1) item = call(value, index, 'exec_command', { cmd: terminalCommand, yield_time_ms: 30000, max_output_tokens: 2000 });
     else if (index === 2) {
       assert.equal(readFileSync(terminalMarker, 'utf8'), 'CMA terminal control verified\n');
       item = call(value, index, 'view_image', { path: terminalScreenshot });
     } else if (index === 3) {
       assert(JSON.stringify(value.input).includes('data:image/'), 'terminal screenshot was not returned to the model');
-      item = call(value, index, 'exec_command', { cmd: command, yield_time_ms: 10000, max_output_tokens: 2000 });
+      item = call(value, index, 'exec_command', { cmd: command, yield_time_ms: 30000, max_output_tokens: 2000 });
     } else if (index === 4) {
       // The command fits within one native tool wait; prove its screen interaction
       // before asking the model to view the resulting image.
