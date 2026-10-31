@@ -291,6 +291,18 @@ impl SandboxAdapter for CodexAdapter {
             .await
     }
 
+    async fn prepare_agent_resources(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        worktree: &WorktreeRequest,
+        home: &AgentHomeRequest,
+    ) -> crate::Result<WorktreeReceipt> {
+        self.hosted
+            .prepare_agent_resources(handle, authority_fence, worktree, home)
+            .await
+    }
+
     async fn materialize_agent_home(
         &self,
         handle: &RuntimeHandle,

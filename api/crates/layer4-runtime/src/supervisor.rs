@@ -23,6 +23,8 @@ const MAX_AGENT_SLOTS: usize = 16;
 mod agent;
 #[path = "supervisor_agent_recovery.rs"]
 mod agent_recovery;
+#[path = "supervisor_agent_resources.rs"]
+mod agent_resources;
 #[path = "supervisor_agent_validation.rs"]
 mod agent_validation;
 #[path = "supervisor_attachment.rs"]
