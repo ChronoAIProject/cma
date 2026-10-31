@@ -25,6 +25,7 @@ pub(super) struct NativeHttpSlot {
     connection: Arc<Mutex<Option<NativeConnection>>>,
     cancelled: watch::Sender<bool>,
     idle_timer: StdMutex<Option<AbortOnDrop>>,
+    last_used: StdMutex<std::time::Instant>,
 }
 
 impl NativeHttpSlot {
@@ -101,6 +102,7 @@ impl NativeLease {
             return Err(retired());
         }
         *self.checkout = self.connection.take();
+        *self.slot.last_used.lock().unwrap() = std::time::Instant::now();
         let weak_state = Arc::downgrade(&self.state);
         let weak_slot = Arc::downgrade(&self.slot);
         let handle = self.handle.clone();
@@ -161,14 +163,16 @@ impl ProviderHostedControlTransport {
             }
         }
         if state.native_http.len() >= MAX_HTTP_SESSIONS {
-            // Evict an idle resource before opening another. The underlying
-            // client still enforces its shared 32 request-stream permits.
+            // Evict the least recently used idle resource before opening another.
+            // Resource-name order can repeatedly discard hot prepared runtimes.
+            // The client still enforces its shared 32 request-stream permits.
             let idle = state
                 .native_http
                 .iter()
-                .find(|(_, slot)| {
+                .filter(|(_, slot)| {
                     Arc::strong_count(slot) == 1 && slot.connection.try_lock().is_ok()
                 })
+                .min_by_key(|(_, slot)| *slot.last_used.lock().unwrap())
                 .map(|(handle, _)| handle.clone());
             if let Some(idle) = idle {
                 state.native_http.remove(&idle);
@@ -184,6 +188,7 @@ impl ProviderHostedControlTransport {
             connection: Arc::new(Mutex::new(None)),
             cancelled: watch::channel(false).0,
             idle_timer: StdMutex::new(None),
+            last_used: StdMutex::new(std::time::Instant::now()),
         });
         state.native_http.insert(handle.clone(), slot.clone());
         Ok(slot)
