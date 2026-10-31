@@ -679,7 +679,8 @@ writers retain the existing conflict retries and unknown-commit reconciliation.
 
 Startup diagnostics record separate prepared-resource intent, worktree replay,
 Agent-home replay, receipt publication, conversation open and Ready-publication
-durations. Slow Agent work publications (at least 100 ms) and publications with
+durations. Conversation traces also separate prepared close and load calls while
+retaining their aggregate protocol-session timing. Slow Agent work publications (at least 100 ms) and publications with
 multiple Mongo attempts also report queue time and attempt count. These logs
 contain bounded Agent identity, work step, fence and timings only. A false
 `commit_confirmed` includes errors, cancellation and ambiguous commits; it does
