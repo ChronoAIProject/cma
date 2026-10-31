@@ -490,16 +490,17 @@ their defaults. Each view keeps its own status choice.
 **Agents view.** One flat list of every Agent the scope shows, most recently active first, with no
 Workspace or Sandbox group headings. Each row is one line, 32px high (44px below 30rem):
 
-- A 16px leading slot that holds a 8px state dot (§12.1) only for a state that needs attention or
-  shows work — Starting, Working, Needs approval, Needs attention. Ready, Paused and Stopped draw
-  none; the slot stays so titles align with each other and with the action-row labels. The slot's
-  hover title is the status word.
+- A 24px leading slot holding the Agent's character, posed by its effective status (§28). Only
+  Starting, Working, Needs approval, Resuming, Pausing and Updating move; Ready, Paused, Stopped and
+  Needs attention draw their still moment. The row is inset 8px and the slot sits 4px from the
+  title, so the character's centre lies under the action-row glyphs and the title on the
+  action-row labels' edge. The slot's hover title is the status word.
 - The Agent title in 13px, truncated on one line with an ellipsis, full text on hover.
 - The relative age (12px tertiary, tabular) and the row's **⋯** menu at the right, shown only while
   the row is hovered, holds focus, or is the current Agent. At rest the menu keeps its place
   invisibly, so revealing it never shifts the title; it is still reached with Tab from its row.
 
-The status word is part of the row's accessible name even where no dot or word is drawn, so the
+The status word is part of the row's accessible name even though no word is drawn, so the
 list reads the same to a screen reader as before. The current row takes the active-item ground.
 Deleted Agents and removed Workspaces are absent; Agents of a paused Sandbox are dimmed but still
 open their conversation. The Shared and Organization Agent lists keep their two-line rows, which
@@ -649,8 +650,8 @@ the row.
 
 A **state dot** is reinforcement and never the signal — it is `aria-hidden`, and every caller pairs it
 with the word, so a state reads the same to somebody who cannot distinguish the colours. The
-one-line personal Agent list (§10) is the single place the word is not drawn beside the dot: there
-it is carried in the row's accessible name and the dot's hover title instead. Three of its
+one-line personal Agent list (§10) draws the Agent's character (§28) instead of a dot and no word:
+there the word is carried in the row's accessible name and the slot's hover title. Three of its
 four states are a solid core inside a same-coloured halo. The fourth is not colour alone: _running_ is
 a claim about right now, so its solid live core sends one expanding ping ring on a quiet loop. Under
 `prefers-reduced-motion: reduce` the ring is absent and the labelled core stays still. This replaces
@@ -1694,11 +1695,13 @@ interaction immediately; presentation must never delay an action.
 ### What motion is for here
 
 Inside a working surface, motion reports a changed surface or ongoing work.
-The signed-in sidebar's §21 mark is the only brand animation in the shell.
-Its geometry draws once at shell mount and its asset-defined lens highlight
+The signed-in sidebar's §21 mark is the only decorative brand animation in the
+shell. Its geometry draws once at shell mount and its asset-defined lens highlight
 loops quietly; its wrapper never bobs, turns or scales. Reduced motion shows
 the finished mark at rest. The signed-out authentication gate uses a static
-brand asset and keeps sign-in immediately usable.
+brand asset and keeps sign-in immediately usable. The Agent characters of §28
+are not decoration: they move only to report work or a person being asked, and
+are otherwise still.
 
 **A surface that replaces another fades in.** Switching Agents changes the whole centre column, and
 without a handover it reads as a different screen rather than the same screen showing something else.
@@ -3925,3 +3928,51 @@ their existing Presence fades and five-second lifetime.
 | 2026-11-01 | Preload the desktop viewer when Machine Included is selected and reveal the first painted frame immediately, preserving input authorization and control handoff animations. |
 
 | 2026-11-01 | Include completed authorization and read time in the short startup observation cadence, preserving sequential requests, slow-preparation backoff and access checks. |
+
+## 28. The character in the product (2026-11-01)
+
+The CMA character of §23 — its procedural geometry, MeshPhysical body and lenses, studio
+lights, lens glint and contact shadow — is the Agent's presence wherever the product lists
+or runs Agents. It is never redrawn, simplified or given props to explain a state: every
+pose moves only the rig the character already has (head look, float and sway, lift, scale,
+tilt, turn, hem breathing, glint and exposure), so the character in a 24px row and on the
+520px landing stage are the same object.
+
+**One registry.** `web/src/character/poses.ts` names every pose and is the only place
+motion is defined. `characterForStatus` (`status.ts`) maps each recorded status, after any
+parent lifecycle (§10), to a pose, a body tone and whether it moves in a list:
+
+| Status words | Pose | Moves in a list | Body |
+|---|---|---|---|
+| Starting, Updating access, Updating runtime | preparing: one turn per second | yes | brand lime |
+| Working | thinking: looks up and to the right, glint every 1.6s | yes | brand lime |
+| Needs approval | approval: leans in, larger, two hops every 2.8s | yes | pending amber |
+| Pausing | paused, breathing as it settles | yes | brand lime |
+| Resuming | resuming: stretches awake, then floats | yes | brand lime |
+| Ready, Live | idle: still, facing forward | no | brand lime |
+| Paused, Stopped, Deleting | paused: low, head down, dimmed | no | brand lime |
+| Needs attention | failed: drooped and tilted | no | failed red |
+
+The body colour only repeats a word that is already present. A pose that plays once (failed)
+holds its last frame, and a pose change eases over 300ms instead of jumping. Neighbouring
+characters take a stable clock offset from their Agent's identifier, so a list never moves
+in lockstep.
+
+**One stage.** Browsers keep roughly sixteen live WebGL contexts per page, so characters
+are not given renderers of their own. One shared renderer draws each character into the
+corner of its buffer and copies it into that character's own canvas. Frames are scheduled
+only for characters that are visible, moving, and on a shown document. Three.js loads on
+demand, after the shell is interactive. Each square is reserved before it is drawn, so rows
+never reflow when their characters arrive.
+
+**Never the only signal.** Characters are `aria-hidden`. Every placement keeps the status
+word in visible text, in an accessible name or in a hover title. Under
+`prefers-reduced-motion: reduce` every character draws its pose's still moment and
+nothing loops. When WebGL is unavailable or its context is lost, each character becomes
+the still §21 mark in its body colour, in the same square.
+
+**Sidebar.** Both navigation views lead every Agent row with its character: 24px in the
+Agents view (§10) and 20px in the Sandboxes tree, where it replaces the generic Agent
+glyph. Only the rows that show work or ask for a person move.
+
+| 2026-11-01 | Lead every sidebar Agent row with its status-posed 3D character from one pose registry and one shared WebGL stage; only work and approval move, reduced motion and missing WebGL draw still poses or the mark, and the status word stays in the row's accessible name and hover title. |
