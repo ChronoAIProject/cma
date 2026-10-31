@@ -204,6 +204,8 @@ mod reconciliation;
 #[path = "management/reconfiguration.rs"]
 mod reconfiguration;
 
+#[path = "management/partitions.rs"]
+mod partitions;
 #[path = "management/targets.rs"]
 mod targets;
 

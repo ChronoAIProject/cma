@@ -62,7 +62,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     }
     let mode = name.strip_prefix("binding_management_")?;
     let (router, store) = management::app();
-    if ["ready", "pending"].contains(&mode) {
+    if ["ready", "pending", "conversation"].contains(&mode) {
         let response = router
             .clone()
             .oneshot(management::request(
@@ -74,7 +74,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
-        if mode == "ready" {
+        if mode != "pending" {
             let mut binding = store.binding("binding-contract").await.unwrap().unwrap();
             let revision = binding.revision;
             binding.state = BindingState::Ready;
@@ -84,6 +84,19 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 .unwrap();
             management::create_backing_resources(&store, &binding).await;
             store.save_binding(Some(revision), binding).await.unwrap();
+        }
+        if mode == "conversation" {
+            let response = router
+                .clone()
+                .oneshot(management::request(
+                    "PUT",
+                    "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-contract",
+                    None,
+                    Some(management::authority()),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 201);
         }
     }
     Some(Scenario {

@@ -15,6 +15,7 @@ export * from './provider-binding-preparation.js';
 import {
   array,
   enumeration,
+  nullable,
   object,
   optional,
   positiveInteger,
@@ -71,6 +72,15 @@ const putBinding = object({
 });
 export type ProviderBinding = Output<typeof binding>;
 export type BindingConversation = Output<typeof conversation>;
+export const BindingConversationInspectionSchema = object({
+  binding_id: text,
+  generation: positiveInteger,
+  conversation_id: text,
+  agent_id: text,
+  state: text,
+  agent_status: nullable(text),
+});
+export type BindingConversationInspection = Output<typeof BindingConversationInspectionSchema>;
 export type PutProviderBinding = Output<typeof putBinding>;
 /** Binding management requires Gateway authority; media operations use the bound consumer key. */
 export class ProviderBindings {
@@ -128,6 +138,14 @@ export class ProviderBindings {
       method: 'DELETE',
       expectedStatus: 204,
     });
+  }
+  inspectConversation(id: string, conversationId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      path(id, conversationId),
+      BindingConversationInspectionSchema,
+      options,
+    );
   }
   ensureConversation(id: string, conversationId: string, options: OperationOptions = {}) {
     return read(this.config, path(id, conversationId), conversation, {

@@ -107,6 +107,23 @@ describe('independent CMAEG client', () => {
         response: sample('ChannelResponse'),
       },
       {
+        run: () => client.inspectChannelPartition(id, 'oracle/+?', { consumerId: 'default' }),
+        method: 'GET',
+        path: `/v1/channels/${segment}/partition?partition_key=oracle%2F%2B%3F&consumer_id=default`,
+        response: {
+          consumer_id: 'default',
+          transport_conversation_id: 'conversation-partition',
+          mapping: {
+            binding_id: 'binding-partition',
+            generation: 1,
+            conversation_id: 'conversation-partition',
+            agent_id: 'agt_missing',
+            state: 'ready',
+            agent_status: null,
+          },
+        },
+      },
+      {
         run: () => client.recoverChannel(id),
         method: 'GET',
         path: `/v1/channel-records/${segment}`,
