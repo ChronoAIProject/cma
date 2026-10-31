@@ -35,6 +35,7 @@ echo "542a3075643971d69862e7481446b9ec8f368338d1dcbc13ce26438a0e7e23cf  $build_d
 mkdir "$build_dir/aquamarine"
 tar xzf "$build_dir/aquamarine.tar.gz" -C "$build_dir/aquamarine" --strip-components=1
 patch --batch --fuzz=0 -d "$build_dir/aquamarine" -p1 < "$build_dir/aquamarine.patch"
+patch --batch --fuzz=0 -d "$build_dir/aquamarine" -p1 < /tmp/aquamarine-fullscreen.patch
 cmake -S "$build_dir/aquamarine" -B "$build_dir/aquamarine-build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib
 cmake --build "$build_dir/aquamarine-build" --target aquamarine --parallel 2
@@ -44,7 +45,7 @@ cp -a "$build_dir/aquamarine-installed/usr/include/aquamarine/." /usr/include/aq
 ldconfig
 {
   printf '\nAquamarine 0.15.1 with upstream configure fix 7bb8bdf4e8fedaf4dfae58512bc4c728671727df\n'
-  sha256sum "$build_dir/aquamarine.tar.gz" "$build_dir/aquamarine.patch" /usr/lib/libaquamarine.so
+  sha256sum "$build_dir/aquamarine.tar.gz" "$build_dir/aquamarine.patch" /tmp/aquamarine-fullscreen.patch /usr/lib/libaquamarine.so
 } >> /usr/share/cma-omarchy/patched-graphics.txt
 # Keep the runtime's original packages; remove only newly added build tooling.
 pacman -Qq | sort > "$build_dir/packages-after"
