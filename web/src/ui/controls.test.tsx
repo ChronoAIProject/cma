@@ -198,8 +198,9 @@ describe('the shared component vocabulary', () => {
   it('pins the field, failure, progress, and skeleton idioms to their aliases', () => {
     const css = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
     expect(css).toMatch(
-      /\.field__label\s*\{[^}]*font-family: var\(--ds-font-family-code\)[^}]*font-size: 10\.5px[^}]*letter-spacing: 0\.14em/,
+      /\.field__label\s*\{[^}]*color: var\(--dsw-alias-label-caption\)[^}]*font: var\(--dsw-font-xxs-strong-12\)/,
     );
+    expect(css).not.toMatch(/\.field__label\s*\{[^}]*text-transform: uppercase/);
     expect(css).toMatch(
       /\.notice--fail\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)[^}]*border-left: 2px solid var\(--dsw-alias-state-error-primary\)/,
     );
