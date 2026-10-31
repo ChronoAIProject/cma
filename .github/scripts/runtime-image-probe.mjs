@@ -33,6 +33,8 @@ export const diagnosticStages = [
   'empty-volume-owned-layout', 'empty-volume-seeded-skills',
   'empty-volume-retained-replay', 'empty-volume-content-preserved',
   'empty-volume-uncommitted-layout-refused',
+  'agent-resource-workspace', 'agent-resource-worktree', 'agent-resource-home',
+  'agent-resource-replay', 'agent-resource-stale-fence', 'agent-resource-retained-files',
   'checkpoint-receipt-type', 'checkpoint-receipt-writers', 'checkpoint-receipt-token',
   'checkpoint-writer-stable',
   'checkpoint-refused-codex-temporary-symlink-escape',
@@ -219,17 +221,18 @@ export function installRequest(commands) {
 }
 
 // Exercise the shipped executable, including each original journal receipt.
-async function agentResourceProof(control) {
+async function agentResourceProof(control, onStage) {
   const field = value => {
     const bytes = Buffer.from(value), size = Buffer.alloc(4);
     size.writeUInt32BE(bytes.length);
     return Buffer.concat([size, bytes]);
   };
-  const workspace = { t: 'prepare_workspace', operation_id: 'workspace:ci-batch:prepare:v1',
-    workspace_id: 'ci-batch', name: 'ci-batch', source: { type: 'init' }, clone_depth: 50 };
+  const workspace = { t: 'prepare_workspace', operation_id: 'workspace:ci_batch:prepare:v1',
+    workspace_id: 'ci_batch', name: 'ci-batch', source: { type: 'init' }, clone_depth: 50 };
   const depth = Buffer.alloc(4); depth.writeUInt32BE(50);
   workspace.request_sha256 = sha256(Buffer.concat([Buffer.from('chrono.workspace.prepare.v2\0'),
     depth, field(workspace.workspace_id), field(workspace.name), Buffer.from([2])]));
+  onStage('agent-resource-workspace');
   const prepared = await control(workspace);
   assert.equal(prepared.t, 'prepare_workspace');
   const worktree = { operation_id: 'worktree:ci-batch:ci-batch:add:v1', workspace: 'ci-batch',
@@ -239,18 +242,24 @@ async function agentResourceProof(control) {
   const home = { operation_id: 'agent:ci-batch:home:create:v1', request_sha256: 'a'.repeat(64),
     agent_id: 'ci-batch', files: [{ path: 'AGENTS.md', bytes: [...Buffer.from('prepared profile')] }],
     symlinks: [], skills: [] };
+  onStage('agent-resource-worktree');
   const treeReceipt = await control({ t: 'add_worktree', authority_fence: 1, request: worktree });
+  assert.equal(treeReceipt.t, 'add_worktree');
+  onStage('agent-resource-home');
   const homeReceipt = await control({ t: 'materialize_agent_home', authority_fence: 1, request: home });
-  assert.equal(treeReceipt.t, 'add_worktree'); assert.equal(homeReceipt.t, 'materialize_agent_home');
+  assert.equal(homeReceipt.t, 'materialize_agent_home');
   const dirty = `${treeReceipt.receipt.path}/owner-work.txt`;
   writeFileSync(dirty, 'retained work');
   writeFileSync(`${homeReceipt.receipt.path}/AGENTS.md`, 'owner-edited profile');
   const frame = { t: 'prepare_agent_resources', authority_fence: 2, request: { worktree, home } };
   const expected = { t: frame.t, authority_fence: 2,
     receipt: { worktree: treeReceipt.receipt, home: homeReceipt.receipt } };
+  onStage('agent-resource-replay');
   assert.deepEqual(await control(frame), expected);
   assert.deepEqual(await control({ ...frame, authority_fence: 3 }), { ...expected, authority_fence: 3 });
+  onStage('agent-resource-stale-fence');
   assert.equal((await control(frame)).t, 'failure');
+  onStage('agent-resource-retained-files');
   assert.equal(readFileSync(dirty, 'utf8'), 'retained work');
   assert.equal(readFileSync(`${homeReceipt.receipt.path}/AGENTS.md`, 'utf8'), 'owner-edited profile');
 }
@@ -332,7 +341,7 @@ export async function probe(onStage = () => {}) {
   complete('install-exact-replay');
   assert.deepEqual(await control(credential), { t: 'credential', operation_id: credential.operation_id, installed: true });
   complete('credential-after-install');
-  await agentResourceProof(control);
+  await agentResourceProof(control, onStage);
   complete('agent-resource-pair-replay');
   credential = await githubProxyProbe(credential, control);
   complete('github-api-proxy');
