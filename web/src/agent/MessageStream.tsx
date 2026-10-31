@@ -39,7 +39,7 @@ export function MessageStream({
   approvalReadOnly = false,
   onApproval,
   children,
-  emptyMessage = 'Start the conversation.',
+  emptyMessage = 'Tell the Agent what you need in your own words, for example “Compare three project management tools for a small team.”',
   optimisticMessages,
   viewPosition,
   user,
