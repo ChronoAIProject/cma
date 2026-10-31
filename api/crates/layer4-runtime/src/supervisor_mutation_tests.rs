@@ -18,6 +18,8 @@ use sha2::{Digest, Sha256};
 use super::*;
 use crate::mutation_journal::{self, Begin, Operation};
 
+#[path = "supervisor_agent_resources_tests.rs"]
+mod agent_resources_tests;
 #[path = "supervisor_warmup_tests.rs"]
 mod warmup_tests;
 

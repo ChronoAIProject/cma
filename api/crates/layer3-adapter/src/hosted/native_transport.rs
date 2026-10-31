@@ -146,6 +146,10 @@ impl ProviderHostedControlTransport {
                 &url[url::Position::BeforeHost..url::Position::AfterPort],
             )
             .header(http::header::CONTENT_TYPE, "application/json")
+            .header(
+                http::header::ACCEPT,
+                crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+            )
             .header(name, token)
             .body(Full::new(Bytes::from(body)))
             .map_err(|_| AdapterError::Rejected("runtime HTTP request is invalid".into()))?;

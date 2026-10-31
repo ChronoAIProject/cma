@@ -451,6 +451,8 @@ COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-r
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
 RUN bash /tmp/install-omarchy.sh && rm /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
 COPY --from=omarchy-cma /usr/local/bin/ /usr/local/bin/
+# Toolchain donor stays pinned; the supervisor must match this source revision.
+COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 COPY --from=omarchy-cma /usr/local/lib/ /usr/local/lib/
 COPY --from=omarchy-cma /etc/codex/ /etc/codex/
 COPY --from=omarchy-cma /usr/share/cma-runtime-home/ /usr/share/cma-runtime-home/

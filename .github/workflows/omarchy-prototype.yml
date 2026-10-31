@@ -1,10 +1,10 @@
 name: Omarchy runtime prototype
 on:
   push:
-    branches: [codex/omarchy-runtime-20261030]
+    branches: [codex/omarchy-runtime-20261030, codex/prepared-activation-batch-20261101]
     paths:
       - infra/runtime/Dockerfile
-      - api/crates/layer4-runtime/src/omarchy/**
+      - api/**
       - .github/scripts/**
       - .github/workflows/omarchy-prototype.yml
 permissions:
