@@ -9,7 +9,15 @@ impl NativeWarmPools {
             .native_pools()
             .ok_or(WarmPoolError::Unavailable)?;
         let home = self.home.as_ref().ok_or(WarmPoolError::Unavailable)?;
-        current_plan(provider, &self.image, home, target)
+        let image = if target.machine {
+            let Some((image, _)) = &self.machine else {
+                return Ok(false);
+            };
+            image
+        } else {
+            &self.image
+        };
+        current_plan(provider, image, home, target)
     }
 }
 
