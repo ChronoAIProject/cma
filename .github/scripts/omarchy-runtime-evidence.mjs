@@ -73,8 +73,8 @@ try {
   writeFileSync(resolve(destination, 'agent-terminal.png'), execFileSync('docker', ['exec', name, 'cat', '/tmp/cma-omarchy-terminal-proof.png'], { maxBuffer: 8 * 1024 * 1024 }));
   screenshot('agent-and-user-input');
   // Close Chromium cleanly to persist the profile and prove the desktop survives.
-  run(['xdotool', 'key', '--clearmodifiers', 'ctrl+shift+q']);
-  await delay(2000);
+  run(['python3', '/opt/probes/omarchy-close-browser.py']);
+  result.browserClosed = true;
   run(['pgrep', '-a', 'quickshell']);
   screenshot('desktop-browser-closed');
   docker(['restart', '--time', '10', name]);
@@ -96,7 +96,7 @@ try {
 } finally {
   // Preserve completed native-tool evidence even if a later input check fails.
   try {
-    writeFileSync(resolve(destination, 'agent-terminal.png'), execFileSync('docker',
+    writeFileSync(resolve(destination, result.first ? 'retained-agent-terminal.png' : 'agent-terminal.png'), execFileSync('docker',
       ['exec', name, 'cat', '/tmp/cma-omarchy-terminal-proof.png'], { maxBuffer: 8 * 1024 * 1024 }));
   } catch {}
   // A later interaction failure leaves the compositor alive. Preserve its logs
