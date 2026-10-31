@@ -4114,3 +4114,14 @@ columns, so their right edges were ragged and the three read as unrelated button
 fills its column at every width, as it already did below 30rem.
 
 | 2026-11-01 | Stretch each approval answer across its column at every width. |
+
+**Code you can take away.** Fenced code in a reply had no header and no copy key, so taking a
+command meant hand-selecting it. The intent of §18.11 had been lost. Each block now carries its
+fence's info string verbatim in 12px mono caption ink at the top left (no label when there is
+none, and no language is ever inferred). At the top right is a 32px **Copy code** key that
+writes the code exactly as fenced and shows a check for two seconds. Both sit inside the
+block's one frame above the first line. While the reply is still streaming the key is
+disabled, with the reason as its title, because half a command pasted into a shell is worse
+than none.
+
+| 2026-11-01 | Give fenced reply code its verbatim language label and a Copy code key that is disabled while the reply streams. |
