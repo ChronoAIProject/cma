@@ -94,6 +94,11 @@ try {
     try { writeFileSync(resolve(destination, 'diagnostics.txt'), docker(['logs', name]).replaceAll(token, '[fixture-token]')); } catch {}
   }
 } finally {
+  // Preserve completed native-tool evidence even if a later input check fails.
+  try {
+    writeFileSync(resolve(destination, 'agent-terminal.png'), execFileSync('docker',
+      ['exec', name, 'cat', '/tmp/cma-omarchy-terminal-proof.png'], { maxBuffer: 8 * 1024 * 1024 }));
+  } catch {}
   // A later interaction failure leaves the compositor alive. Preserve its logs
   // too, before disposing of the test's exact container and home volume.
   try {

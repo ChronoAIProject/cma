@@ -60,9 +60,7 @@ cat > /tmp/cma-labwc/rc.xml <<'XML'
 <labwc_config>
   <keyboard><keybind key="W-F35"><action name="None" /></keybind></keyboard>
   <mouse><context name="Root"><mousebind button="Left" action="Press"><action name="None" /></mousebind></context></mouse>
-  <windowRules><windowRule identifier="*" serverDecoration="no">
-    <action name="ToggleFullscreen" />
-  </windowRule></windowRules>
+  <windowRules><windowRule identifier="aquamarine" serverDecoration="no" /></windowRules>
 </labwc_config>
 XML
 labwc --config-dir /tmp/cma-labwc --debug >/tmp/cma-labwc.log 2>&1 &
@@ -97,7 +95,7 @@ done
 xdotool set_window --name CMA-Omarchy-Transport "$window"
 xdotool windowsize "$window" 1280 800 windowmove "$window" 0 0
 export WAYLAND_DISPLAY=wayland-0
-Hyprland --config /usr/share/cma-omarchy/hyprland.lua >/tmp/cma-hyprland.log 2>&1 &
+AQ_WL_FULLSCREEN=1 Hyprland --config /usr/share/cma-omarchy/hyprland.lua >/tmp/cma-hyprland.log 2>&1 &
 children+=("$!")
 hypr_pid=$!
 for ((i=0;i<300;i++)); do
@@ -110,13 +108,13 @@ done
 export HYPRLAND_INSTANCE_SIGNATURE="$instance"
 printf '%s\n' "$instance" > "$XDG_RUNTIME_DIR/cma-hyprland-instance"
 for ((i=0;i<100;i++)); do
-  hyprctl -j monitors 2>/dev/null | jq -e 'any(.[]; .name | startswith("WAYLAND-"))' >/dev/null && break
+  hyprctl -j monitors 2>/dev/null | jq -e 'any(.[]; (.name | startswith("WAYLAND-")) and .width == 1280 and .height == 800)' >/dev/null && break
   kill -0 "$hypr_pid"
   sleep 0.1
 done
 # A running compositor on its fallback headless output does not prove that the
 # Omarchy desktop is connected to the output being streamed to its owner.
-hyprctl -j monitors | tee /tmp/cma-hyprland-monitors.log | jq -e 'any(.[]; .name | startswith("WAYLAND-"))' >/dev/null
+hyprctl -j monitors | tee /tmp/cma-hyprland-monitors.log | jq -e 'any(.[]; (.name | startswith("WAYLAND-")) and .width == 1280 and .height == 800)' >/dev/null
 for ((i=0;i<300;i++)); do
   hyprctl -j clients 2>/dev/null | jq -e 'any(.[]; .class | ascii_downcase | contains("chromium"))' >/dev/null && break
   kill -0 "$hypr_pid"
