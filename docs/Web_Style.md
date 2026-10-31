@@ -4012,3 +4012,19 @@ layer 2 and 4.8:1 on layer 3, still clearly quieter than the caption ink. Fixing
 fixes every surface that uses it. Light keeps `zinc 500` (4.8:1).
 
 | 2026-11-01 | Raise the dark tertiary ink to zinc 450 so small tertiary text meets 4.5:1 on every dark layer while staying quieter than caption. |
+
+**One reading size in a reply.** A reply's paragraphs were 16/28 while its list items and tables
+inherited the stream's 14px interface size, so any answer with bullets changed size halfway
+through. `.agent-content` now sets `--dsw-font-markdown-base` for everything it holds, and
+tables use `--dsw-font-markdown-table`. A reply's top heading is `markdown-h3` (20/30), below
+the 20px page title rather than above it, and every deeper level shares `markdown-h4` (16/28,
+600). Tables are row rules and alignment only: no cell grid, 8px by 12px cells, caption-ink
+heads and tabular figures. While a reply streams its paragraphs wrap plainly: pretty wrapping
+re-broke the last lines on every token. It returns once the reply settles.
+
+**Links are underlined at rest.** In dark the accent link measured 1.15:1 against the reply
+text, so a link told apart only by colour was invisible to many readers. Links are underlined
+at 1px, 3px below the baseline, in the link colour at 45%, and darken to the full colour on
+hover. This restores §18.12's underline.
+
+| 2026-11-01 | Set one reading size across a reply, cap its headings below the page title, draw tables as row rules with tabular figures, wrap streaming paragraphs plainly, and underline reply links at rest. |

@@ -1,8 +1,18 @@
+/*
+ * One reading size for the whole reply (§13, §29): lists and tables used to inherit the
+ * stream's 14px UI size and changed size mid-answer.
+ */
 .agent-content {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  font: var(--dsw-font-markdown-base);
+}
+
+/* Pretty wrapping re-breaks the last lines on every streamed token; settle it once done. */
+.agent-content[data-streaming] :is(p, li) {
+  text-wrap: wrap;
 }
 
 .agent-content p,
@@ -24,13 +34,8 @@
   letter-spacing: 0;
 }
 
+/* A reply's top heading stays below the page title (20px); deeper levels share 16/28. */
 .agent-content h2 {
-  font: var(--dsw-font-markdown-h1);
-}
-.agent-content h3 {
-  font: var(--dsw-font-markdown-h2);
-}
-.agent-content h4 {
   font: var(--dsw-font-markdown-h3);
 }
 
@@ -74,13 +79,18 @@
   border-radius: 8px;
 }
 
+/* A link is underlined at rest: in dark the accent is too close to the text to stand alone. */
 .agent-content a {
   color: var(--dsw-alias-state-business-primary);
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  transition: text-decoration-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
 .agent-content a:hover {
-  text-decoration: underline;
+  text-decoration-color: currentColor;
 }
 
 .agent-content__table-wrap {
@@ -88,18 +98,25 @@
   overflow-x: auto;
 }
 
+/* Tables are rules and alignment: row rules only, caption-ink heads, steady figures. */
 .agent-content table {
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font: var(--dsw-font-markdown-table);
+  font-variant-numeric: tabular-nums;
 }
 
 .agent-content th,
 .agent-content td {
-  padding: 6px 9px;
+  padding: 8px 12px;
   text-align: left;
-  border: 1px solid var(--dsw-alias-border-l1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.agent-content th {
+  color: var(--dsw-alias-label-caption);
+  font: var(--dsw-font-markdown-table-head);
 }
 
 .agent-content img,
