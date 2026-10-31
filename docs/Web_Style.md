@@ -734,8 +734,10 @@ lifecycle request's `workspace_id`.
 checked when the field loses focus and on Create agent, never while typing; the
 error *Enter an HTTPS GitHub repository URL.* is announced once when it appears
 and leaves as soon as the value is valid. A read-only **Agent settings** summary
-reads *gpt-6 · High · Autonomous*; there is no control to change it here. The
-footer starts with the note *Includes chrono-llm-public and ornn-api access.* and
+reads *gpt-6 · High reasoning · Autonomous* with the line *The Agent works without
+asking first. Change this anytime from the message box.*; there is no control to
+change it here. The footer starts with the note *Includes access to ChronoAI
+models and the Ornn skill library.* and
 ends with Cancel and the primary Create agent, which reads *Starting
 provisioning…* while the request is pending and *Recover creation* while a
 retained request is unconfirmed. Each location keeps its own retained request,
@@ -3901,3 +3903,4 @@ again.* Protocol wording such as "problem document" never reaches the page.
 
 | 2026-10-31 | Replace protocol and server-failure wording in resource, navigation and Agent errors with plain sentences that say what to do next. |
 | 2026-10-31 | Give the shared Workspace read failure the same titled *Workspace unavailable* section, gutter and action placement as the owner Sandbox and Workspace failures. |
+| 2026-10-31 | Rewrite New agent copy for people who do not write code: the new-Sandbox description explains a Sandbox as the Agent's private computer, the repository hint says when to paste a link, the Machine Included choice reads *Include a shared desktop* with what it is for, Agent settings explain Autonomous and where to change it, and the footer names ChronoAI models and the Ornn skill library instead of service ids. |
