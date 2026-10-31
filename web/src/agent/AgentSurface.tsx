@@ -336,6 +336,7 @@ export function AgentSurface({
             user={user}
             viewPosition={viewPosition}
             conversation={conversation}
+            agentStatus={status}
             optimisticMessages={messageQueue.messages}
             arrivalsEnabled={!accessUncertain}
             approvalBusy={approvalBusy}
