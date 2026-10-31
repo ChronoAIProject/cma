@@ -1,12 +1,15 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DesktopPanel } from './DesktopPanel';
+import { prepareDesktop } from './desktopPreparation';
+import { desktopSocket, stubDesktopSockets } from './desktopPreparation.fixture';
 
 type Connection = EventTarget & {
   viewOnly: boolean;
   resizeSession: boolean;
   disconnect: () => void;
-  url: string;
+  url: string | WebSocket;
+  messages: unknown[];
   painted: boolean;
   focus: () => void;
   blur: () => void;
@@ -19,6 +22,7 @@ vi.mock('@novnc/novnc', () => ({
     resizeSession = false;
     viewOnly = false;
     painted = true;
+    messages: unknown[] = [];
     focus = vi.fn();
     blur = vi.fn();
     sendKey = vi.fn();
@@ -26,9 +30,10 @@ vi.mock('@novnc/novnc', () => ({
     disconnect = vi.fn(() => this.canvas.remove());
     constructor(
       target: HTMLElement,
-      readonly url: string,
+      readonly url: string | WebSocket,
     ) {
       super();
+      if (typeof url !== 'string') url.onmessage = (event) => this.messages.push(event.data);
       Object.defineProperty(this.canvas, 'getContext', {
         value: () => ({
           getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, this.painted ? 255 : 0]) }),
@@ -42,7 +47,44 @@ vi.mock('@novnc/novnc', () => ({
 beforeEach(() => {
   connections.length = 0;
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+it('attaches the prepared stream once with input disabled, then reconnects normally', async () => {
+  stubDesktopSockets();
+  const preparation = { context: {}, owner: 'alice' };
+  prepareDesktop(preparation.context, 'agt_demo', preparation.owner)?.handoff();
+  const socket = desktopSocket();
+  const greeting = new Uint8Array([82, 70, 66]).buffer;
+  socket.receive(greeting);
+  const view = render(
+    <DesktopPanel
+      runtimeReady
+      agentId="agt_demo"
+      running={false}
+      onClose={vi.fn()}
+      preparation={preparation}
+    />,
+  );
+  await waitFor(() => expect(connections).toHaveLength(1));
+  const first = connectionAt(0);
+  expect(first.url).toBe(socket);
+  expect(first.messages).toEqual([greeting]);
+  expect(first.viewOnly).toBe(true);
+  expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
+  act(() => first.dispatchEvent(new Event('connect')));
+  expect(first.viewOnly).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Control desktop' }));
+  expect(first.viewOnly).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+  await waitFor(() => expect(connections).toHaveLength(2));
+  expect(first.disconnect).toHaveBeenCalledOnce();
+  expect(connectionAt(1).url).toContain('/agents/agt_demo/desktop/ws');
+  expect(connectionAt(1).viewOnly).toBe(true);
+  view.unmount();
+});
 
 function connectionAt(index: number): Connection {
   const connection = connections[index];

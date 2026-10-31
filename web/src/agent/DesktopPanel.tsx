@@ -4,6 +4,7 @@ import { IconCloseOutline16 } from '../ui/icons';
 import { StateDot } from '../ui/StateDot';
 import { DesktopFeedback, useDesktopNotice } from './DesktopFeedback';
 import { useDesktopConnection } from './useDesktopConnection';
+import type { DesktopPreparationScope } from './desktopPreparation';
 import './DesktopPanel.css';
 
 export function DesktopPanel({
@@ -11,11 +12,13 @@ export function DesktopPanel({
   runtimeReady,
   running,
   onClose,
+  preparation,
 }: {
   readonly agentId: string;
   readonly runtimeReady: boolean;
   readonly running: boolean;
   readonly onClose: () => void;
+  readonly preparation?: DesktopPreparationScope;
 }) {
   const panel = useRef<HTMLElement>(null);
   const [fullScreen, setFullScreen] = useState(false);
@@ -27,6 +30,7 @@ export function DesktopPanel({
     attempt,
     control && !running,
     runtimeReady,
+    preparation,
   );
   const ready = phase === 'ready';
   const [previousGate, setPreviousGate] = useState({ running, ready });
