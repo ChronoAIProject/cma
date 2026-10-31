@@ -47,7 +47,7 @@ it('polls a starting Agent until its first message is durably delivered without 
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10000);
   });
-  expect(readAgent).toHaveBeenCalledTimes(2);
+  expect(readAgent).toHaveBeenCalledTimes(3);
   expect(createAgent).not.toHaveBeenCalled();
   expect(runAgent).not.toHaveBeenCalled();
   unmount();
@@ -65,13 +65,15 @@ it('keeps startup reads sequential, slows prolonged preparation and stops on unm
       finishRead = resolve;
     });
   });
-  const client = agentClient({ readAgent });
+  const readAgentTranscript = vi.fn(async () => AGENT_TRANSCRIPT);
+  const client = agentClient({ readAgent, readAgentTranscript });
   const { unmount } = renderHook(() => useAgentController(client, 'agt_1'));
   await act(() => vi.advanceTimersByTimeAsync(0));
   await act(() => vi.advanceTimersByTimeAsync(250));
   expect(readAgent).toHaveBeenCalledTimes(2);
   await act(() => vi.advanceTimersByTimeAsync(10000));
   expect(readAgent).toHaveBeenCalledTimes(2);
+  expect(readAgentTranscript).toHaveBeenCalledTimes(1);
   await act(async () => finishRead?.(starting));
   await act(() => vi.advanceTimersByTimeAsync(1499));
   expect(readAgent).toHaveBeenCalledTimes(2);
@@ -82,6 +84,34 @@ it('keeps startup reads sequential, slows prolonged preparation and stops on unm
   await act(async () => finishRead?.(starting));
   await act(() => vi.advanceTimersByTimeAsync(10000));
   expect(readAgent).toHaveBeenCalledTimes(3);
+});
+
+it('rejects changed startup lineage before reading history and retains error backoff', async () => {
+  vi.useFakeTimers();
+  const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
+  const readAgent = vi
+    .fn()
+    .mockResolvedValueOnce(starting)
+    .mockResolvedValue({
+      ...starting,
+      workspace: { ...starting.workspace, id: 'foreign-workspace' },
+    });
+  const readAgentTranscript = vi.fn(async () => AGENT_TRANSCRIPT);
+  const client = agentClient({ readAgent, readAgentTranscript });
+  const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  expect(readAgentTranscript).toHaveBeenCalledTimes(1);
+  expect(result.current.actionError).toBe(
+    'Preparation progress could not be refreshed. Reconnecting.',
+  );
+  await act(() => vi.advanceTimersByTimeAsync(4999));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(readAgent).toHaveBeenCalledTimes(3);
+  expect(readAgentTranscript).toHaveBeenCalledTimes(1);
+  unmount();
 });
 
 it('preserves live fragments and reasoning through advancing JSON polls and reconciles the durable message', async () => {
