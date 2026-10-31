@@ -10,7 +10,7 @@ it('greets a ready Agent with its idle character above the prompt', () => {
   const character = container.querySelector('.character-avatar');
   expect(character).toHaveAttribute('data-pose', 'idle');
   expect(character).toHaveAttribute('data-motion', 'live');
-  expect(character).toHaveStyle({ '--character-size': '120px' });
+  expect(character).toHaveStyle({ width: '120px', height: '120px' });
 });
 
 it.each([

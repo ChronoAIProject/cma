@@ -326,7 +326,7 @@ describe('Sandbox navigation tree', () => {
     const character = agent?.querySelector('.tree-row__icon .character-avatar');
     expect(character).toHaveAttribute('data-pose', 'idle');
     expect(character).toHaveAttribute('data-motion', 'still');
-    expect(character).toHaveStyle({ '--character-size': '20px' });
+    expect(character).toHaveStyle({ width: '20px', height: '20px' });
   });
 
   it('keeps Agent navigation available during runtime updates', () => {
