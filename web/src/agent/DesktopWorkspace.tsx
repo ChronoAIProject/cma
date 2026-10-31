@@ -6,12 +6,14 @@ import { DesktopPanel } from './DesktopPanel';
 export function DesktopWorkspace({
   agentId,
   open,
+  runtimeReady,
   running,
   onClose,
   children,
 }: {
   readonly agentId: string;
   readonly open: boolean;
+  readonly runtimeReady: boolean;
   readonly running: boolean;
   readonly onClose: () => void;
   readonly children: ReactNode;
@@ -21,7 +23,13 @@ export function DesktopWorkspace({
       <div className="agent-workspace__panes" data-desktop={open || undefined}>
         {children}
         {open ? (
-          <DesktopPanel key={agentId} agentId={agentId} running={running} onClose={onClose} />
+          <DesktopPanel
+            key={agentId}
+            agentId={agentId}
+            runtimeReady={runtimeReady}
+            running={running}
+            onClose={onClose}
+          />
         ) : null}
       </div>
     </div>
