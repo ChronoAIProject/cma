@@ -102,6 +102,7 @@ body {
   --dsw-alias-bg-mask-3: rgba(9, 9, 11, 0.6);
   --dsw-alias-bg-mask-photo: rgba(9, 9, 11, 0.88);
   --dsw-alias-bg-mask-drop: rgba(255, 255, 255, 0.74);
+  --dsw-alias-image-outline: rgba(0, 0, 0, 0.1);
   --dsw-alias-bg-module-platform: var(--dsw-static-zinc-50);
   --dsw-alias-bg-multi-select: var(--dsw-static-zinc-100);
   --dsw-alias-bg-overlay: var(--dsw-static-zinc-100);
@@ -197,6 +198,7 @@ body[data-ds-dark-theme] {
   --dsw-alias-bg-mask-3: rgba(0, 0, 0, 0.84);
   --dsw-alias-bg-mask-photo: rgba(0, 0, 0, 0.92);
   --dsw-alias-bg-mask-drop: rgba(17, 17, 19, 0.74);
+  --dsw-alias-image-outline: rgba(255, 255, 255, 0.1);
   --dsw-alias-bg-module-platform: var(--dsw-static-zinc-900);
   --dsw-alias-bg-multi-select: var(--dsw-static-zinc-850);
   --dsw-alias-bg-overlay: var(--dsw-static-zinc-800);
