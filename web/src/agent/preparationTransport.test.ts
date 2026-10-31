@@ -31,9 +31,10 @@ async function preparing() {
 it('refreshes startup through the selected transport with fresh account checks', async () => {
   const h = await preparing();
   h.currentUser.mockClear();
+  const pending = h.session.journal.retain('Retain the pending message');
   const result = await h.read();
   expect(result.detail.status).toBe('ready');
-  expect(result.v2).toBe(h.session);
+  expect(result.v2?.journal.read()).toEqual(pending);
   expect(result.conversation.agentIncarnation).toBe('a'.repeat(64));
   expect(h.select).not.toHaveBeenCalled();
   expect(h.currentUser).toHaveBeenCalledTimes(3);
