@@ -372,6 +372,7 @@
 .trigger-stats dd {
   margin-top: 8px;
   font: var(--dsw-font-base-strong-16);
+  font-variant-numeric: tabular-nums;
 }
 @media (max-width: 48rem) {
   .trigger-publisher__body {
