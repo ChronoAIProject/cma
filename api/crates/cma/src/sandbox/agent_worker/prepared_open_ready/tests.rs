@@ -45,6 +45,7 @@ impl Fixture {
             crate::store::native_prepared::tests::open_ready_fixture::hierarchy(&store).await;
         let runtime = RuntimeHandle::new(&sandbox.runtime.as_ref().unwrap().runtime_id);
         let context = AgentContext {
+            agent_resource_preparation: false,
             sandbox,
             workspace,
             worktree,

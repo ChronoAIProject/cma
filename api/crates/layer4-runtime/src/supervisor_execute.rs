@@ -71,6 +71,10 @@ impl Supervisor {
             | RequestFrame::PrepareWorkspace(_)
             | RequestFrame::WorkspaceSetup(_)
             | RequestFrame::RemoveWorkspace(_) => unreachable!("workspace requests detach first"),
+            RequestFrame::PrepareAgentResources(request) => {
+                self.prepare_agent_resources(request.authority_fence, request.request)
+                    .await
+            }
             RequestFrame::AddWorktree(request) => {
                 self.add_worktree(request.authority_fence, request.request)
                     .await

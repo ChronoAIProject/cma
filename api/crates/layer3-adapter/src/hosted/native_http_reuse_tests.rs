@@ -430,3 +430,49 @@ async fn native_http_poisoned_stream_cannot_pin_a_replaced_container_forever() {
     fixture.transport.retire(&handle()).await.unwrap();
     fixture.drained().await;
 }
+
+#[tokio::test]
+async fn status_capability_opt_in_is_present_on_new_and_reused_native_http() {
+    let fixture = fixture().await;
+    let request = crate::RuntimeStatusRequest {
+        sandbox_id: "sandbox-one".into(),
+        generation: 1,
+        home_identity: "a".repeat(43),
+    };
+    let fresh = fixture
+        .transport
+        .exchange(&handle(), RequestFrame::RuntimeStatus(request.clone()))
+        .await
+        .unwrap();
+    let endpoint = fixture.endpoint().await;
+    let slot = fixture.transport.native_slot(&endpoint).await.unwrap();
+    let lease = fixture
+        .transport
+        .native_checkout(&endpoint, slot)
+        .await
+        .unwrap();
+    let reused = fixture
+        .transport
+        .status_on_native_lease(&endpoint, &request, lease)
+        .await
+        .unwrap();
+    assert_eq!(fresh, reused);
+    let ResponseFrame::RuntimeStatus(status) = reused else {
+        panic!("expected status")
+    };
+    assert!(
+        !status.agent_resource_preparation,
+        "retained runtime did not advertise support"
+    );
+    let requests = fixture.state.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2);
+    for received in requests {
+        assert!(received.to_ascii_lowercase().contains(&format!(
+            "accept: {}",
+            crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE
+        )));
+    }
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 1);
+    fixture.transport.retire(&handle()).await.unwrap();
+    fixture.drained().await;
+}
