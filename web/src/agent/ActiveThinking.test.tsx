@@ -43,7 +43,10 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   const { rerender } = render(draw(state));
   const toggle = screen.getByRole('button', { name: /^Thinking/ });
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  expect(toggle.querySelector('.statedot[data-state="ongoing"]')).not.toBeNull();
+  // Pending tools put the turn's character to work (§28).
+  const character = () => toggle.querySelector('.character-avatar');
+  expect(character()).toHaveAttribute('data-pose', 'working');
+  expect(character()).toHaveAttribute('aria-hidden', 'true');
   fireEvent.click(toggle);
   const dock = screen.getByRole('region', { name: 'What the agent is working through' });
   expect(within(dock).getByText('Inspecting dependencies')).toBeInTheDocument();
@@ -75,6 +78,8 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
     result: 'One assertion failed',
   });
   rerender(draw(state));
+  // With no tool left pending and reply text streaming, the character replies.
+  expect(character()).toHaveAttribute('data-pose', 'replying');
   const cards = screen.getAllByRole('article', { name: /^Tool call:/ });
   expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
     'Tool call: Read package',
@@ -113,6 +118,8 @@ it('shows exactly one transient row before the first reply and before queued fol
   expect(thinking.closest('.message-stream')).not.toBeNull();
   expect(thinking.closest('article')).toBeNull();
   expect(container.querySelectorAll('.active-thinking')).toHaveLength(1);
+  // Before any tool or reply, the character thinks.
+  expect(thinking.querySelector('.character-avatar')).toHaveAttribute('data-pose', 'thinking');
   expect(
     thinking.compareDocumentPosition(screen.getByText('Next question')) &
       Node.DOCUMENT_POSITION_FOLLOWING,

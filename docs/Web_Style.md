@@ -970,11 +970,13 @@ Its left edge aligns with the Agent avatar and message row's left edge, without
 the message body's avatar-and-gap inset. Before the first reply, it uses the same alignment.
 It is transient turn status, never a persisted message or an extra transcript row.
 Its 44px control
-places the existing compact, rotating running CMA character before Thinking,
-followed by elapsed seconds and a single-line current-activity preview. Clicking
+places the turn's 32px character (§28) before Thinking, posed by what the turn
+is doing now — working while a tool is pending, replying while reply text
+streams, thinking otherwise — followed by elapsed seconds and a single-line
+current-activity preview. Clicking
 or keyboard activation opens the existing 120px capped body, containing current
 live reasoning and only pending or running tool calls. The character follows
-the shared visibility, static fallback and reduced-motion behavior in §23.
+the shared visibility, static fallback and reduced-motion behavior in §28.
 The elapsed figure comes from the recorded active turn's start timestamp, so
 navigation, reload and reconnect do not reset it. A new turn uses its own start;
 an unavailable timestamp leaves the duration unstated rather than inventing zero.
@@ -1031,7 +1033,9 @@ the public stream carries them; history read from the transcript alone has no
 plan, and no card is invented for it.
 
 An approval is a card in the timeline at the point of interruption, on the
-layer-1 ground with a warning-toned hairline and radius 8. An eyebrow reads
+layer-1 ground with a warning-toned hairline and radius 8. While it waits on a
+person, a 40px approval character (§28) leads the request; a decided card has
+none. An eyebrow reads
 **Approval**; the request's action reason is the heading and its detail the
 body. Below them sit **Deny**, **Abort** and the primary **Allow**, each over a
 one-line caption that states its effect: Deny refuses this request and lets the
@@ -3976,3 +3980,19 @@ Agents view (§10) and 20px in the Sandboxes tree, where it replaces the generic
 glyph. Only the rows that show work or ask for a person move.
 
 | 2026-11-01 | Lead every sidebar Agent row with its status-posed 3D character from one pose registry and one shared WebGL stage; only work and approval move, reduced motion and missing WebGL draw still poses or the mark, and the status word stays in the row's accessible name and hover title. |
+
+**Conversation.** The character returns to the conversation where it reports something live,
+superseding the 2026-10-21 dot for Thinking:
+
+- The active Thinking control (§13) leads with a 32px character in the avatar column. It
+  works while a tool call is pending, replies while reply text streams, and thinks otherwise.
+  It leaves with the turn.
+- An approval still waiting on a person leads with a 40px approval character in the pending
+  amber. A decided approval is history and carries none.
+- A conversation with no messages yet shows the Agent's character at 120px with its contact
+  shadow, above the one line that says what to do (secondary ink). It is posed by the Agent's
+  status: it looks around while Ready, and stays still while Paused or failed.
+
+Message avatars keep the inline §21 mark: transcripts are history, and history does not move.
+
+| 2026-11-01 | Lead the live Thinking row, waiting approvals and empty conversations with the status-posed character; Thinking follows pending tools, streaming replies and reasoning, decided approvals and message history stay still. |

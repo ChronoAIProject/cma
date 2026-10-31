@@ -115,12 +115,6 @@
   margin: 0 auto;
 }
 
-.message-stream__empty {
-  padding-top: 16vh;
-  color: var(--dsw-alias-label-tertiary);
-  text-align: center;
-}
-
 .message {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr);

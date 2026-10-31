@@ -17,8 +17,21 @@
   border-radius: 8px;
 }
 
+/* The waiting character leads the request; a decided card keeps only its words. */
+.approval__head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.approval__character {
+  margin-top: -4px;
+}
+
 .approval__request {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
