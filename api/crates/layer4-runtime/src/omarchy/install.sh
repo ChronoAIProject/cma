@@ -37,6 +37,7 @@ pacman -Rns --noconfirm python-pip
 /opt/cma-stream/bin/python -c 'from importlib.metadata import version; assert version("websockify") == "0.13.0"'
 websockify --help >/dev/null
 bash /tmp/secure-omarchy-tools.sh
+bash /tmp/build-graphics.sh
 pacman -Q > /usr/share/cma-omarchy/packages.txt
 find /var/cache/pacman/pkg -type f -name '*.pkg.tar.*' ! -name '*.sig' -exec sha256sum {} + > /usr/share/cma-omarchy/package-sha256.txt
 pacman -Q hyprland aquamarine > /usr/share/cma-omarchy/hyprland-version.txt
