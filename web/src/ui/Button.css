@@ -98,8 +98,8 @@
 }
 
 .button--outline:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l4);
 }
 
 /* A control sitting on chrome rather than on a page. */
