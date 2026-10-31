@@ -179,6 +179,10 @@ export function AgentSurface({
     <DesktopWorkspace
       agentId={agentId}
       open={desktopOpen}
+      runtimeReady={
+        detail.sandbox.status === 'active' &&
+        (status === 'ready' || status === 'working' || status === 'waiting_approval')
+      }
       running={running || starting}
       onClose={() => setClosedDesktopAgentId(agentId)}
     >
