@@ -1,0 +1,91 @@
+--- a/include/aquamarine/allocator/Allocator.hpp
++++ b/include/aquamarine/allocator/Allocator.hpp
+@@ -17,6 +17,7 @@
+     enum eAllocatorType {
+         AQ_ALLOCATOR_TYPE_GBM = 0,
+         AQ_ALLOCATOR_TYPE_DRM_DUMB,
++        AQ_ALLOCATOR_TYPE_SHM,
+     };
+ 
+     class IAllocator {
+--- a/src/backend/Backend.cpp
++++ b/src/backend/Backend.cpp
+@@ -4,6 +4,7 @@
+ #include <aquamarine/backend/DRM.hpp>
+ #include <aquamarine/backend/Null.hpp>
+ #include <aquamarine/allocator/GBM.hpp>
++#include "cma-shm-allocator.hpp"
+ #include <hyprutils/os/FileDescriptor.hpp>
+ #include <ranges>
+ #include <sys/timerfd.h>
+@@ -173,6 +174,11 @@
+         }
+     }
+ 
++    // Explicit opt-in for nested software rendering when no DRM device exists.
++    if (!primaryAllocator && getenv("AQ_WL_SHM") && std::string(getenv("AQ_WL_SHM")) == "1" &&
++        std::ranges::any_of(implementations, [](const auto& b) { return b->type() == AQ_BACKEND_WAYLAND && b->drmFD() < 0; }))
++        primaryAllocator = makeShared<CSHMAllocator>(self);
++
+     if (!primaryAllocator && (implementations.empty() || implementations.at(0)->type() != AQ_BACKEND_NULL)) {
+         log(AQ_LOG_CRITICAL, "Cannot open backend: no allocator available");
+         return false;
+--- a/src/backend/Wayland.cpp
++++ b/src/backend/Wayland.cpp
+@@ -144,7 +144,8 @@
+ 
+     wl_display_roundtrip(waylandState.display);
+ 
+-    if (!waylandState.xdg || !waylandState.compositor || !waylandState.seat || !waylandState.dmabuf || waylandState.dmabufFailed || !waylandState.shm) {
++    if (!waylandState.xdg || !waylandState.compositor || !waylandState.seat || !waylandState.shm ||
++        ((!getenv("AQ_WL_SHM") || std::string(getenv("AQ_WL_SHM")) != "1") && (!waylandState.dmabuf || waylandState.dmabufFailed))) {
+         backend->log(AQ_LOG_ERROR, "Wayland backend cannot start: Missing protocols");
+         return false;
+     }
+@@ -475,11 +476,14 @@
+ }
+ 
+ std::vector<SDRMFormat> Aquamarine::CWaylandBackend::getRenderFormats() {
++    if (drmState.fd < 0)
++        return {{.drmFormat = DRM_FORMAT_XRGB8888, .modifiers = {DRM_FORMAT_MOD_LINEAR}},
++                {.drmFormat = DRM_FORMAT_ARGB8888, .modifiers = {DRM_FORMAT_MOD_LINEAR}}};
+     return dmabufFormats;
+ }
+ 
+ std::vector<SDRMFormat> Aquamarine::CWaylandBackend::getCursorFormats() {
+-    return dmabufFormats;
++    return getRenderFormats();
+ }
+ 
+ SP<IAllocator> Aquamarine::CWaylandBackend::preferredAllocator() {
+@@ -896,6 +900,19 @@
+ }
+ 
+ Aquamarine::CWaylandBuffer::CWaylandBuffer(SP<IBuffer> buffer_, Hyprutils::Memory::CWeakPointer<CWaylandBackend> backend_) : buffer(buffer_), backend(backend_) {
++    if (const auto attrs = buffer->shm(); attrs.success) {
++        auto pool = makeShared<CCWlShmPool>(backend->waylandState.shm->sendCreatePool(attrs.fd, attrs.stride * static_cast<int>(attrs.size.y)));
++        if (!pool)
++            return;
++        waylandState.buffer = makeShared<CCWlBuffer>(pool->sendCreateBuffer(attrs.offset, attrs.size.x, attrs.size.y,
++                                                                          attrs.stride, shmFormatFromDRM(attrs.format)));
++        pool->sendDestroy();
++        if (waylandState.buffer)
++            waylandState.buffer->setRelease([this](CCWlBuffer*) { pendingRelease = false; });
++        return;
++    }
++    if (!backend->waylandState.dmabuf || !buffer->dmabuf().success)
++        return;
+     auto params = makeShared<CCZwpLinuxBufferParamsV1>(backend->waylandState.dmabuf->sendCreateParams());
+ 
+     if (!params) {
+--- a/src/allocator/Swapchain.cpp
++++ b/src/allocator/Swapchain.cpp
+@@ -52,7 +52,7 @@
+ 
+     options = options_;
+     if (options.format == DRM_FORMAT_INVALID)
+-        options.format = buffers.at(0)->dmabuf().format;
++        options.format = buffers.at(0)->shm().success ? buffers.at(0)->shm().format : buffers.at(0)->dmabuf().format;
+ 
+     allocator->getBackend()->log(AQ_LOG_DEBUG,
+                                  std::format("Swapchain: Reconfigured a swapchain to {} {} of length {}", options.size, fourccToName(options.format), options.length));

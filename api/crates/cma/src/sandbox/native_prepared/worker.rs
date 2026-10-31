@@ -21,6 +21,8 @@ pub(crate) struct NativePreparedWorker {
     deployment_id: String,
     desired: Option<NativePreparedPlan>,
     target: u8,
+    machine_desired: Option<NativePreparedPlan>,
+    machine_target: u8,
 }
 
 impl NativePreparedWorker {
@@ -30,7 +32,8 @@ impl NativePreparedWorker {
         config: &Config,
     ) -> Result<Self, String> {
         let target = config.runtime.native_prepared_target;
-        let desired = if target == 0 {
+        let machine_target = config.runtime.native_machine_prepared_target;
+        let mut desired = if target == 0 && machine_target == 0 {
             None
         } else {
             let services = crate::config::REQUIRED_BASELINE_SERVICES
@@ -75,12 +78,48 @@ impl NativePreparedWorker {
                 .map_err(|error| error.to_string())?,
             )
         };
+        let machine_desired = if machine_target > 0 {
+            let prototype = desired.as_ref().ok_or("prepared prototype missing")?;
+            let image = config
+                .runtime
+                .machine_sandbox_image
+                .clone()
+                .ok_or("prepared machine image missing")?;
+            let mut sandbox = prototype.warm.profile.content.clone();
+            sandbox.runtime_image = Some(image.clone());
+            sandbox.workspace_profiles.clear();
+            sandbox.environment_variables = vec![layer2_core::profiles::EnvironmentVariable {
+                name: "CMA_MACHINE_INCLUDED".into(),
+                value: "1".into(),
+            }];
+            let mut workspace = prototype.warm.workspaces[0].profile.content.clone();
+            workspace.agent_profiles.clear();
+            Some(
+                NativePreparedPlan::new(
+                    sandbox,
+                    workspace,
+                    prototype.warm.workspaces[0].agents[0].content.clone(),
+                    prototype.warm.reaches.clone(),
+                    image,
+                    config.execution,
+                    prototype.home_policy.clone(),
+                )
+                .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
+        if target == 0 {
+            desired = None;
+        }
         Ok(Self {
             store,
             adapter,
             deployment_id: config.deployment_id.clone(),
             desired,
             target,
+            machine_desired,
+            machine_target,
         })
     }
 
@@ -104,12 +143,16 @@ impl NativePreparedWorker {
                             tracing::warn!(%error, "native preparation target reconciliation deferred");
                             continue;
                         }
+                        if let Err(error) = worker.store.reconcile_native_prepared_class(worker.machine_desired.as_ref(), worker.machine_target, &now_rfc3339(), true).await {
+                            tracing::warn!(%error, "native machine preparation reconciliation deferred");
+                            continue;
+                        }
                     },
                 }
                 if *shutdown.borrow() {
                     break;
                 }
-                while jobs.len() < 2 {
+                while jobs.len() < 4 {
                     match worker
                         .store
                         .claim_native_prepared_work(&now_rfc3339(), &after(60))
