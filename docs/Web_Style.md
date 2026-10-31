@@ -1679,7 +1679,9 @@ no-preference` matches only where somebody has explicitly expressed none, so a p
 report the feature at all matches neither value and loses every transition. The suite refuses that
 too.
 
-**Nothing moves on hover**, and nothing is animated on the agent's own words. A turn arriving may
+**Nothing moves on hover**, and nothing is animated on the agent's own words. A pressed button
+settles to 96% over the fast duration and returns on release (§29); under reduced motion it
+does not move. A turn arriving may
 fade; the text inside it does not animate as it is read.
 
 ### View and message continuity
@@ -4028,3 +4030,10 @@ at 1px, 3px below the baseline, in the link colour at 45%, and darken to the ful
 hover. This restores §18.12's underline.
 
 | 2026-11-01 | Set one reading size across a reply, cap its headings below the page title, draw tables as row rules with tabular figures, wrap streaming paragraphs plainly, and underline reply links at rest. |
+
+**Press feedback.** Only the primary and ghost buttons answered a press, by a fill change.
+Every enabled button now settles to 96% over the fast duration while pressed and returns on
+release. That is the one movement a control makes, and it confirms a click landed without
+claiming anything about the result. Hover still never moves. Reduced motion drops the scale.
+
+| 2026-11-01 | Settle every enabled button to 96% while pressed, with the scale in the shared transition rule and no movement under reduced motion. |

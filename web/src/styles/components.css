@@ -48,7 +48,8 @@
     background var(--ds-transition-duration) var(--ds-ease-in-out),
     border-color var(--ds-transition-duration) var(--ds-ease-in-out),
     color var(--ds-transition-duration) var(--ds-ease-in-out),
-    box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+    box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    scale var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
 @media (prefers-reduced-motion: reduce) {
