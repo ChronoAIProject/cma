@@ -226,9 +226,9 @@ with readable initials in either theme.
   `0 0 0 2px bg-base, 0 0 0 4px state-business-primary`.
 
 Measured on the base grounds, primary text is 19.9:1 light / 19.1:1 dark, secondary text is
-7.7:1 / 7.8:1, and the accent is 7.1:1 / 16.5:1. Tertiary (`zinc 500`) is 4.8:1 light and 4.1:1
-dark and therefore carries only non-essential or sufficiently large text in dark; required small
-metadata uses `label-caption`. `label-dimmed` is a disabled or non-text paint and never the sole
+7.7:1 / 7.8:1, and the accent is 7.1:1 / 16.5:1. Tertiary is `zinc 500` in light (4.8:1) and
+`zinc 450` (`#8A8A93`) in dark, 5.8:1 on the base and at least 4.8:1 on every dark layer (§29),
+so small tertiary metadata is readable in both appearances; it stays quieter than `label-caption`. `label-dimmed` is a disabled or non-text paint and never the sole
 readable account of state.
 
 The four former vendored sheets (`design-platform.css`, `effects-typography.css`, `scrollbar.css`,
@@ -3996,3 +3996,19 @@ superseding the 2026-10-21 dot for Thinking:
 Message avatars keep the inline §21 mark: transcripts are history, and history does not move.
 
 | 2026-11-01 | Lead the live Thinking row, waiting approvals and empty conversations with the status-posed character; Thinking follows pending tools, streaming replies and reasoning, decided approvals and message history stay still. |
+
+## 29. Interface polish (2026-11-01)
+
+A pass over the whole signed-in product against two checklists: the detail principles
+(concentric radii, tabular figures, specific transitions, press feedback, hit areas, image
+outlines) and the app-screen principles (colour on data rather than chrome, honest states,
+receding navigation). Each change below amends the section it names; this section records
+why it was made.
+
+**Readable tertiary ink in dark.** The dark tertiary ink was `zinc 500`, 4.1:1 on the base
+and 3.7:1 on layer 2, yet it carried required small text — sidebar ages, field hints, record
+metadata and picker reasons. It is now `zinc 450` (`#8A8A93`): 5.8:1 on the base, 5.2:1 on
+layer 2 and 4.8:1 on layer 3, still clearly quieter than the caption ink. Fixing the one token
+fixes every surface that uses it. Light keeps `zinc 500` (4.8:1).
+
+| 2026-11-01 | Raise the dark tertiary ink to zinc 450 so small tertiary text meets 4.5:1 on every dark layer while staying quieter than caption. |
