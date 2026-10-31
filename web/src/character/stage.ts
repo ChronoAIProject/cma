@@ -75,6 +75,11 @@ interface Instance {
 
 const BLEND_SECONDS = 0.3;
 const MAX_PIXEL_RATIO = 2;
+/**
+ * Characters are copied out of the shared buffer each frame, which some GPUs pay for with a
+ * read-back. Every pose is slow enough that 30fps reads the same, at half that cost.
+ */
+const FRAME_SECONDS = 1 / 30;
 
 export function createCharacterStage(env: StageEnvironment): CharacterStage {
   let surface: StageSurface | undefined;
@@ -82,6 +87,7 @@ export function createCharacterStage(env: StageEnvironment): CharacterStage {
   let lost = false;
   let pending: number | null = null;
   let last: number | null = null;
+  let carried = 0;
   const instances = new Set<Instance>();
   const watchers: (() => void)[] = [];
 
@@ -134,15 +140,24 @@ export function createCharacterStage(env: StageEnvironment): CharacterStage {
     pending = null;
     if (!env.documentVisible()) {
       last = null;
+      carried = 0;
       return;
     }
-    const delta = last === null ? 0 : Math.min((time - last) / 1000, 0.05);
+    if (last !== null) carried += Math.min((time - last) / 1000, 0.05);
+    last = time;
+    // Wait for the next 30fps beat; a first frame (nothing carried) always draws at once.
+    if (carried > 0 && carried < FRAME_SECONDS) {
+      pending = env.requestFrame(tick);
+      return;
+    }
+    const delta = carried;
+    carried = 0;
     let again = false;
     for (const instance of instances) {
       if (instance.draw(delta)) again = true;
     }
-    last = again ? time : null;
     if (again) schedule();
+    else last = null;
   }
 
   function attach(
