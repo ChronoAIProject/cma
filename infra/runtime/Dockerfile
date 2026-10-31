@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+ARG OMARCHY_CMA_BASE=runtime
 # CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
 # not in the Sandbox environment, so existing runtime identities stay stable.
 # Bot-pod image for a contract-3 CMA Sandbox.
@@ -439,3 +440,53 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.runtime-desktop="${RUNTIME_DESKTOP}" \
       dev.chrono.cma.runtime-bootstrap="1" \
       dev.chrono.cma.home-layout="2"
+
+# Explicit experimental target. The default target remains the Debian runtime.
+# CI supplies a verified native CMA artifact as OMARCHY_CMA_BASE.
+FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
+FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy
+COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
+COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-tools.sh
+COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
+COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
+RUN bash /tmp/install-omarchy.sh && rm /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+COPY --from=omarchy-cma /usr/local/bin/ /usr/local/bin/
+COPY --from=omarchy-cma /usr/local/lib/ /usr/local/lib/
+COPY --from=omarchy-cma /etc/codex/ /etc/codex/
+COPY --from=omarchy-cma /usr/share/cma-runtime-home/ /usr/share/cma-runtime-home/
+COPY --from=omarchy-cma /usr/share/cma-desktop/ /usr/share/cma-desktop/
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/session.sh /usr/local/bin/cma-desktop-session
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/inner-session.sh /usr/local/bin/cma-omarchy-inner-session
+COPY api/crates/layer4-runtime/src/omarchy/hyprland.lua /usr/share/cma-omarchy/hyprland.lua
+COPY api/crates/layer4-runtime/src/omarchy/graphics-device.py /usr/share/cma-omarchy/graphics-device.py
+COPY api/crates/layer4-runtime/src/omarchy/chromium.desktop /usr/share/applications/chromium.desktop
+RUN groupadd --gid 10001 cma \
+    && useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash cma \
+    && cp -a /usr/share/cma-runtime-home/. /home/cma/ \
+    && mkdir -p /var/lib/cma-runtime /var/lib/cma-transfer \
+    && chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer \
+    && codex --version && node --version && nyxid --version && gh --version
+WORKDIR /home/cma
+USER 10001:10001
+ENV HOME=/home/cma CHRONO_RUNTIME_GENERATION=1 CHRONO_RUNTIME_HOME_IDENTITY="" \
+    PATH=/home/cma/.local/bin:/usr/local/bin:/usr/share/omarchy/bin:/usr/bin \
+    CHRONO_RUNTIME_BIND=0.0.0.0:9090 TERM=xterm-256color \
+    CODEX_PATH=/usr/local/bin/codex OMARCHY_PATH=/usr/share/omarchy
+EXPOSE 9090
+ENTRYPOINT ["/usr/local/bin/layer4-runtime"]
+ARG CHRONO_BUILD_SHA=local-unpinned
+ARG CHRONO_BUILD=omarchy-prototype
+LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+      org.opencontainers.image.version="${CHRONO_BUILD}" \
+      dev.chrono.cma.runtime-contract="3" dev.chrono.cma.runtime-desktop="1" \
+      dev.chrono.cma.runtime-bootstrap="1" dev.chrono.cma.home-layout="2" \
+      dev.chrono.cma.desktop-environment="omarchy-4.0.6" \
+      dev.chrono.cma.omarchy-revision="237f1b4071a0bff2296c6d740ba2b9fd695ebfa0"
+
+FROM runtime AS default-runtime
+ARG CHRONO_BUILD_SHA=local-unpinned
+ARG CHRONO_BUILD=development
+LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+      org.opencontainers.image.version="${CHRONO_BUILD}"
