@@ -4037,3 +4037,11 @@ release. That is the one movement a control makes, and it confirms a click lande
 claiming anything about the result. Hover still never moves. Reduced motion drops the scale.
 
 | 2026-11-01 | Settle every enabled button to 96% while pressed, with the scale in the shared transition rule and no movement under reduced motion. |
+
+**The current row is not a hovered row.** §10 gives the current Agent the active-item ground,
+but the tree drew it with the 4% hover tint, so the open conversation looked exactly like a
+row the pointer happened to rest on. The current tree row now takes
+`--dsw-specific-sidebar-nav-item-active`, the ground the action rows already use for the
+current page.
+
+| 2026-11-01 | Draw the current sidebar tree row on the active-item ground rather than the hover tint. |
