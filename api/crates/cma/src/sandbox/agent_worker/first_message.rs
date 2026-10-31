@@ -74,36 +74,52 @@ impl AgentWorker {
         authority: &AgentWorkAuthority,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        // A fresh exact-fence observation is required: a dispatch fence or any
-        // write evidence must never be reset into a second prompt attempt.
-        let current = self.current_dispatch(original, authority).await?;
-        let now = publication_time(now, &current)?;
-        if current.status != AgentStatus::Ready
-            || current.conversation.active_turn.is_some()
-            || current.conversation.first_message != original.conversation.first_message
-            || current
-                .work
-                .lease
-                .as_ref()
-                .is_none_or(|lease| lease.expires_at <= layer2_core::rfc3339_at(now))
-            || !current
-                .conversation
-                .first_message
-                .as_ref()
-                .is_some_and(|record| record.state == FirstMessageDelivery::Queued)
-        {
-            return Err(SandboxStoreError::Conflict);
+        let started = tokio::time::Instant::now();
+        for attempt in 0..8 {
+            // This retries only releasing the unadmitted work lease. Each fresh
+            // observation must still prove the same queued prompt and fence;
+            // it never repeats dispatch or overwrites concurrent metadata.
+            let current = self.current_dispatch(original, authority).await?;
+            let at = publication_time(now + started.elapsed(), &current)?;
+            if current.status != AgentStatus::Ready
+                || current.requested_stop_reason.is_some()
+                || current.deleted_at.is_some()
+                || current.conversation.active_turn.is_some()
+                || current.conversation.first_message != original.conversation.first_message
+                || current.conversation.conversation_id != original.conversation.conversation_id
+                || current.conversation.runtime_generation
+                    != original.conversation.runtime_generation
+                || current.work != original.work
+                || current
+                    .work
+                    .lease
+                    .as_ref()
+                    .is_none_or(|lease| lease.expires_at <= layer2_core::rfc3339_at(at))
+                || !current
+                    .conversation
+                    .first_message
+                    .as_ref()
+                    .is_some_and(|record| record.state == FirstMessageDelivery::Queued)
+            {
+                return Err(SandboxStoreError::Conflict);
+            }
+            let result = self
+                .retry_at(
+                    current,
+                    WorkerFailure::retryable(
+                        "agent_first_message_admission_conflict",
+                        "first-message admission conflicted before dispatch; retrying fresh state",
+                    ),
+                    at,
+                    at + Duration::from_secs(1),
+                )
+                .await;
+            match result {
+                Err(SandboxStoreError::Conflict) if attempt < 7 => tokio::task::yield_now().await,
+                result => return result,
+            }
         }
-        self.retry_at(
-            current,
-            WorkerFailure::retryable(
-                "agent_first_message_admission_conflict",
-                "first-message admission conflicted before dispatch; retrying fresh state",
-            ),
-            now,
-            now + Duration::from_secs(1),
-        )
-        .await
+        Err(SandboxStoreError::Conflict)
     }
 
     async fn ensure_dispatch_connection(&self, agent: &Agent) -> Result<(), WorkerFailure> {
