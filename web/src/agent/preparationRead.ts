@@ -63,11 +63,19 @@ export async function readPreparation(
       await wait(performance.now() - started < 10000 ? Math.max(0, 250 - elapsed) : 1500, signal);
     }
   }
-  // This view already selected its transport. Refresh through that same session;
-  // the loader still checks current account authority before and after its reads.
+  // Keep the selected transport and journal, with a fresh handle so live replay
+  // restarts at the new snapshot cursor. Loading still checks current authority.
   return current.v2 === undefined
     ? loadAgent(client, agentId, signal, false, undefined, lineage)
-    : loadV2Agent(client, agentId, signal, current.v2, false, undefined, lineage);
+    : loadV2Agent(
+        client,
+        agentId,
+        signal,
+        current.v2.forSnapshotRefresh(),
+        false,
+        undefined,
+        lineage,
+      );
 }
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
