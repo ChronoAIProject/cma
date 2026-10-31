@@ -1,4 +1,4 @@
-# Omarchy runtime prototype
+# Omarchy machine runtime
 
 Production preparation on 2026-10-31 exposed a filesystem difference from the
 isolated microVM: Arch already owns `/tmp/.X11-unix` as root with mode 1777.
@@ -10,11 +10,47 @@ directory, all seven native/manual control checks, and container replacement
 with the retained home. Its export admission includes that additional gate.
 
 The explicit `omarchy` Docker target packages the actual Omarchy Hyprland and
-Quickshell desktop on Arch Linux. It remains experimental. The default image
-target remains Debian/XFCE, and this prototype has not been deployed or verified
-through the production CMA UI.
+Quickshell desktop on Arch Linux. Production Machine Included allocations now
+use its verified immutable image; agent-only allocations retain their separate
+Codex runtime. The Dockerfile's ordinary Debian target is independent of that
+explicit production machine selection.
 
-## Verified scope, 31 October 2026
+## Production evidence, 1 November 2026 SGT
+
+PR [1250](https://github.com/ChronoAIProject/cma/pull/1250), source
+`4281b81dc27e5df895fd26a93652422bcc80d597`, passed graphics workflow
+[41216119511](https://github.com/ChronoAIProject/cma/actions/runs/41216119511)
+and full application CI
+[41216170142](https://github.com/ChronoAIProject/cma/actions/runs/41216170142).
+The promoted machine image is
+`asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime-omarchy@sha256:71746483245eb16c9502a114677e9f18e25ede191f2f08edd64f7666689e2792`.
+
+A disposable production microVM passed without `/dev/dri`, using the untouched
+image temporary directory, runtime home initialization, assignment fencing and
+a production-equivalent 64 GiB ReadWriteOncePod home. Its Pod, PVC and isolated
+canary resources were subsequently removed.
+
+An actual production Create Agent journey then established live Codex desktop
+control: the Agent opened Foot, executed a command, inspected the screenshot,
+and typed and clicked in Chromium while the conversation remained visible
+beside the desktop. Separate manual keyboard input created a second proof file.
+Fullscreen, reconnect, panel close/reopen and Agent-driven browser closure all
+passed. The Stop response button and interrupt-with-message cancelled bounded
+long-running test turns in 2.253 and 2.875 seconds respectively.
+
+Pause/revival retained the same Agent, Sandbox, PVC/home, image, lineage, both
+proof-file hashes and every prior durable conversation event. A different Pod
+and boot identity returned a rendered desktop. Retained production demos were
+checked without mutation and survived the runtime-default and API rollouts.
+
+Both current image classes have independent warm and prepared targets of two.
+The five-second creation target is still under verification: two instrumented
+agent-only UI trials measured 5.090 and 4.683 seconds. Earlier machine trials
+exposed a first-load viewer race, so a reload was needed and those trials do not
+establish machine creation latency. Pool readiness and successful desktop
+control must not be reported as a passing creation-time budget.
+
+## Earlier isolated-container evidence, 31 October 2026
 
 [Run 41181999176](https://github.com/ChronoAIProject/cma/actions/runs/41181999176)
 uses source `83e06de5098d53fd700bafc4f677aa9ba4ca7b34` and image
@@ -48,16 +84,16 @@ This establishes clean-restart persistence; abrupt termination while the browser
 is active is a separate unverified case. The prototype still displays Hyprland's
 direct-launch notice because CMA supervises its compositor process.
 
-Startup without a graphics device still fails. The overall prototype workflow
-therefore does not establish device-free operation or production admission.
-The image export remains `admission: blocked`, `productionValidated: false`.
+For that earlier candidate, startup without a graphics device failed. Its
+workflow did not establish device-free operation or production admission.
+That image export retained `admission: blocked`, `productionValidated: false`.
 
 The subsequent candidate at source `1e14344010d534411a85e7b7525cda8dbc345e2a`
 initializes surfaceless EGL and the nested SHM display without a DRM device, but
 aborts while destroying a cursor renderbuffer: its cleanup attempts a pixel
-copy after the underlying SHM buffer has expired. The current patch completes
+copy after the underlying SHM buffer has expired. The subsequent fix completes
 cursor and output copies before submission, and performs no copy from a
-destructor. Its complete no-device acceptance result is still pending. The
+destructor. The promoted candidate above passed the no-device acceptance. The
 same candidate's VKMS, runtime-contract and configured scan checks passed;
 those passes do not override its failed no-device check.
 
@@ -83,7 +119,7 @@ This does not require a physical GPU, but it does require an accessible DRM
 primary node. The disposable runner loads VKMS on its own host and maps only the
 identified node and its group into the container. A disposable production
 microVM inventory found no `/dev/dri` device or available VKMS/vgem driver.
-Production acceptance therefore requires the separate device-free path.
+Production uses the separately verified device-free path.
 
 The implementation includes four targeted graphics adaptations:
 

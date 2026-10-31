@@ -3887,10 +3887,11 @@ remain valid; a temporary resize may finish repainting before recovery starts.
 
 | 2026-10-30 | Recover lost Machine viewer canvases with bounded retries and the existing loading surface; preserve conversations and require explicit input takeover after restoration. |
 
-Before the Agent is ready in an active Sandbox, keep the existing desktop
-placeholder with **Waiting for your Agent to be ready…** and disable input and
+Before the owned Sandbox is active, keep the existing desktop
+placeholder with **Waiting for your machine to be ready…** and disable input and
 Reconnect. Start the stream and its connection timeout only after readiness is
-observed. Pausing or revival releases the old viewer; readiness opens a fresh
+observed. The desktop can connect while Codex is still starting; this does not
+mark the Agent ready. Pausing or revival releases the old viewer; readiness opens a fresh
 viewer in Watching mode without remounting the conversation. Normal Agent turns
 retain the connected display.
 

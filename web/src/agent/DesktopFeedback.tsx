@@ -64,7 +64,7 @@ export function DesktopFeedback({
               <StateDot state={phase === 'error' ? 'error' : 'ongoing'} />
               <span>
                 {phase === 'waiting'
-                  ? 'Waiting for your Agent'
+                  ? 'Waiting for your machine'
                   : phase === 'connecting'
                     ? 'Connecting to your machine'
                     : phase === 'recovering'
