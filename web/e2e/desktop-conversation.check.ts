@@ -9,7 +9,11 @@ test('LOCAL a starting Machine connects when ready without a page reload', async
 }) => {
   const fixture = new LocalAgentV2();
   const ready = { ...fixture.boundary.agent, desktop: true };
-  fixture.boundary.agent = { ...ready, status: 'starting' };
+  fixture.boundary.agent = {
+    ...ready,
+    status: 'starting',
+    sandbox: { ...ready.sandbox, status: 'installing' },
+  };
   try {
     await fixture.route(page, baseURL!);
     const stream = await desktopBoundary(page);
@@ -27,13 +31,14 @@ test('LOCAL a starting Machine connects when ready without a page reload', async
     );
     await page.goto('/agents/agt_contract');
     const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
-    await expect(desktop.getByRole('status')).toContainText('Waiting for your Agent');
+    await expect(desktop.getByRole('status')).toContainText('Waiting for your machine');
     await expect(desktop.getByRole('button', { name: 'Reconnect', exact: true })).toBeDisabled();
     const surface = await page.locator('.agent-surface').elementHandle();
     expect(stream.connections).toHaveLength(0);
-    fixture.boundary.agent = ready;
+    fixture.boundary.agent = { ...ready, status: 'starting' };
     await expect(desktop.getByRole('status')).toContainText('Connected');
     expect(stream.connections).toHaveLength(1);
+    fixture.boundary.agent = ready;
     expect(
       await page.locator('.agent-surface').evaluate((node, original) => node === original, surface),
     ).toBe(true);

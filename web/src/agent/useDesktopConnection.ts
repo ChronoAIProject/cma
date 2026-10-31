@@ -59,7 +59,7 @@ export function useDesktopConnection(
   }, [inputAllowed, phase]);
 
   useEffect(() => {
-    // The stream is owner-authorized only after startup has published Ready.
+    // The stream is owner-authorized only after the Sandbox becomes Active.
     // A later revival opens a fresh viewer without restoring manual input.
     if (!runtimeReady) return;
     let disposed = false;
