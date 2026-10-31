@@ -3900,3 +3900,4 @@ moment.* (5xx) and *CMA could not be reached. Check your connection, then try
 again.* Protocol wording such as "problem document" never reaches the page.
 
 | 2026-10-31 | Replace protocol and server-failure wording in resource, navigation and Agent errors with plain sentences that say what to do next. |
+| 2026-10-31 | Give the shared Workspace read failure the same titled *Workspace unavailable* section, gutter and action placement as the owner Sandbox and Workspace failures. |
