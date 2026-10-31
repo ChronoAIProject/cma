@@ -100,6 +100,7 @@ fn prepared_machines_require_native_full_home_and_bounded_capacity() {
     }
     let mut fields = native.to_vec();
     fields.retain(|(name, _)| *name != "CHRONO_AGENT_SANDBOX_HOME_MODE");
+    fields.push(("CHRONO_AGENT_SANDBOX_HOME_MODE", "native_vct_empty_v1"));
     fields.push(("CHRONO_NATIVE_MACHINE_PREPARED_TARGET", "1"));
     assert!(configured(&fields)
         .unwrap_err()
