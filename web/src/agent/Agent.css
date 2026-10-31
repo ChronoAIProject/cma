@@ -484,8 +484,15 @@
 }
 /* Compact keys: the footer is reserved under every message, so its height is the rhythm. */
 .message-footer__actions .button {
+  position: relative;
   width: 28px;
   height: 28px;
+}
+/* Each 28px key answers a 32px square; with the 4px gap the squares meet but never overlap. */
+.message-footer__actions .button::after {
+  position: absolute;
+  inset: -2px;
+  content: '';
 }
 .message-footer__actions .button[aria-pressed='true'] {
   color: var(--dsw-alias-state-business-primary);
