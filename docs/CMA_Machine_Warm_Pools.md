@@ -42,6 +42,14 @@ count is not a guarantee for an unlimited concurrent burst. Rollback after
 enabling machine preparation must retain the machine preparation reader;
 older readers reject its environment and cannot service those reservations.
 
+Within each API process, the preparation worker runs at most one Ready health
+probe per image class at a time. With two healthy reservations this keeps the
+other available for admission while the probe holds its lease. Agent-only and
+machine checks may run together; preparation and retirement still share the
+four bounded worker slots. Durable reservation leases retain effect authority
+across processes. Probe frequency, admission proof freshness and the owner's
+fresh runtime checks remain unchanged.
+
 The Mongo contract CI partition includes the prepared hierarchy suite, covering
 separate caps and retirement, preserved agent-only spares during machine claims,
 prestarted runtime retention and refusal of obsolete prepared machine images.
