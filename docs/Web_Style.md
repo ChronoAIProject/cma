@@ -3901,8 +3901,9 @@ retain the connected display.
 
 While an Agent is Starting, observe its public detail immediately after the
 initial conversation has loaded, without reloading history on every check.
-During the first ten seconds, check 250 milliseconds
-after each completed read; longer preparation returns to the 1.5-second interval.
+During the first ten seconds, check at a 250-millisecond cadence including
+authorization and read time, without overlapping requests. Longer preparation
+returns to the 1.5-second delay after each completed read.
 When its status or parent state changes, refresh the complete conversation.
 While the first message remains pending, show the fresh Agent state immediately
 and retain the current conversation until its history refresh completes. Settled
@@ -3922,3 +3923,5 @@ The first painted screen appears immediately; control handoff notices retain
 their existing Presence fades and five-second lifetime.
 
 | 2026-11-01 | Preload the desktop viewer when Machine Included is selected and reveal the first painted frame immediately, preserving input authorization and control handoff animations. |
+
+| 2026-11-01 | Include completed authorization and read time in the short startup observation cadence, preserving sequential requests, slow-preparation backoff and access checks. |
