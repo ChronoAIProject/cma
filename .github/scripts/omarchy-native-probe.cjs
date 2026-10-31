@@ -115,7 +115,9 @@ const server = createServer(async (request, response) => {
     '[model_providers.fixture]', 'name="Offline desktop acceptance"',
     'base_url="' + origin + '/v1"', 'wire_api="responses"', 'requires_openai_auth=false',
   ].join('\n'));
-  const window = execFileSync('xdotool', ['search', '--onlyvisible', '--name', '^CMA-Omarchy-Transport$'], { encoding: 'utf8' }).trim().split('\n')[0];
+  const viewerPid = execFileSync('pgrep', ['-x', 'vncviewer'], { encoding: 'utf8' }).trim();
+  assert(/^\d+$/.test(viewerPid));
+  const window = execFileSync('xdotool', ['search', '--onlyvisible', '--pid', viewerPid], { encoding: 'utf8' }).trim().split('\n')[0];
   assert(/^\d+$/.test(window));
   terminalCommand = [
     'set -e', 'export DISPLAY=:99',
