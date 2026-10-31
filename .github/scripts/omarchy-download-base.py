@@ -1,23 +1,22 @@
-"""Retry transport failures while preserving the pinned base artifact identity."""
+"""Download a pinned retained binary donor; its desktop is not accepted."""
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import time
 import zipfile
 
 assert os.environ.get('GITHUB_ACTIONS') == 'true'
 assert os.environ.get('GITHUB_REPOSITORY') == 'ChronoAIProject/cma'
-endpoint = 'repos/ChronoAIProject/cma/actions/artifacts/12955388554'
+endpoint = 'repos/ChronoAIProject/cma/actions/artifacts/12997689773'
 metadata = json.loads(subprocess.check_output(['gh', 'api', endpoint]))
-assert metadata['workflow_run']['id'] == 41005657911
-# This pull-request workflow tested the merge revision recorded inside the
-# export; GitHub's artifact envelope records the PR branch head separately.
-assert metadata['workflow_run']['head_sha'] == '87c381d64556a4471ab2ee773a2812b700e88d21'
+assert metadata['workflow_run']['id'] == 41100886329
+assert metadata['workflow_run']['head_sha'] == '3f7bef51e0676abef0fb6e51e701b037bcb0d249'
 assert not metadata['expired']
-digest = '032a7876df1b63de0e0b64bcc7cbf5586bccba4ae355241114ac36d9f249a3aa'
+digest = '872b260e2c7ef9cfd85d15d1800935373f42d8bb10403b6216efc54caec81f65'
 assert metadata['digest'] == 'sha256:' + digest
 destination = Path('/tmp/cma-base')
 destination.mkdir(exist_ok=True)
@@ -55,10 +54,15 @@ with tempfile.TemporaryDirectory(prefix='cma-base-transfer-') as directory:
             print('Base artifact transport retry', attempt + 1, flush=True)
             time.sleep(2)
     with zipfile.ZipFile(archive) as source:
-        # The original native export consists of these two regular files.
-        required = {'metadata.json', 'cma-runtime-desktop-linux-amd64.docker.tar.gz'}
-        assert set(source.namelist()) == required
-        for member in required:
-            source.extract(member, destination)
-# omarchy-base.py then verifies the image archive, successful original workflow,
-# source labels, platform and runtime contract before loading/tagging it.
+        # Extract only these literal members; never follow paths or links from
+        # the archive. The enclosing ZIP digest pins all retained evidence.
+        required = {'metadata.json', 'cma-runtime-omarchy-linux-amd64.docker.tar.gz',
+                    'evidence/base-provenance.json', 'evidence/runtime-contract.json'}
+        for name in required:
+            assert source.namelist().count(name) == 1
+            target = destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with source.open(name) as member, target.open('wb') as output:
+                shutil.copyfileobj(member, output)
+# The original successful desktop archive has expired. omarchy-base.py verifies
+# the retained candidate's runtime-only evidence and original base provenance.

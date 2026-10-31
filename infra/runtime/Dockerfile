@@ -456,6 +456,7 @@ COPY --from=omarchy-cma /usr/share/cma-desktop/ /usr/share/cma-desktop/
 COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/session.sh /usr/local/bin/cma-desktop-session
 COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/inner-session.sh /usr/local/bin/cma-omarchy-inner-session
 COPY api/crates/layer4-runtime/src/omarchy/hyprland.lua /usr/share/cma-omarchy/hyprland.lua
+COPY api/crates/layer4-runtime/src/omarchy/graphics-device.py /usr/share/cma-omarchy/graphics-device.py
 COPY api/crates/layer4-runtime/src/omarchy/chromium.desktop /usr/share/applications/chromium.desktop
 RUN groupadd --gid 10001 cma \
     && useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash cma \
