@@ -1,4 +1,5 @@
 import type { CmaWebClient } from '../api/client';
+import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { AgentResourceState } from './controllerTypes';
 import { loadAgent } from './loadAgent';
 
@@ -7,8 +8,10 @@ export async function readPreparation(
   client: CmaWebClient,
   agentId: string,
   signal: AbortSignal,
-  current: AgentResourceState,
+  state: RefObject<AgentResourceState>,
+  publish: Dispatch<SetStateAction<AgentResourceState>>,
 ) {
+  const current = state.current;
   if (current.status !== 'ready' || current.detail.id !== agentId)
     return loadAgent(client, agentId, signal);
   const lineage = {
@@ -30,8 +33,28 @@ export async function readPreparation(
         detail.worktree.id !== current.detail.worktree.id
       )
         throw new Error('Agent projections changed identity.');
-      if (detail.status !== 'starting' || detail.sandbox.status !== current.detail.sandbox.status)
+      if (detail.status !== 'starting' || detail.sandbox.status !== current.detail.sandbox.status) {
+        // Pending first-message work keeps the preparation effect alive while
+        // history refreshes. Settled preparation publishes only the full read.
+        if (
+          detail.firstMessage !== undefined &&
+          !['completed', 'failed', 'recovery_required'].includes(detail.firstMessage.state)
+        ) {
+          await current.v2?.authorize(signal);
+          signal.throwIfAborted();
+          publish((latest) =>
+            latest.status === 'ready' &&
+            latest.detail.id === agentId &&
+            latest.detail.workspace.id === lineage.workspaceId &&
+            latest.detail.sandbox.id === lineage.sandboxId &&
+            latest.detail.worktree.id === detail.worktree.id &&
+            Date.parse(latest.detail.updatedAt) <= Date.parse(detail.updatedAt)
+              ? { ...latest, detail }
+              : latest,
+          );
+        }
         break;
+      }
       await wait(performance.now() - started < 10000 ? 250 : 1500, signal);
     }
   }

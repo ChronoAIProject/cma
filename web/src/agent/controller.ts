@@ -293,7 +293,7 @@ export function useAgentController(
     let observedStatus: string | undefined;
     const poll = async () => {
       try {
-        const next = await readPreparation(client, agentId, request.signal, stateRef.current);
+        const next = await readPreparation(client, agentId, request.signal, stateRef, setState);
         events = await readSandboxHistory(client, next.detail.sandbox.id, request.signal, events);
         if (request.signal.aborted) return;
         setState((current) => {
