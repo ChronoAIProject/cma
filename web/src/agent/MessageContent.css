@@ -128,6 +128,13 @@
   border-radius: 8px;
 }
 
+/* A hairline in pure black or white at 10% keeps a picture's edge on any ground (§29). */
+.agent-content img,
+.agent-content video {
+  outline: 1px solid var(--dsw-alias-image-outline);
+  outline-offset: -1px;
+}
+
 .agent-content__media {
   display: flex;
   flex-direction: column;

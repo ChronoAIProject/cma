@@ -132,6 +132,7 @@ second vocabulary.
 | `--dsw-alias-interactive-bg-hover-accent`    | `rgba(63,98,18,.08)`  | `rgba(195,253,67,.1)`   |
 | `--dsw-alias-interactive-bg-hover-danger`    | `rgba(188,59,38,.08)` | `rgba(255,90,69,.1)`    |
 | `--dsw-alias-interactive-bg-hover-solid`     | `#F4F4F5`             | `#1F1F23`               |
+| `--dsw-alias-image-outline`                  | `rgba(0,0,0,.1)`      | `rgba(255,255,255,.1)`  |
 
 | Alias                                          | Light                | Dark                   |
 | ---------------------------------------------- | -------------------- | ---------------------- |
@@ -205,6 +206,10 @@ Message-avatar fallback aliases are also appearance-independent:
 `--dsw-alias-avatar-bg` is `zinc 950` (`#09090B`), and
 `--dsw-alias-avatar-label` is `zinc 50` (`#FAFAFA`). They retain a black circle
 with readable initials in either theme.
+
+The character body aliases (§28) are appearance-independent too:
+`--dsw-alias-character-brand` is `lime 400`, `-running` `ink 800`, `-completed` `moss 500`,
+`-pending` `amber 300` and `-failed` `red 600`.
 
 - **Backgrounds.** Light is white with `zinc 50` and `zinc 100` layers; dark climbs from
   `zinc 950` through `zinc 925`, `900` and `850`. Separation comes from a 1px zinc border first and
@@ -4095,3 +4100,11 @@ Footer keys sit 4px apart, so their squares meet without overlapping. The others
 32px. The modal close is the shared 32px small icon button again.
 
 | 2026-11-01 | Give every desktop key at least a 32px target: Send, footer, row-menu and reset keys extend their hit area, while the modal close, sidebar filter keys and tool-group toggle draw at 32px. |
+
+**Concentric corners and outlined pictures.** The menu's segmented choice track was 8px with
+3px padding around 6px choices, so the inner corners looked rounder than the outer ones. It is
+now 10px with 4px padding. Images and videos in replies, attachment previews and avatar photos
+carry a 1px inset outline in pure black or white at 10% (`--dsw-alias-image-outline`). A tinted
+neutral would pick up the ground beneath it and read as dirt on the edge.
+
+| 2026-11-01 | Make the menu's segmented track concentric and outline reply media, attachment previews and avatar photos with a 10% black or white hairline. |
