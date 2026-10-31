@@ -10,11 +10,11 @@ data:
   CHRONO_SANDBOX_PROVIDER: "agent-sandbox"
   CHRONO_RETAIN_OPENSANDBOX: "true"
   CHRONO_AGENT_SANDBOX_ENABLED: "true"
-  # Explicitly enable 1 or 2 only after the matching native pool is ready.
+  # Both exact production image pools passed runtime and desktop acceptance.
   # Prepared hierarchies hold native Claims/PVCs but receive no owner key or prompt.
-  CHRONO_NATIVE_PREPARED_TARGET: "0"
-  # Enable alongside independently verified Omarchy warm capacity.
-  CHRONO_NATIVE_MACHINE_PREPARED_TARGET: "0"
+  CHRONO_NATIVE_PREPARED_TARGET: "2"
+  # Keep separate prepared capacity for Omarchy with Codex.
+  CHRONO_NATIVE_MACHINE_PREPARED_TARGET: "2"
   # Verified remote microvm path; exec reaches the guest's loopback runtime.
   # Native Pod lifecycle and persistent homes remain controller-owned.
   CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT: "kubernetes-exec"
@@ -134,16 +134,16 @@ data:
   # manual/daily updates. Prewarm this exact image before release promotion.
   # Active work finishes before an admitted update; deployment never rotates it.
   # API/Web rollback retains this runtime pointer and the original user PVCs.
-  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:a8f9bd81ef1d9a79eacbd2b91bebc51c0dbd8d8399462229d50a938327eb1f9e"
-  # Keep empty until the separately built RUNTIME_DESKTOP=1 image is published
-  # and its immutable digest has passed the desktop runtime acceptance checks.
-  CHRONO_MACHINE_SANDBOX_IMAGE: ""
-  # Keep one unclaimed native CMA runtime ready for immediate SandboxClaim
+  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:a04af1f9c1e70be28674ac13c3804dd9d8df970df34c82ba649f70819c72e9c0"
+  # Verified Omarchy target; production proved device-free graphics, native/manual
+  # control and retained-home revival. See docs/Omarchy_Runtime_Prototype.md.
+  CHRONO_MACHINE_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime-omarchy@sha256:71746483245eb16c9502a114677e9f18e25ede191f2f08edd64f7666689e2792"
+  # Keep two unclaimed native CMA runtimes ready for immediate SandboxClaim
   # admission. The target is persisted by Agent Manager and reconciled through
   # SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs only.
-  CHRONO_NATIVE_WARM_POOL_TARGET: "1"
+  CHRONO_NATIVE_WARM_POOL_TARGET: "2"
   # Independent machine capacity; promote with the verified Omarchy image pin.
-  CHRONO_NATIVE_MACHINE_WARM_POOL_TARGET: "0"
+  CHRONO_NATIVE_MACHINE_WARM_POOL_TARGET: "2"
   # Native warm pools are managed by immutable image/resources/home policy.
   # Agent Manager persists the default target before serving and reconciles it
   # through SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs. Retained pools
