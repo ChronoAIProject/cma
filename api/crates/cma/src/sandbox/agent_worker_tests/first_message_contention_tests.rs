@@ -12,7 +12,9 @@ async fn first_message_write_conflicts_retry_without_retaining_eighteen_minute_l
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     // One conflict is absorbed by the transaction loop; forty exhaust all five
     // transaction attempts in each of the eight fresh operation observations.
-    for failures in [1_i32, 40] {
+    // Forty-five also exhausts the first lease-release publication, proving
+    // that transient contention there does not strand the 18-minute lease.
+    for failures in [1_i32, 40, 45] {
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         let app = format!("cma-first-message-contention-{suffix}");
         let database = format!("cma_first_message_contention_{suffix}");
@@ -95,7 +97,7 @@ async fn first_message_write_conflicts_retry_without_retaining_eighteen_minute_l
             .await
             .expect("disable owned failpoint before assertions");
         result.unwrap();
-        if failures == 40 {
+        if failures >= 40 {
             let retrying = harness.stored(&agent.id).await;
             assert_eq!(retrying.work.step, AgentWorkStep::DispatchFirstMessage);
             assert!(retrying.work.lease.is_none());
