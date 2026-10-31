@@ -316,10 +316,12 @@ The reference voice sits around that existing composite ramp:
 | Display              | 44px, 700, `-0.035em`                    | 56px, 900, `-0.02em`; Archivo may set `"wdth" 118` |
 | H1                   | 32px, 700, `-0.03em`                     | 32px, 800, `-0.03em`                               |
 | H2                   | 22px, 600, `-0.02em`                     | 22px, 700, `-0.02em`                               |
-| Kicker / field label | 10.5–11px mono, 500, uppercase, `0.14em` | 10.5–11px mono, 500, uppercase, `0.14em`           |
+| Kicker / field label | 12/18, 500, sentence case (`xxs-strong-12`) | 12/18, 500, sentence case (`xxs-strong-12`) |
 
-`0.14em` is the one adopted label tracking value even though the references vary from `0.12em` to
-`0.16em`. Letter spacing is otherwise zero unless this document names a display or label exception.
+Labels, kickers, eyebrows and pills are set in the interface face at `xxs-strong-12`, in sentence
+case with no tracking (§29). Mono is kept for identifiers — IDs, paths, commands, versions — where
+the face says "this is a literal". Letter spacing is otherwise zero unless this document names a
+display exception.
 
 ---
 
@@ -698,7 +700,7 @@ sentences and full-screen characters are not loading states.
 
 A 44px field at radius 10, with its border on the **wrapper** rather than on the input. That is what
 lets a glyph sit inside the field instead of beside it, and it is why a field with an icon and one
-without focus identically. A label is the §4 mono 10.5px uppercase voice at `0.14em`. Focus swaps the
+without focus identically. A label is the §4 label voice (`xxs-strong-12`, sentence case) in the caption ink. Focus swaps the
 edge to the accent and adds `--dsw-ring-accent-soft`; because the ring is a token and does not enter
 layout, the control does not grow. Invalidity uses the same edge and the danger wash.
 
@@ -4064,3 +4066,14 @@ already had. `text-rendering: optimizeLegibility` is gone: Geist already sets it
 and the property makes long transcripts noticeably slower to lay out.
 
 | 2026-11-01 | Add grayscale smoothing for Firefox on macOS and drop optimizeLegibility from the body. |
+
+**One label voice, in the interface face.** Section labels, field labels, card eyebrows and
+pills were 10–11px uppercase mono with 0.14em tracking — four slightly different versions, two
+below the 11px floor. Tiny tracked capitals in a code face are the most recognisable mark of a
+generated template, and they read as a category tag rather than a label. Every such label is
+now `xxs-strong-12`: 12/18 at weight 500, sentence case, no tracking, in the interface face.
+Field labels and section eyebrows take the caption ink; tone-bearing eyebrows, such as the
+approval card's warning, keep their tone. Mono stays for identifiers, where its meaning — a
+literal value — is true.
+
+| 2026-11-01 | Replace the uppercase mono label voice on eyebrows, field labels and pills with sentence-case 12/18 medium in the interface face; keep mono for identifiers. |

@@ -39,10 +39,7 @@
 
 .approval__eyebrow {
   color: var(--dsw-alias-state-warn-label);
-  font-family: var(--ds-font-family-code);
-  font-size: 10px;
-  line-height: 15px;
-  text-transform: uppercase;
+  font: var(--dsw-font-xxs-strong-12);
 }
 
 .approval h2 {
