@@ -63,7 +63,7 @@ it('waits through startup and reconnects after revival without retaining input c
   const view = render(draw(false));
   await act(async () => vi.advanceTimersByTime(60_000));
   expect(connections).toHaveLength(0);
-  expect(screen.getByRole('status')).toHaveTextContent('Waiting for your Agent');
+  expect(screen.getByRole('status')).toHaveTextContent('Waiting for your machine');
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
   await act(async () => view.rerender(draw(true)));

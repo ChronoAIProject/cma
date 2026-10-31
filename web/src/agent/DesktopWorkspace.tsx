@@ -7,7 +7,7 @@ import { DesktopPanel } from './DesktopPanel';
 export function desktopRuntimeReady(detail: Pick<AgentDetail, 'status' | 'sandbox'>) {
   return (
     detail.sandbox.status === 'active' &&
-    ['ready', 'working', 'waiting_approval'].includes(detail.status)
+    ['starting', 'ready', 'working', 'waiting_approval'].includes(detail.status)
   );
 }
 
