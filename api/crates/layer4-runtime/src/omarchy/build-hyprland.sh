@@ -7,6 +7,11 @@ curl -fsSL https://github.com/hyprwm/Hyprland/archive/refs/tags/v0.56.2.tar.gz -
 echo "ddeb92a654fa65d41ed2add3176de4fe54eab3752441c33ca99f5e598e0571e5  $build_dir/hyprland.tar.gz" | sha256sum -c -
 mkdir "$build_dir/hyprland"
 tar xzf "$build_dir/hyprland.tar.gz" -C "$build_dir/hyprland" --strip-components=1
+# GitHub source archives omit submodules. Use Hyprland v0.56.2's exact udis86
+# revision; this dependency is not a package in the pinned Arch repositories.
+curl -fsSL https://github.com/canihavesomecoffee/udis86/archive/5336633af70f3917760a6d441ff02d93477b0c86.tar.gz -o "$build_dir/udis86.tar.gz"
+echo "2f459fafa19535ef1be417bf7614e4f92475e5787d7ba76df20287cc29d1b5a9  $build_dir/udis86.tar.gz" | sha256sum -c -
+tar xzf "$build_dir/udis86.tar.gz" -C "$build_dir/hyprland/subprojects/udis86" --strip-components=1
 patch --batch --fuzz=0 -d "$build_dir/hyprland" -p1 < /tmp/hyprland-shm.patch
 cmake -S "$build_dir/hyprland" -B "$build_dir/hyprland-build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DNO_HYPRPM=ON \
@@ -16,5 +21,5 @@ install -m 0755 "$build_dir/hyprland-build/Hyprland" /usr/bin/Hyprland
 strip /usr/bin/Hyprland
 {
   printf '\nHyprland 0.56.2 with nested SHM software output\n'
-  sha256sum "$build_dir/hyprland.tar.gz" /tmp/hyprland-shm.patch /usr/bin/Hyprland
+  sha256sum "$build_dir/hyprland.tar.gz" "$build_dir/udis86.tar.gz" /tmp/hyprland-shm.patch /usr/bin/Hyprland
 } >> /usr/share/cma-omarchy/patched-graphics.txt
