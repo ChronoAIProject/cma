@@ -128,6 +128,7 @@ pub struct MongoSandboxStore {
     pub(super) native_prepared: Collection<Document>,
     pub(super) warm_runtime_version: Option<String>,
     pub(super) managed_runtime_version: Option<String>,
+    pub(super) managed_machine_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
     // Coalesced process-local hints; durable discovery owns recovery and authority.
@@ -141,6 +142,11 @@ pub struct MongoSandboxStore {
 impl MongoSandboxStore {
     pub(crate) fn with_managed_runtime_version(mut self, version: String) -> Self {
         self.managed_runtime_version = Some(version);
+        self
+    }
+
+    pub(crate) fn with_machine_runtime_version(mut self, version: Option<String>) -> Self {
+        self.managed_machine_runtime_version = version;
         self
     }
 
@@ -206,6 +212,7 @@ impl MongoSandboxStore {
             native_prepared: majority_collection(&database, super::native_prepared::COLLECTION),
             warm_runtime_version: None,
             managed_runtime_version: None,
+            managed_machine_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),

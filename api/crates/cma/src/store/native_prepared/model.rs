@@ -90,6 +90,10 @@ impl NativePreparedPlan {
         &self.warm
     }
 
+    pub(crate) fn machine(&self) -> bool {
+        !self.warm.profile.content.environment_variables.is_empty()
+    }
+
     pub(crate) fn validate(&self) -> Result<(), SandboxStoreError> {
         self.warm.validate()?;
         self.home_policy
@@ -106,7 +110,7 @@ impl NativePreparedPlan {
             || sandbox.agent_provider != AgentProvider::Codex
             || sandbox.model_access != ModelAccess::ChronoaiManaged
             || !sandbox.software_install_commands.is_empty()
-            || !sandbox.environment_variables.is_empty()
+            || !crate::sandbox::native_prepared::valid_environment(sandbox)
             || !workspace.profile.content.setup_commands.is_empty()
             || !matches!(&workspace.profile.content.location, WorkspaceLocation::Directory { name } if name == "workspace")
             || workspace.profile.content.name != "workspace"
