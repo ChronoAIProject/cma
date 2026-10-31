@@ -290,6 +290,7 @@ export function useAgentController(
     let timer: ReturnType<typeof setTimeout> | undefined;
     let events: readonly SandboxEvent[] = [];
     let observedStatus: string | undefined;
+    const started = performance.now();
     const poll = async () => {
       try {
         const next = await loadAgent(client, agentId, request.signal);
@@ -309,7 +310,7 @@ export function useAgentController(
         if (next.detail.status !== 'starting' && observedStatus !== next.detail.status)
           hierarchyChanged.current?.();
         observedStatus = next.detail.status;
-        timer = setTimeout(() => void poll(), 1500);
+        timer = setTimeout(() => void poll(), performance.now() - started < 10000 ? 250 : 1500);
       } catch (error) {
         if (!request.signal.aborted && !onIdentityChange(error)) {
           setActionError('Preparation progress could not be refreshed. Reconnecting.');
@@ -317,13 +318,12 @@ export function useAgentController(
         }
       }
     };
-    timer = setTimeout(() => void poll(), 1500);
+    timer = setTimeout(() => void poll(), 250);
     return () => {
       request.abort();
       clearTimeout(timer);
     };
   }, [agentId, client, pending, provisioning, setState, onIdentityChange]);
-
   useEffect(() => {
     if (!replayEnabled || agentId === undefined) return;
     const controller = new AbortController();

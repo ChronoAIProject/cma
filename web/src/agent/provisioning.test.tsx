@@ -40,7 +40,7 @@ it('polls a starting Agent until its first message is durably delivered without 
     expect(result.current.state.conversation.messages).toHaveLength(0);
   delivered = true;
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(250);
   });
   if (result.current.state.status === 'ready')
     expect(result.current.state.conversation.messages[0]?.content).toBe('Inspect this repository.');
@@ -51,6 +51,37 @@ it('polls a starting Agent until its first message is durably delivered without 
   expect(createAgent).not.toHaveBeenCalled();
   expect(runAgent).not.toHaveBeenCalled();
   unmount();
+});
+
+it('keeps startup reads sequential, slows prolonged preparation and stops on unmount', async () => {
+  vi.useFakeTimers();
+  const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
+  let finishRead: ((value: typeof starting) => void) | undefined;
+  let readSignal: AbortSignal | undefined;
+  const readAgent = vi.fn(async (_id: string, options?: { signal?: AbortSignal }) => {
+    readSignal = options?.signal;
+    if (readAgent.mock.calls.length === 1) return starting;
+    return new Promise<typeof starting>((resolve) => {
+      finishRead = resolve;
+    });
+  });
+  const client = agentClient({ readAgent });
+  const { unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  await act(async () => finishRead?.(starting));
+  await act(() => vi.advanceTimersByTimeAsync(1499));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(readAgent).toHaveBeenCalledTimes(3);
+  unmount();
+  expect(readSignal?.aborted).toBe(true);
+  await act(async () => finishRead?.(starting));
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(readAgent).toHaveBeenCalledTimes(3);
 });
 
 it('preserves live fragments and reasoning through advancing JSON polls and reconciles the durable message', async () => {

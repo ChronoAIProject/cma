@@ -3896,3 +3896,11 @@ viewer in Watching mode without remounting the conversation. Normal Agent turns
 retain the connected display.
 
 | 2026-11-01 | Wait for Machine runtime readiness before connecting the desktop, and reconnect after revival without restoring manual input. |
+
+During the first ten seconds of Agent preparation, refresh recorded progress
+250 milliseconds after each completed read. Longer preparation returns to the
+existing 1.5-second interval; failed reads retain the five-second retry delay.
+Reads never overlap, stop on departure or settled preparation, and preserve live
+conversation fragments. Faster observation never implies readiness by elapsed time.
+
+| 2026-11-01 | Refresh initial Agent preparation promptly, with bounded frequency and the existing slow-preparation and error backoff. |
