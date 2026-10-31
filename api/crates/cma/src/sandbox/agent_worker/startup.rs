@@ -218,10 +218,12 @@ impl AgentWorker {
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
         let attempt_now = now;
+        let mut timing = super::startup_timing::StartupTiming::new(&agent);
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
+        timing.completed("open_context");
         if agent.conversation.conversation_id.is_some()
             || agent.conversation.runtime_generation.is_some()
         {
@@ -255,6 +257,7 @@ impl AgentWorker {
                 now + started.elapsed(),
             )
             .await?;
+        timing.completed("open_intent");
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         let opened = self
             .open_starting(
@@ -265,6 +268,7 @@ impl AgentWorker {
                 now + started.elapsed(),
             )
             .await;
+        timing.completed("open_runtime");
         let now = now + started.elapsed();
         let (channel, updates) = match opened {
             Ok(opened) => opened,
@@ -286,10 +290,11 @@ impl AgentWorker {
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
         let result = async {
-            match self
+            let published = self
                 .publish_prepared_open_ready(&agent, &context, &evidence, &attachment, now)
-                .await
-            {
+                .await;
+            timing.completed("prepared_open_ready_publication");
+            match published {
                 Ok(true) => {
                     tracing::info!(agent_id = %agent.id, "Prepared Agent Open and Ready published atomically");
                     return self
