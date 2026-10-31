@@ -3942,6 +3942,17 @@ their existing Presence fades and five-second lifetime.
 
 | 2026-11-01 | Include completed authorization and read time in the short startup observation cadence, preserving sequential requests, slow-preparation backoff and access checks. |
 
+Preparation refreshes retain the Agent tab's selected conversation transport.
+They still check the current account before reading and before exposing history;
+refreshing readiness never selects a different transport or resubmits setup work.
+
+| 2026-11-01 | Refresh preparation through the Agent's existing conversation transport, retaining fresh account checks around history reads. |
+
+After a complete preparation snapshot refresh, restart live replay from that
+snapshot's cursor while retaining the same selected transport and input journal.
+
+| 2026-11-01 | Preserve the live replay restart at the new preparation snapshot cursor when reusing the selected transport. |
+
 ## 28. The character in the product (2026-11-01)
 
 The CMA character of §23 — its procedural geometry, MeshPhysical body and lenses, studio
