@@ -30,3 +30,51 @@ pub(super) fn exhausted(
     // path and must never acquire this retry/release classification.
     SandboxStoreError::Conflict
 }
+
+/// Diagnose slow publications without logging documents or driver error bodies.
+pub(super) struct PublicationTiming<'a> {
+    mutation: &'a AgentWorkMutation,
+    started: std::time::Instant,
+    queue_ms: u64,
+    attempts: usize,
+    committed: bool,
+}
+
+impl<'a> PublicationTiming<'a> {
+    pub(super) fn new(mutation: &'a AgentWorkMutation) -> Self {
+        Self {
+            mutation,
+            started: std::time::Instant::now(),
+            queue_ms: 0,
+            attempts: 0,
+            committed: false,
+        }
+    }
+    pub(super) fn acquired(&mut self) {
+        self.queue_ms = self.started.elapsed().as_millis() as u64;
+    }
+    pub(super) fn attempt(&mut self) {
+        self.attempts += 1;
+    }
+    pub(super) fn committed(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for PublicationTiming<'_> {
+    fn drop(&mut self) {
+        let elapsed_ms = self.started.elapsed().as_millis() as u64;
+        if elapsed_ms >= 100 || self.attempts > 1 {
+            tracing::info!(
+                agent_id = %self.mutation.agent.id,
+                step = ?self.mutation.agent.work.step,
+                authority_fence = self.mutation.fence,
+                queue_ms = self.queue_ms,
+                transaction_attempts = self.attempts,
+                elapsed_ms,
+                commit_confirmed = self.committed,
+                "Agent work publication timing"
+            );
+        }
+    }
+}
