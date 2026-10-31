@@ -6,7 +6,7 @@ trap 'rm -rf "$build_dir"' EXIT
 test "$(pacman -Q wlroots0.20)" = 'wlroots0.20 0.20.2-1'
 test "$(pacman -Q aquamarine)" = 'aquamarine 0.15.1-1'
 pacman -Qq | sort > "$build_dir/packages-before"
-pacman -S --disable-sandbox --noconfirm --needed gcc make meson ninja glslang vulkan-headers pkgconf patch cmake hyprwayland-scanner
+pacman -S --disable-sandbox --noconfirm --needed gcc make meson ninja glslang vulkan-headers pkgconf patch cmake hyprwayland-scanner hyprland-protocols udis86 glaze
 curl -fsSL https://gitlab.freedesktop.org/wlroots/wlroots/-/archive/0.20.2/wlroots-0.20.2.tar.gz -o "$build_dir/source.tar.gz"
 echo "972c7ac44b17828f4702bfae7cd8347346a3fb5b2c1076cfa2c3fcedac5ec343  $build_dir/source.tar.gz" | sha256sum -c -
 mkdir "$build_dir/source"
@@ -36,6 +36,8 @@ mkdir "$build_dir/aquamarine"
 tar xzf "$build_dir/aquamarine.tar.gz" -C "$build_dir/aquamarine" --strip-components=1
 patch --batch --fuzz=0 -d "$build_dir/aquamarine" -p1 < "$build_dir/aquamarine.patch"
 patch --batch --fuzz=0 -d "$build_dir/aquamarine" -p1 < /tmp/aquamarine-fullscreen.patch
+patch --batch --fuzz=0 -d "$build_dir/aquamarine" -p1 < /tmp/aquamarine-shm.patch
+cp /tmp/shm-allocator.hpp "$build_dir/aquamarine/src/backend/cma-shm-allocator.hpp"
 cmake -S "$build_dir/aquamarine" -B "$build_dir/aquamarine-build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib
 cmake --build "$build_dir/aquamarine-build" --target aquamarine --parallel 2
@@ -45,8 +47,9 @@ cp -a "$build_dir/aquamarine-installed/usr/include/aquamarine/." /usr/include/aq
 ldconfig
 {
   printf '\nAquamarine 0.15.1 with upstream configure fix 7bb8bdf4e8fedaf4dfae58512bc4c728671727df\n'
-  sha256sum "$build_dir/aquamarine.tar.gz" "$build_dir/aquamarine.patch" /tmp/aquamarine-fullscreen.patch /usr/lib/libaquamarine.so
+  sha256sum "$build_dir/aquamarine.tar.gz" "$build_dir/aquamarine.patch" /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/shm-allocator.hpp /usr/lib/libaquamarine.so
 } >> /usr/share/cma-omarchy/patched-graphics.txt
+bash /tmp/build-hyprland.sh "$build_dir"
 # Keep the runtime's original packages; remove only newly added build tooling.
 pacman -Qq | sort > "$build_dir/packages-after"
 mapfile -t build_packages < <(comm -13 "$build_dir/packages-before" "$build_dir/packages-after")
