@@ -16,7 +16,7 @@ namespace Aquamarine {
             if (!std::isfinite(size.x) || !std::isfinite(size.y) || size.x < 1 || size.y < 1 ||
                 size.x > 8192 || size.y > 8192 || std::floor(size.x) != size.x || std::floor(size.y) != size.y)
                 return;
-            format = params.format == DRM_FORMAT_INVALID ? DRM_FORMAT_XRGB8888 : params.format;
+            format = params.format == DRM_FORMAT_INVALID ? (params.cursor ? DRM_FORMAT_ARGB8888 : DRM_FORMAT_XRGB8888) : params.format;
             if (format != DRM_FORMAT_XRGB8888 && format != DRM_FORMAT_ARGB8888)
                 return;
             stride = static_cast<int>(size.x) * 4;
