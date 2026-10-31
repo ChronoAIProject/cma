@@ -1,8 +1,15 @@
 import * as THREE from 'three';
-import { stepMotion } from './characterMotion';
 import { readPalette, type CharacterState } from './characterPalette';
 import { clamp } from './characterGeometry';
-import { createCharacterRig } from '../character/rig';
+import { createCharacterRig, REST_FRAME } from '../character/rig';
+import { poseFrame, type CharacterPose } from '../character/poses';
+
+/** The landing's step states are poses of the shared registry. */
+const STEP_POSES: Readonly<Record<'running' | 'pending' | 'completed', CharacterPose>> = {
+  running: 'running',
+  pending: 'preparing',
+  completed: 'done',
+};
 
 interface CharacterOptions {
   readonly onReady?: () => void;
@@ -21,6 +28,10 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const decorative = options.state === undefined || options.state === 'brand';
   const moving = decorative || options.state !== 'failed';
+  const stepPose =
+    options.state === 'running' || options.state === 'pending' || options.state === 'completed'
+      ? STEP_POSES[options.state]
+      : undefined;
   let reduced = motion.matches;
   let disposed = false;
   let intersecting = true;
@@ -86,9 +97,15 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     lastFrame = timestamp;
     const time = reduced || !moving ? 0 : animationTime;
 
-    const step = stepMotion(options.state, time);
+    if (!decorative) {
+      // Step states are registry poses; failed stays still and keeps only its colour.
+      character.applyFrame(stepPose === undefined ? REST_FRAME : poseFrame(stepPose, time).frame);
+      draw();
+      return;
+    }
+
     let scale = 1;
-    if (reduced || !decorative) {
+    if (reduced) {
       pointer.x = 0;
       pointer.y = 0;
       target.x = 0;
@@ -103,8 +120,8 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       swing += ((pointer.x - previousX) * 9 - swing) * 0.12;
     }
 
-    let y = reduced ? 0 : decorative ? Math.sin(time * 1.05) * 0.028 : step.lift;
-    const rotZ = reduced || !decorative ? 0 : Math.sin(time * 0.72) * 0.028 - pointer.x * 0.05;
+    let y = reduced ? 0 : Math.sin(time * 1.05) * 0.028;
+    const rotZ = reduced ? 0 : Math.sin(time * 0.72) * 0.028 - pointer.x * 0.05;
 
     if (!reduced && bumpStart >= 0 && spinStart < 0) {
       const progress = clamp((animationTime - bumpStart) / 0.65, 0, 1);
@@ -132,11 +149,10 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
         }
       }
     }
-    const rotationSpeed =
-      options.state === 'running' ? Math.PI : options.autoRotate ? Math.PI / 4 : 0;
+    const rotationSpeed = options.autoRotate ? Math.PI / 4 : 0;
 
     let glint = -1;
-    if (!reduced && decorative && time > nextGlint) {
+    if (!reduced && time > nextGlint) {
       const progress = (time - nextGlint) / 0.62;
       if (progress >= 1) {
         nextGlint = time + 4.5 + Math.random() * 2.5;
@@ -148,15 +164,18 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       headYaw: pointer.x * 0.42,
       headPitch: pointer.y * 0.24,
       swing,
-      hem: decorative || options.state === 'running' ? time : 0,
+      hem: time,
       y,
       rotX: 0,
-      rotY: reduced ? 0 : time * rotationSpeed + spin + step.rotation,
+      rotY: reduced ? 0 : time * rotationSpeed + spin,
       rotZ,
       scale: [scale, scale, scale],
       glint,
     });
+    draw();
+  }
 
+  function draw() {
     renderer.render(character.scene, character.camera);
     if (!ready) {
       ready = true;
