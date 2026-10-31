@@ -73,6 +73,11 @@
   min-width: 0;
 }
 
+/* The three answers fill their equal columns, so they read as one choice rather than three. */
+.approval__choice > .button {
+  align-self: stretch;
+}
+
 .approval__effect {
   color: var(--dsw-alias-label-caption);
   font-size: 12px;
@@ -88,7 +93,6 @@
 
 @media (max-width: 30rem) {
   .approval__choice > .button {
-    align-self: stretch;
     min-height: 44px;
     max-height: 44px;
   }
