@@ -55,6 +55,20 @@
   padding: 0;
 }
 
+/*
+ * A press settles the button to 96% (§14a, §29): the one moment a control answers the
+ * hand. Hover never moves, and reduced motion keeps the press still.
+ */
+.button:active:not(:disabled) {
+  scale: 0.96;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button:active:not(:disabled) {
+    scale: none;
+  }
+}
+
 .button--primary {
   color: var(--dsw-alias-label-primary-foreground);
   background: var(--dsw-alias-button-primary-fill);
