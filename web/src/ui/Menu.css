@@ -183,9 +183,10 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   margin: 0 6px;
-  padding: 3px;
+  /* Concentric with its 6px choices: 4px padding plus 6px inside makes the 10px track. */
+  padding: 4px;
   background: var(--dsw-alias-bg-layer-1);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .menu__choice {

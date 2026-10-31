@@ -152,6 +152,8 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  outline: 1px solid var(--dsw-alias-image-outline);
+  outline-offset: -1px;
 }
 
 /* A continuation keeps the column so its text aligns, but draws nothing in it. */
