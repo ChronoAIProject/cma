@@ -3917,3 +3917,12 @@ project management tools for a small team.”* in place of *Start the conversati
 a shared reader's empty history still reads *No messages yet.*
 
 | 2026-10-31 | Add a one-line explanation of Agents to Agent Manager home, secondary paragraph and action spacing to the centred plain states, and an example request to the owner's empty conversation. |
+
+### Unavailable views give a reason (2026-10-31)
+
+A centre view that cannot open for this caller keeps its *<View> unavailable*
+heading and adds one secondary sentence saying why and who can help, followed by
+**Return to Agent Manager**. The inventory, Operations, Trigger publishing and
+Agent sharing views each name their own reason; none is shown as an error.
+
+| 2026-10-31 | Give every unavailable centre view a reason sentence and a Return to Agent Manager link. |

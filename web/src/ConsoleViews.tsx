@@ -8,10 +8,19 @@ import { IconNewChatOutline16 } from './ui/icons';
  * of the console's routing so the routing reads as routing.
  */
 
-export function UnavailableView({ title }: { readonly title: string }) {
+export function UnavailableView({
+  title,
+  reason,
+}: {
+  readonly title: string;
+  /** Why this caller cannot open the view, in words they can act on. */
+  readonly reason: string;
+}) {
   return (
     <section className="console__empty">
       <h1>{title}</h1>
+      <p>{reason}</p>
+      <a href="/">Return to Agent Manager</a>
     </section>
   );
 }
