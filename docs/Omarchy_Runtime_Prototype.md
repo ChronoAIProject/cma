@@ -44,6 +44,14 @@ and boot identity returned a rendered desktop. Retained production demos were
 checked without mutation and survived the runtime-default and API rollouts.
 
 Both current image classes have independent warm and prepared targets of two.
+The Agent Manager ConfigMap records those four targets and the same immutable
+runtime pins used in production. The Agent-only runtime is
+`asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime@sha256:a04af1f9c1e70be28674ac13c3804dd9d8df970df34c82ba649f70819c72e9c0`.
+Native pool ready counts describe unclaimed members; prepared capacity is held
+separately and replenished after claims. Exhausting either prepared pool falls
+back to normal provisioning. A target of two does not guarantee two available
+prepared Agents at every instant or a five-second creation time.
+
 The five-second creation target is still under verification: two instrumented
 agent-only UI trials measured 5.090 and 4.683 seconds. Earlier machine trials
 exposed a first-load viewer race, so a reload was needed and those trials do not
