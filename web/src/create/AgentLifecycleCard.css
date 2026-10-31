@@ -133,6 +133,7 @@
 .agent-lifecycle-steps small {
   grid-column: 2;
   color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
 }
 @media (max-width: 30rem) {
   .agent-lifecycle-steps {
