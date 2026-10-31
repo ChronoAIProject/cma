@@ -3930,3 +3930,14 @@ Agent sharing views each name their own reason; none is shown as an error.
 
 | 2026-10-31 | Give every unavailable centre view a reason sentence and a Return to Agent Manager link. |
 | 2026-10-31 | Let phone dialogs (480px wide or less) use the full height less a 16px gutter so New agent's Create agent key is visible without scrolling the card. |
+
+### Explaining machine resources (2026-10-31)
+
+The Sandbox Overview's **Machine resources** heading is followed by one secondary
+line, *How much memory, processing power and network the Agent’s computer is
+using.*, 8px closer to the heading than an ordinary paragraph. A read that fails
+before any reading says *Usage readings are unavailable right now. Your Agent keeps
+working.* and a runtime that cannot report says *This Sandbox does not report usage
+readings.*; the distinct written states of §13a are otherwise unchanged.
+
+| 2026-10-31 | Explain Machine resources in one line and reword its unavailable notices so they say the Agent is unaffected. |
