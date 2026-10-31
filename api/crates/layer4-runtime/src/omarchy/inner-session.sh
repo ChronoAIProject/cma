@@ -81,7 +81,7 @@ for ((i=0;i<100;i++)); do
   sleep 0.1
 done
 # FLTK must use X11 even though the compositor's client environment is Wayland.
-env -u WAYLAND_DISPLAY FLTK_BACKEND=x11 vncviewer -display :99 -Shared -SecurityTypes None -FullScreen \
+env -u WAYLAND_DISPLAY FLTK_BACKEND=x11 vncviewer -display :99 -Shared -SecurityTypes None -FullScreen=0 \
   -RemoteResize=0 -ShortcutModifiers= -AcceptClipboard=0 -SendClipboard=0 \
   -geometry 1280x800+0+0 127.0.0.1:5900 >/tmp/cma-vncviewer.log 2>&1 &
 children+=("$!")
@@ -109,6 +109,14 @@ done
 [[ -n "$instance" ]]
 export HYPRLAND_INSTANCE_SIGNATURE="$instance"
 printf '%s\n' "$instance" > "$XDG_RUNTIME_DIR/cma-hyprland-instance"
+for ((i=0;i<100;i++)); do
+  hyprctl -j monitors 2>/dev/null | jq -e 'any(.[]; .name | startswith("WAYLAND-"))' >/dev/null && break
+  kill -0 "$hypr_pid"
+  sleep 0.1
+done
+# A running compositor on its fallback headless output does not prove that the
+# Omarchy desktop is connected to the output being streamed to its owner.
+hyprctl -j monitors | tee /tmp/cma-hyprland-monitors.log | jq -e 'any(.[]; .name | startswith("WAYLAND-"))' >/dev/null
 for ((i=0;i<300;i++)); do
   hyprctl -j clients 2>/dev/null | jq -e 'any(.[]; .class | ascii_downcase | contains("chromium"))' >/dev/null && break
   kill -0 "$hypr_pid"
