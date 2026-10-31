@@ -238,8 +238,16 @@
 }
 
 .tree-row[data-layout='line'] .tree-row__menu {
+  position: relative;
   width: 24px;
   height: 24px;
+}
+
+/* The drawn key stays 24px; its hit area is the 32px square the row height allows (§15). */
+.tree-row[data-layout='line'] .tree-row__menu::after {
+  position: absolute;
+  inset: -4px;
+  content: '';
 }
 
 .tree-row__signal {
