@@ -35,14 +35,10 @@ for device in /dev/dri/renderD*; do
 done
 # VKMS has a primary node only. Its dumb buffers are supported by Mesa's
 # software renderer; vgem's render node denies MODE_CREATE_DUMB.
-for device in /dev/dri/card*; do
-  [[ -r "$device" && -w "$device" ]] || continue
-  driver=$(readlink -f "/sys/class/drm/${device##*/}/device/driver" || true)
-  if [[ ${driver##*/} == vkms ]]; then
-    export WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE="$device"
-    break
-  fi
-done
+device=$(python3 /usr/share/cma-omarchy/graphics-device.py)
+if [[ -n "$device" ]]; then
+  export WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE="$device"
+fi
 # The host only transports the actual Hyprland desktop. No host keybindings
 # intercept the owner's input; every inner window occupies the whole output.
 mkdir -p /tmp/cma-labwc
@@ -71,12 +67,12 @@ for ((i=0;i<100;i++)); do
   sleep 0.1
 done
 # FLTK must use X11 even though the compositor's client environment is Wayland.
-env -u WAYLAND_DISPLAY vncviewer -Shared -SecurityTypes None -FullScreen \
+env -u WAYLAND_DISPLAY FLTK_BACKEND=x11 vncviewer -Shared -SecurityTypes None -FullScreen \
   -RemoteResize=0 -ShortcutModifiers= -AcceptClipboard=0 -SendClipboard=0 \
   -geometry 1280x800+0+0 127.0.0.1:5900 >/tmp/cma-vncviewer.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do
-  window=$(xdotool search --onlyvisible --class 'Vncviewer' | head -1 || true)
+  window=$(xdotool search --onlyvisible --class '[Vv]ncviewer' | head -1 || true)
   [[ -z "$window" ]] || break
   kill -0 "${children[2]}"
   sleep 0.1
