@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { AgentDetail } from '../api/types';
 import { Button } from '../ui/Button';
 import { DesktopPanel } from './DesktopPanel';
+import type { DesktopPreparationScope } from './desktopPreparation';
 
 /** Match the public desktop service's runtime availability gate. */
 export function desktopRuntimeReady(detail: Pick<AgentDetail, 'status' | 'sandbox'>) {
@@ -19,6 +20,7 @@ export function DesktopWorkspace({
   running,
   onClose,
   children,
+  preparation,
 }: {
   readonly agentId: string;
   readonly open: boolean;
@@ -26,6 +28,7 @@ export function DesktopWorkspace({
   readonly running: boolean;
   readonly onClose: () => void;
   readonly children: ReactNode;
+  readonly preparation?: DesktopPreparationScope;
 }) {
   return (
     <div className="agent-workspace">
@@ -38,6 +41,7 @@ export function DesktopWorkspace({
             runtimeReady={runtimeReady}
             running={running}
             onClose={onClose}
+            preparation={preparation}
           />
         ) : null}
       </div>
