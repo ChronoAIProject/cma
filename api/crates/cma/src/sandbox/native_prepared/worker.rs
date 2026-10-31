@@ -1,4 +1,5 @@
 //! Bounded leased preparation, always saving a transition before the next effect.
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -127,6 +128,7 @@ impl NativePreparedWorker {
         tokio::spawn(async move {
             let worker = Arc::new(self);
             let mut jobs = JoinSet::new();
+            let mut probes = HashMap::new();
             let mut ticker = tokio::time::interval(Duration::from_secs(2));
             ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
@@ -135,8 +137,15 @@ impl NativePreparedWorker {
                 }
                 tokio::select! {
                     _ = shutdown.changed() => break,
-                    result = jobs.join_next(), if !jobs.is_empty() => {
-                        if let Some(Err(error)) = result { tracing::error!(%error, "native preparation worker task failed"); }
+                    result = jobs.join_next_with_id(), if !jobs.is_empty() => {
+                        match result {
+                            Some(Ok((id, ()))) => { probes.remove(&id); }
+                            Some(Err(error)) => {
+                                probes.remove(&error.id());
+                                tracing::error!(%error, "native preparation worker task failed");
+                            }
+                            None => {}
+                        }
                     }
                     _ = ticker.tick() => {
                         if let Err(error) = worker.store.reconcile_native_prepared_target(worker.desired.as_ref(), worker.target, &now_rfc3339()).await {
@@ -153,18 +162,29 @@ impl NativePreparedWorker {
                     break;
                 }
                 while jobs.len() < 4 {
+                    // Keep the other ready reservation available for admission.
+                    // Durable leases continue to fence workers across processes.
+                    let ready_classes = [
+                        !probes.values().any(|machine: &bool| !*machine),
+                        !probes.values().any(|machine| *machine),
+                    ];
                     match worker
                         .store
-                        .claim_native_prepared_work(&now_rfc3339(), &after(60))
+                        .claim_native_prepared_work_for(&now_rfc3339(), &after(60), ready_classes)
                         .await
                     {
                         Ok(Some(claim)) => {
+                            let probe = (claim.record.state == WarmSandboxState::Ready)
+                                .then_some(claim.plan.machine());
                             let worker = worker.clone();
-                            jobs.spawn(async move {
+                            let task = jobs.spawn(async move {
                                 if let Err(error) = worker.run_claim(claim).await {
                                     tracing::warn!(%error, "native preparation step requires reconciliation");
                                 }
                             });
+                            if let Some(machine) = probe {
+                                probes.insert(task.id(), machine);
+                            }
                         }
                         Ok(None) => break,
                         Err(error) => {
