@@ -677,6 +677,16 @@ The queue owns no durable authority: each operation still starts a fresh Mongo
 transaction and validates revisions, ownership and work fences. Cross-process
 writers retain the existing conflict retries and unknown-commit reconciliation.
 
+Startup diagnostics record separate prepared-resource intent, worktree replay,
+Agent-home replay, receipt publication, conversation open and Ready-publication
+durations. Slow Agent work publications (at least 100 ms) and publications with
+multiple Mongo attempts also report queue time and attempt count. These logs
+contain bounded Agent identity, work step, fence and timings only. A false
+`commit_confirmed` includes errors, cancellation and ambiguous commits; it does
+not prove that a transaction failed to commit. Use the durable reconciliation
+result for that distinction. Timing instrumentation grants no authority and does
+not change startup checks, retries or readiness criteria.
+
 ### Image Identity
 
 All three Dockerfiles declare final-image OCI source, revision and version
