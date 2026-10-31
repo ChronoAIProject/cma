@@ -22,6 +22,7 @@ export async function readPreparation(
   if (current.detail.status === 'starting') {
     const started = performance.now();
     for (;;) {
+      const readStarted = performance.now();
       await current.v2?.authorize(signal);
       signal.throwIfAborted();
       const detail = await client.readAgent(agentId, { signal });
@@ -55,7 +56,10 @@ export async function readPreparation(
         }
         break;
       }
-      await wait(performance.now() - started < 10000 ? 250 : 1500, signal);
+      // Include authorization and the completed read in the short startup cadence.
+      // Slow preparation retains its full backoff; requests never overlap.
+      const elapsed = performance.now() - readStarted;
+      await wait(performance.now() - started < 10000 ? Math.max(0, 250 - elapsed) : 1500, signal);
     }
   }
   return loadAgent(client, agentId, signal, false, undefined, lineage);
