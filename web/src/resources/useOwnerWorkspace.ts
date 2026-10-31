@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
+import { readableError } from '../vocabulary/errors';
 import type { SandboxDetail, WorkspaceDetail } from '../api/types';
 import { sandboxRefreshDelay } from '../sandbox/lifecycle';
 
@@ -66,7 +67,7 @@ export function useOwnerWorkspace(client: CmaWebClient, workspaceId: string, rev
                 ? { ...previous.state, pollError: true }
                 : {
                     status: 'error',
-                    message: error instanceof Error ? error.message : 'Workspace unavailable.',
+                    message: readableError(error, 'Workspace unavailable.'),
                   },
           }));
           timer = setTimeout(poll, 5000);
