@@ -1044,7 +1044,7 @@ layer-1 ground with a warning-toned hairline and radius 8. While it waits on a
 person, a 40px approval character (§28) leads the request; a decided card has
 none. An eyebrow reads
 **Approval**; the request's action reason is the heading and its detail the
-body. Below them sit **Deny**, **Abort** and the primary **Allow**, each over a
+body. Below them sit **Deny**, **Abort** and the primary **Allow**, each filling its equal column over a
 one-line caption that states its effect: Deny refuses this request and lets the
 Agent continue another way; Abort cancels the request without an answer; Allow
 lets the Agent go ahead. The captions describe the buttons, they do not rename
@@ -4108,3 +4108,9 @@ carry a 1px inset outline in pure black or white at 10% (`--dsw-alias-image-outl
 neutral would pick up the ground beneath it and read as dirt on the edge.
 
 | 2026-11-01 | Make the menu's segmented track concentric and outline reply media, attachment previews and avatar photos with a 10% black or white hairline. |
+
+**Approval answers as one choice.** Deny, Abort and Allow were left-aligned inside equal
+columns, so their right edges were ragged and the three read as unrelated buttons. Each now
+fills its column at every width, as it already did below 30rem.
+
+| 2026-11-01 | Stretch each approval answer across its column at every width. |
