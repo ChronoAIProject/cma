@@ -53,3 +53,11 @@ runtime assignment, desktop startup, credentials, workspace preparation, Agent
 open and the public UI must all be measured. Production timing and Omarchy
 acceptance remain pending. Do not advertise the five-second target as achieved
 from pool readiness or fixture tests.
+
+The API manifest reserves 500 millicores and permits bursts to two cores while
+both preparation classes reconcile. A production sample with two agent-only
+reservations used about 0.41 cores on average but hit the one-core quota in
+663 of 2,709 scheduling periods, accumulating 12.8 seconds of throttling.
+This capacity change addresses measured contention; it does not establish the
+five-second creation budget. Verify that budget from the actual Create Agent
+click through usable conversation and, for machines, a connected desktop.
