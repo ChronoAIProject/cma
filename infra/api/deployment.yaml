@@ -151,10 +151,10 @@ spec:
               drop: ["ALL"]
           resources:
             requests:
-              cpu: 100m
+              cpu: 500m
               memory: 256Mi
             limits:
-              cpu: "1"
+              cpu: "2"
               # Four lifecycle sweeps can each hold bounded upload buffers.
               # All restore downloads share a four-part (128 MiB) buffer cap.
               memory: 1Gi

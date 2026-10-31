@@ -669,6 +669,14 @@ The historical cluster context in [Sandbox Provider](Sandbox_Provider.md) is
 Confirm it is still the target before any context-pinned command. Do not change
 account/project context globally while other work may be active.
 
+Agent startup work, runtime message updates and conversation admissions share a
+per-Agent transaction queue within each API store instance. This reduces local
+write conflicts while a prepared Agent publishes its connection and first
+message. Different Agents remain independent; unused queue entries are pruned.
+The queue owns no durable authority: each operation still starts a fresh Mongo
+transaction and validates revisions, ownership and work fences. Cross-process
+writers retain the existing conflict retries and unknown-commit reconciliation.
+
 ### Image Identity
 
 All three Dockerfiles declare final-image OCI source, revision and version
@@ -883,8 +891,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SANDBOX_PROVIDER` | Runtime provider selector: `opensandbox` (default) or `agent-sandbox`; selects the direct agent-sandbox backend for new allocations |
 | `CHRONO_RETAIN_OPENSANDBOX` | Whether to retain the legacy OpenSandbox endpoint configuration; `true` by default, and required while existing OpenSandbox runtimes remain addressable |
 | `CHRONO_AGENT_SANDBOX_ENABLED` | Optional boolean override for the direct agent-sandbox adapter; defaults to the provider selection |
-| `CHRONO_NATIVE_PREPARED_TARGET` | Deployment-owned count of credential-free native Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires native allocation and `native_vct_full_home_v2`. A matching ready native pool must exist first. A separate durable collection bounds all preparing, ready and retiring reservations to two across replicas. Explicit default Agent Manager creation atomically takes one matching reservation; other requests use normal creation. Set to `0` to retire unclaimed prepared capacity while preserving owned Sandboxes. |
+| `CHRONO_NATIVE_PREPARED_TARGET` | Deployment-owned count of credential-free agent-only native Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires native allocation and `native_vct_full_home_v2`. A matching ready native pool must exist first. A separate durable collection bounds preparing, ready and retiring reservations to two per image class across replicas. Explicit default Agent Manager creation atomically takes one matching reservation; other requests use normal creation. Set to `0` to retire unclaimed agent-only prepared capacity while preserving owned Sandboxes and machine spares. |
+| `CHRONO_NATIVE_MACHINE_PREPARED_TARGET` | Independent count of credential-free machine Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires a pinned machine image, native allocation and full native home. Starts the desktop and Agent before owner adoption. Its durable target and admission fence are independent from agent-only preparations. Keep the compatible preparation reader during rollback after enablement. |
 | `CHRONO_NATIVE_WARM_POOL_TARGET` | Number of unclaimed native agent-sandbox members kept ready for SandboxClaim admission (`0`–`1000`). Defaults to `1` when `CHRONO_SANDBOX_PROVIDER=agent-sandbox`, and `0` for legacy OpenSandbox. Requires a native VCT home. Agent Manager persists this deployment-owned target keyed by the exact runtime image, resources and Pod policy before serving, then reconciles `SandboxTemplate`, `SandboxWarmPool` and `SandboxClaim` resources. Existing targets and claimed Sandboxes retain their original policy. |
+| `CHRONO_NATIVE_MACHINE_WARM_POOL_TARGET` | Independent unclaimed capacity for `CHRONO_MACHINE_SANDBOX_IMAGE` (`0`–`1000`). Defaults to `1` only with a configured machine image and native allocation, otherwise `0`. Positive capacity requires a native VCT home and a distinct machine image. Startup persists and checks both pool plans before serving. The manifest keeps machine capacity at `0` until its production image is verified and promoted. |
 | `CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT` | `direct` (default) connects to the owned Pod IP on TCP 9090. `kubernetes-portforward` uses authenticated Kubernetes `pods/portforward` streams to port 9090. `kubernetes-exec` uses `pods/exec` and the runtime image's `/usr/bin/python3` to relay stdio to fixed `127.0.0.1:9090`. Both carry control, history and conversation WebSockets with the same pinned CA and renewable credentials as CRD operations. The selected subresource needs `get`/`create` authorization. No local listening port, local subprocess, router or `pods/proxy` permission is used. |
 | `CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE` | Required readable secret file when the direct agent-sandbox adapter is enabled; never store the control key in a ConfigMap |
 | `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS` | Optional Kubernetes RuntimeClass passed to agent-sandbox Pods |

@@ -107,6 +107,7 @@ fn service(store: Arc<Memory>, provider: Provider) -> Arc<NativeWarmPools> {
             memory_mib: 8192,
         },
         1,
+        None,
     )
 }
 

@@ -8,13 +8,26 @@ use eligibility::{owned_home, warm_blocks};
 
 const MAX_RECORDS: i64 = 10_000;
 
+fn release_scope(store: &MongoNativeWarmPools, machine: bool) -> Document {
+    let mut scope = store.scope();
+    scope.insert(
+        "machine",
+        if machine {
+            mongodb::bson::Bson::Boolean(true)
+        } else {
+            doc! {"$ne": true}.into()
+        },
+    );
+    scope
+}
+
 pub(super) async fn activate(store: &MongoNativeWarmPools, id: &str) -> Result<(), WarmPoolError> {
     let candidate = store
         .find(id)
         .await?
         .filter(|row| !row.retiring && !row.retired)
         .ok_or(WarmPoolError::Conflict)?;
-    let mut image_scope = store.scope();
+    let mut image_scope = release_scope(store, candidate.machine);
     image_scope.extend(doc! {"plan.spec.image.uri":&candidate.plan.spec.image.uri,
     "activated_at":{"$type":"date"}});
     let previous = store
@@ -43,7 +56,7 @@ pub(super) async fn activate(store: &MongoNativeWarmPools, id: &str) -> Result<(
         .await?
         .filter(|row| row.activated_at.is_some() && !row.retiring && !row.retired)
         .ok_or(WarmPoolError::Conflict)?;
-    let mut scope = store.scope();
+    let mut scope = release_scope(store, row.machine);
     scope.insert("activated_at", doc! {"$type":"date"});
     let latest = store
         .targets
@@ -57,7 +70,7 @@ pub(super) async fn activate(store: &MongoNativeWarmPools, id: &str) -> Result<(
     if latest.plan.spec.image.uri != row.plan.spec.image.uri || latest.retiring || latest.retired {
         return Err(WarmPoolError::Conflict);
     }
-    let mut ambiguous = store.scope();
+    let mut ambiguous = release_scope(store, row.machine);
     ambiguous.extend(doc! {"activated_at":latest.activated_at,
     "plan.spec.image.uri":{"$ne":&row.plan.spec.image.uri}});
     if store
@@ -87,7 +100,7 @@ async fn authorized(
         return Err(WarmPoolError::Conflict);
     }
     // Tombstones retain release order even after old capacity is removed.
-    let mut scope = store.scope();
+    let mut scope = release_scope(store, target.machine);
     scope.insert("activated_at", doc! {"$type":"date"});
     let latest_row = store
         .targets
@@ -108,7 +121,7 @@ async fn authorized(
         return Ok(false);
     }
     // A same-millisecond tie between different releases is ambiguous: defer.
-    let mut conflict = store.scope();
+    let mut conflict = release_scope(store, target.machine);
     conflict.extend(doc! {"activated_at":latest,"$or":[
         {"retiring":true},{"retired":true},{"plan.spec.image.uri":{"$ne":image}}
     ]});
