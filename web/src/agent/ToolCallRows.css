@@ -44,6 +44,7 @@
 
 .tool-calls__count {
   flex: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .tool-calls__running {

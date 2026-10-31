@@ -4045,3 +4045,10 @@ row the pointer happened to rest on. The current tree row now takes
 current page.
 
 | 2026-11-01 | Draw the current sidebar tree row on the active-item ground rather than the hover tint. |
+
+**Steady figures.** Elapsed preparation times, Trigger statistics, tool-call and queued counts,
+and sidebar ages changed width as they ticked and nudged the words beside them. Every `<time>`
+now takes tabular numerals from the base sheet, and so does each counter. This replaces the
+`.tabular` helper, which nothing used.
+
+| 2026-11-01 | Use tabular numerals for every time element and every changing count, and retire the unused tabular helper. |
