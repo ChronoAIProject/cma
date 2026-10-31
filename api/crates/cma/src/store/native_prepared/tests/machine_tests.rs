@@ -43,6 +43,82 @@ async fn ready_machine(store: &MongoSandboxStore) -> Record {
     record
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn health_probe_scheduling_keeps_each_classes_other_reservation_admissible() {
+    let (client, name, store) = database().await;
+    let agent = plan();
+    let machine = machine_plan();
+    let store = store
+        .with_managed_runtime_version(agent.warm.runtime_version.clone())
+        .with_machine_runtime_version(Some(machine.warm.runtime_version.clone()));
+    store
+        .reconcile_native_prepared_target(Some(&agent), 2, NOW)
+        .await
+        .unwrap();
+    publish_ready(&store).await;
+    publish_ready(&store).await;
+    store
+        .reconcile_native_prepared_class(Some(&machine), 2, NOW, true)
+        .await
+        .unwrap();
+    ready_machine(&store).await;
+    ready_machine(&store).await;
+    store
+        .native_prepared
+        .update_many(
+            doc! {"kind":"reservation"},
+            doc! {"$set":{"check_after":NOW}},
+        )
+        .await
+        .unwrap();
+    let first = store
+        .claim_native_prepared_work_for(NOW, LATER, [true, true])
+        .await
+        .unwrap()
+        .unwrap();
+    let mut classes = [true, true];
+    classes[usize::from(first.plan.machine())] = false;
+    let second = store
+        .claim_native_prepared_work_for(NOW, LATER, classes)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(first.plan.machine(), second.plan.machine());
+    assert!(store
+        .claim_native_prepared_work_for(NOW, LATER, [false, false])
+        .await
+        .unwrap()
+        .is_none());
+    for (index, held) in [&first, &second].into_iter().enumerate() {
+        let request = admission(&store, &held.plan, "owner", &format!("probe-spare-{index}")).await;
+        let SandboxAdmissionResult::Created(owned) = admit_at(&store, request, NOW).await.unwrap()
+        else {
+            panic!("new admission");
+        };
+        assert!(owned.runtime.is_some());
+        assert_ne!(owned.id, held.record.id);
+    }
+    // Preparation and retirement can still progress while both classes probe.
+    store
+        .reconcile_native_prepared_target(Some(&agent), 2, NOW)
+        .await
+        .unwrap();
+    let preparing = store
+        .claim_native_prepared_work_for(NOW, LATER, [false, false])
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(preparing.record.state, WarmSandboxState::Preparing);
+    for held in [&first, &second, &preparing] {
+        store
+            .finish_native_prepared_work(held, held.record.clone(), NOW, LATER)
+            .await
+            .unwrap();
+    }
+    client.database(&name).drop().await.unwrap();
+}
+
 #[test]
 fn machine_preparation_accepts_only_exact_marker_and_preserves_channel_authority() {
     let machine = machine_plan();
