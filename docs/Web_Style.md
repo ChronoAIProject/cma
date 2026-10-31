@@ -3931,3 +3931,8 @@ They still check the current account before reading and before exposing history;
 refreshing readiness never selects a different transport or resubmits setup work.
 
 | 2026-11-01 | Refresh preparation through the Agent's existing conversation transport, retaining fresh account checks around history reads. |
+
+After a complete preparation snapshot refresh, restart live replay from that
+snapshot's cursor while retaining the same selected transport and input journal.
+
+| 2026-11-01 | Preserve the live replay restart at the new preparation snapshot cursor when reusing the selected transport. |
