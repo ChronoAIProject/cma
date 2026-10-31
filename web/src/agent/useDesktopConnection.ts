@@ -3,7 +3,7 @@ import type RFB from '@novnc/novnc';
 import { desktopInput } from './desktopInput';
 import { watchDesktopDisplay } from './desktopDisplay';
 
-export type DesktopPhase = 'connecting' | 'loading' | 'recovering' | 'ready' | 'error';
+export type DesktopPhase = 'waiting' | 'connecting' | 'loading' | 'recovering' | 'ready' | 'error';
 
 /** Poll the first frame quickly; the settled display uses a separate sparse monitor. */
 export function waitForDesktopFrame(target: HTMLElement, ready: () => void) {
@@ -27,17 +27,26 @@ export function waitForDesktopFrame(target: HTMLElement, ready: () => void) {
   return () => window.clearTimeout(timer);
 }
 
-export function useDesktopConnection(agentId: string, attempt: number, inputAllowed: boolean) {
+export function useDesktopConnection(
+  agentId: string,
+  attempt: number,
+  inputAllowed: boolean,
+  runtimeReady: boolean,
+) {
   const screen = useRef<HTMLDivElement>(null);
   const connection = useRef<RFB>(undefined);
   const input = useRef<ReturnType<typeof desktopInput>>(undefined);
-  const [phase, setPhase] = useState<DesktopPhase>('connecting');
+  const [phase, setPhase] = useState<DesktopPhase>(runtimeReady ? 'connecting' : 'waiting');
   const [error, setError] = useState('');
   const [recovery, setRecovery] = useState(0);
-  const [generation, setGeneration] = useState({ agentId, attempt });
-  if (generation.agentId !== agentId || generation.attempt !== attempt) {
-    setGeneration({ agentId, attempt });
-    setPhase('connecting');
+  const [generation, setGeneration] = useState({ agentId, attempt, runtimeReady });
+  if (
+    generation.agentId !== agentId ||
+    generation.attempt !== attempt ||
+    generation.runtimeReady !== runtimeReady
+  ) {
+    setGeneration({ agentId, attempt, runtimeReady });
+    setPhase(runtimeReady ? 'connecting' : 'waiting');
     setError('');
     setRecovery(0);
   }
@@ -50,6 +59,9 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
   }, [inputAllowed, phase]);
 
   useEffect(() => {
+    // The stream is owner-authorized only after startup has published Ready.
+    // A later revival opens a fresh viewer without restoring manual input.
+    if (!runtimeReady) return;
     let disposed = false;
     let failed = false;
     let rfb: RFB | undefined;
@@ -139,7 +151,7 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
       connection.current = undefined;
       rfb?.disconnect();
     };
-  }, [agentId, attempt, recovery]);
+  }, [agentId, attempt, recovery, runtimeReady]);
 
   return { screen, phase, error, focus: () => connection.current?.focus() };
 }
