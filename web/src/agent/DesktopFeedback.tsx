@@ -63,13 +63,15 @@ export function DesktopFeedback({
             <div className="agent-desktop__loading-label">
               <StateDot state={phase === 'error' ? 'error' : 'ongoing'} />
               <span>
-                {phase === 'connecting'
-                  ? 'Connecting to your machine'
-                  : phase === 'recovering'
-                    ? 'Restoring your desktop'
-                    : phase === 'loading'
-                      ? 'Loading your desktop'
-                      : error}
+                {phase === 'waiting'
+                  ? 'Waiting for your machine'
+                  : phase === 'connecting'
+                    ? 'Connecting to your machine'
+                    : phase === 'recovering'
+                      ? 'Restoring your desktop'
+                      : phase === 'loading'
+                        ? 'Loading your desktop'
+                        : error}
               </span>
             </div>
           </div>

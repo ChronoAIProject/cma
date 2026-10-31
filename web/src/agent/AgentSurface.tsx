@@ -38,7 +38,7 @@ import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
-import { DesktopToggle, DesktopWorkspace } from './DesktopWorkspace';
+import { DesktopToggle, DesktopWorkspace, desktopRuntimeReady } from './DesktopWorkspace';
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
 interface AgentSurfaceProps {
@@ -179,6 +179,7 @@ export function AgentSurface({
     <DesktopWorkspace
       agentId={agentId}
       open={desktopOpen}
+      runtimeReady={desktopRuntimeReady(detail)}
       running={running || starting}
       onClose={() => setClosedDesktopAgentId(agentId)}
     >
