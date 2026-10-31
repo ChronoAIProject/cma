@@ -179,7 +179,6 @@ it('keeps loading until the first painted screen, including a real black desktop
   act(() => vi.advanceTimersByTime(50));
   expect(screen.getByRole('status')).toHaveTextContent('Connected');
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeEnabled();
-  act(() => vi.advanceTimersByTime(200));
   expect(view.container.querySelector('.agent-desktop__loading')).not.toBeInTheDocument();
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
