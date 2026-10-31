@@ -185,6 +185,16 @@ describe('the shared component vocabulary', () => {
     );
   });
 
+  it('settles a pressed button to 96% and keeps it still under reduced motion', () => {
+    const css = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
+    expect(css).toMatch(/\.button:active:not\(:disabled\) \{\s*scale: 0\.96;/);
+    expect(css).toMatch(
+      /prefers-reduced-motion: reduce[\s\S]*\.button:active:not\(:disabled\) \{\s*scale: none;/,
+    );
+    const shared = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
+    expect(shared).toMatch(/scale var\(--ds-transition-duration-fast\)/);
+  });
+
   it('pins the field, failure, progress, and skeleton idioms to their aliases', () => {
     const css = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
     expect(css).toMatch(
