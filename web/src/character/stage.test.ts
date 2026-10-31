@@ -151,8 +151,8 @@ describe('createCharacterStage', () => {
     const target = canvas();
     h.stage.attach(target, animated, vi.fn());
     expect(h.run(0)).toBe(true);
-    expect(h.run(16)).toBe(true);
-    expect(h.run(32)).toBe(true);
+    expect(h.run(40)).toBe(true);
+    expect(h.run(80)).toBe(true);
     expect(h.surface.draw).toHaveBeenCalledTimes(3);
     expect(target.width).toBe(48);
     expect(h.surface.draw).toHaveBeenLastCalledWith(h.rigs[0], 48, 48, expect.any(Number));
@@ -168,6 +168,17 @@ describe('createCharacterStage', () => {
       48,
     );
     expect(h.pending()).toBe(true);
+  });
+
+  it('caps animation at 30fps by waiting out display frames between beats', () => {
+    const h = harness();
+    h.stage.attach(canvas(), animated, vi.fn());
+    h.run(0);
+    h.run(16);
+    expect(h.surface.draw).toHaveBeenCalledTimes(1);
+    expect(h.pending()).toBe(true);
+    h.run(34);
+    expect(h.surface.draw).toHaveBeenCalledTimes(2);
   });
 
   it('draws a still character once at its rest moment and stops scheduling', () => {
@@ -229,8 +240,8 @@ describe('createCharacterStage', () => {
     h.run(0);
     const before = h.rigs[0]?.frames.at(-1);
     handle?.update({ ...animated, pose: 'approval' });
-    h.run(16);
-    h.run(32);
+    h.run(40);
+    h.run(80);
     const blended = h.rigs[0]?.frames.at(-1);
     expect(blended?.y).toBeGreaterThan(before?.y ?? 0);
     expect(blended?.scale[0]).toBeLessThan(1.05);
