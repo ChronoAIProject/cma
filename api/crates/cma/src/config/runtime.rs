@@ -16,6 +16,7 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub allocate_agent_sandbox: bool,
     pub native_prepared_target: u8,
+    pub native_machine_prepared_target: u8,
     /// Number of unclaimed native agent-sandbox members kept ready for new Sandboxes.
     pub native_warm_pool_target: u32,
     /// Independent unclaimed capacity for the deployment desktop image.
@@ -47,6 +48,10 @@ impl fmt::Debug for RuntimeConfig {
             .field("sandbox_namespace", &self.sandbox_namespace)
             .field("home_policy", &self.home_policy)
             .field("native_prepared_target", &self.native_prepared_target)
+            .field(
+                "native_machine_prepared_target",
+                &self.native_machine_prepared_target,
+            )
             .field("native_warm_pool_target", &self.native_warm_pool_target)
             .field(
                 "native_machine_warm_pool_target",
@@ -126,6 +131,23 @@ impl RuntimeConfig {
             Some("2") => 2,
             _ => return Err("CHRONO_NATIVE_PREPARED_TARGET must be 0, 1 or 2".into()),
         };
+        let native_machine_prepared_target =
+            match lookup("CHRONO_NATIVE_MACHINE_PREPARED_TARGET")?.as_deref() {
+                None | Some("0") => 0,
+                Some("1") => 1,
+                Some("2") => 2,
+                _ => return Err("CHRONO_NATIVE_MACHINE_PREPARED_TARGET must be 0, 1 or 2".into()),
+            };
+        if native_machine_prepared_target > 0
+            && (machine_sandbox_image.is_none()
+                || !allocate_agent_sandbox
+                || agent_sandbox.is_none()
+                || !agent_sandbox_home_policy
+                    .as_ref()
+                    .is_some_and(|p| p.mounts_full_home()))
+        {
+            return Err("CHRONO_NATIVE_MACHINE_PREPARED_TARGET requires a machine image, native allocation and full native home".into());
+        }
         let native_warm_pool_target = match lookup("CHRONO_NATIVE_WARM_POOL_TARGET")?.as_deref() {
             // Keep one native member ready whenever agent-sandbox is the selected
             // provider. Legacy OpenSandbox deployments remain unchanged.
@@ -217,6 +239,7 @@ impl RuntimeConfig {
             agent_sandbox_runtime_transport,
             allocate_agent_sandbox,
             native_prepared_target,
+            native_machine_prepared_target,
             native_warm_pool_target,
             native_machine_warm_pool_target,
             retain_opensandbox,
