@@ -1,5 +1,14 @@
 # Omarchy runtime prototype
 
+Production preparation on 2026-10-31 exposed a filesystem difference from the
+isolated microVM: Arch already owns `/tmp/.X11-unix` as root with mode 1777.
+Unconditionally running `chmod` as the runtime user stopped the launcher before
+graphics startup. The launcher now changes permissions only when it owns the
+directory and verifies that an existing directory is usable with mode 1777.
+The desktop workflow additionally exercises the image's original temporary
+directory, all seven native/manual control checks, and container replacement
+with the retained home. Its export admission includes that additional gate.
+
 The explicit `omarchy` Docker target packages the actual Omarchy Hyprland and
 Quickshell desktop on Arch Linux. It remains experimental. The default image
 target remains Debian/XFCE, and this prototype has not been deployed or verified
