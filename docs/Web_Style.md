@@ -3897,8 +3897,9 @@ retain the connected display.
 
 | 2026-11-01 | Wait for Machine runtime readiness before connecting the desktop, and reconnect after revival without restoring manual input. |
 
-While an Agent is Starting, observe its public detail without reloading the
-conversation on every check. During the first ten seconds, check 250 milliseconds
+While an Agent is Starting, observe its public detail immediately after the
+initial conversation has loaded, without reloading history on every check.
+During the first ten seconds, check 250 milliseconds
 after each completed read; longer preparation returns to the 1.5-second interval.
 When its status or parent state changes, load the complete conversation before
 publishing the observation. First-message execution retains normal history refresh.

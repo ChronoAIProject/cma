@@ -318,7 +318,7 @@ export function useAgentController(
         }
       }
     };
-    timer = setTimeout(() => void poll(), 250);
+    void poll();
     return () => {
       request.abort();
       clearTimeout(timer);
