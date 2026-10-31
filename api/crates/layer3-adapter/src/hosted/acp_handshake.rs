@@ -217,11 +217,13 @@ impl Bridge {
                     // then load its same persisted identity with owner tools.
                     // A source-issued receipt is required before this branch;
                     // ordinary retained conversations never take it.
+                    let mut rebinding = super::startup_timing::StartupTiming::new();
                     self.call(
                         "session/close",
                         serde_json::json!({ "sessionId": conversation }),
                     )
                     .await?;
+                    rebinding.completed("prepared_protocol_close");
                     self.activate_session(conversation.clone(), updates).await?;
                     self.call(
                         "session/load",
@@ -233,6 +235,7 @@ impl Bridge {
                     )
                     .await
                     .map_err(|error| error.context("could not bind prepared conversation"))?;
+                    rebinding.completed("prepared_protocol_load");
                 } else {
                     self.activate_session(conversation.clone(), updates).await?;
                 }
