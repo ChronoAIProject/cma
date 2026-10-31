@@ -1,4 +1,4 @@
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
 import { CredentialAccountError, credentialSetupMessage } from '../auth/credentialSetup';
 
 export const refusalSentences = {
@@ -60,4 +60,35 @@ export function failureRemediation(code: string): string {
     default:
       return 'CMA could not finish preparing your agent. Check again, or share the support code with your administrator.';
   }
+}
+
+const NO_DETAIL = /^HTTP (\d{3}) problem document carried no detail$/;
+
+function statusSentence(status: number): string | undefined {
+  if (status === 401) return 'Your sign-in has expired. Reload the page to sign in again.';
+  if (status === 403) return 'Your account does not have access to this.';
+  if (status === 404) return 'This could not be found. It may have been deleted or moved.';
+  if (status === 429) return 'CMA is receiving too many requests. Wait a moment, then try again.';
+  if (status >= 500) return 'CMA had a problem on its side. Try again in a moment.';
+  return undefined;
+}
+
+/**
+ * The sentence a person sees when a read or command fails. A service detail
+ * written for people is kept; a protocol fault, a server-side failure or a
+ * lost connection becomes a plain sentence that says what to do next.
+ */
+export function readableError(error: unknown, fallback: string): string {
+  if (
+    error instanceof TransportError ||
+    (error instanceof TypeError && /fetch|network|load failed/i.test(error.message))
+  )
+    return 'CMA could not be reached. Check your connection, then try again.';
+  if (error instanceof ApiError)
+    return error.status >= 500 ? (statusSentence(error.status) ?? fallback) : error.message;
+  if (error instanceof ProtocolError) {
+    const status = NO_DETAIL.exec(error.message)?.[1];
+    return (status === undefined ? undefined : statusSentence(Number(status))) ?? fallback;
+  }
+  return error instanceof Error && error.message !== '' ? error.message : fallback;
 }
