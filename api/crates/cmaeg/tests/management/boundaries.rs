@@ -264,6 +264,7 @@ async fn http_errors_and_openapi_share_the_management_contract() {
             "getChannel",
             "getChannelActivity",
             "getEventMediaResponses",
+            "inspectChannelPartition",
             "listChannels",
             "recoverChannel",
             "rekeyChannel",

@@ -1,6 +1,8 @@
 //! Typed management, event and tool protocol documents.
 mod channels;
 pub use channels::*;
+mod partitions;
+pub use partitions::*;
 mod sources;
 pub use sources::*;
 mod native_media_update;

@@ -484,6 +484,18 @@ Once reserved, a conversation still provisioning its Agent returns
 the same input and idempotency key; a preparation refusal admits no turn.
 Missing, foreign, failed or retired conversations remain 404.
 
+`GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` reads
+the retained current-generation mapping with binding management authority and
+`Cache-Control: no-store`. It returns binding/generation, canonical conversation,
+Agent identity, conversation state and nullable `agent_status`. A missing Agent
+record returns null status; a retained deletion tombstone returns `deleted`.
+Borrowed Agents use the canonical `existing_agent` alias. This endpoint does
+not create or repair resources and remains usable for orphaned mappings.
+Responses admission through a binding returns `410 partition_agent_missing`
+when its mapped Agent record is absent, or `409 partition_agent_unavailable`
+when its lifecycle refuses input, including a retained deletion tombstone.
+Neither response requests automatic retry.
+
 After a preparation reserves a guarded generation, conversation PUT requires
 one positive canonical `x-cma-binding-generation` header and Responses v2
 requires the matching `binding_generation` field. These are checked before
@@ -1362,6 +1374,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections` | InspectPreparationRequest | - | 200 PreparationInspectionView; 400/401/403/404/409/503 ProblemDocument |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/preparations` | PrepareBindingRequest | Idempotency-Key | 200 PreparationReceiptView; 400/401/403/404/409/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 200 BindingConversationInspectionView; 400/401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` | - | - | 200 EventContext; 401/403/404/503 Responses error |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | raw binary; upload query | Content-Type, Content-Length | 201 AgentAttachment; 400/403/409/413/429/503 media error |

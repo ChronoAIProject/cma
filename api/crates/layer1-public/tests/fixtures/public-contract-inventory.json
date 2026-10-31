@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 238,
+  "openapi_operations": 239,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2288,6 +2288,11 @@
         "not_authenticated",
         "forbidden"
       ]
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/inspection.rs# Read-only mapping inspection uses binding management authority.",
+      "required_problems": ["not_authenticated", "forbidden", "binding_not_found", "invalid_binding"]
     },
     "PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
       "classification": "openapi",

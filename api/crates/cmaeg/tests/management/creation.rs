@@ -125,7 +125,17 @@ async fn failed_binding_retains_encrypted_cleanup_identity_and_blocks_events() {
         .unwrap();
     assert_eq!(recovered["definition"]["creation"]["ready"], false);
     let id = cmaeg_core::ids::ChannelId::new(recovered["channel_id"].as_str().unwrap()).unwrap();
-    assert!(resolver.resolve(id.as_str()).await.is_err());
+    let refused = resolver.resolve(id.as_str()).await.unwrap_err();
+    assert_eq!(
+        refused,
+        cmaeg::channels::resolver::ResolveError::CreationPending
+    );
+    assert_eq!(refused.problem().status, 409);
+    assert!(refused
+        .problem()
+        .detail
+        .unwrap()
+        .contains("channel_creation_pending"));
     assert_eq!(cma.records().len(), 1);
     let url = format!(
         "{base}/v1/channels/{id}?expected_version={}",
