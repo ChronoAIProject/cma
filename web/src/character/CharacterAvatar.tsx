@@ -85,6 +85,7 @@ export function CharacterAvatar({
       style={{ '--character-size': `${String(size)}px` } as CSSProperties}
       data-pose={pose}
       data-tone={tone}
+      data-motion={still ? 'still' : 'live'}
       data-status={status}
       aria-hidden="true"
     >

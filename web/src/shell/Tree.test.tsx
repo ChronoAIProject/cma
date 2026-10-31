@@ -322,6 +322,11 @@ describe('Sandbox navigation tree', () => {
     expect(agent).not.toHaveAttribute('data-dimmed');
     expect(within(agent as HTMLElement).getByText('Ready')).toBeInTheDocument();
     expect(screen.queryByText('agent/one')).not.toBeInTheDocument();
+    // The Agent leads with its still, settled character rather than a generic glyph.
+    const character = agent?.querySelector('.tree-row__icon .character-avatar');
+    expect(character).toHaveAttribute('data-pose', 'idle');
+    expect(character).toHaveAttribute('data-motion', 'still');
+    expect(character).toHaveStyle({ '--character-size': '20px' });
   });
 
   it('keeps Agent navigation available during runtime updates', () => {
