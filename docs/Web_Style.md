@@ -3896,3 +3896,18 @@ viewer in Watching mode without remounting the conversation. Normal Agent turns
 retain the connected display.
 
 | 2026-11-01 | Wait for Machine runtime readiness before connecting the desktop, and reconnect after revival without restoring manual input. |
+
+While an Agent is Starting, observe its public detail immediately after the
+initial conversation has loaded, without reloading history on every check.
+During the first ten seconds, check 250 milliseconds
+after each completed read; longer preparation returns to the 1.5-second interval.
+When its status or parent state changes, refresh the complete conversation.
+While the first message remains pending, show the fresh Agent state immediately
+and retain the current conversation until its history refresh completes. Settled
+preparation publishes the full read together. First-message execution retains
+normal history refresh.
+Failed reads retain the five-second retry delay. Reads never overlap, stop on
+departure or settled preparation, and preserve live conversation fragments.
+Faster observation never implies readiness by elapsed time.
+
+| 2026-11-01 | Refresh initial Agent preparation promptly, with bounded frequency and the existing slow-preparation and error backoff. |
