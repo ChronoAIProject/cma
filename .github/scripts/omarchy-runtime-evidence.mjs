@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { desktopSeccomp } from './desktop-seccomp.mjs';
@@ -15,16 +15,6 @@ const token = randomBytes(32).toString('hex');
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
 const result = { scope: 'isolated-docker-offline-model', revision, result: 'fail', cleanup: false };
 const devices = [];
-if (process.env.CMA_OMARCHY_TEST_DRM === '1') {
-  for (const entry of readdirSync('/dev/dri').filter(x => /^(card|renderD)[0-9]+$/.test(x))) {
-    if (!realpathSync('/sys/class/drm/' + entry + '/device/driver').endsWith('/vkms')) continue;
-    const path = '/dev/dri/' + entry;
-    devices.push('--device', path, '--group-add', String(statSync(path).gid));
-  }
-  assert(devices.length > 0);
-  result.graphicsDriver = 'vkms';
-}
-result.graphicsDevices = devices.filter(x => x.startsWith('/dev/dri/'));
 const run = (command, extra = []) => docker(['exec', '--env', 'DISPLAY=:99',
   '--env', 'XDG_RUNTIME_DIR=/tmp/cma-desktop-runtime', ...extra, name, ...command]);
 async function ready() {
@@ -41,6 +31,15 @@ function screenshot(label) {
   writeFileSync(resolve(destination, label + '.png'), execFileSync('docker', ['exec', name, 'cat', '/tmp/omarchy-proof.png'], { maxBuffer: 8 * 1024 * 1024 }));
 }
 try {
+  if (process.env.CMA_OMARCHY_TEST_DRM === '1') {
+    result.graphicsInventory = JSON.parse(execFileSync('sudo', ['python3',
+      'api/crates/layer4-runtime/src/omarchy/graphics-device.py', '--json'], { encoding: 'utf8' }));
+    const device = result.graphicsInventory.find(item => item.driver === 'vkms');
+    assert(device, 'No VKMS primary DRM device identified by DRM_IOCTL_VERSION');
+    devices.push('--device', device.path, '--group-add', String(statSync(device.path).gid));
+    result.graphicsDriver = 'vkms';
+  }
+  result.graphicsDevices = devices.filter(x => x.startsWith('/dev/dri/'));
   const image = JSON.parse(docker(['image', 'inspect', 'cma-runtime-omarchy:ci']))[0];
   assert.equal(image.Config.Labels['org.opencontainers.image.revision'], revision);
   assert.equal(image.Config.Labels['dev.chrono.cma.runtime-contract'], '3');
