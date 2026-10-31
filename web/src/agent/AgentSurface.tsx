@@ -39,6 +39,7 @@ import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
 import { DesktopToggle, DesktopWorkspace, desktopRuntimeReady } from './DesktopWorkspace';
+import { conversationMedia } from './mediaSources';
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
 interface AgentSurfaceProps {
@@ -325,15 +326,12 @@ export function AgentSurface({
             />
           ) : null}
           <MessageStream
-            media={
-              lifecycleClient?.files && !accessUncertain && accessAuthorized
-                ? {
-                    agentId,
-                    files: lifecycleClient.files,
-                    workingDirectory: conversation.runtimeMetadata?.workingDirectory,
-                  }
-                : undefined
-            }
+            media={conversationMedia(
+              agentId,
+              lifecycleClient?.files,
+              !accessUncertain && accessAuthorized,
+              conversation.runtimeMetadata?.workingDirectory,
+            )}
             feedback={feedback}
             user={user}
             viewPosition={viewPosition}
