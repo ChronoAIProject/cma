@@ -14,6 +14,7 @@ import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { agentNameFor, validRepository } from './repository';
+import { retainLifecycleHandoff } from '../resources/lifecycleHandoff';
 import './Create.css';
 import './AgentLifecycleCard.css';
 
@@ -96,10 +97,22 @@ function AgentLifecycleForm({
     // opened directly after the server reports the final Agent identity.
     openedOperation.current = operation.id;
     if (operation.status === 'succeeded' ? clearIntent() : bindAgent(openTarget.id)) {
+      retainLifecycleHandoff(client.resourceViews, viewerId, admitted);
       handoffTransport();
       onCreated({ ...createdReceipt, id: openTarget.id, status: openTarget.status });
     }
-  }, [bindAgent, clearIntent, createdReceipt, handoffTransport, onCreated, operation, openTarget]);
+  }, [
+    admitted,
+    bindAgent,
+    clearIntent,
+    client.resourceViews,
+    createdReceipt,
+    handoffTransport,
+    onCreated,
+    operation,
+    openTarget,
+    viewerId,
+  ]);
   const repositoryUrl = repository.trim();
   const repositoryValid = validRepository(repositoryUrl);
   const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
@@ -237,6 +250,7 @@ function AgentLifecycleForm({
                       : lifecycle.bindAgent(openTarget.id))
                   ) {
                     openedOperation.current = operation.id;
+                    retainLifecycleHandoff(client.resourceViews, viewerId, admitted);
                     handoffTransport();
                     onCreated({ ...createdReceipt, id: openTarget.id, status: openTarget.status });
                   }
