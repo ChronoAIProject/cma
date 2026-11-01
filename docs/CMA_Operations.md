@@ -688,6 +688,15 @@ not prove that a transaction failed to commit. Use the durable reconciliation
 result for that distinction. Timing instrumentation grants no authority and does
 not change startup checks, retries or readiness criteria.
 
+Native inspection timings separate exclusive HTTP checkout, the authority graph,
+runtime policy, the process-status exchange and the fresh post-status home read.
+The graph and policy reads overlap. They and the status exchange are nested
+inside `native_observation`; do not add all phase durations together. Each event
+identifies only the Sandbox, phase, elapsed milliseconds, completion and result.
+`completed=false` means the observation future was dropped before returning;
+`succeeded=true` means it returned `Ok`, which can still select the ordinary
+bootstrap fallback. Neither field proves runtime readiness or a committed write.
+
 ### Image Identity
 
 All three Dockerfiles declare final-image OCI source, revision and version
