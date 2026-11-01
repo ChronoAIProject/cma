@@ -164,6 +164,17 @@ pub(crate) async fn adopt_bound_runtime(
     sandbox: &Sandbox,
     deployment_id: &str,
 ) -> layer3_adapter::Result<RuntimeHandle> {
+    Ok(inspect_bound_runtime(adapter, sandbox, deployment_id)
+        .await?
+        .0)
+}
+
+/// Fresh identity proof and optional capabilities from that same runtime process.
+pub(crate) async fn inspect_bound_runtime(
+    adapter: &dyn SandboxAdapter,
+    sandbox: &Sandbox,
+    deployment_id: &str,
+) -> layer3_adapter::Result<(RuntimeHandle, Option<RuntimeStatus>)> {
     let binding = sandbox
         .runtime
         .as_ref()
@@ -197,7 +208,7 @@ pub(crate) async fn adopt_bound_runtime(
         .await?
         .ok_or_else(runtime_absent)?;
     validate_bound_inspection(sandbox, generation, &inspected)?;
-    Ok(handle)
+    Ok((handle, inspected.status))
 }
 
 pub(crate) fn validate_bound_inspection(

@@ -107,6 +107,35 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
                 && receipt.request_sha256 == request.request_sha256
                 && receipt.workspace_id == request.workspace_id
         }
+        (
+            RequestFrame::PrepareAgentResources(request),
+            ResponseFrame::PrepareAgentResources(receipt),
+        ) => {
+            let fence = request.authority_fence;
+            receipt.authority_fence == fence
+                && validate(
+                    &RequestFrame::AddWorktree(crate::wire::FencedRequest::new(
+                        fence,
+                        request.request.worktree.clone(),
+                    )),
+                    &ResponseFrame::AddWorktree(crate::wire::FencedReceipt::new(
+                        fence,
+                        receipt.receipt.worktree.clone(),
+                    )),
+                )
+                .is_ok()
+                && validate(
+                    &RequestFrame::MaterializeAgentHome(crate::wire::FencedRequest::new(
+                        fence,
+                        request.request.home.clone(),
+                    )),
+                    &ResponseFrame::MaterializeAgentHome(crate::wire::FencedReceipt::new(
+                        fence,
+                        receipt.receipt.home.clone(),
+                    )),
+                )
+                .is_ok()
+        }
         (RequestFrame::AddWorktree(request), ResponseFrame::AddWorktree(receipt)) => {
             receipt.authority_fence == request.authority_fence
                 && receipt.receipt.operation_id == request.request.operation_id

@@ -1,5 +1,6 @@
 use super::*;
 use layer3_adapter::wire::RequestFrame;
+mod batch_tests;
 
 async fn prepared() -> (Harness, Agent) {
     prepared_with_prompt(crate::agent_lifecycle::guidance::managed_v2()).await
