@@ -60,7 +60,10 @@ export async function readPreparation(
       // Include authorization and the completed read in the short startup cadence.
       // Slow preparation retains its full backoff; requests never overlap.
       const elapsed = performance.now() - readStarted;
-      await wait(performance.now() - started < 10000 ? Math.max(0, 250 - elapsed) : 1500, signal);
+      // The runtime publishes Ready before the first-message acknowledgement.
+      // A short cadence keeps that bounded readiness window visible without
+      // overlapping reads; prolonged preparation still uses the full delay.
+      await wait(performance.now() - started < 10000 ? Math.max(0, 100 - elapsed) : 1500, signal);
     }
   }
   // Keep the selected transport and journal, with a fresh handle so live replay
