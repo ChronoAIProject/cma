@@ -227,7 +227,12 @@ impl ControlPlaneComposition {
             Arc::clone(&operations),
         )
         .with_runtime_updates(runtime.updates)
-        .with_user_directory(Arc::clone(&users));
+        .with_user_directory(Arc::clone(&users))
+        .with_sandbox_colors(layer2_core::sandbox::colors::SandboxColorService::new(
+            stores.sandbox_colors.clone(),
+            stores.sandbox_model.clone(),
+            Arc::new(layer2_core::sandbox::colors::SystemColorRandom::new()),
+        ));
         let recorder = ActivityRecorder::new(Arc::clone(&activity));
         let profile_authoring = ProfileAuthoringService::new(
             authoring_bounds,

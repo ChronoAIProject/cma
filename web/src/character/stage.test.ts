@@ -270,10 +270,44 @@ describe('createCharacterStage', () => {
     const h = harness();
     const target = canvas();
     const handle = h.stage.attach(target, { ...animated, tone: 'warning' }, vi.fn());
-    expect(h.env.readPalette).toHaveBeenLastCalledWith(target, '--dsw-alias-character-pending');
+    expect(h.env.readPalette).toHaveBeenLastCalledWith(
+      target,
+      '--dsw-alias-character-pending',
+      undefined,
+    );
     handle?.update({ ...animated, tone: 'error', shadow: true });
-    expect(h.env.readPalette).toHaveBeenLastCalledWith(target, '--dsw-alias-character-failed');
+    expect(h.env.readPalette).toHaveBeenLastCalledWith(
+      target,
+      '--dsw-alias-character-failed',
+      undefined,
+    );
     expect(h.rigs[0]?.setShadow).toHaveBeenLastCalledWith(true);
+  });
+
+  it('wears a Sandbox colour in place of the body alias and repaints only when it changes', () => {
+    const h = harness();
+    const target = canvas();
+    const handle = h.stage.attach(target, { ...animated, color: '#2f96fa' }, vi.fn());
+    expect(h.env.readPalette).toHaveBeenLastCalledWith(
+      target,
+      '--dsw-alias-character-brand',
+      '#2f96fa',
+    );
+    handle?.update({ ...animated, color: '#62d079' });
+    expect(h.env.readPalette).toHaveBeenLastCalledWith(
+      target,
+      '--dsw-alias-character-brand',
+      '#62d079',
+    );
+    const painted = vi.mocked(h.env.readPalette).mock.calls.length;
+    handle?.update({ ...animated, pose: 'working', color: '#62d079' });
+    expect(h.env.readPalette).toHaveBeenCalledTimes(painted);
+    handle?.update({ ...animated, pose: 'working' });
+    expect(h.env.readPalette).toHaveBeenLastCalledWith(
+      target,
+      '--dsw-alias-character-brand',
+      undefined,
+    );
   });
 
   it('falls back when the character cannot be built', () => {
