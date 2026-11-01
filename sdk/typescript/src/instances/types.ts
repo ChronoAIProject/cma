@@ -1,3 +1,4 @@
+import { ProtocolError } from '../errors.js';
 import { modelAccess, profileReference } from '../profiles/types.js';
 import { sandboxLifecycle } from './lifecycle.js';
 import { sandboxRuntimeUpdate } from './runtime-update.js';
@@ -16,6 +17,7 @@ import {
   text,
   variant,
   type Output,
+  type Parser,
 } from '../schema.js';
 
 export const sandboxStatus = enumeration(
@@ -50,11 +52,19 @@ export type AgentStatus = Output<typeof agentStatus>;
 export const failure = object({ class: text, detail: text, remediation: optional(text) });
 export type Failure = Output<typeof failure>;
 
+/** The colour every Agent in a Sandbox wears; the server spells it as lowercase `#rrggbb`. */
+const sandboxColor: Parser<string> = (value) => {
+  const color = text(value);
+  if (!/^#[0-9a-f]{6}$/.test(color)) throw new ProtocolError('expected a lowercase #rrggbb colour');
+  return color;
+};
+
 const sandboxFields = {
   id: text,
   owner: optional(text),
   owner_name: optional(nullable(text)),
   name: text,
+  color: optional(sandboxColor),
   status: sandboxStatus,
   profile: profileReference,
   nyxid_services: optional(array(text)),

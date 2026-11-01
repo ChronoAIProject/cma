@@ -4212,3 +4212,24 @@ readings.*; the distinct written states of §13a are otherwise unchanged.
 | 2026-10-31 | Cap the compact home mark at 134px, the size it rendered at beside the heading alone, so the new home explanation does not enlarge it. |
 
 | 2026-11-01 | Use the conversation refresh's fresh entry account check to publish pending preparation synchronously, avoiding a duplicate account round trip while retaining authorization before reads and history publication. |
+
+### Sandbox colours (2026-11-01)
+
+Amends §28's *Body* column. Each Sandbox has one colour, and every Agent in it wears that
+colour as its character's body wherever the brand lime used to stand: both sidebar views,
+the live Thinking row and the empty conversation. Pending amber and failed red still replace
+it for Needs approval and Needs attention, so status is read before ownership, and the
+status word stays where §28 puts it.
+
+The server assigns the colour (`SandboxView.color`) when an owner first sees the Sandbox and
+keeps it for the Sandbox's life. It is drawn at random from bodies that hold up on both
+themes (OKLab lightness 0.62–0.86, chroma at least 0.10), kept clear of the two status
+colours, and chosen to sit as far as possible from the owner's other live Sandboxes. A
+Sandbox without a colour (shared with the viewer, or while colours cannot be read) wears the
+brand lime.
+
+The colour is data, not a design token: it only ever paints the character's body and the
+still mark's `currentColor`, applied inline. It never colours text, rows, borders or
+controls, and no stylesheet refers to it.
+
+| 2026-11-01 | Dress every Agent's character in its Sandbox's server-assigned colour in the sidebar, Thinking row and empty conversation, with approval amber and failure red still taking over and brand lime when a Sandbox has no colour. |

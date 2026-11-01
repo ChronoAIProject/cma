@@ -186,6 +186,28 @@ index initialize additively at startup. Isolated database deployments must add
 this collection to the generated Agent Manager role before upgrading; explicit
 shared-schema deployments require no new database credential.
 
+### Sandbox colours
+
+Every Agent in one Sandbox wears that Sandbox's colour. `SandboxView.color` is
+lowercase `#rrggbb` on the owner's `POST /api/v1/sandboxes`, personal
+`GET /api/v1/sandboxes` and owner `GET /api/v1/sandboxes/{id}`. The first owner
+read of a Sandbox without a colour assigns one, oldest first. The colour is a
+random sRGB value whose OKLab lightness is 0.62–0.86 and chroma at least 0.10,
+kept at least ΔEok 0.15 from the approval amber and failure red. Of 64 such
+candidates, the one farthest from every live (not retiring or retired) Sandbox of
+that owner wins, so colours stay distinct until the pool is crowded and never
+repeat exactly. A Sandbox keeps its first colour; retiring frees it for the next.
+Organization rows, shared-grant reads and another owner's Sandboxes are never
+assigned and omit the field, as does any read while colours cannot be stored.
+
+Palettes live in Agent Manager's `sandbox_colors` collection, one document per
+owner, written by revision compare-and-set. They are deliberately outside the
+Sandbox record, which denies unknown fields: a rolled-back reader ignores this
+collection instead of refusing every coloured Sandbox. The collection initializes
+additively at startup. Isolated database deployments must add it to the
+generated Agent Manager role before upgrading; explicit shared-schema deployments
+require no new database credential.
+
 ### Direct owner service access
 
 Direct NyxID owner access tokens can approve requests and replace service scope
