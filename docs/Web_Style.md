@@ -3953,6 +3953,10 @@ their existing Presence fades and five-second lifetime.
 Preparation refreshes retain the Agent tab's selected conversation transport.
 They still check the current account before reading and before exposing history;
 refreshing readiness never selects a different transport or resubmits setup work.
+When a startup observation triggers a conversation refresh, its fresh entry
+account check may also publish that observed preparation state synchronously.
+There is no intervening asynchronous work or cached authorization; the completed
+history still requires its own account check before publication.
 
 | 2026-11-01 | Refresh preparation through the Agent's existing conversation transport, retaining fresh account checks around history reads. |
 
@@ -4206,3 +4210,5 @@ readings.*; the distinct written states of §13a are otherwise unchanged.
 | 2026-10-31 | Explain Machine resources in one line and reword its unavailable notices so they say the Agent is unaffected. |
 | 2026-10-31 | Reword the Agents inventory description and its first filter choices (*Created any way*, *With or without a chat channel*) so the filters read as questions a person asks rather than record fields; filter names are unchanged. |
 | 2026-10-31 | Cap the compact home mark at 134px, the size it rendered at beside the heading alone, so the new home explanation does not enlarge it. |
+
+| 2026-11-01 | Use the conversation refresh's fresh entry account check to publish pending preparation synchronously, avoiding a duplicate account round trip while retaining authorization before reads and history publication. |
