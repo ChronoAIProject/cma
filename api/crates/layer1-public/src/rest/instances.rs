@@ -12,6 +12,7 @@ use super::BodyProblem;
 
 #[derive(Clone)]
 pub struct HierarchyState {
+    pub(super) colors: Option<Arc<layer2_core::sandbox::colors::SandboxColorService>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     pub(super) users: Option<Arc<layer2_core::UserDirectory>>,
     pub(super) sandboxes: Arc<SandboxService>,
@@ -28,6 +29,7 @@ impl HierarchyState {
         operations: Arc<dyn OperationStore>,
     ) -> Self {
         Self {
+            colors: None,
             users: None,
             runtime_updates: None,
             sandboxes,
@@ -47,6 +49,14 @@ impl HierarchyState {
 
     pub fn with_user_directory(mut self, users: Arc<layer2_core::UserDirectory>) -> Self {
         self.users = Some(users);
+        self
+    }
+
+    pub fn with_sandbox_colors(
+        mut self,
+        colors: Arc<layer2_core::sandbox::colors::SandboxColorService>,
+    ) -> Self {
+        self.colors = Some(colors);
         self
     }
 }

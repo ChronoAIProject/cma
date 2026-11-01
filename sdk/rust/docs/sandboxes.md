@@ -72,6 +72,12 @@ unavailable, not that status alone authorizes an action. A race with new work ca
 return HTTP 409 `sandbox_lifecycle_busy`; refresh before retrying. Existing
 command replay semantics are unchanged.
 
+The owner's list, read and create responses carry an optional `Sandbox.color`:
+the colour every Agent in that Sandbox wears, as lowercase `#rrggbb`. The server
+assigns it and keeps it distinct from the owner's other live Sandboxes. It is
+`None` until assigned, on shared-grant reads and on older servers; any other
+spelling fails deserialization.
+
 ## Managed runtime updates
 
 Owner detail includes optional `Sandbox.runtime_update` information for managed

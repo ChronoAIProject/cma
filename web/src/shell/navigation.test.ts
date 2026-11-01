@@ -4,7 +4,7 @@ import type { SandboxDetail } from '../api/types';
 import { agentClient } from '../test/agent';
 import { testClient } from '../test/client';
 import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
-import { loadNavigation, useNavigation } from './navigation';
+import { loadNavigation, navigationAgent, useNavigation } from './navigation';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -195,5 +195,18 @@ describe('navigation hierarchy loading', () => {
     await expect(
       loadNavigation(testClient({ listSandboxes }), new AbortController().signal),
     ).rejects.toThrow(/did not advance/i);
+  });
+});
+
+describe('navigationAgent', () => {
+  it('finds an Agent with the Sandbox it works in, only once the hierarchy is ready', () => {
+    const sandbox = sandboxFixture();
+    const workspace = workspaceFixture();
+    const agent = workspace.agents[0]!;
+    const ready = { status: 'ready', items: [{ sandbox, workspaces: [workspace] }] } as const;
+    expect(navigationAgent(ready, agent.id)).toEqual({ agent, sandbox });
+    expect(navigationAgent(ready, 'agt_missing')).toBeUndefined();
+    expect(navigationAgent(ready, undefined)).toBeUndefined();
+    expect(navigationAgent({ status: 'loading' }, agent.id)).toBeUndefined();
   });
 });

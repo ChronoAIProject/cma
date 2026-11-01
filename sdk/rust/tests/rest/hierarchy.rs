@@ -86,6 +86,28 @@ fn sandbox_detail_preserves_optional_pinned_providers() {
     }
 }
 
+#[test]
+fn sandbox_colour_is_optional_and_only_in_its_single_spelling() {
+    let legacy: SandboxDetail = serde_json::from_value(sandbox_detail()).unwrap();
+    assert!(legacy.summary.sandbox.color.is_none());
+    let mut body = sandbox_detail();
+    body["color"] = json!("#2f96fa");
+    let detail: SandboxDetail = serde_json::from_value(body).unwrap();
+    assert_eq!(detail.summary.sandbox.color.as_deref(), Some("#2f96fa"));
+    for invalid in [
+        json!("#2F96FA"),
+        json!("2f96fa"),
+        json!("#2f96f"),
+        json!("blue"),
+        json!(null),
+        json!(7),
+    ] {
+        let mut body = sandbox_detail();
+        body["color"] = invalid;
+        assert!(serde_json::from_value::<SandboxDetail>(body).is_err());
+    }
+}
+
 #[tokio::test]
 async fn accessible_hierarchy_requires_explicit_shapes_and_exact_identity() {
     let server = Server::new().await;

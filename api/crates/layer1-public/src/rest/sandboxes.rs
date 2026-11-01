@@ -110,7 +110,12 @@ pub(super) async fn create(
                 )
                 .await
                 .map_err(HierarchyProblem::sandbox)?;
-            Ok((StatusCode::CREATED, Json(SandboxView::from(&sandbox))).into_response())
+            let mut view = SandboxView::from(&sandbox);
+            view.color =
+                super::sandbox_colors::colors(&command_state, &command_caller.subject, &[&sandbox])
+                    .await
+                    .remove(&view.id);
+            Ok((StatusCode::CREATED, Json(view)).into_response())
         },
     )
     .await
@@ -217,6 +222,8 @@ pub(super) async fn list(
         .map(|row| row.sandbox.owner.clone())
         .collect();
     let names = super::public_names::resolve(&state.users, &subjects).await;
+    let listed: Vec<_> = page.items.iter().map(|row| &row.sandbox).collect();
+    let colors = super::sandbox_colors::colors(&state, &caller.subject, &listed).await;
     Ok(Json(AccessibleSandboxPageView {
         items: page
             .items
@@ -224,6 +231,7 @@ pub(super) async fn list(
             .map(|row| {
                 let mut view = OwnerSandboxSummaryView::from(row);
                 view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
+                view.sandbox.color = colors.get(&view.sandbox.id).cloned();
                 AccessibleSandboxSummaryView::Personal(Box::new(view))
             })
             .collect(),
@@ -257,6 +265,16 @@ pub(super) async fn read(
             .map(|value| SandboxHierarchyReading::Personal(Box::new(value))),
     }
     .map_err(HierarchyProblem::sandbox_read)?;
+    // Only the owner's own read assigns or reads a colour, matching the owner
+    // list; shared-grant readers keep their default colour.
+    let color = match &reading {
+        SandboxHierarchyReading::Personal(personal) if personal.sandbox.owner == caller.subject => {
+            super::sandbox_colors::colors(&state, &caller.subject, &[&personal.sandbox])
+                .await
+                .remove(personal.sandbox.id.as_str())
+        }
+        _ => None,
+    };
     let runtime_update = match (&reading, &state.runtime_updates) {
         (SandboxHierarchyReading::Personal(personal), Some(service))
             if personal.sandbox.owner == caller.subject =>
@@ -273,6 +291,7 @@ pub(super) async fn read(
     let mut view = AccessibleSandboxDetailView::from(reading);
     if let AccessibleSandboxDetailView::Personal(personal) = &mut view {
         personal.sandbox.runtime_update = runtime_update;
+        personal.sandbox.color = color;
         let names = super::public_names::resolve(
             &state.users,
             &[layer2_core::SubjectId::new(personal.sandbox.owner.clone())],

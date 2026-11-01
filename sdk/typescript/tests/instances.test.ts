@@ -67,6 +67,21 @@ describe('Sandbox hierarchy resources', () => {
       await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
     }
   });
+  it('keeps a Sandbox colour only in its single lowercase #rrggbb spelling', async () => {
+    const test = transport();
+    const summary = { ...sandbox, workspace_count: 0, worktree_count: 0, agent_count: 0 };
+    const detail = { ...summary, workspaces: [] };
+    test.answer({ ...detail, color: '#2f96fa' });
+    expect((await test.client.sandboxes.read(sandbox.id)).color).toBe('#2f96fa');
+    test.answer({ items: [{ ...summary, color: '#62d079' }] });
+    expect((await test.client.sandboxes.list()).items[0]).toMatchObject({ color: '#62d079' });
+    test.answer(detail);
+    expect((await test.client.sandboxes.read(sandbox.id)).color).toBeUndefined();
+    for (const color of ['#2F96FA', '2f96fa', '#2f96f', 'blue', null, 7]) {
+      test.answer({ ...detail, color });
+      await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
   it('retains authoritative lifecycle eligibility and recorded phases without status inference', async () => {
     const test = transport();
     const base = {

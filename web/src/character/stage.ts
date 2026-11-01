@@ -17,6 +17,11 @@ export interface CharacterOptions {
   readonly still: boolean;
   readonly shadow: boolean;
   readonly tone: CharacterTone;
+  /**
+   * The Sandbox's colour as `#rrggbb`, replacing the tone's body alias. The avatar passes it
+   * only with the brand tone, so approval and failure always keep their own colour.
+   */
+  readonly color?: string;
   /** Seconds added to this character's clock, so neighbours never move in lockstep. */
   readonly phase: number;
 }
@@ -40,7 +45,7 @@ export interface StageSurface {
 export interface StageEnvironment {
   createSurface(): StageSurface | undefined;
   createRig(): CharacterRig;
-  readPalette(host: HTMLElement, bodyProperty: string): CharacterPalette;
+  readPalette(host: HTMLElement, bodyProperty: string, bodyColor?: string): CharacterPalette;
   requestFrame(callback: (time: number) => void): number;
   cancelFrame(handle: number): void;
   reducedMotion(): boolean;
@@ -177,7 +182,7 @@ export function createCharacterStage(env: StageEnvironment): CharacterStage {
     let rig: CharacterRig;
     try {
       rig = env.createRig();
-      rig.applyPalette(env.readPalette(canvas, BODY_PROPERTY[options.tone]));
+      rig.applyPalette(env.readPalette(canvas, BODY_PROPERTY[options.tone], options.color));
     } catch (error) {
       env.log('error', 'Character could not be built; showing the still mark', error);
       return undefined;
@@ -197,7 +202,7 @@ export function createCharacterStage(env: StageEnvironment): CharacterStage {
       },
       repaint() {
         try {
-          rig.applyPalette(env.readPalette(canvas, BODY_PROPERTY[options.tone]));
+          rig.applyPalette(env.readPalette(canvas, BODY_PROPERTY[options.tone], options.color));
         } catch (error) {
           env.log('error', 'Character palette did not resolve', error);
         }
@@ -290,7 +295,7 @@ export function createCharacterStage(env: StageEnvironment): CharacterStage {
           if (shown !== undefined) blend = { from: shown, elapsed: 0 };
           time = 0;
         }
-        if (next.tone !== previous.tone) instance.repaint();
+        if (next.tone !== previous.tone || next.color !== previous.color) instance.repaint();
         if (next.shadow !== previous.shadow) rig.setShadow(next.shadow);
         dirty = true;
         schedule();
