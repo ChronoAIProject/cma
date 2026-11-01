@@ -4,6 +4,8 @@ mod artifacts;
 mod hierarchy;
 #[path = "resource_access_tests/inventory.rs"]
 mod inventory;
+#[path = "resource_access_tests/provenance.rs"]
+mod provenance;
 #[path = "resource_access_tests/sandbox_inventory.rs"]
 mod sandbox_inventory;
 #[path = "resource_access_tests/share_links.rs"]
