@@ -20,7 +20,8 @@ import { AppFrame } from './shell/AppFrame';
 import { Sidebar } from './shell/Sidebar';
 import type { TreePermissions } from './shell/Tree';
 import { ManagerNavigation } from './shell/ManagerNavigation';
-import { useNavigation } from './shell/navigation';
+import { navigationAgent, useNavigation } from './shell/navigation';
+import { CharacterColorContext } from './character/characterColor';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
@@ -129,16 +130,12 @@ function ConsoleContent({
     refreshNavigation();
     setRevision((value) => value + 1);
   }, [refreshNavigation]);
+  const located = navigationAgent(navigation, route.kind === 'agent' ? route.agentId : undefined);
   const agent = useAgentController(client, personalAgentId, {
     viewerId: user.id,
     suspended: accessUncertain,
     authorizedLineage: agentAccess.personalLineage,
-    summary:
-      route.kind === 'agent' && navigation.status === 'ready'
-        ? navigation.items
-            .flatMap(({ workspaces }) => workspaces.flatMap((workspace) => workspace.agents))
-            .find(({ id }) => id === route.agentId)
-        : undefined,
+    summary: located?.agent,
     onHierarchyChange: refresh,
     onDeleted: () => onNavigate({ kind: 'home' }),
   });
@@ -250,26 +247,28 @@ function ConsoleContent({
         )}
       </section>
     ) : route.kind === 'agent' ? (
-      <AgentSurface
-        key={route.agentId}
-        user={user}
-        lifecycleClient={client}
-        draft={draft}
-        agentId={route.agentId}
-        viewerId={user.id}
-        controller={agent}
-        viewPosition={viewPosition}
-        accessUncertain={accessUncertain}
-        accessAuthorized={agentAccess.personalReady && !accessUncertain}
-        filesOpen={panel === 'files'}
-        onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
-        detailsOpen={detailsOpen}
-        onDetailsOpenChange={setDetailsOpen}
-        onNavigate={onNavigate}
-        permissions={permissions}
-        actionsBusy={actions.pending}
-        onAgentAction={actions.select}
-      />
+      <CharacterColorContext value={located?.sandbox.color}>
+        <AgentSurface
+          key={route.agentId}
+          user={user}
+          lifecycleClient={client}
+          draft={draft}
+          agentId={route.agentId}
+          viewerId={user.id}
+          controller={agent}
+          viewPosition={viewPosition}
+          accessUncertain={accessUncertain}
+          accessAuthorized={agentAccess.personalReady && !accessUncertain}
+          filesOpen={panel === 'files'}
+          onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
+          detailsOpen={detailsOpen}
+          onDetailsOpenChange={setDetailsOpen}
+          onNavigate={onNavigate}
+          permissions={permissions}
+          actionsBusy={actions.pending}
+          onAgentAction={actions.select}
+        />
+      </CharacterColorContext>
     ) : route.kind === 'sandbox' ? (
       <SandboxAccessPage
         key={route.sandboxId}

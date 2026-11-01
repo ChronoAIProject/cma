@@ -58,6 +58,7 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
     owner: value.owner,
     ownerName: value.owner_name ?? undefined,
     name: value.name,
+    color: value.color,
     status: value.status,
     runtimeUpdate:
       value.runtime_update === undefined ? undefined : runtimeUpdate(value.runtime_update),

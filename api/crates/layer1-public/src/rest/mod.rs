@@ -139,6 +139,7 @@ mod launch_events;
 mod launch_quota;
 mod launches;
 mod public_names;
+mod sandbox_colors;
 mod sandbox_commands;
 #[cfg(test)]
 mod sandbox_commands_tests;
