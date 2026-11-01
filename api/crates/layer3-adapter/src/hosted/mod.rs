@@ -19,6 +19,7 @@ mod deployment;
 mod home;
 #[cfg(test)]
 mod home_tests;
+mod inspection_timing;
 mod managed_context;
 mod memory;
 mod nonexecuting;

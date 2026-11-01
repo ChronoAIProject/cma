@@ -1,6 +1,7 @@
 //! One fresh graph proof authorizes one status request after exclusive checkout.
 use super::super::NativeStatusInspection;
 use super::*;
+use crate::hosted::inspection_timing;
 
 impl ProviderHostedControlTransport {
     pub(super) async fn inspect_reused_native_status(
@@ -40,7 +41,12 @@ impl ProviderHostedControlTransport {
         let slot = self.native_slot(&endpoint).await?;
         let mut cancelled = slot.cancellation();
         let exchange = async {
-            let lease = self.native_checkout(&endpoint, slot.clone()).await?;
+            let lease = inspection_timing::measure(
+                &sandbox_id,
+                "native_http_checkout",
+                self.native_checkout(&endpoint, slot.clone()),
+            )
+            .await?;
             if lease
                 .connection
                 .as_ref()
@@ -60,9 +66,12 @@ impl ProviderHostedControlTransport {
                 ));
             }
             lease.current().await?;
-            let response = self
-                .status_on_native_lease(&endpoint, proof.request(), lease)
-                .await?;
+            let response = inspection_timing::measure(
+                &sandbox_id,
+                "native_status_exchange",
+                self.status_on_native_lease(&endpoint, proof.request(), lease),
+            )
+            .await?;
             proof.complete(response).map(Some)
         };
         tokio::time::timeout(CONTROL_DEADLINE, async {
