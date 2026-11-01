@@ -138,3 +138,15 @@ export function useNavigation(client: CmaWebClient): NavigationState & { refresh
 
   return { ...state, refresh };
 }
+
+/** The Agent's navigation row and the Sandbox it works in, once the hierarchy has loaded. */
+export function navigationAgent(navigation: NavigationState, agentId: string | undefined) {
+  if (navigation.status !== 'ready' || agentId === undefined) return undefined;
+  for (const { sandbox, workspaces } of navigation.items) {
+    for (const workspace of workspaces) {
+      const agent = workspace.agents.find(({ id }) => id === agentId);
+      if (agent !== undefined) return { agent, sandbox };
+    }
+  }
+  return undefined;
+}
