@@ -73,10 +73,8 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
 });
 
-it('uses effective parent lifecycle status and draws a dot only for attention states', async () => {
+it('poses each Agent character from its effective status and moves only attention states', async () => {
   const refresh = vi.fn();
-  const dot = () =>
-    screen.getByRole('tree', { name: 'Personal Agents' }).querySelector('.statedot');
   const draw = (sandbox: 'active' | 'paused', agent: AgentStatus) => (
     <ManagerNavigation
       {...props}
@@ -85,29 +83,28 @@ it('uses effective parent lifecycle status and draws a dot only for attention st
   );
   const view = render(draw('active', 'ready'));
   const cases = [
-    // Ready is settled and usable: the slot stays blank, the word is still heard.
-    ['active', 'ready', undefined, 'Ready'],
-    ['active', 'starting', 'ongoing', 'Starting'],
-    ['active', 'working', 'ongoing', 'Working'],
-    ['active', 'waiting_approval', 'warning', 'Needs approval'],
-    ['active', 'failed', 'error', 'Needs attention'],
-    ['active', 'stopped', undefined, 'Stopped'],
-    // A held parent holds its Agents too, and a held state draws no dot.
-    ['paused', 'working', undefined, 'Paused'],
+    // Ready is settled and usable: a still, looking-ahead character; the word is still heard.
+    ['active', 'ready', 'idle', 'still', 'brand', 'Ready'],
+    ['active', 'starting', 'preparing', 'live', 'brand', 'Starting'],
+    ['active', 'working', 'thinking', 'live', 'brand', 'Working'],
+    ['active', 'waiting_approval', 'approval', 'live', 'warning', 'Needs approval'],
+    ['active', 'failed', 'failed', 'still', 'error', 'Needs attention'],
+    ['active', 'stopped', 'paused', 'still', 'brand', 'Stopped'],
+    // A held parent holds its Agents too: they sleep, still.
+    ['paused', 'working', 'paused', 'still', 'brand', 'Paused'],
   ] as const;
-  for (const [sandbox, agent, state, word] of cases) {
+  for (const [sandbox, agent, pose, motion, tone, word] of cases) {
     view.rerender(draw(sandbox, agent));
     const name = new RegExp(`^Agent one, ${word}`);
     const row = screen.getByRole('treeitem', { name });
     expect(row).toHaveAttribute('data-layout', 'line');
     expect(screen.getByRole('link', { name })).toBe(row.querySelector('a'));
-    if (state === undefined) {
-      expect(dot()).toBeNull();
-      expect(row.querySelector('.tree-row__signal')).not.toHaveAttribute('title');
-    } else {
-      expect(dot()).toHaveAttribute('data-state', state);
-      expect(row.querySelector('.tree-row__signal')).toHaveAttribute('title', word);
-    }
+    const character = row.querySelector('.tree-row__signal .character-avatar');
+    expect(character).toHaveAttribute('aria-hidden', 'true');
+    expect(character).toHaveAttribute('data-pose', pose);
+    expect(character).toHaveAttribute('data-motion', motion);
+    expect(character).toHaveAttribute('data-tone', tone);
+    expect(row.querySelector('.tree-row__signal')).toHaveAttribute('title', word);
   }
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Filter' }));

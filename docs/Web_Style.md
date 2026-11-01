@@ -132,6 +132,7 @@ second vocabulary.
 | `--dsw-alias-interactive-bg-hover-accent`    | `rgba(63,98,18,.08)`  | `rgba(195,253,67,.1)`   |
 | `--dsw-alias-interactive-bg-hover-danger`    | `rgba(188,59,38,.08)` | `rgba(255,90,69,.1)`    |
 | `--dsw-alias-interactive-bg-hover-solid`     | `#F4F4F5`             | `#1F1F23`               |
+| `--dsw-alias-image-outline`                  | `rgba(0,0,0,.1)`      | `rgba(255,255,255,.1)`  |
 
 | Alias                                          | Light                | Dark                   |
 | ---------------------------------------------- | -------------------- | ---------------------- |
@@ -206,6 +207,10 @@ Message-avatar fallback aliases are also appearance-independent:
 `--dsw-alias-avatar-label` is `zinc 50` (`#FAFAFA`). They retain a black circle
 with readable initials in either theme.
 
+The character body aliases (§28) are appearance-independent too:
+`--dsw-alias-character-brand` is `lime 400`, `-running` `ink 800`, `-completed` `moss 500`,
+`-pending` `amber 300` and `-failed` `red 600`.
+
 - **Backgrounds.** Light is white with `zinc 50` and `zinc 100` layers; dark climbs from
   `zinc 950` through `zinc 925`, `900` and `850`. Separation comes from a 1px zinc border first and
   shadow second, as in shadcn/ui.
@@ -226,9 +231,9 @@ with readable initials in either theme.
   `0 0 0 2px bg-base, 0 0 0 4px state-business-primary`.
 
 Measured on the base grounds, primary text is 19.9:1 light / 19.1:1 dark, secondary text is
-7.7:1 / 7.8:1, and the accent is 7.1:1 / 16.5:1. Tertiary (`zinc 500`) is 4.8:1 light and 4.1:1
-dark and therefore carries only non-essential or sufficiently large text in dark; required small
-metadata uses `label-caption`. `label-dimmed` is a disabled or non-text paint and never the sole
+7.7:1 / 7.8:1, and the accent is 7.1:1 / 16.5:1. Tertiary is `zinc 500` in light (4.8:1) and
+`zinc 450` (`#8A8A93`) in dark, 5.8:1 on the base and at least 4.8:1 on every dark layer (§29),
+so small tertiary metadata is readable in both appearances; it stays quieter than `label-caption`. `label-dimmed` is a disabled or non-text paint and never the sole
 readable account of state.
 
 The four former vendored sheets (`design-platform.css`, `effects-typography.css`, `scrollbar.css`,
@@ -316,10 +321,12 @@ The reference voice sits around that existing composite ramp:
 | Display              | 44px, 700, `-0.035em`                    | 56px, 900, `-0.02em`; Archivo may set `"wdth" 118` |
 | H1                   | 32px, 700, `-0.03em`                     | 32px, 800, `-0.03em`                               |
 | H2                   | 22px, 600, `-0.02em`                     | 22px, 700, `-0.02em`                               |
-| Kicker / field label | 10.5–11px mono, 500, uppercase, `0.14em` | 10.5–11px mono, 500, uppercase, `0.14em`           |
+| Kicker / field label | 12/18, 500, sentence case (`xxs-strong-12`) | 12/18, 500, sentence case (`xxs-strong-12`) |
 
-`0.14em` is the one adopted label tracking value even though the references vary from `0.12em` to
-`0.16em`. Letter spacing is otherwise zero unless this document names a display or label exception.
+Labels, kickers, eyebrows and pills are set in the interface face at `xxs-strong-12`, in sentence
+case with no tracking (§29). Mono is kept for identifiers — IDs, paths, commands, versions — where
+the face says "this is a literal". Letter spacing is otherwise zero unless this document names a
+display exception.
 
 ---
 
@@ -478,7 +485,7 @@ stays visible because it changes what the list is; it is two text tabs at 13px w
 track: the selected one in the primary ink at weight 500, the other in the secondary ink. They
 keep their pressed-button semantics (`aria-pressed`, one Tab stop each) inside the group named
 **Navigation view**. Scope and status only narrow the list, so they sit behind the **Filter** key
-at the row's right: a 28px icon button (44px below 30rem) with the sliders glyph, named *Filter*.
+at the row's right: a 32px icon button (44px below 30rem) with the sliders glyph, named *Filter*.
 When any filter differs from its default (Personal, All statuses) a 6px accent dot sits at its
 top-right corner, and a 12px secondary summary line under the row names only the non-default
 parts, joined by ` · ` — *Shared*, *Working*, or *Shared · Working* — and serves as the key's
@@ -490,16 +497,17 @@ their defaults. Each view keeps its own status choice.
 **Agents view.** One flat list of every Agent the scope shows, most recently active first, with no
 Workspace or Sandbox group headings. Each row is one line, 32px high (44px below 30rem):
 
-- A 16px leading slot that holds a 8px state dot (§12.1) only for a state that needs attention or
-  shows work — Starting, Working, Needs approval, Needs attention. Ready, Paused and Stopped draw
-  none; the slot stays so titles align with each other and with the action-row labels. The slot's
-  hover title is the status word.
+- A 24px leading slot holding the Agent's character, posed by its effective status (§28). Only
+  Starting, Working, Needs approval, Resuming, Pausing and Updating move; Ready, Paused, Stopped and
+  Needs attention draw their still moment. The row is inset 8px and the slot sits 4px from the
+  title, so the character's centre lies under the action-row glyphs and the title on the
+  action-row labels' edge. The slot's hover title is the status word.
 - The Agent title in 13px, truncated on one line with an ellipsis, full text on hover.
 - The relative age (12px tertiary, tabular) and the row's **⋯** menu at the right, shown only while
   the row is hovered, holds focus, or is the current Agent. At rest the menu keeps its place
   invisibly, so revealing it never shifts the title; it is still reached with Tab from its row.
 
-The status word is part of the row's accessible name even where no dot or word is drawn, so the
+The status word is part of the row's accessible name even though no word is drawn, so the
 list reads the same to a screen reader as before. The current row takes the active-item ground.
 Deleted Agents and removed Workspaces are absent; Agents of a paused Sandbox are dimmed but still
 open their conversation. The Shared and Organization Agent lists keep their two-line rows, which
@@ -649,8 +657,8 @@ the row.
 
 A **state dot** is reinforcement and never the signal — it is `aria-hidden`, and every caller pairs it
 with the word, so a state reads the same to somebody who cannot distinguish the colours. The
-one-line personal Agent list (§10) is the single place the word is not drawn beside the dot: there
-it is carried in the row's accessible name and the dot's hover title instead. Three of its
+one-line personal Agent list (§10) draws the Agent's character (§28) instead of a dot and no word:
+there the word is carried in the row's accessible name and the slot's hover title. Three of its
 four states are a solid core inside a same-coloured halo. The fourth is not colour alone: _running_ is
 a claim about right now, so its solid live core sends one expanding ping ring on a quiet loop. Under
 `prefers-reduced-motion: reduce` the ring is absent and the labelled core stays still. This replaces
@@ -697,7 +705,7 @@ sentences and full-screen characters are not loading states.
 
 A 44px field at radius 10, with its border on the **wrapper** rather than on the input. That is what
 lets a glyph sit inside the field instead of beside it, and it is why a field with an icon and one
-without focus identically. A label is the §4 mono 10.5px uppercase voice at `0.14em`. Focus swaps the
+without focus identically. A label is the §4 label voice (`xxs-strong-12`, sentence case) in the caption ink. Focus swaps the
 edge to the accent and adds `--dsw-ring-accent-soft`; because the ring is a token and does not enter
 layout, the control does not grow. Invalidity uses the same edge and the danger wash.
 
@@ -769,8 +777,8 @@ equivalence. Profile links remain independently clickable.
 
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
 fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 7. The Lumen row
-radius wins for both appearances; geometry never flips with theme. Hover is an accent wash plus
-accent ink, while a danger row uses the danger wash and danger ink.
+radius wins for both appearances; geometry never flips with theme. Hover is the neutral hover
+ground in the primary ink (§29), while a danger row uses the danger wash and danger ink.
 
 Rows are reachable by arrow keys, Home and End, and **wrap** rather than stopping dead — a list that
 stops at the last row puts the first one four presses away in a menu of five. Opening a value picker
@@ -969,11 +977,13 @@ Its left edge aligns with the Agent avatar and message row's left edge, without
 the message body's avatar-and-gap inset. Before the first reply, it uses the same alignment.
 It is transient turn status, never a persisted message or an extra transcript row.
 Its 44px control
-places the existing compact, rotating running CMA character before Thinking,
-followed by elapsed seconds and a single-line current-activity preview. Clicking
+places the turn's 32px character (§28) before Thinking, posed by what the turn
+is doing now — working while a tool is pending, replying while reply text
+streams, thinking otherwise — followed by elapsed seconds and a single-line
+current-activity preview. Clicking
 or keyboard activation opens the existing 120px capped body, containing current
 live reasoning and only pending or running tool calls. The character follows
-the shared visibility, static fallback and reduced-motion behavior in §23.
+the shared visibility, static fallback and reduced-motion behavior in §28.
 The elapsed figure comes from the recorded active turn's start timestamp, so
 navigation, reload and reconnect do not reset it. A new turn uses its own start;
 an unavailable timestamp leaves the duration unstated rather than inventing zero.
@@ -1030,9 +1040,11 @@ the public stream carries them; history read from the transcript alone has no
 plan, and no card is invented for it.
 
 An approval is a card in the timeline at the point of interruption, on the
-layer-1 ground with a warning-toned hairline and radius 8. An eyebrow reads
+layer-1 ground with a warning-toned hairline and radius 8. While it waits on a
+person, a 40px approval character (§28) leads the request; a decided card has
+none. An eyebrow reads
 **Approval**; the request's action reason is the heading and its detail the
-body. Below them sit **Deny**, **Abort** and the primary **Allow**, each over a
+body. Below them sit **Deny**, **Abort** and the primary **Allow**, each filling its equal column over a
 one-line caption that states its effect: Deny refuses this request and lets the
 Agent continue another way; Abort cancels the request without an answer; Allow
 lets the Agent go ahead. The captions describe the buttons, they do not rename
@@ -1186,7 +1198,7 @@ while a turn runs. On the right: the model and effort chip, the context ring, an
 the Send (or Queue/Interrupt) and Stop circles. There is no settings row and no
 usage row below the box. A chip is quiet: 12/18 secondary ink, no border, radius 8,
 an interactive hover wash, a leading icon or trailing chevron. Send is a 28px
-circle (44px below 30rem): a neutral `bg-layer-3` ground with dimmed ink while
+circle answering a 32px square (44px below 30rem): a neutral `bg-layer-3` ground with dimmed ink while
 there is nothing to send, the primary fill once the draft is ready. Below 30rem
 the permission and steering chips show only their icons and keep their names as
 accessible names; while a turn runs there the row wraps, putting the model chip,
@@ -1202,7 +1214,7 @@ with both values. It opens a popover card drawn on the body like a dropdown list
 256px wide and nudged inside the viewport, above the chip. The card holds:
 
 - the current effort word (Minimal, Low, Medium, High, Very high) as its heading,
-  14/20 semibold in the accent ink, and at the top right a 24px reset icon button,
+  14/20 semibold in the accent ink, and at the top right a 24px reset icon button answering a 32px square,
   **Reset to current settings**, which returns model and effort to the Agent's
   confirmed settings and is unavailable when they already match;
 - the model name with a `›` chevron, named *Model*, opening the shared dropdown of
@@ -1674,7 +1686,9 @@ no-preference` matches only where somebody has explicitly expressed none, so a p
 report the feature at all matches neither value and loses every transition. The suite refuses that
 too.
 
-**Nothing moves on hover**, and nothing is animated on the agent's own words. A turn arriving may
+**Nothing moves on hover**, and nothing is animated on the agent's own words. A pressed button
+settles to 96% over the fast duration and returns on release (§29); under reduced motion it
+does not move. A turn arriving may
 fade; the text inside it does not animate as it is read.
 
 ### View and message continuity
@@ -1694,11 +1708,13 @@ interaction immediately; presentation must never delay an action.
 ### What motion is for here
 
 Inside a working surface, motion reports a changed surface or ongoing work.
-The signed-in sidebar's §21 mark is the only brand animation in the shell.
-Its geometry draws once at shell mount and its asset-defined lens highlight
+The signed-in sidebar's §21 mark is the only decorative brand animation in the
+shell. Its geometry draws once at shell mount and its asset-defined lens highlight
 loops quietly; its wrapper never bobs, turns or scales. Reduced motion shows
 the finished mark at rest. The signed-out authentication gate uses a static
-brand asset and keeps sign-in immediately usable.
+brand asset and keeps sign-in immediately usable. The Agent characters of §28
+are not decoration: they move only to report work or a person being asked, and
+are otherwise still.
 
 **A surface that replaces another fades in.** Switching Agents changes the whole centre column, and
 without a handover it reads as a different screen rather than the same screen showing something else.
@@ -3947,3 +3963,187 @@ connection errors discard it; the viewer retains its normal connection fallback,
 first-frame readiness, explicit input control and display recovery.
 
 | 2026-11-01 | Overlap desktop connection setup with admitted Machine creation navigation, preserving owner checks, bounded single-use handoff and explicit desktop input control. |
+
+## 28. The character in the product (2026-11-01)
+
+The CMA character of §23 — its procedural geometry, MeshPhysical body and lenses, studio
+lights, lens glint and contact shadow — is the Agent's presence wherever the product lists
+or runs Agents. It is never redrawn, simplified or given props to explain a state: every
+pose moves only the rig the character already has (head look, float and sway, lift, scale,
+tilt, turn, hem breathing, glint and exposure), so the character in a 24px row and on the
+520px landing stage are the same object.
+
+**One registry.** `web/src/character/poses.ts` names every pose and is the only place
+motion is defined. `characterForStatus` (`status.ts`) maps each recorded status, after any
+parent lifecycle (§10), to a pose, a body tone and whether it moves in a list:
+
+| Status words | Pose | Moves in a list | Body |
+|---|---|---|---|
+| Starting, Updating access, Updating runtime | preparing: one turn per second | yes | brand lime |
+| Working | thinking: looks up and to the right, glint every 1.6s | yes | brand lime |
+| Needs approval | approval: leans in, larger, two hops every 2.8s | yes | pending amber |
+| Pausing | paused, breathing as it settles | yes | brand lime |
+| Resuming | resuming: stretches awake, then floats | yes | brand lime |
+| Ready, Live | idle: still, facing forward | no | brand lime |
+| Paused, Stopped, Deleting | paused: low, head down, dimmed | no | brand lime |
+| Needs attention | failed: drooped and tilted | no | failed red |
+
+The body colour only repeats a word that is already present. A pose that plays once (failed)
+holds its last frame, and a pose change eases over 300ms instead of jumping. Neighbouring
+characters take a stable clock offset from their Agent's identifier, so a list never moves
+in lockstep.
+
+**One stage.** Browsers keep roughly sixteen live WebGL contexts per page, so characters
+are not given renderers of their own. One shared renderer draws each character into the
+corner of its buffer and copies it into that character's own canvas. Frames are scheduled
+only for characters that are visible, moving, and on a shown document. Three.js loads on
+demand, after the shell is interactive. Each square is reserved before it is drawn, so rows
+never reflow when their characters arrive.
+
+**Never the only signal.** Characters are `aria-hidden`. Every placement keeps the status
+word in visible text, in an accessible name or in a hover title. Under
+`prefers-reduced-motion: reduce` every character draws its pose's still moment and
+nothing loops. When WebGL is unavailable or its context is lost, each character becomes
+the still §21 mark in its body colour, in the same square.
+
+**Sidebar.** Both navigation views lead every Agent row with its character: 24px in the
+Agents view (§10) and 20px in the Sandboxes tree, where it replaces the generic Agent
+glyph. Only the rows that show work or ask for a person move.
+
+| 2026-11-01 | Lead every sidebar Agent row with its status-posed 3D character from one pose registry and one shared WebGL stage; only work and approval move, reduced motion and missing WebGL draw still poses or the mark, and the status word stays in the row's accessible name and hover title. |
+
+**Conversation.** The character returns to the conversation where it reports something live,
+superseding the 2026-10-21 dot for Thinking:
+
+- The active Thinking control (§13) leads with a 32px character in the avatar column. It
+  works while a tool call is pending, replies while reply text streams, and thinks otherwise.
+  It leaves with the turn.
+- An approval still waiting on a person leads with a 40px approval character in the pending
+  amber. A decided approval is history and carries none.
+- A conversation with no messages yet shows the Agent's character at 120px with its contact
+  shadow, above the one line that says what to do (secondary ink). It is posed by the Agent's
+  status: it looks around while Ready, and stays still while Paused or failed.
+
+Message avatars keep the inline §21 mark: transcripts are history, and history does not move.
+
+| 2026-11-01 | Lead the live Thinking row, waiting approvals and empty conversations with the status-posed character; Thinking follows pending tools, streaming replies and reasoning, decided approvals and message history stay still. |
+
+## 29. Interface polish (2026-11-01)
+
+A pass over the whole signed-in product against two checklists: the detail principles
+(concentric radii, tabular figures, specific transitions, press feedback, hit areas, image
+outlines) and the app-screen principles (colour on data rather than chrome, honest states,
+receding navigation). Each change below amends the section it names; this section records
+why it was made.
+
+**Readable tertiary ink in dark.** The dark tertiary ink was `zinc 500`, 4.1:1 on the base
+and 3.7:1 on layer 2, yet it carried required small text — sidebar ages, field hints, record
+metadata and picker reasons. It is now `zinc 450` (`#8A8A93`): 5.8:1 on the base, 5.2:1 on
+layer 2 and 4.8:1 on layer 3, still clearly quieter than the caption ink. Fixing the one token
+fixes every surface that uses it. Light keeps `zinc 500` (4.8:1).
+
+| 2026-11-01 | Raise the dark tertiary ink to zinc 450 so small tertiary text meets 4.5:1 on every dark layer while staying quieter than caption. |
+
+**One reading size in a reply.** A reply's paragraphs were 16/28 while its list items and tables
+inherited the stream's 14px interface size, so any answer with bullets changed size halfway
+through. `.agent-content` now sets `--dsw-font-markdown-base` for everything it holds, and
+tables use `--dsw-font-markdown-table`. A reply's top heading is `markdown-h3` (20/30), below
+the 20px page title rather than above it, and every deeper level shares `markdown-h4` (16/28,
+600). Tables are row rules and alignment only: no cell grid, 8px by 12px cells, caption-ink
+heads and tabular figures. While a reply streams its paragraphs wrap plainly: pretty wrapping
+re-broke the last lines on every token. It returns once the reply settles.
+
+**Links are underlined at rest.** In dark the accent link measured 1.15:1 against the reply
+text, so a link told apart only by colour was invisible to many readers. Links are underlined
+at 1px, 3px below the baseline, in the link colour at 45%, and darken to the full colour on
+hover. This restores §18.12's underline.
+
+| 2026-11-01 | Set one reading size across a reply, cap its headings below the page title, draw tables as row rules with tabular figures, wrap streaming paragraphs plainly, and underline reply links at rest. |
+
+**Press feedback.** Only the primary and ghost buttons answered a press, by a fill change.
+Every enabled button now settles to 96% over the fast duration while pressed and returns on
+release. That is the one movement a control makes, and it confirms a click landed without
+claiming anything about the result. Hover still never moves. Reduced motion drops the scale.
+
+| 2026-11-01 | Settle every enabled button to 96% while pressed, with the scale in the shared transition rule and no movement under reduced motion. |
+
+**The current row is not a hovered row.** §10 gives the current Agent the active-item ground,
+but the tree drew it with the 4% hover tint, so the open conversation looked exactly like a
+row the pointer happened to rest on. The current tree row now takes
+`--dsw-specific-sidebar-nav-item-active`, the ground the action rows already use for the
+current page.
+
+| 2026-11-01 | Draw the current sidebar tree row on the active-item ground rather than the hover tint. |
+
+**Steady figures.** Elapsed preparation times, Trigger statistics, tool-call and queued counts,
+and sidebar ages changed width as they ticked and nudged the words beside them. Every `<time>`
+now takes tabular numerals from the base sheet, and so does each counter. This replaces the
+`.tabular` helper, which nothing used.
+
+| 2026-11-01 | Use tabular numerals for every time element and every changing count, and retire the unused tabular helper. |
+
+**Readable placeholders.** Field placeholders used the dimmed ink, about 2.6:1, though a
+placeholder is often the only hint of what a field takes. They now use the caption ink, as §23
+already did for the composer.
+
+| 2026-11-01 | Draw field placeholders in the caption ink instead of the dimmed ink. |
+
+**Font rendering.** Firefox on macOS now gets the same grayscale smoothing Chromium and Safari
+already had. `text-rendering: optimizeLegibility` is gone: Geist already sets its own kerning,
+and the property makes long transcripts noticeably slower to lay out.
+
+| 2026-11-01 | Add grayscale smoothing for Firefox on macOS and drop optimizeLegibility from the body. |
+
+**One label voice, in the interface face.** Section labels, field labels, card eyebrows and
+pills were 10–11px uppercase mono with 0.14em tracking — four slightly different versions, two
+below the 11px floor. Tiny tracked capitals in a code face are the most recognisable mark of a
+generated template, and they read as a category tag rather than a label. Every such label is
+now `xxs-strong-12`: 12/18 at weight 500, sentence case, no tracking, in the interface face.
+Field labels and section eyebrows take the caption ink; tone-bearing eyebrows, such as the
+approval card's warning, keep their tone. Mono stays for identifiers, where its meaning — a
+literal value — is true.
+
+| 2026-11-01 | Replace the uppercase mono label voice on eyebrows, field labels and pills with sentence-case 12/18 medium in the interface face; keep mono for identifiers. |
+
+**Lime means something.** Every menu row, every outline button and every picker caret turned lime
+on hover, so the accent flickered across chrome whenever the pointer moved and stopped meaning
+anything. §2 already says neutral interaction stays neutral. Menu rows, outline buttons and picker
+carets now hover with the neutral ground, primary ink and the level-4 border. Lime is kept for the
+one primary action, selection and the current item, live state, focus and data.
+
+| 2026-11-01 | Make menu-row, outline-button and picker-caret hovers neutral, keeping lime for primary actions, selection, live state, focus and data. |
+
+**Every key answers 32px.** §15 sets a 32px minimum target, but several keys were smaller:
+Send and Stop (28px), message footer keys (28px), the modal close (28px, shrunk under the shared
+small button), the sidebar row menu (24px), the effort reset (24px), the sidebar view tabs, the
+Filter and Clear keys, and the tool-group toggle (28px). Keys whose drawn size is part of the
+layout keep it and extend their hit area with a transparent pseudo-element to a 32px square.
+Footer keys sit 4px apart, so their squares meet without overlapping. The others now draw at
+32px. The modal close is the shared 32px small icon button again.
+
+| 2026-11-01 | Give every desktop key at least a 32px target: Send, footer, row-menu and reset keys extend their hit area, while the modal close, sidebar filter keys and tool-group toggle draw at 32px. |
+
+**Concentric corners and outlined pictures.** The menu's segmented choice track was 8px with
+3px padding around 6px choices, so the inner corners looked rounder than the outer ones. It is
+now 10px with 4px padding. Images and videos in replies, attachment previews and avatar photos
+carry a 1px inset outline in pure black or white at 10% (`--dsw-alias-image-outline`). A tinted
+neutral would pick up the ground beneath it and read as dirt on the edge.
+
+| 2026-11-01 | Make the menu's segmented track concentric and outline reply media, attachment previews and avatar photos with a 10% black or white hairline. |
+
+**Approval answers as one choice.** Deny, Abort and Allow were left-aligned inside equal
+columns, so their right edges were ragged and the three read as unrelated buttons. Each now
+fills its column at every width, as it already did below 30rem.
+
+| 2026-11-01 | Stretch each approval answer across its column at every width. |
+
+**Code you can take away.** Fenced code in a reply had no header and no copy key, so taking a
+command meant hand-selecting it. The intent of §18.11 had been lost. Each block now carries its
+fence's info string verbatim in 12px mono caption ink at the top left (no label when there is
+none, and no language is ever inferred). At the top right is a 32px **Copy code** key that
+writes the code exactly as fenced and shows a check for two seconds. Both sit inside the
+block's one frame above the first line. While the reply is still streaming the key is
+disabled, with the reason as its title, because half a command pasted into a shell is worse
+than none.
+
+| 2026-11-01 | Give fenced reply code its verbatim language label and a Copy code key that is disabled while the reply streams. |

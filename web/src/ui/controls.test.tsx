@@ -100,7 +100,7 @@ describe('the button', () => {
     );
     expect(css).toMatch(/\.button--outline\s*\{[^}]*var\(--dsw-alias-border-l3\)/);
     expect(css).toMatch(
-      /\.button--outline:hover:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-interactive-bg-hover-accent\)[^}]*var\(--dsw-alias-state-business-primary\)/,
+      /\.button--outline:hover:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-interactive-bg-hover\)[^}]*var\(--dsw-alias-border-l4\)/,
     );
   });
 
@@ -185,11 +185,22 @@ describe('the shared component vocabulary', () => {
     );
   });
 
+  it('settles a pressed button to 96% and keeps it still under reduced motion', () => {
+    const css = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
+    expect(css).toMatch(/\.button:active:not\(:disabled\) \{\s*scale: 0\.96;/);
+    expect(css).toMatch(
+      /prefers-reduced-motion: reduce[\s\S]*\.button:active:not\(:disabled\) \{\s*scale: none;/,
+    );
+    const shared = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
+    expect(shared).toMatch(/scale var\(--ds-transition-duration-fast\)/);
+  });
+
   it('pins the field, failure, progress, and skeleton idioms to their aliases', () => {
     const css = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
     expect(css).toMatch(
-      /\.field__label\s*\{[^}]*font-family: var\(--ds-font-family-code\)[^}]*font-size: 10\.5px[^}]*letter-spacing: 0\.14em/,
+      /\.field__label\s*\{[^}]*color: var\(--dsw-alias-label-caption\)[^}]*font: var\(--dsw-font-xxs-strong-12\)/,
     );
+    expect(css).not.toMatch(/\.field__label\s*\{[^}]*text-transform: uppercase/);
     expect(css).toMatch(
       /\.notice--fail\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)[^}]*border-left: 2px solid var\(--dsw-alias-state-error-primary\)/,
     );
@@ -297,7 +308,7 @@ describe('the value picker', () => {
     const css = readFileSync(join(SRC, 'ui', 'Menu.css'), 'utf8');
     expect(css).toMatch(/\.menu__item\s*\{[^}]*min-height: 40px[^}]*border-radius: 7px/);
     expect(css).toMatch(
-      /\.menu__item:hover:not\(\[aria-disabled='true'\]\)\s*\{[^}]*color: var\(--dsw-alias-state-business-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover-accent\)/,
+      /\.menu__item:hover:not\(\[aria-disabled='true'\]\)\s*\{[^}]*color: var\(--dsw-alias-label-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover\)/,
     );
     expect(css).toMatch(
       /\.menu__item--danger:hover:not\(\[aria-disabled='true'\]\)[^{]*\{[^}]*color: var\(--dsw-alias-state-error-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)/,
