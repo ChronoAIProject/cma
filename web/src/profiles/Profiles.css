@@ -31,9 +31,7 @@
 .profile-editor__eyebrow {
   margin: 0 0 8px;
   color: var(--dsw-alias-label-caption);
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  text-transform: uppercase;
+  font: var(--dsw-font-xxs-strong-12);
 }
 .profile-editor__band {
   padding: 24px 0;
@@ -55,10 +53,7 @@
 .profile-field > label,
 .profile-field__label {
   color: var(--dsw-alias-label-secondary);
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
+  font: var(--dsw-font-xxs-strong-12);
 }
 .profile-field__help {
   margin: 0;
