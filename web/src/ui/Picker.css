@@ -36,7 +36,7 @@
 
 .picker__anchor:hover:not(:disabled) .picker__caret,
 .picker__anchor:focus-visible .picker__caret {
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary);
 }
 
 /*

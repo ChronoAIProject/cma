@@ -24,6 +24,7 @@ pub(super) struct AgentContext {
     pub(super) workspace: Workspace,
     pub(super) worktree: Worktree,
     pub(super) runtime: RuntimeHandle,
+    pub(super) agent_resource_preparation: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +131,7 @@ impl AgentWorker {
             ));
         }
         let inspection_started = std::time::Instant::now();
-        let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
+        let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime(
             self.dependencies.adapter.as_ref(),
             &sandbox,
             &self.config.deployment_id,
@@ -144,12 +145,14 @@ impl AgentWorker {
             succeeded = attached.is_ok(),
             "Agent runtime inspection completed"
         );
-        let attached = attached.map_err(adapter_failure)?;
+        let (attached, status) = attached.map_err(adapter_failure)?;
         Ok(AgentContext {
             sandbox,
             workspace,
             worktree,
             runtime: attached,
+            agent_resource_preparation: status
+                .is_some_and(|status| status.agent_resource_preparation),
         })
     }
 

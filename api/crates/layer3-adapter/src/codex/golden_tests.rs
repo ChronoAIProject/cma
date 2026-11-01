@@ -415,3 +415,6 @@ fn acp_open_settings_map_permissions_and_preserve_credential_ownership() {
         }
     }
 }
+
+#[path = "agent_resources_tests.rs"]
+mod agent_resources;

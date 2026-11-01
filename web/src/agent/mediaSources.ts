@@ -9,6 +9,16 @@ export interface MessageMediaAccess {
 
 export const MessageMediaContext = createContext<MessageMediaAccess | undefined>(undefined);
 
+/** A conversation's media access, offered only with a files client and settled authorization. */
+export function conversationMedia(
+  agentId: string,
+  files: AgentFilesClient | undefined,
+  authorized: boolean,
+  workingDirectory: string | undefined,
+): MessageMediaAccess | undefined {
+  return files !== undefined && authorized ? { agentId, files, workingDirectory } : undefined;
+}
+
 export function safeHttpUrl(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   try {

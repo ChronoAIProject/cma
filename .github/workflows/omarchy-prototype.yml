@@ -1,0 +1,125 @@
+name: Omarchy runtime prototype
+on:
+  push:
+    branches: [codex/omarchy-runtime-20261030, codex/prepared-activation-batch-20261101]
+    paths:
+      - infra/runtime/Dockerfile
+      - api/**
+      - .github/scripts/**
+      - .github/workflows/omarchy-prototype.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: omarchy-prototype-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Reserve space on the disposable runner
+        timeout-minutes: 3
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+      - name: Download retained donor with verified CMA runtime binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/omarchy-download-base.py
+      - name: Verify base provenance and load exact image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/omarchy-base.py /tmp/cma-base
+      - name: Build isolated Omarchy image
+        id: build
+        run: |
+          docker build --target omarchy --build-arg OMARCHY_CMA_BASE=cma-omarchy-base:verified \
+            --build-arg CHRONO_BUILD_SHA="$GITHUB_SHA" \
+            --build-arg CHRONO_BUILD=omarchy-prototype \
+            --progress=plain -t cma-runtime-omarchy:ci -f infra/runtime/Dockerfile .
+      - name: Release build-only layers before scanning
+        run: |
+          image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
+          docker builder prune --all --force
+          docker image rm cma-omarchy-base:verified
+          test "$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')" = "$image_id"
+          df -h /
+      - name: Verify CMA runtime contract on Arch
+        id: contract
+        run: node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" /tmp/omarchy-evidence/runtime-contract.json
+      - name: Docker host Chromium namespace prerequisite
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          uname -r
+          ls -l /dev/dri || true
+          modinfo vkms || true
+          modinfo vgem || true
+      - name: Verify desktop and native agent controls
+        id: desktop
+        if: always() && steps.build.outcome == 'success'
+        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence
+      - name: Compare with a virtual graphics device on this disposable runner
+        id: graphics
+        if: always() && steps.build.outcome == 'success'
+        env:
+          CMA_OMARCHY_TEST_DRM: '1'
+        run: |
+          sudo modprobe vkms
+          ls -l /dev/dri
+          node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence/virtual-drm
+      - name: Verify desktop with the production image temporary directory
+        id: image_tmp
+        if: always() && steps.build.outcome == 'success'
+        env:
+          CMA_OMARCHY_TEST_IMAGE_TMP: '1'
+        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" /tmp/omarchy-evidence/image-tmp
+      - name: Retain startup results before the full image scan
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v5
+        with:
+          name: omarchy-startup-${{ github.sha }}
+          path: /tmp/omarchy-evidence/
+          retention-days: 7
+      - name: Scan experimental image
+        id: scan
+        if: always() && steps.build.outcome == 'success'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: cma-runtime-omarchy:ci
+          format: json
+          output: /tmp/omarchy-evidence/vulnerabilities.json
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Export candidate with immutable identity
+        if: always() && steps.build.outcome == 'success'
+        env:
+          DESKTOP_OUTCOME: ${{ steps.desktop.outcome }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          CONTRACT_OUTCOME: ${{ steps.contract.outcome }}
+          GRAPHICS_OUTCOME: ${{ steps.graphics.outcome }}
+          IMAGE_TMP_OUTCOME: ${{ steps.image_tmp.outcome }}
+        run: |
+          python3 .github/scripts/omarchy-export.py "$GITHUB_SHA" /tmp/omarchy-image /tmp/omarchy-evidence
+      - name: Retain candidate image
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v5
+        with:
+          name: omarchy-runtime-candidate-${{ github.sha }}
+          path: /tmp/omarchy-image/
+          compression-level: 0
+          retention-days: 7
+      - name: Retain verification evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: omarchy-runtime-evidence-${{ github.sha }}
+          path: /tmp/omarchy-evidence/
+          retention-days: 7

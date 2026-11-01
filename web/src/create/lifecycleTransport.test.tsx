@@ -11,6 +11,7 @@ import { lifecycleStorageKey } from './lifecycleIntent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { connectionClient } from '../connections/client';
 import { readAgentConnections } from '../connections/preparation';
+import * as desktop from '../agent/desktopPreparation';
 
 const operation: AgentLifecycleOperationView = {
   id: 'operation-one',
@@ -35,8 +36,14 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-it('overlaps actual-Agent preparation with lineage checks and transfers the pending selection across navigation unmount', async () => {
+it('overlaps retained Machine preparation with lineage checks and transfers across navigation unmount', async () => {
   const h = harness();
+  const desktopHandoff = vi.fn();
+  const desktopRelease = vi.fn();
+  const prepareDesktop = vi.spyOn(desktop, 'prepareDesktop').mockReturnValue({
+    handoff: desktopHandoff,
+    release: desktopRelease,
+  });
   const flag = deferred<Response>();
   const response = await h.eligibility();
   h.eligibility.mockClear();
@@ -54,7 +61,11 @@ it('overlaps actual-Agent preparation with lineage checks and transfers the pend
     lifecycleStorageKey('alice'),
     JSON.stringify({
       version: 1,
-      intent: { key: 'same-key', body: { name: 'Agent' }, receipt: { id: operation.id } },
+      intent: {
+        key: 'same-key',
+        body: { name: 'Agent', machine_included: true },
+        receipt: { id: operation.id },
+      },
     }),
   );
   const prepare = vi.spyOn(client.agentTransport!, 'prepare');
@@ -66,6 +77,8 @@ it('overlaps actual-Agent preparation with lineage checks and transfers the pend
   expect(readAgent).toHaveBeenCalledOnce();
   expect(readSandbox).not.toHaveBeenCalled();
   expect(prepare).toHaveBeenCalledExactlyOnceWith('agt_1', 'alice');
+  expect(prepareDesktop).toHaveBeenCalledExactlyOnceWith(client, 'agt_1', 'alice');
+  expect(desktopHandoff).not.toHaveBeenCalled();
   expect(connectionClient.check).toHaveBeenCalledExactlyOnceWith(
     { type: 'agent', id: 'agt_1' },
     undefined,
@@ -77,6 +90,8 @@ it('overlaps actual-Agent preparation with lineage checks and transfers the pend
     expect(onCreated).toHaveBeenCalledExactlyOnceWith({ id: 'agt_1', status: 'starting' }),
   );
   view.unmount();
+  expect(desktopHandoff).toHaveBeenCalledOnce();
+  expect(desktopRelease).toHaveBeenCalledOnce();
   const entryIdentity = deferred<string | undefined>();
   const finalIdentity = deferred<string | undefined>();
   h.currentUser
@@ -119,43 +134,75 @@ it.each([
   ['unknown viewer', operation, operation.id, undefined],
 ] as const)('does not prepare with %s', async (_reason, current, receipt, viewer) => {
   const h = harness();
-  renderHook(() => useLifecycleTransport(h.client, current, receipt, viewer));
+  const prepareDesktop = vi.spyOn(desktop, 'prepareDesktop');
+  renderHook(() => useLifecycleTransport(h.client, current, receipt, viewer, true));
   await act(async () => undefined);
   expect(h.currentUser).not.toHaveBeenCalled();
   expect(h.eligibility).not.toHaveBeenCalled();
   expect(connectionClient.check).not.toHaveBeenCalled();
+  expect(prepareDesktop).not.toHaveBeenCalled();
+});
+
+it.each([false, true])('prepares desktop only for an explicit Machine creation (%s)', (machine) => {
+  const h = harness();
+  const release = vi.fn();
+  const handoff = vi.fn();
+  const prepareDesktop = vi.spyOn(desktop, 'prepareDesktop').mockReturnValue({ handoff, release });
+  const view = renderHook(() =>
+    useLifecycleTransport(h.client, operation, operation.id, 'alice', machine),
+  );
+  if (machine) expect(prepareDesktop).toHaveBeenCalledExactlyOnceWith(h.client, 'agt_1', 'alice');
+  else expect(prepareDesktop).not.toHaveBeenCalled();
+  act(() => view.result.current());
+  view.unmount();
+  expect(handoff).toHaveBeenCalledTimes(machine ? 1 : 0);
+  expect(release).toHaveBeenCalledTimes(machine ? 1 : 0);
 });
 
 it('reuses one preparation across repeated operation polls and running-to-succeeded updates', () => {
   const h = harness();
+  const desktopHandoff = vi.fn();
+  const desktopRelease = vi.fn();
+  const prepareDesktop = vi.spyOn(desktop, 'prepareDesktop').mockReturnValue({
+    handoff: desktopHandoff,
+    release: desktopRelease,
+  });
   const release = vi.fn();
   const handoff = vi.fn();
   const prepare = vi
     .spyOn(h.client.agentTransport!, 'prepare')
     .mockReturnValue({ release, handoff });
   const view = renderHook(
-    ({ current }) => useLifecycleTransport(h.client, current, operation.id, 'alice'),
+    ({ current }) => useLifecycleTransport(h.client, current, operation.id, 'alice', true),
     { initialProps: { current: operation } },
   );
   view.rerender({ current: { ...operation, events: [] } });
   view.rerender({ current: { ...operation, status: 'succeeded' } });
   expect(prepare).toHaveBeenCalledOnce();
+  expect(prepareDesktop).toHaveBeenCalledOnce();
   act(() => view.result.current());
   expect(handoff).toHaveBeenCalledOnce();
   view.unmount();
   expect(release).toHaveBeenCalledOnce();
+  expect(desktopHandoff).toHaveBeenCalledOnce();
+  expect(desktopRelease).toHaveBeenCalledOnce();
 });
 
 it.each(['owner', 'client', 'operation', 'Agent', 'refusal', 'close'] as const)(
   'releases preparation when %s changes',
   (change) => {
     const h = harness();
+    const desktopRelease = vi.fn();
+    vi.spyOn(desktop, 'prepareDesktop').mockReturnValue({
+      handoff: vi.fn(),
+      release: desktopRelease,
+    });
     const release = vi.fn();
     const handoff = vi.fn();
     vi.spyOn(h.client.agentTransport!, 'prepare').mockReturnValue({ release, handoff });
     const view = renderHook(
       ({ client, current, receipt, viewer }) =>
-        useLifecycleTransport(client, current, receipt, viewer),
+        useLifecycleTransport(client, current, receipt, viewer, true),
       {
         initialProps: {
           client: h.client,
@@ -181,6 +228,7 @@ it.each(['owner', 'client', 'operation', 'Agent', 'refusal', 'close'] as const)(
         viewer: change === 'owner' ? 'bob' : 'alice',
       });
     expect(release).toHaveBeenCalledOnce();
+    expect(desktopRelease).toHaveBeenCalledOnce();
     expect(handoff).not.toHaveBeenCalled();
   },
 );

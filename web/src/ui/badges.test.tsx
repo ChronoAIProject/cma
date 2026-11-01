@@ -57,13 +57,13 @@ describe('the pill', () => {
     expect(css).not.toMatch(/\.pill--active\s*\{[^}]*\n\s*border:/);
   });
 
-  it('uses the shared mono-uppercase badge voice', () => {
+  it('uses the shared sentence-case label voice (§29)', () => {
     const css = readFileSync(join(SRC, 'ui', 'Pill.css'), 'utf8');
     expect(css).toMatch(/\.pill\s*\{[^}]*height: 24px[^}]*border-radius: 12px/);
-    expect(css).toMatch(/\.pill\s*\{[^}]*font-family: var\(--ds-font-family-code\)/);
-    expect(css).toMatch(/\.pill\s*\{[^}]*font-size: 10\.5px/);
-    expect(css).toMatch(/\.pill\s*\{[^}]*letter-spacing: 0\.14em/);
-    expect(css).toMatch(/\.pill\s*\{[^}]*text-transform: uppercase/);
+    expect(css).toMatch(/\.pill\s*\{[^}]*font: var\(--dsw-font-xxs-strong-12\)/);
+    expect(css).not.toMatch(
+      /\.pill\s*\{[^}]*(text-transform: uppercase|font-family-code|letter-spacing)/,
+    );
   });
 });
 

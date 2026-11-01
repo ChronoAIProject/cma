@@ -1,9 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type RFB from '@novnc/novnc';
+import {
+  desktopSocketUrl,
+  takePreparedDesktop,
+  type DesktopPreparationScope,
+} from './desktopPreparation';
 import { desktopInput } from './desktopInput';
 import { watchDesktopDisplay } from './desktopDisplay';
 
-export type DesktopPhase = 'connecting' | 'loading' | 'recovering' | 'ready' | 'error';
+export type DesktopPhase = 'waiting' | 'connecting' | 'loading' | 'recovering' | 'ready' | 'error';
 
 /** Poll the first frame quickly; the settled display uses a separate sparse monitor. */
 export function waitForDesktopFrame(target: HTMLElement, ready: () => void) {
@@ -27,17 +32,28 @@ export function waitForDesktopFrame(target: HTMLElement, ready: () => void) {
   return () => window.clearTimeout(timer);
 }
 
-export function useDesktopConnection(agentId: string, attempt: number, inputAllowed: boolean) {
+export function useDesktopConnection(
+  agentId: string,
+  attempt: number,
+  inputAllowed: boolean,
+  runtimeReady: boolean,
+  preparation?: DesktopPreparationScope,
+) {
+  const { context, owner } = preparation ?? {};
   const screen = useRef<HTMLDivElement>(null);
   const connection = useRef<RFB>(undefined);
   const input = useRef<ReturnType<typeof desktopInput>>(undefined);
-  const [phase, setPhase] = useState<DesktopPhase>('connecting');
+  const [phase, setPhase] = useState<DesktopPhase>(runtimeReady ? 'connecting' : 'waiting');
   const [error, setError] = useState('');
   const [recovery, setRecovery] = useState(0);
-  const [generation, setGeneration] = useState({ agentId, attempt });
-  if (generation.agentId !== agentId || generation.attempt !== attempt) {
-    setGeneration({ agentId, attempt });
-    setPhase('connecting');
+  const [generation, setGeneration] = useState({ agentId, attempt, runtimeReady });
+  if (
+    generation.agentId !== agentId ||
+    generation.attempt !== attempt ||
+    generation.runtimeReady !== runtimeReady
+  ) {
+    setGeneration({ agentId, attempt, runtimeReady });
+    setPhase(runtimeReady ? 'connecting' : 'waiting');
     setError('');
     setRecovery(0);
   }
@@ -50,6 +66,9 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
   }, [inputAllowed, phase]);
 
   useEffect(() => {
+    // The stream is owner-authorized only after the Sandbox becomes Active.
+    // A later revival opens a fresh viewer without restoring manual input.
+    if (!runtimeReady) return;
     let disposed = false;
     let failed = false;
     let rfb: RFB | undefined;
@@ -94,11 +113,13 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
       .then(({ default: Client }) => {
         if (disposed || failed || !screen.current) return;
         const target = screen.current;
-        const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-        rfb = new Client(
-          target,
-          `${scheme}://${location.host}/api/v1/agents/${encodeURIComponent(agentId)}/desktop/ws`,
-        );
+        const prepared = takePreparedDesktop({ context, owner }, agentId);
+        try {
+          rfb = new Client(target, prepared?.socket ?? desktopSocketUrl(agentId));
+        } catch (error) {
+          prepared?.socket.close();
+          throw error;
+        }
         rfb.scaleViewport = true;
         // Keep Agent screenshot coordinates stable while the viewer scales.
         rfb.resizeSession = false;
@@ -126,6 +147,7 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
           fail('Connection lost. Reconnect, and close any other desktop viewer if needed.'),
         );
         rfb.addEventListener('securityfailure', () => fail('Desktop connection refused.'));
+        prepared?.replay();
       })
       .catch(() => fail('Could not load the desktop viewer. Reconnect to try again.'));
     return () => {
@@ -139,7 +161,7 @@ export function useDesktopConnection(agentId: string, attempt: number, inputAllo
       connection.current = undefined;
       rfb?.disconnect();
     };
-  }, [agentId, attempt, recovery]);
+  }, [agentId, attempt, context, owner, recovery, runtimeReady]);
 
   return { screen, phase, error, focus: () => connection.current?.focus() };
 }

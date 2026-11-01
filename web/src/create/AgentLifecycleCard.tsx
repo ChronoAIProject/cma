@@ -54,7 +54,13 @@ function AgentLifecycleForm({
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const { pending, failure, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
-  const handoffTransport = useLifecycleTransport(client, operation, createdReceipt?.id, viewerId);
+  const handoffTransport = useLifecycleTransport(
+    client,
+    operation,
+    createdReceipt?.id,
+    viewerId,
+    lifecycle.intent?.body.machine_included === true,
+  );
   const admitted = useLifecycleAgent(
     client,
     operation,
@@ -99,6 +105,11 @@ function AgentLifecycleForm({
   const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
   const machineIncludedAvailable =
     workspaceId === undefined && sandboxId === undefined && canCreateSandbox;
+  useEffect(() => {
+    // Fetch static viewer code during creation; the owned Agent page opens the stream.
+    if (machineIncludedAvailable && machineIncluded)
+      void import('@novnc/novnc').catch(() => undefined);
+  }, [machineIncludedAvailable, machineIncluded]);
   const submit = () => {
     if (!canCreate) return;
     if (!repositoryValid) {
