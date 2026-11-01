@@ -69,3 +69,39 @@ reservations used about 0.41 cores on average but hit the one-core quota in
 This capacity change addresses measured contention; it does not establish the
 five-second creation budget. Verify that budget from the actual Create Agent
 click through usable conversation and, for machines, a connected desktop.
+
+Prepared ownership replay may combine Worktree and Agent-home preparation into
+one authenticated runtime request. Both cleanup intents still commit before the
+request; both original operation IDs, digests, resource fences and journals remain
+authoritative. The runtime executes the pair in order under its mutation gate,
+and the API publishes both validated receipts atomically. A partial or lost reply
+retains both debts for recovery and never triggers an automatic separate-request
+fallback. Prepared Codex close/load, fresh runtime identity proof and final
+connection publication remain required.
+
+The API selects this path only from the capability returned by its fresh bound
+runtime inspection. It opts in with the HTTP Accept media type
+`application/vnd.chrono.cma.agent-resources-status+json`; request JSON is unchanged.
+Only that status response includes `agent_resource_preparation`. Old APIs receive
+the prior status shape, including embedded Workspace protocol status, and old
+runtimes leave the new capability absent. An absent capability keeps the existing
+two-request path. Both image contract probes execute receipt replay and capability
+negotiation against the shipped supervisor. The Omarchy build now copies the
+supervisor from the current source build while retaining its pinned tool donor.
+These checks establish behavior, not the end-to-end five-second acceptance target.
+
+Production promotion on 1 November 2026 pins the API, agent-only runtime and
+Omarchy runtime to the verified artifacts from implementation PR #1263. Both
+native pools and both preparation targets remain two, at 2 CPU and 8 GiB per
+Sandbox. The Deployment prepared-target override now matches the ConfigMap;
+reapplying the manifests must not silently lower the agent-only target to one.
+The Web manifest records the already-deployed UI and all retained asset images
+so returning conversation tabs keep loading their original chunks.
+
+The candidate passed runtime receipt/capability contracts and an isolated
+production microVM desktop/control check, with the exact test resources removed.
+These checks permit release promotion; they do not establish the UI latency
+target. Before this optimization, six prepared creation trials measured
+4.810/5.157/4.886 seconds for agent-only and 5.301/4.805/5.831 seconds for
+Omarchy. Strict five-second production acceptance remains pending new timed
+Create Agent trials and live desktop/Agent lifecycle verification.

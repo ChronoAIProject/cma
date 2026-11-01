@@ -297,6 +297,16 @@ impl SandboxAdapter for HostedAdapter {
         workspace::reconcile_removal(self, handle, expected_runtime, request).await
     }
 
+    async fn prepare_agent_resources(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        worktree: &WorktreeRequest,
+        home: &AgentHomeRequest,
+    ) -> crate::Result<WorktreeReceipt> {
+        agent_resources::prepare(self, handle, authority_fence, worktree, home).await
+    }
+
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
@@ -466,16 +476,7 @@ impl SandboxAdapter for HostedAdapter {
     }
 
     async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> crate::Result<()> {
-        self.known_state(handle).await?;
-        if !valid_checkpoint_reference(&request.object_reference, &request.sha256) {
-            return Err(AdapterError::Rejected(
-                "restore object reference or digest is invalid".into(),
-            ));
-        }
-        expect_ack(
-            self.exchange(handle, RequestFrame::Restore(request.clone()))
-                .await?,
-        )
+        self.restore_checkpoint(handle, request).await
     }
 
     async fn resources(&self, handle: &RuntimeHandle) -> crate::Result<ResourceReading> {
