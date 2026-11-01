@@ -18,7 +18,7 @@ pub(in crate::store) fn policy_document(
         doc! {"_id":record.sandbox_id.as_str(),"document_schema_version":DOCUMENT_SCHEMA_VERSION,"owner_kind":kind,"owner_subject":subject.as_str(),"revision":signed(record.revision,"resource policy revision").map_err(|_|ResourceAccessStoreError::Corrupt)?,"record":record_bson(record).map_err(|_|ResourceAccessStoreError::Corrupt)?},
     )
 }
-pub(super) fn read_policy(
+pub(in crate::store) fn read_policy(
     document: &Document,
 ) -> Result<ResourcePolicyRecord, ResourceAccessStoreError> {
     let record = read_record(document).map_err(|_| ResourceAccessStoreError::Corrupt)?;
@@ -50,7 +50,7 @@ pub(super) fn share_document(
     }
     Ok(document)
 }
-pub(super) fn read_share(
+pub(in crate::store) fn read_share(
     sandbox_id: &SandboxId,
     document: &Document,
 ) -> Result<ResourceShare, ResourceAccessStoreError> {
