@@ -1,5 +1,6 @@
 //! One-operation native authority and process inspection.
 use super::*;
+use crate::hosted::inspection_timing;
 
 pub(super) fn observation(object: &DynamicObject) -> Result<RuntimeObservation> {
     let identity = crate::hosted::deployment::provider_metadata_identity(object.annotations())?;
@@ -78,10 +79,13 @@ impl AgentSandboxBackend {
         let Some(proof) = inspection.prove().await? else {
             return Ok(None);
         };
-        let response = self
-            .transport
-            .exchange(handle, RequestFrame::RuntimeStatus(proof.request().clone()))
-            .await?;
+        let response = inspection_timing::measure(
+            &home.request.sandbox_id,
+            "native_status_exchange",
+            self.transport
+                .exchange(handle, RequestFrame::RuntimeStatus(proof.request().clone())),
+        )
+        .await?;
         proof.complete(response).map(Some)
     }
 }
@@ -121,8 +125,16 @@ impl NativeStatusInspection<'_> {
     pub(crate) async fn prove(&self) -> Result<Option<NativeStatusProof>> {
         let (backend, handle, request, home) = (self.backend, self.handle, self.request, self.home);
         let (proof, policy) = tokio::join!(
-            backend.client.native_runtime_proof(handle, request, home),
-            backend.client.verify_native_runtime_policy(handle, home),
+            inspection_timing::measure(
+                &home.request.sandbox_id,
+                "native_authority_graph",
+                backend.client.native_runtime_proof(handle, request, home),
+            ),
+            inspection_timing::measure(
+                &home.request.sandbox_id,
+                "native_runtime_policy",
+                backend.client.verify_native_runtime_policy(handle, home),
+            ),
         );
         // Consume graph errors and the bootstrap fallback before policy errors,
         // preserving the original authority/error precedence of this operation.
