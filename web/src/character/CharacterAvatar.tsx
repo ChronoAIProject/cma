@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import markMarkup from '../assets/brand/cma-mark.svg?raw';
+import { CharacterColorContext } from './characterColor';
 import type { CharacterPose } from './poses';
 import type { CharacterHandle, CharacterOptions, CharacterTone } from './stage';
 import './CharacterAvatar.css';
@@ -11,6 +12,11 @@ interface CharacterAvatarProps {
   readonly still?: boolean;
   readonly shadow?: boolean;
   readonly tone?: CharacterTone;
+  /**
+   * The Sandbox's colour as `#rrggbb`; without it the surrounding `CharacterColorContext`
+   * applies. It replaces only the brand body: approval and failure keep their status colour.
+   */
+  readonly color?: string;
   /** Seconds to offset this character's clock from its neighbours. */
   readonly phase?: number;
   readonly className?: string;
@@ -36,20 +42,23 @@ export function CharacterAvatar({
   still = false,
   shadow = false,
   tone = 'brand',
+  color,
   phase = 0,
   className,
 }: CharacterAvatarProps) {
+  const inherited = useContext(CharacterColorContext);
+  const body = tone === 'brand' ? (color ?? inherited) : undefined;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const handleRef = useRef<CharacterHandle | undefined>(undefined);
   const [status, setStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
-  const optionsRef = useRef<CharacterOptions>({ pose, still, shadow, tone, phase });
+  const optionsRef = useRef<CharacterOptions>({ pose, still, shadow, tone, color: body, phase });
 
   // Declared before the mount effect so a stage that resolves later attaches the latest options.
   useEffect(() => {
-    const next = { pose, still, shadow, tone, phase };
+    const next = { pose, still, shadow, tone, color: body, phase };
     optionsRef.current = next;
     handleRef.current?.update(next);
-  }, [pose, still, shadow, tone, phase]);
+  }, [pose, still, shadow, tone, body, phase]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -82,7 +91,8 @@ export function CharacterAvatar({
   return (
     <span
       className={className === undefined ? 'character-avatar' : `character-avatar ${className}`}
-      style={{ width: size, height: size }}
+      // The still mark draws in currentColor, so the fallback wears the same Sandbox colour.
+      style={{ width: size, height: size, color: body }}
       data-pose={pose}
       data-tone={tone}
       data-motion={still ? 'still' : 'live'}

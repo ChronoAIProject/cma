@@ -5,6 +5,7 @@ import { navigationFixture } from '../test/hierarchy';
 import type { NavigationSandbox } from './navigation';
 import type { AppRoute } from '../routing/routes';
 import { Tree, activityLabel, type TreeAction, type TreePermissions } from './Tree';
+import { agentSignal } from './treePresentation';
 
 const FULL_ACCESS: TreePermissions = {
   createWorkspace: true,
@@ -327,6 +328,31 @@ describe('Sandbox navigation tree', () => {
     expect(character).toHaveAttribute('data-pose', 'idle');
     expect(character).toHaveAttribute('data-motion', 'still');
     expect(character).toHaveStyle({ width: '20px', height: '20px' });
+  });
+
+  it('dresses each Agent in its Sandbox colour', () => {
+    renderTree({
+      items: navigationFixture().map((item) => ({
+        ...item,
+        sandbox: { ...item.sandbox, color: '#2f96fa' },
+      })),
+    });
+    const agent = screen.getByText('Agent one').closest('[role="treeitem"]');
+    const character = agent?.querySelector<HTMLElement>('.tree-row__icon .character-avatar');
+    expect(character?.style.color).toBe('rgb(47, 150, 250)');
+  });
+
+  it('lets approval and failure colours replace the Sandbox colour', () => {
+    for (const [status, tone] of [
+      ['waiting_approval', 'warning'],
+      ['failed', 'error'],
+    ] as const) {
+      const { container, unmount } = render(<>{agentSignal(status, 'agt_1', 20, '#2f96fa')}</>);
+      const character = container.querySelector<HTMLElement>('.character-avatar');
+      expect(character).toHaveAttribute('data-tone', tone);
+      expect(character?.style.color).toBe('');
+      unmount();
+    }
   });
 
   it('keeps Agent navigation available during runtime updates', () => {
