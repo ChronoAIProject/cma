@@ -40,7 +40,7 @@ it('polls a starting Agent until its first message is durably delivered without 
     expect(result.current.state.conversation.messages).toHaveLength(0);
   delivered = true;
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(100);
   });
   if (result.current.state.status === 'ready')
     expect(result.current.state.conversation.messages[0]?.content).toBe('Inspect this repository.');
@@ -69,7 +69,7 @@ it('keeps startup reads sequential, slows prolonged preparation and stops on unm
   const client = agentClient({ readAgent, readAgentTranscript });
   const { unmount } = renderHook(() => useAgentController(client, 'agt_1'));
   await act(() => vi.advanceTimersByTimeAsync(0));
-  await act(() => vi.advanceTimersByTimeAsync(250));
+  await act(() => vi.advanceTimersByTimeAsync(100));
   expect(readAgent).toHaveBeenCalledTimes(2);
   await act(() => vi.advanceTimersByTimeAsync(10000));
   expect(readAgent).toHaveBeenCalledTimes(2);
@@ -101,7 +101,7 @@ it('observes startup again without an extra idle interval after a slow successfu
   const client = agentClient({ readAgent });
   const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
   await act(() => vi.advanceTimersByTimeAsync(0));
-  await act(() => vi.advanceTimersByTimeAsync(350));
+  await act(() => vi.advanceTimersByTimeAsync(200));
   expect(readAgent).toHaveBeenCalledTimes(2);
   await act(async () => finishRead?.(starting));
   await act(() => vi.advanceTimersByTimeAsync(1));
