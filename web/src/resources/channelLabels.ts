@@ -2,7 +2,7 @@ import type { ChannelUsageSummary } from '@chronoai/cma-sdk';
 
 export type ChannelFilter = 'all' | 'active' | 'history' | 'detached' | 'never';
 export const channelFilters: readonly { value: ChannelFilter; label: string }[] = [
-  { value: 'all', label: 'All channel activity' },
+  { value: 'all', label: 'With or without a chat channel' },
   { value: 'active', label: 'Currently linked to a channel' },
   { value: 'history', label: 'Any channel history' },
   { value: 'detached', label: 'Previously linked, now detached' },
