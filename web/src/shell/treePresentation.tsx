@@ -20,14 +20,16 @@ export function stateMeta(status: Parameters<typeof statusLabel>[0], extra?: Rea
 
 /**
  * An Agent row's leading slot (§10, §28): the Agent's character, posed by its
- * status. Only work in progress or a person being asked moves, so the rows
- * that move are worth looking at. The word stays in the hover title and the
- * row's accessible name; the character itself is decorative.
+ * status and wearing its Sandbox's colour. Only work in progress or a person
+ * being asked moves, so the rows that move are worth looking at. The word
+ * stays in the hover title and the row's accessible name; the character itself
+ * is decorative.
  */
 export function agentSignal(
   status: Parameters<typeof statusLabel>[0],
   agentId: string,
   size: number,
+  color?: string,
 ) {
   const presence = characterForStatus(status);
   return (
@@ -35,6 +37,7 @@ export function agentSignal(
       <CharacterAvatar
         pose={presence.pose}
         tone={presence.tone}
+        color={color}
         still={!presence.animate}
         phase={characterPhase(agentId)}
         size={size}
