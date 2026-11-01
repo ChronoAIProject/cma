@@ -8,6 +8,7 @@ import { join } from 'node:path';
 const requiredPrefixes = [
   'document_artifacts::mongo_integration_tests::',
   'store::message_feedback::tests::',
+  'store::sandbox_colors::tests::',
   'agent_lifecycle::workspace::tests::mongo::',
   'agent_lifecycle::workspace::tests::bootstrap::',
   'warm_pools::tests::mongo::',

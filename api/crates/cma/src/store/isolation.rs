@@ -109,6 +109,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
+    super::sandbox_colors::COLLECTION,
     "sandbox_controls",
     "sandbox_credential_revocations",
     "sandbox_credentials",
