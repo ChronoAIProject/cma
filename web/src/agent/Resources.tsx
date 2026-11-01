@@ -166,13 +166,16 @@ export function Resources({
                   error:
                     current.reading === undefined
                       ? cause instanceof ApiError && cause.code === 'agent_resources_unsupported'
-                        ? 'This sandbox does not report resources'
+                        ? 'This Sandbox does not report usage readings.'
                         : cause instanceof ApiError && cause.status === 403
                           ? 'Resources are not permitted for this Agent'
-                          : 'Resources unavailable'
+                          : 'Usage readings are unavailable right now. Your Agent keeps working.'
                       : 'Last reading; reconnecting',
                 }
-              : { sampleIdentity, error: 'Resources unavailable' },
+              : {
+                  sampleIdentity,
+                  error: 'Usage readings are unavailable right now. Your Agent keeps working.',
+                },
           );
       } finally {
         pending = false;

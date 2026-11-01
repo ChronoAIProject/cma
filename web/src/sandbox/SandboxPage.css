@@ -19,6 +19,9 @@
 .sandbox-page p {
   color: var(--dsw-alias-label-secondary);
 }
+.sandbox-page__hint {
+  margin: -8px 0 16px;
+}
 /* Links in the content; the header's breadcrumb keeps its own quieter ink. */
 .sandbox-page__band a {
   color: var(--dsw-alias-brand-primary);

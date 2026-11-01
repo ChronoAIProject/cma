@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
+import { readableError } from '../vocabulary/errors';
 import type { SandboxDetail, SandboxSummary, WorkspaceDetail } from '../api/types';
 
 export interface NavigationSandbox {
@@ -66,7 +67,7 @@ export async function loadNavigation(
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : 'The Sandbox hierarchy could not be loaded.';
+  return readableError(error, 'The Sandbox hierarchy could not be loaded.');
 }
 
 export function useNavigation(client: CmaWebClient): NavigationState & { refresh: () => void } {
