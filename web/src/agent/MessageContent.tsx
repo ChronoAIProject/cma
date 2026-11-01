@@ -8,6 +8,7 @@ import {
   messageMediaType,
   safeHttpUrl,
 } from './mediaSources';
+import { CodeBlock, CodeStreamingContext } from './CodeBlock';
 import './MessageContent.css';
 
 const components: Components = {
@@ -61,6 +62,7 @@ const components: Components = {
     );
   },
   img: ({ src, alt }) => <MessageMedia src={src ?? ''} label={alt ?? ''} image />,
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   table: ({ children }) => (
     <div className="agent-content__table-wrap">
       <table>{children}</table>
@@ -77,19 +79,21 @@ export const MessageContent = memo(function MessageContent({
 }) {
   const access = useContext(MessageMediaContext);
   return (
-    <div className="agent-content" data-streaming={streaming ? '' : undefined}>
-      {/* Default HTML handling preserves placeholders and markup as inert text. */}
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        components={components}
-        urlTransform={(url) =>
-          messageFilePath(url, access?.workingDirectory) === undefined
-            ? defaultUrlTransform(url)
-            : url
-        }
-      >
-        {content}
-      </Markdown>
-    </div>
+    <CodeStreamingContext.Provider value={streaming}>
+      <div className="agent-content" data-streaming={streaming ? '' : undefined}>
+        {/* Default HTML handling preserves placeholders and markup as inert text. */}
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          components={components}
+          urlTransform={(url) =>
+            messageFilePath(url, access?.workingDirectory) === undefined
+              ? defaultUrlTransform(url)
+              : url
+          }
+        >
+          {content}
+        </Markdown>
+      </div>
+    </CodeStreamingContext.Provider>
   );
 });

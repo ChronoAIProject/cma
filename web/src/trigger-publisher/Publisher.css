@@ -115,8 +115,7 @@
 .trigger-field__label,
 .trigger-badge-options legend,
 .trigger-rail__mobile > span {
-  font: 500 11px/1.5 var(--ds-font-family-code);
-  text-transform: uppercase;
+  font: var(--dsw-font-xxs-strong-12);
   color: var(--dsw-alias-label-secondary);
 }
 .trigger-publisher select,
@@ -372,6 +371,7 @@
 .trigger-stats dd {
   margin-top: 8px;
   font: var(--dsw-font-base-strong-16);
+  font-variant-numeric: tabular-nums;
 }
 @media (max-width: 48rem) {
   .trigger-publisher__body {
