@@ -1004,6 +1004,16 @@ both debts; recovery can replay the pair or use the ordinary individual steps
 when preparation evidence is unavailable. No runtime request is omitted, and
 metadata conflict retries contain publication only.
 
+Prepared Open/Ready publication decides eligibility inside the same Mongo
+transaction that validates the current Agent and writes its parent fences. It
+reads the consumed preparation once and fences that exact revision before
+committing the Agent, Worktree, logs and Sandbox event. Ineligibility aborts
+without writes and retains the ordinary startup path; a changed parent or writer
+still conflicts. Logs distinguish `ineligible` fallback from `conflict` fallback
+without recording document contents. This removes a separate eligibility
+snapshot and duplicate reads; it does not omit fresh runtime/home checks or prove
+that provisioning meets any latency target.
+
 First-message admission backs off bounded transaction conflicts. When all attempts
 are known to have aborted, the worker rereads the exact first-message record and
 its current unexpired writer lease before releasing that lease for a one-second
