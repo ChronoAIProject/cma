@@ -89,3 +89,19 @@ two-request path. Both image contract probes execute receipt replay and capabili
 negotiation against the shipped supervisor. The Omarchy build now copies the
 supervisor from the current source build while retaining its pinned tool donor.
 These checks establish behavior, not the end-to-end five-second acceptance target.
+
+Production promotion on 1 November 2026 pins the API, agent-only runtime and
+Omarchy runtime to the verified artifacts from implementation PR #1263. Both
+native pools and both preparation targets remain two, at 2 CPU and 8 GiB per
+Sandbox. The Deployment prepared-target override now matches the ConfigMap;
+reapplying the manifests must not silently lower the agent-only target to one.
+The Web manifest records the already-deployed UI and all retained asset images
+so returning conversation tabs keep loading their original chunks.
+
+The candidate passed runtime receipt/capability contracts and an isolated
+production microVM desktop/control check, with the exact test resources removed.
+These checks permit release promotion; they do not establish the UI latency
+target. Before this optimization, six prepared creation trials measured
+4.810/5.157/4.886 seconds for agent-only and 5.301/4.805/5.831 seconds for
+Omarchy. Strict five-second production acceptance remains pending new timed
+Create Agent trials and live desktop/Agent lifecycle verification.
