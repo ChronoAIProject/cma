@@ -14,6 +14,61 @@ use super::support::{
 use super::AgentWorker;
 
 impl AgentWorker {
+    pub(super) async fn replay_and_open_prepared(
+        &self,
+        agent: Agent,
+        context: AgentContext,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let Some(completed) = self.replay_prepared_resources(agent, &context, now).await? else {
+            return Ok(());
+        };
+        if !context.agent_resource_preparation {
+            return Ok(());
+        }
+        // Publication released the replay lease. Preserve the ordinary durable
+        // claim for Open, including a new fence; another worker may win it.
+        let at = now + started.elapsed();
+        let Some(claimed) = self
+            .dependencies
+            .store
+            .claim_agent_work(
+                &completed.id,
+                &self.config.holder,
+                rfc3339_at(at),
+                rfc3339_at(at + self.config.lease_duration),
+            )
+            .await?
+        else {
+            return Ok(());
+        };
+        let at = now + started.elapsed();
+        if !same_prepared_open(&completed, &claimed) {
+            // A concurrent owner command or another completed worker may have
+            // changed the step. Execute its fresh claim without this observation.
+            return Box::pin(self.execute(claimed, at)).await;
+        }
+        if !super::startup_publication::holds_startup_authority(&claimed, &self.config.holder, at) {
+            return Err(SandboxStoreError::Conflict);
+        }
+        self.open_conversation_with_context(claimed, Some(context), at)
+            .await
+    }
+
+    #[cfg(test)]
+    pub(in crate::sandbox) async fn replay_and_open_prepared_for_test(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let context = self
+            .startup_context(&agent)
+            .await
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        self.replay_and_open_prepared(agent, context, now).await
+    }
+
     #[cfg(test)]
     pub(in crate::sandbox) async fn replay_prepared_for_test(
         &self,
@@ -24,15 +79,17 @@ impl AgentWorker {
             .startup_context(&agent)
             .await
             .map_err(|_| SandboxStoreError::Conflict)?;
-        self.replay_prepared_resources(agent, context, now).await
+        self.replay_prepared_resources(agent, &context, now)
+            .await
+            .map(|_| ())
     }
 
-    pub(super) async fn replay_prepared_resources(
+    async fn replay_prepared_resources(
         &self,
         agent: Agent,
-        context: AgentContext,
+        context: &AgentContext,
         now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<Option<Agent>, SandboxStoreError> {
         let started = tokio::time::Instant::now();
         let mut timing = super::startup_timing::StartupTiming::new(&agent);
         // The store proved the immutable prepared hierarchy. This path still
@@ -73,7 +130,7 @@ impl AgentWorker {
             ),
         ];
         let agent = self
-            .prepare_replay_pair(agent, &context, &evidence, now)
+            .prepare_replay_pair(agent, context, &evidence, now)
             .await?;
         timing.completed("prepared_replay_intent");
         let fence = claimed_fence(&agent, &self.config.holder)?;
@@ -99,7 +156,7 @@ impl AgentWorker {
                 .await
         };
         match result {
-            Ok(receipt) if valid_worktree_receipt(&context, &worktree, &receipt) => {}
+            Ok(receipt) if valid_worktree_receipt(context, &worktree, &receipt) => {}
             Ok(_) => {
                 return self
                     .handle_failure(
@@ -111,11 +168,13 @@ impl AgentWorker {
                         now + started.elapsed(),
                     )
                     .await
+                    .map(|()| None)
             }
             Err(error) => {
                 return self
                     .handle_failure(agent, adapter_failure(error), now + started.elapsed())
                     .await
+                    .map(|()| None)
             }
         }
         timing.completed(if context.agent_resource_preparation {
@@ -140,7 +199,8 @@ impl AgentWorker {
             {
                 return self
                     .handle_failure(agent, adapter_failure(error), now + started.elapsed())
-                    .await;
+                    .await
+                    .map(|()| None);
             }
         }
         if !context.agent_resource_preparation {
@@ -181,7 +241,7 @@ impl AgentWorker {
                                 expected_agent_revision: revision,
                                 holder: self.config.holder.clone(),
                                 fence,
-                                agent,
+                                agent: agent.clone(),
                                 worktree: None,
                                 appended_at: stamp,
                                 sandbox_event: None,
@@ -194,7 +254,8 @@ impl AgentWorker {
                                     },
                                 ],
                             })
-                            .await
+                            .await?;
+                        Ok(Some(agent))
                     }
                 },
             )
@@ -250,3 +311,21 @@ impl AgentWorker {
         .await
     }
 }
+
+fn same_prepared_open(completed: &Agent, claimed: &Agent) -> bool {
+    if completed.work.step != AgentWorkStep::OpenConversation
+        || completed.work.lease.is_some()
+        || claimed.work.lease.as_ref().map(|lease| lease.fence) != Some(completed.work.next_fence)
+        || completed.work.next_fence.checked_add(1) != Some(claimed.work.next_fence)
+    {
+        return false;
+    }
+    let mut normalized = claimed.clone();
+    normalized.work.lease = None;
+    normalized.work.next_fence = completed.work.next_fence;
+    super::startup_publication::only_startup_metadata_changed(completed, &normalized)
+}
+
+#[cfg(test)]
+#[path = "prepared_claim_tests.rs"]
+mod claim_tests;

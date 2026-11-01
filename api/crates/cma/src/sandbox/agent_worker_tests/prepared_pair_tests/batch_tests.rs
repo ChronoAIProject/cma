@@ -2,6 +2,10 @@ use super::*;
 use layer3_adapter::*;
 use std::sync::atomic::AtomicBool;
 
+#[path = "continuation_tests.rs"]
+mod continuation_tests;
+use continuation_tests::ReplayChange;
+
 struct ObservedAdapter {
     inner: Arc<dyn SandboxAdapter>,
     store: Arc<InMemorySandboxStore>,
@@ -12,6 +16,9 @@ struct ObservedAdapter {
     individual: AtomicUsize,
     lose_response: AtomicBool,
     refuse_inspection: AtomicBool,
+    opens: AtomicUsize,
+    refuse_open: AtomicBool,
+    after_replay: Mutex<Option<ReplayChange>>,
 }
 
 #[async_trait::async_trait]
@@ -26,7 +33,11 @@ impl SandboxAdapter for ObservedAdapter {
                 "fresh process proof unavailable".into(),
             ));
         }
-        let mut inspected = self.inner.inspect_runtime(request).await?.unwrap();
+        let mut inspected = self
+            .inner
+            .inspect_runtime(request)
+            .await?
+            .ok_or_else(|| AdapterError::Unavailable("inspected runtime is absent".into()))?;
         // This port fixture supplies the observed capability for the exact
         // in-memory runtime. Production obtains it from authenticated status.
         inspected.status = Some(
@@ -62,6 +73,10 @@ impl SandboxAdapter for ObservedAdapter {
         self.inner
             .materialize_agent_home(handle, fence, home)
             .await?;
+        let change = self.after_replay.lock().unwrap().take();
+        if let Some(change) = change {
+            change.apply(self).await;
+        }
         if self.lose_response.swap(false, Ordering::SeqCst) {
             return Err(AdapterError::Unavailable(
                 "response lost after both effects".into(),
@@ -171,6 +186,7 @@ impl SandboxAdapter for ObservedAdapter {
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<ConversationChannel> {
+        self.observe_open(authority_fence).await?;
         self.inner
             .open_agent(handle, authority_fence, request, updates)
             .await
@@ -184,6 +200,7 @@ impl SandboxAdapter for ObservedAdapter {
         conversation_id: &str,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<ConversationChannel> {
+        self.observe_open(authority_fence).await?;
         self.inner
             .reconnect_agent(handle, authority_fence, request, conversation_id, updates)
             .await
@@ -244,6 +261,9 @@ fn use_adapter(harness: &mut Harness, agent: &Agent, supported: bool) -> Arc<Obs
         individual: AtomicUsize::new(0),
         lose_response: AtomicBool::new(false),
         refuse_inspection: AtomicBool::new(false),
+        opens: AtomicUsize::new(0),
+        refuse_open: AtomicBool::new(false),
+        after_replay: Mutex::new(None),
     });
     let mut config = AgentWorkerConfig::new("agent-worker", DEPLOYMENT_ID);
     config.lease_duration = Duration::from_secs(30);
@@ -347,4 +367,25 @@ async fn prepared_batch_refuses_missing_fresh_inspection_without_any_resource_ef
     assert_eq!(adapter.batches.load(Ordering::SeqCst), 0);
     assert_eq!(adapter.individual.load(Ordering::SeqCst), 0);
     assert!(harness.stored(&agent.id).await.work.cleanup_debt.is_empty());
+}
+
+impl ObservedAdapter {
+    async fn observe_open(&self, fence: u64) -> layer3_adapter::Result<()> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        let agent = self.store.get_agent(&self.agent_id).await.unwrap().unwrap();
+        assert_eq!(agent.work.step, AgentWorkStep::OpenConversation);
+        assert_eq!(agent.work.lease.as_ref().unwrap().fence, fence);
+        assert_eq!(agent.work.receipts.len(), 2);
+        assert_eq!(agent.work.cleanup_debt.len(), 1);
+        assert_eq!(
+            agent.work.cleanup_debt[0].step,
+            AgentWorkStep::OpenConversation
+        );
+        if self.refuse_open.swap(false, Ordering::SeqCst) {
+            return Err(AdapterError::Unavailable(
+                "fresh command authority unavailable".into(),
+            ));
+        }
+        Ok(())
+    }
 }
