@@ -36,6 +36,9 @@ export function SandboxOverview({
       {runtime}
       <section className="sandbox-page__band">
         <h2>Machine resources</h2>
+        <p className="sandbox-page__hint">
+          How much memory, processing power and network the Agent’s computer is using.
+        </p>
         {resourceAgent === undefined ? (
           <p>Resources are available when this Sandbox has an Agent.</p>
         ) : (

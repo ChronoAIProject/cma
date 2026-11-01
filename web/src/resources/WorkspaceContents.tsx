@@ -142,10 +142,11 @@ export function WorkspaceContents({
     return <SkeletonRows rows={2} label="Loading authorized Workspace" />;
   if (current.state.status === 'error')
     return (
-      <div role="alert">
+      <section className="sandbox-page" role="alert">
+        <h1>Workspace unavailable</h1>
         <p>{current.state.message}</p>
         <Button onClick={current.reload}>Check Workspace access</Button>
-      </div>
+      </section>
     );
   const workspace = current.state.value.detail;
   const agents = (
