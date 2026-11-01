@@ -57,22 +57,26 @@ pub(crate) struct ControlPlaneComposition {
 
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
-        let stores = Arc::new(
-            MongoStores::connect_with_authority(
-                &config.mongodb_uri,
-                &config.mongodb_database,
-                &config.deployment_id,
-                &config.auth_encryption_key,
-                config.activity_retention,
-                (
-                    &config.runtime.sandbox_image,
-                    config.runtime.home_policy.as_ref(),
-                ),
-                config.mongodb_authority,
-            )
-            .await
-            .map_err(|error| format!("durable stores are not usable: {error}"))?,
+        let mut stores = MongoStores::connect_with_authority(
+            &config.mongodb_uri,
+            &config.mongodb_database,
+            &config.deployment_id,
+            &config.auth_encryption_key,
+            config.activity_retention,
+            (
+                &config.runtime.sandbox_image,
+                config.runtime.home_policy.as_ref(),
+            ),
+            config.mongodb_authority,
+        )
+        .await
+        .map_err(|error| format!("durable stores are not usable: {error}"))?;
+        stores.sandbox_model = Arc::new(
+            (*stores.sandbox_model)
+                .clone()
+                .with_machine_runtime_version(config.runtime.machine_sandbox_image.clone()),
         );
+        let stores = Arc::new(stores);
         let activity = ActivityService::new(stores.activity.clone());
         let documents = documents::compose(config, &stores)?;
         let users = UserDirectory::new(stores.users.clone());

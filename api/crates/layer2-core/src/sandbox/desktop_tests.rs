@@ -18,6 +18,7 @@ async fn desktop_fixture(
     isolated: bool,
     status: SandboxStatus,
     bound: bool,
+    agent_status: AgentStatus,
 ) -> DesktopService {
     let store = Arc::new(store::InMemorySandboxStore::default());
     let mut root = sandbox();
@@ -43,7 +44,7 @@ async fn desktop_fixture(
     store.create_workspace(workspace()).await.unwrap();
     store.create_worktree(worktree()).await.unwrap();
     let mut a = agent();
-    a.status = AgentStatus::Ready;
+    a.status = agent_status;
     a.profile.content.isolated_agent = isolated;
     a.conversation.conversation_id = Some("conversation".into());
     a.conversation.runtime_generation = Some(1);
@@ -57,7 +58,8 @@ async fn desktop_fixture(
 
 #[tokio::test]
 async fn desktop_uses_sandbox_configuration_without_changing_frozen_conversation_grants() {
-    let service = desktop_fixture(true, false, SandboxStatus::Active, true).await;
+    let service =
+        desktop_fixture(true, false, SandboxStatus::Active, true, AgentStatus::Ready).await;
     let owner = Caller::new(
         SubjectId("owner".into()),
         Authorization::new([Capability::UseOwnSandboxes]),
@@ -94,10 +96,50 @@ async fn desktop_refuses_headless_isolated_paused_and_unbound_sandboxes() {
         (true, false, SandboxStatus::Paused, true),
         (true, false, SandboxStatus::Active, false),
     ] {
-        let service = desktop_fixture(machine, isolated, status, bound).await;
+        let service = desktop_fixture(machine, isolated, status, bound, AgentStatus::Ready).await;
         assert!(matches!(
             service.available(&owner, &AgentId("agt_test".into())).await,
             Err(DesktopError::Unavailable)
         ));
+    }
+}
+
+#[tokio::test]
+async fn desktop_startup_requires_an_active_owned_machine_and_refuses_terminal_agents() {
+    let owner = Caller::new(
+        SubjectId("owner".into()),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let other = Caller::new(SubjectId("other".into()), owner.authorization.clone());
+    let id = AgentId("agt_test".into());
+    for sandbox_status in [
+        SandboxStatus::Provisioning,
+        SandboxStatus::Installing,
+        SandboxStatus::Active,
+        SandboxStatus::Reviving,
+        SandboxStatus::Paused,
+    ] {
+        for agent_status in [
+            AgentStatus::Starting,
+            AgentStatus::Ready,
+            AgentStatus::Working,
+            AgentStatus::WaitingApproval,
+            AgentStatus::Paused,
+            AgentStatus::Stopped,
+            AgentStatus::Failed,
+            AgentStatus::Deleted,
+        ] {
+            let service = desktop_fixture(true, false, sandbox_status, true, agent_status).await;
+            let expected = sandbox_status == SandboxStatus::Active
+                && matches!(
+                    agent_status,
+                    AgentStatus::Starting
+                        | AgentStatus::Ready
+                        | AgentStatus::Working
+                        | AgentStatus::WaitingApproval
+                );
+            assert_eq!(service.available(&owner, &id).await.is_ok(), expected);
+            assert!(service.available(&other, &id).await.is_err());
+        }
     }
 }

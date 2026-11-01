@@ -1,4 +1,5 @@
 import { useAgentTitle } from './useAgentTitle';
+import { readPreparation } from './preparationRead';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { errorMessage, retainHistoryOnFailure } from './controllerError';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
@@ -292,7 +293,7 @@ export function useAgentController(
     let observedStatus: string | undefined;
     const poll = async () => {
       try {
-        const next = await loadAgent(client, agentId, request.signal);
+        const next = await readPreparation(client, agentId, request.signal, stateRef, setState);
         events = await readSandboxHistory(client, next.detail.sandbox.id, request.signal, events);
         if (request.signal.aborted) return;
         setState((current) => {
@@ -317,13 +318,12 @@ export function useAgentController(
         }
       }
     };
-    timer = setTimeout(() => void poll(), 1500);
+    void poll();
     return () => {
       request.abort();
       clearTimeout(timer);
     };
-  }, [agentId, client, pending, provisioning, setState, onIdentityChange]);
-
+  }, [agentId, client, pending, provisioning, setState, stateRef, onIdentityChange]);
   useEffect(() => {
     if (!replayEnabled || agentId === undefined) return;
     const controller = new AbortController();
