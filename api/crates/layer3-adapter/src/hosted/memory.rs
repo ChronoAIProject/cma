@@ -260,6 +260,10 @@ impl HostedBackend for InMemoryHostedBackend {
                 require_credential(runtime, operation)?;
                 workspace::remove(runtime, request)
             }
+            RequestFrame::PrepareAgentResources(_) => {
+                // The in-memory backend does not advertise this optional runtime operation.
+                refused(operation, "agent_resource_preparation_unsupported")
+            }
             RequestFrame::AddWorktree(request) => {
                 require_credential(runtime, operation)?;
                 mutations::add_worktree(runtime, request)

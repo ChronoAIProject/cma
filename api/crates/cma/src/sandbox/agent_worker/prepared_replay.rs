@@ -77,11 +77,27 @@ impl AgentWorker {
             .await?;
         timing.completed("prepared_replay_intent");
         let fence = claimed_fence(&agent, &self.config.holder)?;
-        let result = self
-            .dependencies
-            .adapter
-            .add_worktree(&context.runtime, fence, &worktree)
-            .await;
+        if !super::startup_publication::holds_startup_authority(
+            &agent,
+            &self.config.holder,
+            now + started.elapsed(),
+        ) {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let result = if context.agent_resource_preparation {
+            // One request retains both fenced effects and both receipts. Any
+            // ambiguous failure leaves the paired intents for durable recovery;
+            // it must never trigger a speculative fallback to separate requests.
+            self.dependencies
+                .adapter
+                .prepare_agent_resources(&context.runtime, fence, &worktree, &home)
+                .await
+        } else {
+            self.dependencies
+                .adapter
+                .add_worktree(&context.runtime, fence, &worktree)
+                .await
+        };
         match result {
             Ok(receipt) if valid_worktree_receipt(&context, &worktree, &receipt) => {}
             Ok(_) => {
@@ -102,8 +118,12 @@ impl AgentWorker {
                     .await
             }
         }
-        timing.completed("prepared_worktree_replay");
-        // Keep ordered effects and the transport's fresh exact Pod proof for each.
+        timing.completed(if context.agent_resource_preparation {
+            "prepared_resources_replay"
+        } else {
+            "prepared_worktree_replay"
+        });
+        // Retained runtimes keep the second request and its fresh exact Pod proof.
         if !super::startup_publication::holds_startup_authority(
             &agent,
             &self.config.holder,
@@ -111,17 +131,21 @@ impl AgentWorker {
         ) {
             return Err(SandboxStoreError::Conflict);
         }
-        if let Err(error) = self
-            .dependencies
-            .adapter
-            .materialize_agent_home(&context.runtime, fence, &home)
-            .await
-        {
-            return self
-                .handle_failure(agent, adapter_failure(error), now + started.elapsed())
-                .await;
+        if !context.agent_resource_preparation {
+            if let Err(error) = self
+                .dependencies
+                .adapter
+                .materialize_agent_home(&context.runtime, fence, &home)
+                .await
+            {
+                return self
+                    .handle_failure(agent, adapter_failure(error), now + started.elapsed())
+                    .await;
+            }
         }
-        timing.completed("prepared_home_replay");
+        if !context.agent_resource_preparation {
+            timing.completed("prepared_home_replay");
+        }
         let result = self
             .retry_startup_publication(
                 agent,

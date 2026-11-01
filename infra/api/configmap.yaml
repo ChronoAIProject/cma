@@ -134,10 +134,10 @@ data:
   # manual/daily updates. Prewarm this exact image before release promotion.
   # Active work finishes before an admitted update; deployment never rotates it.
   # API/Web rollback retains this runtime pointer and the original user PVCs.
-  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:a04af1f9c1e70be28674ac13c3804dd9d8df970df34c82ba649f70819c72e9c0"
+  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:e1d2accb555dbfe92eee9e736a968e50125f08c64c21247a6b590117d95b7c1f"
   # Verified Omarchy target; production proved device-free graphics, native/manual
   # control and retained-home revival. See docs/Omarchy_Runtime_Prototype.md.
-  CHRONO_MACHINE_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime-omarchy@sha256:71746483245eb16c9502a114677e9f18e25ede191f2f08edd64f7666689e2792"
+  CHRONO_MACHINE_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime-omarchy@sha256:7eae22a35310f291454d170e489e5f0a9dd9fa6e78a45873b9d09fd179a7863b"
   # Keep two unclaimed native CMA runtimes ready for immediate SandboxClaim
   # admission. The target is persisted by Agent Manager and reconciled through
   # SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs only.
