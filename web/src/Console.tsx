@@ -203,7 +203,10 @@ function ConsoleContent({
       />
     ) : route.kind === 'inventory' ? (
       client.resourceViews === undefined ? (
-        <UnavailableView title="Agent inventory unavailable" />
+        <UnavailableView
+          title="Agent inventory unavailable"
+          reason="This CMA deployment does not offer the Agents list. Your Agents are still listed in the sidebar."
+        />
       ) : (
         <AgentInventory
           client={client.resourceViews}
@@ -323,7 +326,10 @@ function ConsoleContent({
           <Operations client={operator} capabilities={user.capabilities} />
         </Suspense>
       ) : (
-        <UnavailableView title="Operations unavailable" />
+        <UnavailableView
+          title="Operations unavailable"
+          reason="Operations is for CMA operators. Ask your CMA administrator if you need access."
+        />
       )
     ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
       publisher !== undefined && !user.visitor && user.capabilities.includes('publish_triggers') ? (
@@ -343,7 +349,10 @@ function ConsoleContent({
           />
         </Suspense>
       ) : (
-        <UnavailableView title="Publishing unavailable" />
+        <UnavailableView
+          title="Publishing unavailable"
+          reason="Your account cannot publish Trigger links. Ask your CMA administrator for publishing access."
+        />
       )
     ) : route.kind === 'not_found' ? (
       <NotFoundView />
@@ -353,6 +362,11 @@ function ConsoleContent({
           route.kind === 'home' || route.kind === 'agent_manager'
             ? 'Welcome to CMA'
             : route.kind.replaceAll('_', ' ')
+        }
+        description={
+          route.kind === 'home' || route.kind === 'agent_manager'
+            ? 'An Agent is an AI assistant with its own private computer. Describe a task such as research, writing, data work or code, and it works on it, asking you when it needs a decision.'
+            : undefined
         }
         onNewAgent={
           (route.kind === 'home' || route.kind === 'agent_manager') && canCreateInScope

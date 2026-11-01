@@ -742,8 +742,10 @@ lifecycle request's `workspace_id`.
 checked when the field loses focus and on Create agent, never while typing; the
 error *Enter an HTTPS GitHub repository URL.* is announced once when it appears
 and leaves as soon as the value is valid. A read-only **Agent settings** summary
-reads *gpt-6 · High · Autonomous*; there is no control to change it here. The
-footer starts with the note *Includes chrono-llm-public and ornn-api access.* and
+reads *gpt-6 · High reasoning · Autonomous* with the line *The Agent works without
+asking first. Change this anytime from the message box.*; there is no control to
+change it here. The footer starts with the note *Includes access to ChronoAI
+models and the Ornn skill library.* and
 ends with Cancel and the primary Create agent, which reads *Starting
 provisioning…* while the request is pending and *Recover creation* while a
 retained request is unconfirmed. Each location keeps its own retained request,
@@ -821,7 +823,7 @@ the width is measured with the position.
 Every modal uses the shared Modal primitive: one centered card on layer 2,
 behind the theme's `bg-mask-1` and blur. Width is `min(700px, 60vw)` and maximum
 height is `60dvh` with a `60vh` fallback. All four card edges stay at least 20%
-inside the whole viewport, including on narrow screens. No call site overrides
+inside the whole viewport on screens wider than 480px. No call site overrides
 width, height or placement. Header and wrapping footer retain the shared style;
 long contents scroll inside the body. Radius remains 16px. The overlay portals
 to the document root and locks background scrolling. Anchored selection menus
@@ -831,8 +833,11 @@ At a viewport width of 480px or less the card takes the full width less a 16px
 gutter on each side: 60% of a 320px phone is 192px, too narrow for a form's fields
 or its footer keys. At viewport widths or heights of 480px or less, the entire card scrolls instead
 of shrinking the body between the header and footer. Content keeps its natural
-height so every field, close control and footer action remains reachable. The
-same centered card bounds, padding, radius and 20% margins still apply.
+height so every field, close control and footer action remains reachable. At a
+viewport width of 480px or less the card may also use the full height less a 16px
+gutter top and bottom (`calc(100dvh - 32px)`), so a form's primary action is on
+screen when it opens instead of below 40% of empty viewport; padding and radius are
+unchanged, and wider screens keep the 60dvh cap and 20% margins.
 Shared input wrappers may shrink to their available width without forcing a
 narrow dialog to scroll horizontally.
 
@@ -4147,3 +4152,54 @@ disabled, with the reason as its title, because half a command pasted into a she
 than none.
 
 | 2026-11-01 | Give fenced reply code its verbatim language label and a Copy code key that is disabled while the reply streams. |
+### Plain-language failures (2026-10-31)
+
+A failed read or command shows a sentence a person can act on. A service detail
+written for people is shown as written. A server-side failure (5xx), a response
+that carried no detail, or a lost connection is replaced by a plain sentence:
+*Your sign-in has expired. Reload the page to sign in again.* (401), *Your
+account does not have access to this.* (403), *This could not be found. It may
+have been deleted or moved.* (404), *CMA is receiving too many requests. Wait a
+moment, then try again.* (429), *CMA had a problem on its side. Try again in a
+moment.* (5xx) and *CMA could not be reached. Check your connection, then try
+again.* Protocol wording such as "problem document" never reaches the page.
+
+| 2026-10-31 | Replace protocol and server-failure wording in resource, navigation and Agent errors with plain sentences that say what to do next. |
+| 2026-10-31 | Give the shared Workspace read failure the same titled *Workspace unavailable* section, gutter and action placement as the owner Sandbox and Workspace failures. |
+| 2026-10-31 | Rewrite New agent copy for people who do not write code: the new-Sandbox description explains a Sandbox as the Agent's private computer, the repository hint says when to paste a link, the Machine Included choice reads *Include a shared desktop* with what it is for, Agent settings explain Autonomous and where to change it, and the footer names ChronoAI models and the Ornn skill library instead of service ids. |
+
+### Saying what an Agent is for (2026-10-31)
+
+Agent Manager home keeps *Welcome to CMA* and adds one secondary line beneath
+it: *An Agent is an AI assistant with its own private computer. Describe a task such
+as research, writing, data work or code, and it works on it, asking you when it needs
+a decision.* Paragraphs in the centred plain states use 8px top margin and secondary
+label colour, and their action row sits 20px below. An owner's empty conversation
+reads *Tell the Agent what you need in your own words, for example “Compare three
+project management tools for a small team.”* in place of *Start the conversation.*;
+a shared reader's empty history still reads *No messages yet.*
+
+| 2026-10-31 | Add a one-line explanation of Agents to Agent Manager home, secondary paragraph and action spacing to the centred plain states, and an example request to the owner's empty conversation. |
+
+### Unavailable views give a reason (2026-10-31)
+
+A centre view that cannot open for this caller keeps its *<View> unavailable*
+heading and adds one secondary sentence saying why and who can help, followed by
+**Return to Agent Manager**. The inventory, Operations, Trigger publishing and
+Agent sharing views each name their own reason; none is shown as an error.
+
+| 2026-10-31 | Give every unavailable centre view a reason sentence and a Return to Agent Manager link. |
+| 2026-10-31 | Let phone dialogs (480px wide or less) use the full height less a 16px gutter so New agent's Create agent key is visible without scrolling the card. |
+
+### Explaining machine resources (2026-10-31)
+
+The Sandbox Overview's **Machine resources** heading is followed by one secondary
+line, *How much memory, processing power and network the Agent’s computer is
+using.*, 8px closer to the heading than an ordinary paragraph. A read that fails
+before any reading says *Usage readings are unavailable right now. Your Agent keeps
+working.* and a runtime that cannot report says *This Sandbox does not report usage
+readings.*; the distinct written states of §13a are otherwise unchanged.
+
+| 2026-10-31 | Explain Machine resources in one line and reword its unavailable notices so they say the Agent is unaffected. |
+| 2026-10-31 | Reword the Agents inventory description and its first filter choices (*Created any way*, *With or without a chat channel*) so the filters read as questions a person asks rather than record fields; filter names are unchanged. |
+| 2026-10-31 | Cap the compact home mark at 134px, the size it rendered at beside the heading alone, so the new home explanation does not enlarge it. |
