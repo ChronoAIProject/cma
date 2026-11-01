@@ -43,6 +43,7 @@ pub mod channel_usage;
 mod checkpoint;
 mod checkpoint_capture;
 mod checkpoint_writer_recovery;
+pub mod colors;
 pub mod control;
 mod conversation;
 mod conversation_fold;

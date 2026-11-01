@@ -376,7 +376,12 @@ export function Tree({
                                                   parentId={workspaceNode}
                                                   level={3}
                                                   label={agentDisplayTitle(agent)}
-                                                  icon={agentSignal(effectiveStatus, agent.id, 20)}
+                                                  icon={agentSignal(
+                                                    effectiveStatus,
+                                                    agent.id,
+                                                    20,
+                                                    sandbox.color,
+                                                  )}
                                                   route={{ kind: 'agent', agentId: agent.id }}
                                                   selected={
                                                     route.kind === 'agent' &&
