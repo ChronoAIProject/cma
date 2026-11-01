@@ -20,6 +20,7 @@ export async function readPreparation(
     workspaceId: current.detail.workspace.id,
     sandboxId: current.detail.sandbox.id,
   };
+  let publishPreparation: (() => void) | undefined;
   if (current.detail.status === 'starting') {
     const started = performance.now();
     for (;;) {
@@ -42,18 +43,19 @@ export async function readPreparation(
           detail.firstMessage !== undefined &&
           !['completed', 'failed', 'recovery_required'].includes(detail.firstMessage.state)
         ) {
-          await current.v2?.authorize(signal);
-          signal.throwIfAborted();
-          publish((latest) =>
-            latest.status === 'ready' &&
-            latest.detail.id === agentId &&
-            latest.detail.workspace.id === lineage.workspaceId &&
-            latest.detail.sandbox.id === lineage.sandboxId &&
-            latest.detail.worktree.id === detail.worktree.id &&
-            Date.parse(latest.detail.updatedAt) <= Date.parse(detail.updatedAt)
-              ? { ...latest, detail }
-              : latest,
-          );
+          publishPreparation = () => {
+            signal.throwIfAborted();
+            publish((latest) =>
+              latest.status === 'ready' &&
+              latest.detail.id === agentId &&
+              latest.detail.workspace.id === lineage.workspaceId &&
+              latest.detail.sandbox.id === lineage.sandboxId &&
+              latest.detail.worktree.id === detail.worktree.id &&
+              Date.parse(latest.detail.updatedAt) <= Date.parse(detail.updatedAt)
+                ? { ...latest, detail }
+                : latest,
+            );
+          };
         }
         break;
       }
@@ -68,17 +70,21 @@ export async function readPreparation(
   }
   // Keep the selected transport and journal, with a fresh handle so live replay
   // restarts at the new snapshot cursor. Loading still checks current authority.
-  return current.v2 === undefined
-    ? loadAgent(client, agentId, signal, false, undefined, lineage)
-    : loadV2Agent(
-        client,
-        agentId,
-        signal,
-        current.v2.forSnapshotRefresh(),
-        false,
-        undefined,
-        lineage,
-      );
+  if (current.v2 === undefined) {
+    publishPreparation?.();
+    return loadAgent(client, agentId, signal, false, undefined, lineage);
+  }
+  return loadV2Agent(
+    client,
+    agentId,
+    signal,
+    current.v2.forSnapshotRefresh(),
+    false,
+    undefined,
+    lineage,
+    undefined,
+    publishPreparation,
+  );
 }
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
