@@ -73,7 +73,7 @@ export function PersonalAgentTree({
             level={1}
             layout="line"
             label={agentDisplayTitle(agent)}
-            icon={agentSignal(status, agent.id, 24)}
+            icon={agentSignal(status, agent.id, 24, sandbox.color)}
             route={{ kind: 'agent', agentId: agent.id }}
             selected={route.kind === 'agent' && route.agentId === agent.id}
             dimmed={sandbox.status === 'paused'}

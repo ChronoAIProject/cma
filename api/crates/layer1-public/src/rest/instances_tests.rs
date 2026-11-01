@@ -43,6 +43,8 @@ use crate::AuthenticatedSubject;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[path = "sandbox_colors_tests.rs"]
+mod colors_tests;
 #[path = "sandbox_lifecycle_view_tests.rs"]
 mod lifecycle_view_tests;
 #[path = "workspace_prepare_recovery_tests.rs"]

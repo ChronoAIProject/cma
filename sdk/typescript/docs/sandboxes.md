@@ -75,6 +75,12 @@ Use `workspaces.create(sandboxId, body, options)` to add a Workspace within the
 pinned limits. `worktrees.list(workspaceId)` and `worktrees.read(id)` expose the
 Agent's real working checkout; a Worktree is not an independent terminal surface.
 
+The owner's `list`, `read` and `create` responses carry an optional `color`: the
+colour every Agent in that Sandbox wears, spelled as lowercase `#rrggbb`. The
+server assigns it and keeps it distinct from the owner's other live Sandboxes.
+It is absent until assigned, on shared-grant reads and on older servers; show
+your default colour then. Any other spelling is a `ProtocolError`.
+
 See [Profiles](profiles.md) for revision selection and [Errors](errors.md) for
 quota, trust and uncertain-command handling.
 
