@@ -22,6 +22,7 @@ mod startup;
 mod startup_open;
 mod startup_publication;
 mod startup_support;
+mod startup_timing;
 mod startup_wait;
 mod support;
 

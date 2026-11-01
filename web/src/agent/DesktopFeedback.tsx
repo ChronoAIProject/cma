@@ -44,37 +44,37 @@ export function DesktopFeedback({
 }) {
   return (
     <>
-      <Presence>
-        {phase !== 'ready' && (
-          <div className="agent-desktop__loading" aria-hidden="true">
-            {phase !== 'error' && (
-              <div className="agent-desktop__placeholder">
-                <div className="agent-desktop__placeholder-bar">
-                  <Skeleton width="28%" height={8} />
-                  <Skeleton width="12%" height={8} />
-                </div>
-                <div className="agent-desktop__placeholder-window">
-                  <Skeleton width="40%" />
-                  <Skeleton width="80%" />
-                  <Skeleton width="60%" />
-                </div>
+      {phase !== 'ready' && (
+        <div className="agent-desktop__loading" aria-hidden="true">
+          {phase !== 'error' && (
+            <div className="agent-desktop__placeholder">
+              <div className="agent-desktop__placeholder-bar">
+                <Skeleton width="28%" height={8} />
+                <Skeleton width="12%" height={8} />
               </div>
-            )}
-            <div className="agent-desktop__loading-label">
-              <StateDot state={phase === 'error' ? 'error' : 'ongoing'} />
-              <span>
-                {phase === 'connecting'
+              <div className="agent-desktop__placeholder-window">
+                <Skeleton width="40%" />
+                <Skeleton width="80%" />
+                <Skeleton width="60%" />
+              </div>
+            </div>
+          )}
+          <div className="agent-desktop__loading-label">
+            <StateDot state={phase === 'error' ? 'error' : 'ongoing'} />
+            <span>
+              {phase === 'waiting'
+                ? 'Waiting for your machine'
+                : phase === 'connecting'
                   ? 'Connecting to your machine'
                   : phase === 'recovering'
                     ? 'Restoring your desktop'
                     : phase === 'loading'
                       ? 'Loading your desktop'
                       : error}
-              </span>
-            </div>
+            </span>
           </div>
-        )}
-      </Presence>
+        </div>
+      )}
       <Presence>
         {notice && (
           // The persistent header announces the same state once. This visual

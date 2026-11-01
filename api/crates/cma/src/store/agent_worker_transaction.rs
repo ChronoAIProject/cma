@@ -91,9 +91,13 @@ async fn commit_agent_work_observed(
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
 ) -> Result<(), SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
+    let mut timing = contention::PublicationTiming::new(&mutation);
+    let _writer = store.agent_writes.lock(&mutation.agent.id).await;
+    timing.acquired();
     let mut last_transient = None;
     let jitter = uuid::Uuid::new_v4().as_u128() as u64;
     for attempt in 0..TRANSACTION_ATTEMPTS {
+        timing.attempt();
         contention::backoff(attempt, jitter).await;
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
@@ -132,7 +136,10 @@ async fn commit_agent_work_observed(
             }
         };
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(()),
+            CommitOutcome::Committed => {
+                timing.committed();
+                return Ok(());
+            }
             CommitOutcome::Retry(error) => last_transient = Some(error),
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {

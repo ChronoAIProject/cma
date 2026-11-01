@@ -88,6 +88,7 @@ async fn prepared_connection_changed_observation_cannot_publish_staged_channel()
         let fixture = Fixture::new().await;
         assert!(fixture.publish().await.unwrap());
         let mut observed = AgentContext {
+            agent_resource_preparation: false,
             sandbox: fixture.context.sandbox.clone(),
             workspace: fixture.context.workspace.clone(),
             worktree: fixture.context.worktree.clone(),

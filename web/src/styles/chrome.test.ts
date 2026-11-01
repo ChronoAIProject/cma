@@ -11,11 +11,12 @@ describe('the migrated chrome sheets', () => {
     expect(migrationShimOffences(sheets)).toEqual([]);
   });
 
-  it('keeps the console empty state quiet and its eyebrow in the identifier face', () => {
+  it('keeps the console empty state quiet and its eyebrow in the shared label voice', () => {
     const css = readFileSync(join(SRC, 'Console.css'), 'utf8');
     expect(css).toMatch(
-      /\.console__eyebrow\s*\{[^}]*color: var\(--dsw-alias-label-tertiary\)[^}]*font-family: var\(--ds-font-family-code\)[^}]*font-size: 11px/,
+      /\.console__eyebrow\s*\{[^}]*color: var\(--dsw-alias-label-tertiary\)[^}]*font: var\(--dsw-font-xxs-strong-12\)/,
     );
+    expect(css).not.toMatch(/\.console__eyebrow\s*\{[^}]*text-transform: uppercase/);
     expect(css).toMatch(/\.console__empty\s*\{[^}]*max-width: 32rem[^}]*text-align: center/);
   });
 
