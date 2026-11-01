@@ -64,6 +64,9 @@ impl Supervisor {
             agent_attachment_upload: crate::agent_attachment::supported(&self.config),
             agent_skill_install: true,
             agent_model_catalog: true,
+            // Advertised only by the negotiated HTTP status response. Embedded
+            // status in legacy Workspace protocols must retain its original shape.
+            agent_resource_preparation: false,
             sandbox_id: request.sandbox_id.clone(),
             generation: request.generation,
             home_identity: request.home_identity.clone(),

@@ -4,16 +4,21 @@ import { IconCloseOutline16 } from '../ui/icons';
 import { StateDot } from '../ui/StateDot';
 import { DesktopFeedback, useDesktopNotice } from './DesktopFeedback';
 import { useDesktopConnection } from './useDesktopConnection';
+import type { DesktopPreparationScope } from './desktopPreparation';
 import './DesktopPanel.css';
 
 export function DesktopPanel({
   agentId,
+  runtimeReady,
   running,
   onClose,
+  preparation,
 }: {
   readonly agentId: string;
+  readonly runtimeReady: boolean;
   readonly running: boolean;
   readonly onClose: () => void;
+  readonly preparation?: DesktopPreparationScope;
 }) {
   const panel = useRef<HTMLElement>(null);
   const [fullScreen, setFullScreen] = useState(false);
@@ -24,6 +29,8 @@ export function DesktopPanel({
     agentId,
     attempt,
     control && !running,
+    runtimeReady,
+    preparation,
   );
   const ready = phase === 'ready';
   const [previousGate, setPreviousGate] = useState({ running, ready });
@@ -63,19 +70,23 @@ export function DesktopPanel({
                     : 'Watching'
                 : phase === 'error'
                   ? 'Unavailable'
-                  : 'Connecting'}
+                  : phase === 'waiting'
+                    ? 'Waiting'
+                    : 'Connecting'}
             </span>
           </div>
           <p role="status">
-            {phase === 'connecting'
-              ? 'Connecting to your machine…'
-              : phase === 'recovering'
-                ? 'Restoring the desktop display…'
-                : phase === 'loading'
-                  ? 'Loading the desktop screen…'
-                  : phase === 'error'
-                    ? error
-                    : 'Connected'}
+            {phase === 'waiting'
+              ? 'Waiting for your machine to be ready…'
+              : phase === 'connecting'
+                ? 'Connecting to your machine…'
+                : phase === 'recovering'
+                  ? 'Restoring the desktop display…'
+                  : phase === 'loading'
+                    ? 'Loading the desktop screen…'
+                    : phase === 'error'
+                      ? error
+                      : 'Connected'}
             {ready &&
               (running
                 ? ' · Agent is working. Watch its actions here.'
@@ -99,6 +110,7 @@ export function DesktopPanel({
           </Button>
           <Button
             size="sm"
+            disabled={!runtimeReady}
             onClick={() => {
               setControl(false);
               setAttempt(attempt + 1);

@@ -24,9 +24,7 @@ pub trait SandboxAdapter: Send + Sync {
     fn capabilities(&self) -> AdapterCapabilities;
 
     async fn open_desktop(&self, _: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime desktop is unavailable".into(),
-        ))
+        Err(unsupported("runtime desktop is unavailable"))
     }
 
     /// Optional durable storage authority; absence must never fall back to an empty home.
@@ -73,22 +71,16 @@ pub trait SandboxAdapter: Send + Sync {
 
     /// Stop the exact runtime Pod while retaining its provider object and volume.
     async fn suspend_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime suspension is unavailable".into(),
-        ))
+        Err(unsupported("runtime suspension is unavailable"))
     }
 
     async fn verify_suspended_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime suspension observation is unavailable".into(),
-        ))
+        Err(unsupported("runtime suspension observation is unavailable"))
     }
 
     /// Delete a persisted provider identity and all Pods without requiring a live process.
     async fn teardown_retained_runtime(&self, _handle: &RuntimeHandle) -> Result<()> {
-        Err(crate::AdapterError::Unsupported(
-            "retained runtime deletion is unavailable".into(),
-        ))
+        Err(unsupported("retained runtime deletion is unavailable"))
     }
 
     /// Resume the same provider object with a reserved generation and admitted service scope.
@@ -97,9 +89,7 @@ pub trait SandboxAdapter: Send + Sync {
         _request: &RuntimeAdoptionRequest,
         _next: &RuntimeProvisionRequest,
     ) -> Result<RuntimeHandle> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime resumption is unavailable".into(),
-        ))
+        Err(unsupported("runtime resumption is unavailable"))
     }
 
     /// Explicitly replace only the image of an idle, suspended native runtime.
@@ -109,9 +99,7 @@ pub trait SandboxAdapter: Send + Sync {
         _request: &RuntimeAdoptionRequest,
         _next: &RuntimeProvisionRequest,
     ) -> Result<RuntimeHandle> {
-        Err(crate::AdapterError::Unsupported(
-            "native runtime upgrades are unavailable".into(),
-        ))
+        Err(unsupported("native runtime upgrades are unavailable"))
     }
 
     /// Exactly one creation dispatch; failures cannot be upgraded by name-only recovery.
@@ -120,8 +108,8 @@ pub trait SandboxAdapter: Send + Sync {
         _request: &RuntimeProvisionRequest,
         _operation_id: &str,
     ) -> Result<crate::RuntimeProvisionReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "original provider incarnation receipts are unavailable".into(),
+        Err(unsupported(
+            "original provider incarnation receipts are unavailable",
         ))
     }
 
@@ -131,16 +119,12 @@ pub trait SandboxAdapter: Send + Sync {
         _original: &crate::RuntimeProvisionReceipt,
         _operation_id: &str,
     ) -> Result<crate::RuntimeFinalityReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "exact provider finality is unavailable".into(),
-        ))
+        Err(unsupported("exact provider finality is unavailable"))
     }
 
     /// Read the current process incarnation only for a verified persistent home.
     async fn runtime_status(&self, _handle: &RuntimeHandle) -> Result<crate::RuntimeStatus> {
-        Err(crate::AdapterError::Unsupported(
-            "persistent runtime status is not supported".into(),
-        ))
+        Err(unsupported("persistent runtime status is not supported"))
     }
 
     /// Provision an exact non-zero runtime generation.
@@ -153,8 +137,8 @@ pub trait SandboxAdapter: Send + Sync {
         if request.generation == 1 {
             return self.provision(&request.spec).await;
         }
-        Err(crate::AdapterError::Unsupported(
-            "generation-specific provisioning is not supported".into(),
+        Err(unsupported(
+            "generation-specific provisioning is not supported",
         ))
     }
 
@@ -168,9 +152,7 @@ pub trait SandboxAdapter: Send + Sync {
 
     /// Observe the complete provider inventory or refuse the whole result.
     async fn runtime_inventory(&self) -> Result<Vec<RuntimeObservation>> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime inventory is not supported".into(),
-        ))
+        Err(unsupported("runtime inventory is not supported"))
     }
 
     /// Attach local runtime state only after proving one exact provider row.
@@ -178,9 +160,7 @@ pub trait SandboxAdapter: Send + Sync {
         &self,
         _request: &RuntimeAdoptionRequest,
     ) -> Result<Option<RuntimeObservation>> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime adoption is not supported".into(),
-        ))
+        Err(unsupported("runtime adoption is not supported"))
     }
 
     /// Collect adoption and process status within one call. Implementations may
@@ -214,9 +194,7 @@ pub trait SandboxAdapter: Send + Sync {
 
     /// Reclaim one exact provider observation without trusting a reused handle.
     async fn reclaim_runtime(&self, _observation: &RuntimeObservation) -> Result<()> {
-        Err(crate::AdapterError::Unsupported(
-            "observed runtime reclamation is not supported".into(),
-        ))
+        Err(unsupported("observed runtime reclamation is not supported"))
     }
 
     /// Publish an exact owner upload within the retained home, never an arbitrary path.
@@ -226,8 +204,8 @@ pub trait SandboxAdapter: Send + Sync {
         _request: &crate::AgentAttachmentRequest,
         _content: Vec<u8>,
     ) -> Result<crate::AgentAttachmentReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "agent attachments are unavailable on this runtime".into(),
+        Err(unsupported(
+            "agent attachments are unavailable on this runtime",
         ))
     }
 
@@ -238,9 +216,7 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _request: &crate::AgentFileListRequest,
     ) -> Result<crate::AgentFileListReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime filesystem access is unavailable".into(),
-        ))
+        Err(unsupported("runtime filesystem access is unavailable"))
     }
 
     async fn read_agent_file(
@@ -248,9 +224,7 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _request: &crate::AgentFileReadRequest,
     ) -> Result<crate::AgentFileReadReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime filesystem access is unavailable".into(),
-        ))
+        Err(unsupported("runtime filesystem access is unavailable"))
     }
 
     async fn write_agent_file(
@@ -258,9 +232,7 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _request: &crate::AgentFileWriteRequest,
     ) -> Result<crate::AgentFileWriteReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime filesystem access is unavailable".into(),
-        ))
+        Err(unsupported("runtime filesystem access is unavailable"))
     }
 
     async fn delete_agent_file(
@@ -268,9 +240,7 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _request: &crate::AgentFileDeleteRequest,
     ) -> Result<crate::AgentFileDeleteReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "runtime filesystem access is unavailable".into(),
-        ))
+        Err(unsupported("runtime filesystem access is unavailable"))
     }
 
     /// Run sandbox-wide installation before any credential is delivered.
@@ -286,9 +256,7 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _request: &RestoreBootstrapRequest,
     ) -> Result<RestoreBootstrapReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "restore bootstrap is not supported".into(),
-        ))
+        Err(unsupported("restore bootstrap is not supported"))
     }
 
     async fn deliver_credential(
@@ -312,8 +280,8 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _request: &crate::WorkspacePrepareRecoveryRequest,
     ) -> Result<crate::WorkspacePrepareRecoveryReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "preserving Workspace preparation recovery is unavailable".into(),
+        Err(unsupported(
+            "preserving Workspace preparation recovery is unavailable",
         ))
     }
     async fn remove_workspace(
@@ -326,9 +294,7 @@ pub trait SandboxAdapter: Send + Sync {
         &self,
         _handle: &RuntimeHandle,
     ) -> Result<crate::WorkspaceRemovalSupport> {
-        Err(crate::AdapterError::Unsupported(
-            "guarded Workspace removal is unavailable".into(),
-        ))
+        Err(unsupported("guarded Workspace removal is unavailable"))
     }
     async fn reconcile_workspace_removal(
         &self,
@@ -336,10 +302,24 @@ pub trait SandboxAdapter: Send + Sync {
         _expected_runtime: &crate::RuntimeStatus,
         _request: &WorkspaceRemoveRequest,
     ) -> Result<crate::WorkspaceRemovalObservation> {
-        Err(crate::AdapterError::Unsupported(
-            "current Workspace removal observation is unavailable".into(),
+        Err(unsupported(
+            "current Workspace removal observation is unavailable",
         ))
     }
+    /// Optional ordered resource creation; the caller must prove runtime support.
+    /// An error can follow a partial effect. It never authorizes an implicit retry.
+    async fn prepare_agent_resources(
+        &self,
+        _handle: &RuntimeHandle,
+        _authority_fence: u64,
+        _worktree: &WorktreeRequest,
+        _home: &AgentHomeRequest,
+    ) -> Result<WorktreeReceipt> {
+        Err(unsupported(
+            "combined Agent resource preparation is unavailable",
+        ))
+    }
+
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
@@ -366,9 +346,7 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _archive: &crate::SkillArchive,
     ) -> Result<()> {
-        Err(crate::AdapterError::Unsupported(
-            "skill archive preparation is unavailable".into(),
-        ))
+        Err(unsupported("skill archive preparation is unavailable"))
     }
 
     async fn install_agent_skill(
@@ -377,9 +355,7 @@ pub trait SandboxAdapter: Send + Sync {
         _authority_fence: u64,
         _request: &crate::AgentSkillInstallRequest,
     ) -> crate::Result<()> {
-        Err(crate::AdapterError::Unsupported(
-            "live skill installation is unavailable".into(),
-        ))
+        Err(unsupported("live skill installation is unavailable"))
     }
 
     async fn remove_agent_home(
@@ -442,9 +418,7 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _agent: &AgentSlot,
     ) -> Result<Vec<u8>> {
-        Err(crate::AdapterError::Unsupported(
-            "agent history export is not supported".into(),
-        ))
+        Err(unsupported("agent history export is not supported"))
     }
 
     /// Exact disposable paths relative to the sandbox home, in canonical order.
@@ -465,9 +439,7 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _request: &CheckpointHoldRequest,
     ) -> Result<CheckpointHoldReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "checkpoint writer hold is not supported".into(),
-        ))
+        Err(unsupported("checkpoint writer hold is not supported"))
     }
 
     /// Revalidate the exact writer hold for an already-published checkpoint.
@@ -487,9 +459,7 @@ pub trait SandboxAdapter: Send + Sync {
         _handle: &RuntimeHandle,
         _request: &CheckpointWriterResumeRequest,
     ) -> Result<CheckpointWriterResumeReceipt> {
-        Err(crate::AdapterError::Unsupported(
-            "checkpoint writer resume is not supported".into(),
-        ))
+        Err(unsupported("checkpoint writer resume is not supported"))
     }
 
     async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> Result<()>;
@@ -497,4 +467,8 @@ pub trait SandboxAdapter: Send + Sync {
     async fn resources(&self, handle: &RuntimeHandle) -> Result<ResourceReading>;
 
     async fn teardown(&self, handle: &RuntimeHandle) -> Result<()>;
+}
+
+fn unsupported(detail: &str) -> crate::AdapterError {
+    crate::AdapterError::Unsupported(detail.into())
 }

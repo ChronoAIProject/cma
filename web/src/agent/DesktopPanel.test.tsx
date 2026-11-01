@@ -1,12 +1,15 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DesktopPanel } from './DesktopPanel';
+import { prepareDesktop } from './desktopPreparation';
+import { desktopSocket, stubDesktopSockets } from './desktopPreparation.fixture';
 
 type Connection = EventTarget & {
   viewOnly: boolean;
   resizeSession: boolean;
   disconnect: () => void;
-  url: string;
+  url: string | WebSocket;
+  messages: unknown[];
   painted: boolean;
   focus: () => void;
   blur: () => void;
@@ -19,6 +22,7 @@ vi.mock('@novnc/novnc', () => ({
     resizeSession = false;
     viewOnly = false;
     painted = true;
+    messages: unknown[] = [];
     focus = vi.fn();
     blur = vi.fn();
     sendKey = vi.fn();
@@ -26,9 +30,10 @@ vi.mock('@novnc/novnc', () => ({
     disconnect = vi.fn(() => this.canvas.remove());
     constructor(
       target: HTMLElement,
-      readonly url: string,
+      readonly url: string | WebSocket,
     ) {
       super();
+      if (typeof url !== 'string') url.onmessage = (event) => this.messages.push(event.data);
       Object.defineProperty(this.canvas, 'getContext', {
         value: () => ({
           getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, this.painted ? 255 : 0]) }),
@@ -42,7 +47,44 @@ vi.mock('@novnc/novnc', () => ({
 beforeEach(() => {
   connections.length = 0;
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+it('attaches the prepared stream once with input disabled, then reconnects normally', async () => {
+  stubDesktopSockets();
+  const preparation = { context: {}, owner: 'alice' };
+  prepareDesktop(preparation.context, 'agt_demo', preparation.owner)?.handoff();
+  const socket = desktopSocket();
+  const greeting = new Uint8Array([82, 70, 66]).buffer;
+  socket.receive(greeting);
+  const view = render(
+    <DesktopPanel
+      runtimeReady
+      agentId="agt_demo"
+      running={false}
+      onClose={vi.fn()}
+      preparation={preparation}
+    />,
+  );
+  await waitFor(() => expect(connections).toHaveLength(1));
+  const first = connectionAt(0);
+  expect(first.url).toBe(socket);
+  expect(first.messages).toEqual([greeting]);
+  expect(first.viewOnly).toBe(true);
+  expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
+  act(() => first.dispatchEvent(new Event('connect')));
+  expect(first.viewOnly).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Control desktop' }));
+  expect(first.viewOnly).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+  await waitFor(() => expect(connections).toHaveLength(2));
+  expect(first.disconnect).toHaveBeenCalledOnce();
+  expect(connectionAt(1).url).toContain('/agents/agt_demo/desktop/ws');
+  expect(connectionAt(1).viewOnly).toBe(true);
+  view.unmount();
+});
 
 function connectionAt(index: number): Connection {
   const connection = connections[index];
@@ -50,9 +92,47 @@ function connectionAt(index: number): Connection {
   return connection;
 }
 
+it('waits through startup and reconnects after revival without retaining input control', async () => {
+  vi.useFakeTimers();
+  const draw = (runtimeReady: boolean) => (
+    <DesktopPanel
+      agentId="agt_starting"
+      runtimeReady={runtimeReady}
+      running={false}
+      onClose={vi.fn()}
+    />
+  );
+  const view = render(draw(false));
+  await act(async () => vi.advanceTimersByTime(60_000));
+  expect(connections).toHaveLength(0);
+  expect(screen.getByRole('status')).toHaveTextContent('Waiting for your machine');
+  expect(screen.getByRole('button', { name: 'Reconnect' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
+  await act(async () => view.rerender(draw(true)));
+  const first = connectionAt(0);
+  act(() => first.dispatchEvent(new Event('connect')));
+  fireEvent.click(screen.getByRole('button', { name: 'Control desktop' }));
+  expect(first.viewOnly).toBe(false);
+  view.rerender(draw(false));
+  expect(first.viewOnly).toBe(true);
+  expect(first.disconnect).toHaveBeenCalledOnce();
+  await act(async () => vi.advanceTimersByTime(60_000));
+  expect(connections).toHaveLength(1);
+  await act(async () => view.rerender(draw(true)));
+  const revived = connectionAt(1);
+  act(() => revived.dispatchEvent(new Event('connect')));
+  act(() => first.dispatchEvent(new Event('disconnect')));
+  expect(screen.getByRole('status')).toHaveTextContent('Connected');
+  expect(revived.viewOnly).toBe(true);
+  view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it('requires explicit user input control and pauses it during an Agent turn', async () => {
   const onClose = vi.fn();
-  const view = render(<DesktopPanel agentId="agt_demo" running={false} onClose={onClose} />);
+  const view = render(
+    <DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={onClose} />,
+  );
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
   await waitFor(() => expect(connections).toHaveLength(1));
   const connection = connectionAt(0);
@@ -61,11 +141,11 @@ it('requires explicit user input control and pauses it during an Agent turn', as
   act(() => connection.dispatchEvent(new Event('connect')));
   fireEvent.click(screen.getByRole('button', { name: 'Control desktop' }));
   expect(connection.viewOnly).toBe(false);
-  view.rerender(<DesktopPanel agentId="agt_demo" running onClose={onClose} />);
+  view.rerender(<DesktopPanel runtimeReady agentId="agt_demo" running onClose={onClose} />);
   expect(connection.viewOnly).toBe(true);
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
   expect(screen.getByRole('status')).toHaveTextContent('Agent is working');
-  view.rerender(<DesktopPanel agentId="agt_demo" running={false} onClose={onClose} />);
+  view.rerender(<DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={onClose} />);
   expect(connection.viewOnly).toBe(true);
   expect(screen.getByText('The Agent finished. You can take control now.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeEnabled();
@@ -76,7 +156,9 @@ it('requires explicit user input control and pauses it during an Agent turn', as
 });
 
 it('reconnects with input disabled and releases the previous stream', async () => {
-  const view = render(<DesktopPanel agentId="agt/one" running={false} onClose={vi.fn()} />);
+  const view = render(
+    <DesktopPanel runtimeReady agentId="agt/one" running={false} onClose={vi.fn()} />,
+  );
   await waitFor(() => expect(connections).toHaveLength(1));
   const previous = connectionAt(0);
   expect(previous.url).toContain('/agents/agt%2Fone/desktop/ws');
@@ -97,7 +179,9 @@ it('reconnects with input disabled and releases the previous stream', async () =
 });
 
 it('keeps the live viewer and controls mounted when entering and leaving full screen', async () => {
-  const view = render(<DesktopPanel agentId="agt_demo" running={false} onClose={vi.fn()} />);
+  const view = render(
+    <DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={vi.fn()} />,
+  );
   await waitFor(() => expect(connections).toHaveLength(1));
   const panel = screen.getByRole('region', { name: 'Machine desktop' });
   const request = vi.fn(async () => {
@@ -121,7 +205,9 @@ it('keeps the live viewer and controls mounted when entering and leaving full sc
 });
 
 it('keeps loading until the first painted screen, including a real black desktop', async () => {
-  const view = render(<DesktopPanel agentId="agt_demo" running={false} onClose={vi.fn()} />);
+  const view = render(
+    <DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={vi.fn()} />,
+  );
   await waitFor(() => expect(connections).toHaveLength(1));
   vi.useFakeTimers();
   const connection = connectionAt(0);
@@ -135,14 +221,15 @@ it('keeps loading until the first painted screen, including a real black desktop
   act(() => vi.advanceTimersByTime(50));
   expect(screen.getByRole('status')).toHaveTextContent('Connected');
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeEnabled();
-  act(() => vi.advanceTimersByTime(200));
   expect(view.container.querySelector('.agent-desktop__loading')).not.toBeInTheDocument();
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
 });
 
 it('shows each handoff for five seconds, replaces stale notices, and retains the control status', async () => {
-  const view = render(<DesktopPanel agentId="agt_demo" running={false} onClose={vi.fn()} />);
+  const view = render(
+    <DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={vi.fn()} />,
+  );
   await waitFor(() => expect(connections).toHaveLength(1));
   vi.useFakeTimers();
   act(() => connectionAt(0).dispatchEvent(new Event('connect')));
@@ -150,7 +237,7 @@ it('shows each handoff for five seconds, replaces stale notices, and retains the
   expect(connectionAt(0).focus).toHaveBeenCalledOnce();
   expect(screen.getByText('You have control. Click and type on the desktop.')).toBeInTheDocument();
   act(() => vi.advanceTimersByTime(4_000));
-  view.rerender(<DesktopPanel agentId="agt_demo" running onClose={vi.fn()} />);
+  view.rerender(<DesktopPanel runtimeReady agentId="agt_demo" running onClose={vi.fn()} />);
   expect(
     screen.queryByText('You have control. Click and type on the desktop.'),
   ).not.toBeInTheDocument();
@@ -170,7 +257,9 @@ it('shows each handoff for five seconds, replaces stale notices, and retains the
 
 it('offers recovery after a missing first frame and cancels the old loading timers', async () => {
   vi.useFakeTimers();
-  const view = render(<DesktopPanel agentId="agt_demo" running={false} onClose={vi.fn()} />);
+  const view = render(
+    <DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={vi.fn()} />,
+  );
   await act(async () => {});
   const connection = connectionAt(0);
   connection.painted = false;
@@ -192,7 +281,9 @@ it('offers recovery after a missing first frame and cancels the old loading time
 
 it('restores a lost display with input revoked and bounds automatic recovery', async () => {
   vi.useFakeTimers();
-  const view = render(<DesktopPanel agentId="agt_demo" running={false} onClose={vi.fn()} />);
+  const view = render(
+    <DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={vi.fn()} />,
+  );
   await act(async () => {});
   const first = connectionAt(0);
   act(() => first.dispatchEvent(new Event('connect')));

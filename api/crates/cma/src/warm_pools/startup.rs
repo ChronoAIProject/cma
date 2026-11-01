@@ -17,15 +17,22 @@ impl NativeWarmPools {
             .adapter
             .native_pools()
             .ok_or(WarmPoolError::Unavailable)?;
-        let plan = provider
-            .plan(&NativePoolSpec {
-                image: self.image.clone(),
-                cpu_millis: self.default_capacity.cpu_millis,
-                memory_mib: self.default_capacity.memory_mib,
-                home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
-            })
-            .map_err(|_| WarmPoolError::Unavailable)?;
-        await_ready(self.store.as_ref(), provider, &plan, STARTUP_WARMUP_LIMIT).await
+        let mut images = vec![&self.image];
+        if let Some((image, _)) = &self.machine {
+            images.push(image);
+        }
+        for image in images {
+            let plan = provider
+                .plan(&NativePoolSpec {
+                    image: image.clone(),
+                    cpu_millis: self.default_capacity.cpu_millis,
+                    memory_mib: self.default_capacity.memory_mib,
+                    home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
+                })
+                .map_err(|_| WarmPoolError::Unavailable)?;
+            await_ready(self.store.as_ref(), provider, &plan, STARTUP_WARMUP_LIMIT).await?;
+        }
+        Ok(())
     }
 }
 

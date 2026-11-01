@@ -43,6 +43,9 @@ pub struct RuntimeStatus {
     /// Managed model selection can resolve current catalogue aliases.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_model_catalog: bool,
+    /// One ordered request can acknowledge both fenced Agent resource operations.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_resource_preparation: bool,
     pub sandbox_id: String,
     pub generation: u64,
     pub home_identity: String,
@@ -101,6 +104,7 @@ mod compatibility_tests {
         assert!(!status.agent_filesystem);
         assert!(!status.agent_model_catalog);
         assert!(!status.agent_skill_install);
+        assert!(!status.agent_resource_preparation);
         assert_eq!(serde_json::to_value(status).unwrap(), original);
     }
 }

@@ -37,10 +37,7 @@
 .console__eyebrow {
   margin: 0;
   color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: uppercase;
+  font: var(--dsw-font-xxs-strong-12);
 }
 
 .console__empty a {

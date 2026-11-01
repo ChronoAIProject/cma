@@ -119,9 +119,17 @@
 }
 
 .agent-composer .agent-composer__submit {
+  position: relative;
   width: 28px;
   height: 28px;
   border-radius: 50%;
+}
+
+/* The 28px circle answers a 32px square (§15, §29) without growing the composer row. */
+.agent-composer .agent-composer__submit::after {
+  position: absolute;
+  inset: -2px;
+  content: '';
 }
 
 /* Nothing to send yet: a neutral circle, not a faded accent. */

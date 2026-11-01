@@ -41,7 +41,7 @@ body {
   font-size: var(--text-ui);
   line-height: var(--leading-ui);
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* §4: selected text uses the appearance's accent and its paired foreground. */
@@ -113,7 +113,10 @@ button {
   white-space: normal;
 }
 
-/* Digit columns take tabular numerals, per Web_Style.md section 4. */
-.tabular {
+/*
+ * Figures that change or line up take tabular numerals (§4, §29): every timestamp and
+ * age is a <time>, so a ticking clock never nudges the words beside it.
+ */
+time {
   font-variant-numeric: tabular-nums;
 }

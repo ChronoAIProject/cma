@@ -73,6 +73,7 @@ pub(super) async fn commit(
     guard: Option<layer2_core::sandbox::store::AgentReopenGuard>,
 ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
     next.validate()?;
+    let _writer = store.agent_writes.lock(&current.id).await;
     let reanchor = mutation.is_none()
         && previous
             .as_ref()

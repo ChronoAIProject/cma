@@ -74,7 +74,10 @@ impl DesktopService {
         if lineage.sandbox.status != SandboxStatus::Active
             || !matches!(
                 lineage.agent.status,
-                AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
+                AgentStatus::Starting
+                    | AgentStatus::Ready
+                    | AgentStatus::Working
+                    | AgentStatus::WaitingApproval
             )
             || lineage.agent.profile.content.isolated_agent
             || !lineage

@@ -18,6 +18,7 @@ pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
         "recover_workspace_prepare" => WireOperation::RecoverWorkspacePrepare,
         "workspace_setup" => WireOperation::WorkspaceSetup,
         "remove_workspace" => WireOperation::RemoveWorkspace,
+        "prepare_agent_resources" => WireOperation::PrepareAgentResources,
         "add_worktree" => WireOperation::AddWorktree,
         "remove_worktree" => WireOperation::RemoveWorktree,
         "materialize_agent_home" => WireOperation::MaterializeAgentHome,

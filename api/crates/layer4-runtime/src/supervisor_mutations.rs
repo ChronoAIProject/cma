@@ -7,6 +7,9 @@ use crate::mutation_journal::{self, Begin, Operation, Subject, Ticket};
 
 impl Supervisor {
     pub(super) async fn authorize_mutation(&self, request: &RequestFrame) -> Result<()> {
+        if let RequestFrame::PrepareAgentResources(request) = request {
+            return self.authorize_agent_resources(request).await;
+        }
         let fenced = match request {
             RequestFrame::AddWorktree(request) => {
                 crate::worktree::validate_add_request(&request.request)?;

@@ -16,8 +16,11 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub allocate_agent_sandbox: bool,
     pub native_prepared_target: u8,
+    pub native_machine_prepared_target: u8,
     /// Number of unclaimed native agent-sandbox members kept ready for new Sandboxes.
     pub native_warm_pool_target: u32,
+    /// Independent unclaimed capacity for the deployment desktop image.
+    pub native_machine_warm_pool_target: u32,
     pub retain_opensandbox: bool,
     pub sandbox_base_url: String,
     pub sandbox_api_key: String,
@@ -45,7 +48,15 @@ impl fmt::Debug for RuntimeConfig {
             .field("sandbox_namespace", &self.sandbox_namespace)
             .field("home_policy", &self.home_policy)
             .field("native_prepared_target", &self.native_prepared_target)
+            .field(
+                "native_machine_prepared_target",
+                &self.native_machine_prepared_target,
+            )
             .field("native_warm_pool_target", &self.native_warm_pool_target)
+            .field(
+                "native_machine_warm_pool_target",
+                &self.native_machine_warm_pool_target,
+            )
             .field("upstream_base_url", &self.upstream_base_url)
             .field("upstream_wire_api", &self.upstream_wire_api)
             .field("platform_base_url", &self.platform_base_url)
@@ -120,6 +131,23 @@ impl RuntimeConfig {
             Some("2") => 2,
             _ => return Err("CHRONO_NATIVE_PREPARED_TARGET must be 0, 1 or 2".into()),
         };
+        let native_machine_prepared_target =
+            match lookup("CHRONO_NATIVE_MACHINE_PREPARED_TARGET")?.as_deref() {
+                None | Some("0") => 0,
+                Some("1") => 1,
+                Some("2") => 2,
+                _ => return Err("CHRONO_NATIVE_MACHINE_PREPARED_TARGET must be 0, 1 or 2".into()),
+            };
+        if native_machine_prepared_target > 0
+            && (machine_sandbox_image.is_none()
+                || !allocate_agent_sandbox
+                || agent_sandbox.is_none()
+                || !agent_sandbox_home_policy
+                    .as_ref()
+                    .is_some_and(|p| p.mounts_full_home()))
+        {
+            return Err("CHRONO_NATIVE_MACHINE_PREPARED_TARGET requires a machine image, native allocation and full native home".into());
+        }
         let native_warm_pool_target = match lookup("CHRONO_NATIVE_WARM_POOL_TARGET")?.as_deref() {
             // Keep one native member ready whenever agent-sandbox is the selected
             // provider. Legacy OpenSandbox deployments remain unchanged.
@@ -133,6 +161,34 @@ impl RuntimeConfig {
                     "CHRONO_NATIVE_WARM_POOL_TARGET must be an integer from 0 to 1000".to_string()
                 })?,
         };
+        let native_machine_warm_pool_target =
+            match lookup("CHRONO_NATIVE_MACHINE_WARM_POOL_TARGET")?.as_deref() {
+                None if allocate_agent_sandbox && machine_sandbox_image.is_some() => 1,
+                None => 0,
+                Some(value) => value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|target| *target <= 1000)
+                    .ok_or_else(|| {
+                        "CHRONO_NATIVE_MACHINE_WARM_POOL_TARGET must be an integer from 0 to 1000"
+                            .to_string()
+                    })?,
+            };
+        if native_machine_warm_pool_target > 0
+            && (machine_sandbox_image.is_none()
+                || !allocate_agent_sandbox
+                || agent_sandbox.is_none()
+                || !agent_sandbox_home_policy
+                    .as_ref()
+                    .is_some_and(layer3_adapter::HomeVolumePolicy::is_native_vct))
+        {
+            return Err("CHRONO_NATIVE_MACHINE_WARM_POOL_TARGET requires a machine image, agent-sandbox allocation and a native VCT home".into());
+        }
+        if machine_sandbox_image.as_ref() == Some(&sandbox_image) {
+            return Err(
+                "CHRONO_MACHINE_SANDBOX_IMAGE must differ from the agent-only image".into(),
+            );
+        }
         if native_prepared_target > 0
             && (!allocate_agent_sandbox
                 || agent_sandbox.is_none()
@@ -183,7 +239,9 @@ impl RuntimeConfig {
             agent_sandbox_runtime_transport,
             allocate_agent_sandbox,
             native_prepared_target,
+            native_machine_prepared_target,
             native_warm_pool_target,
+            native_machine_warm_pool_target,
             retain_opensandbox,
             sandbox_base_url,
             sandbox_api_key,

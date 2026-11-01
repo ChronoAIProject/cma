@@ -80,11 +80,8 @@
   overflow-wrap: anywhere;
 }
 
-/* The close key is the button at its icon size, squared off rather than capsule. */
+/* The close key is the small icon-only button at its full 32px square (§15), squared off. */
 .modal__close {
-  width: 28px;
-  height: 28px;
-  padding: 0;
   border-radius: 8px;
 }
 

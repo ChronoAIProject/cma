@@ -13,6 +13,15 @@ pub(super) async fn initialize_collections(
     database: &Database,
     collections: &[&str],
 ) -> Result<(), StoreError> {
+    ensure_collections(database, collections).await?;
+    refuse_unknown_versions(database, collections).await
+}
+
+/// Collection creation shared by stores with explicitly versioned readers.
+pub(super) async fn ensure_collections(
+    database: &Database,
+    collections: &[&str],
+) -> Result<(), StoreError> {
     let existing: HashSet<_> = database
         .list_collection_names()
         .await
@@ -38,7 +47,7 @@ pub(super) async fn initialize_collections(
             }
         }
     }
-    refuse_unknown_versions(database, collections).await
+    Ok(())
 }
 
 /// Refuse a database containing any document this binary cannot interpret.
