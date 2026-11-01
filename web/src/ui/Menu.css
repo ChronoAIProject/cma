@@ -68,15 +68,16 @@
     color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
+/* Hover is neutral (§12.3, §29): lime is kept for selection, live state, focus and data. */
 .menu__item:hover:not([aria-disabled='true']) {
-  color: var(--dsw-alias-state-business-primary);
-  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .menu__item:focus-visible {
   outline: none;
-  color: var(--dsw-alias-state-business-primary);
-  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
   box-shadow: var(--focus-ring);
 }
 
@@ -182,9 +183,10 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   margin: 0 6px;
-  padding: 3px;
+  /* Concentric with its 6px choices: 4px padding plus 6px inside makes the 10px track. */
+  padding: 4px;
   background: var(--dsw-alias-bg-layer-1);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .menu__choice {

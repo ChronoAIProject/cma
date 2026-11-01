@@ -1,6 +1,8 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import { toneDot } from '../ui/Badge';
 import { statusLabel, statusTone } from '../vocabulary/status';
+import { CharacterAvatar, characterPhase } from '../character/CharacterAvatar';
+import { characterForStatus } from '../character/status';
 
 /** A row's status word with its dot from the shared tone (§12.1), then any facts. */
 export function stateMeta(status: Parameters<typeof statusLabel>[0], extra?: ReactNode) {
@@ -17,16 +19,26 @@ export function stateMeta(status: Parameters<typeof statusLabel>[0], extra?: Rea
 }
 
 /**
- * The one-line Agent row's leading slot (§10): a dot only for a state that
- * shows work or asks for a person. Ready and held states stay blank, so the
- * dots that remain are worth looking at.
+ * An Agent row's leading slot (§10, §28): the Agent's character, posed by its
+ * status. Only work in progress or a person being asked moves, so the rows
+ * that move are worth looking at. The word stays in the hover title and the
+ * row's accessible name; the character itself is decorative.
  */
-export function attentionSignal(status: Parameters<typeof statusLabel>[0]) {
-  const tone = statusTone(status);
-  const drawn = tone === 'active' || tone === 'warning' || tone === 'error';
+export function agentSignal(
+  status: Parameters<typeof statusLabel>[0],
+  agentId: string,
+  size: number,
+) {
+  const presence = characterForStatus(status);
   return (
-    <span className="tree-row__signal" title={drawn ? statusLabel(status) : undefined}>
-      {drawn ? toneDot(tone) : null}
+    <span className="tree-row__signal" title={statusLabel(status)}>
+      <CharacterAvatar
+        pose={presence.pose}
+        tone={presence.tone}
+        still={!presence.animate}
+        phase={characterPhase(agentId)}
+        size={size}
+      />
     </span>
   );
 }

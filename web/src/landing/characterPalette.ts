@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 export type CharacterState = 'brand' | 'running' | 'completed' | 'pending' | 'failed';
 
-interface CharacterPalette {
+export interface CharacterPalette {
   readonly body: THREE.Color;
   readonly lens: THREE.Color;
   readonly sky: THREE.Color;
@@ -18,6 +18,16 @@ export function readPalette(
   host: HTMLElement,
   state: CharacterState | undefined,
 ): CharacterPalette {
+  return readCharacterPalette(
+    host,
+    state === undefined || state === 'brand'
+      ? '--dsw-static-lime-400'
+      : `--dsw-alias-character-${state}`,
+  );
+}
+
+/** The studio palette with the body taken from `bodyProperty`, resolved on `host`. */
+export function readCharacterPalette(host: HTMLElement, bodyProperty: string): CharacterPalette {
   const styles = getComputedStyle(host);
   const read = (property: string) => {
     const value = styles.getPropertyValue(property).trim();
@@ -28,11 +38,7 @@ export function readPalette(
   };
 
   return {
-    body: read(
-      state === undefined || state === 'brand'
-        ? '--dsw-static-lime-400'
-        : `--dsw-alias-character-${state}`,
-    ),
+    body: read(bodyProperty),
     lens: read('--dsw-static-zinc-950'),
     sky: read('--dsw-static-zinc-50'),
     ground: read('--dsw-static-zinc-800'),
