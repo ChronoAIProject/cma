@@ -13,7 +13,7 @@ export const bootstrapChecks = [
   'bootstrap-native-initialization', 'bootstrap-waiting-no-listener',
   'bootstrap-wrong-pod-refused', 'bootstrap-stdin-assignment',
   'bootstrap-exact-replay', 'bootstrap-conflicting-config-refused',
-  'bootstrap-http-auth-status', 'bootstrap-install-once',
+  'bootstrap-http-auth-status', 'bootstrap-agent-resource-capability', 'bootstrap-install-once',
   'bootstrap-fresh-process-waiting', 'bootstrap-old-assignment-refused',
   'bootstrap-retained-installation', 'bootstrap-retained-install-replay',
 ];
@@ -263,6 +263,21 @@ export async function bootstrapProbe(onStage = () => {}) {
     onStage('bootstrap-http-auth-status');
     const firstBoot = await authenticatedStatus(running, base, request, false);
     complete('bootstrap-http-auth-status');
+    onStage('bootstrap-agent-resource-capability');
+    const extendedResponse = await fetch(`${base}/runtime/control`, {
+      method: 'POST', headers: { 'content-type': 'application/json',
+        accept: 'application/vnd.chrono.cma.agent-resources-status+json',
+        'x-cma-runtime-token': request.environment.CHRONO_RUNTIME_CONTROL_TOKEN },
+      body: JSON.stringify(statusRequest(request)), signal: AbortSignal.timeout(15000), redirect: 'error',
+    });
+    assert.equal(extendedResponse.status, 200);
+    const extended = await extendedResponse.json();
+    assert.equal(extended.agent_resource_preparation, true);
+    delete extended.agent_resource_preparation;
+    assert.equal(assertRuntimeStatus(extended, request, false), firstBoot);
+    // The opt-in does not change the response for subsequent old readers.
+    assert.equal(await authenticatedStatus(running, base, request, false), firstBoot);
+    complete('bootstrap-agent-resource-capability');
     onStage('bootstrap-install-once');
     const install = installRequest(['printf \'installed\\n\' >> "$HOME/ci-bootstrap-install-count"']);
     const installed = await control(base, install, request.environment.CHRONO_RUNTIME_CONTROL_TOKEN);

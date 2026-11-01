@@ -16,6 +16,8 @@ use tokio_tungstenite::tungstenite::Message as ClientMessage;
 use super::*;
 use crate::lanes;
 
+#[path = "link_agent_resources_tests.rs"]
+mod agent_resources;
 #[path = "link_workspace_recovery_tests.rs"]
 mod workspace_recovery;
 
