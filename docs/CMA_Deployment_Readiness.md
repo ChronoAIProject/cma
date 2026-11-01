@@ -1004,6 +1004,19 @@ both debts; recovery can replay the pair or use the ordinary individual steps
 when preparation evidence is unavailable. No runtime request is omitted, and
 metadata conflict retries contain publication only.
 
+After a successful paired replay on a runtime advertising combined resource
+preparation, the same worker call may immediately claim Open with its next durable
+writer fence. It compares that claim with the just-committed Agent, allowing only
+the existing startup metadata races, and rereads the complete Sandbox, Workspace
+and Worktree records. Only unchanged parents retain the call's runtime inspection;
+any parent or Agent authority change takes the ordinary startup path. Open still
+records its cleanup intent, validates the live native Pod at command transport,
+and retains its receipt and publication fences. A lost replay reply, uncertain
+publication, competing claim, retained runtime without this capability, or later
+worker invocation cannot reuse that observation. This removes one repeated full
+inspection from successful prepared startup; production measurements must still
+establish the end-to-end provisioning time.
+
 Prepared Open/Ready publication decides eligibility inside the same Mongo
 transaction that validates the current Agent and writes its parent fences. It
 reads the consumed preparation once and fences that exact revision before
