@@ -20,7 +20,7 @@ import { AppFrame } from './shell/AppFrame';
 import { Sidebar } from './shell/Sidebar';
 import type { TreePermissions } from './shell/Tree';
 import { ManagerNavigation } from './shell/ManagerNavigation';
-import { useNavigation } from './shell/navigation';
+import { navigationAgent, useNavigation } from './shell/navigation';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
@@ -129,16 +129,12 @@ function ConsoleContent({
     refreshNavigation();
     setRevision((value) => value + 1);
   }, [refreshNavigation]);
+  const located = navigationAgent(navigation, route.kind === 'agent' ? route.agentId : undefined);
   const agent = useAgentController(client, personalAgentId, {
     viewerId: user.id,
     suspended: accessUncertain,
     authorizedLineage: agentAccess.personalLineage,
-    summary:
-      route.kind === 'agent' && navigation.status === 'ready'
-        ? navigation.items
-            .flatMap(({ workspaces }) => workspaces.flatMap((workspace) => workspace.agents))
-            .find(({ id }) => id === route.agentId)
-        : undefined,
+    summary: located?.agent,
     onHierarchyChange: refresh,
     onDeleted: () => onNavigate({ kind: 'home' }),
   });
