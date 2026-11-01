@@ -8,10 +8,19 @@ import { IconNewChatOutline16 } from './ui/icons';
  * of the console's routing so the routing reads as routing.
  */
 
-export function UnavailableView({ title }: { readonly title: string }) {
+export function UnavailableView({
+  title,
+  reason,
+}: {
+  readonly title: string;
+  /** Why this caller cannot open the view, in words they can act on. */
+  readonly reason: string;
+}) {
   return (
     <section className="console__empty">
       <h1>{title}</h1>
+      <p>{reason}</p>
+      <a href="/">Return to Agent Manager</a>
     </section>
   );
 }
@@ -28,9 +37,12 @@ export function NotFoundView() {
 
 export function WelcomeView({
   heading,
+  description,
   onNewAgent,
 }: {
   readonly heading: string;
+  /** One sentence saying what an Agent is for, on Agent Manager home. */
+  readonly description?: string;
   /** Present only when the caller can create an Agent right now. */
   readonly onNewAgent?: () => void;
 }) {
@@ -40,6 +52,7 @@ export function WelcomeView({
         <LandingCharacter autoRotate />
       </div>
       <h1 id="empty-title">{heading}</h1>
+      {description === undefined ? null : <p>{description}</p>}
       {onNewAgent === undefined ? null : (
         <div className="console__empty-actions">
           <Button variant="primary" icon={<IconNewChatOutline16 />} onClick={onNewAgent}>
