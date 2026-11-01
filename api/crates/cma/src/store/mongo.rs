@@ -15,6 +15,8 @@ use super::{
 pub struct MongoStores {
     pub(crate) document_artifacts: Arc<crate::document_artifacts::MongoDocumentStore>,
     pub(crate) message_feedback: Arc<super::message_feedback::MongoMessageFeedbackStore>,
+    /// Owner presentation palettes, kept apart from the strictly read Sandbox records.
+    pub(crate) sandbox_colors: Arc<super::sandbox_colors::MongoSandboxColorStore>,
     pub(crate) event_workers: Arc<super::event_workers::MongoEventWorkerProfileStore>,
     pub(crate) bot_setups: Arc<super::bot_setups::MongoBotSetupStore>,
     pub(crate) bot_setup_contexts: Arc<super::bot_setup_contexts::MongoBotSetupContextStore>,
@@ -165,6 +167,9 @@ impl MongoStores {
             super::message_feedback::MongoMessageFeedbackStore::open(&client.database(database))
                 .await?,
         );
+        let sandbox_colors = Arc::new(
+            super::sandbox_colors::MongoSandboxColorStore::open(&client.database(database)).await?,
+        );
         super::schema::initialize_collections(
             &client.database(database),
             &[crate::document_artifacts::COLLECTION],
@@ -180,6 +185,7 @@ impl MongoStores {
         let stores = Self {
             document_artifacts,
             message_feedback,
+            sandbox_colors,
             native_warm_pools,
             event_workers,
             bot_setups,
