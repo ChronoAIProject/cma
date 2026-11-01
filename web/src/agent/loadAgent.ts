@@ -63,7 +63,12 @@ export async function loadAgent(
       onInputReady,
     );
   const hierarchy = (async () => {
-    const detail = await client.readAgent(agentId, { signal });
+    const detailRead = client.readAgent(agentId, { signal });
+    const preparedWorkspace =
+      lineage?.agentId === agentId
+        ? client.readWorkspace(lineage.workspaceId, { signal })
+        : undefined;
+    const [detail, lineageWorkspace] = await Promise.all([detailRead, preparedWorkspace]);
     signal.throwIfAborted();
     if (
       detail.id !== agentId ||
@@ -73,7 +78,8 @@ export async function loadAgent(
           lineage.sandboxId !== detail.sandbox.id))
     )
       throw new Error('Agent projections referred to different resources.');
-    const workspace = await client.readWorkspace(detail.workspace.id, { signal });
+    const workspace =
+      lineageWorkspace ?? (await client.readWorkspace(detail.workspace.id, { signal }));
     signal.throwIfAborted();
     if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id)
       throw new Error('Agent projections referred to different resources.');
