@@ -10,6 +10,11 @@ it('names the request and offers Deny, Abort and Allow with their effects', asyn
   render(<ApprovalCard approval={request} busy={false} readOnly={false} onApproval={onApproval} />);
   const card = screen.getByRole('region', { name: 'Push to origin' });
   expect(card).toHaveTextContent('Approval');
+  // A waiting request leads with the asking character, decorative and warning-toned.
+  const character = card.querySelector('.approval__head .character-avatar');
+  expect(character).toHaveAttribute('data-pose', 'approval');
+  expect(character).toHaveAttribute('data-tone', 'warning');
+  expect(character).toHaveAttribute('aria-hidden', 'true');
   expect(screen.getByRole('heading', { level: 2, name: 'Push to origin' })).toBeInTheDocument();
   expect(screen.getByText('git push origin main')).toBeInTheDocument();
   expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual([
@@ -61,4 +66,6 @@ it('shows the recorded decision once the approval is resolved, without a detail 
   expect(screen.queryByRole('button')).not.toBeInTheDocument();
   expect(screen.queryByText(/Waiting for an authorized/)).not.toBeInTheDocument();
   expect(document.querySelector('.approval__detail')).toBeNull();
+  // A decided request is history; nothing on it asks for anything.
+  expect(document.querySelector('.approval .character-avatar')).toBeNull();
 });
