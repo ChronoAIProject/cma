@@ -84,7 +84,6 @@ it('recovers the exact old target and new message after reload while another tur
 
 it.each([
   { code: 'response_control_conflict', status: 409, retained: true },
-  { code: 'response_interrupt_not_admitted', status: 409, retained: false },
   { code: 'invalid_interrupt_request', status: 422, retained: false },
   { code: 'capability_unsupported', status: 422, retained: false },
 ])(
@@ -120,6 +119,53 @@ it.each([
     unmount();
   },
 );
+
+it('re-observes once and retries a stale interruption revision while the same turn is active', async () => {
+  const h = activeHarness();
+  h.observe
+    .mockResolvedValueOnce(json(observation('resp_1', 1, 10)))
+    .mockResolvedValueOnce(json(observation('resp_1', 1, 12)));
+  h.interrupt.mockResolvedValueOnce(
+    json(
+      {
+        error: {
+          type: 'invalid_request_error',
+          code: 'response_interrupt_not_admitted',
+          message: 'The observed Agent revision is stale.',
+          param: null,
+        },
+      },
+      409,
+    ),
+  );
+  const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
+  await waitFor(() => expect(result.current.inputAvailability.allowed).toBe(true));
+  const accepted = vi.fn();
+  await act(() => result.current.interruptWithMessage!('Continue in a new turn', accepted));
+  expect(result.current.actionError).toBeUndefined();
+  expect(result.current.pendingControl).toBe(false);
+  expect(accepted).toHaveBeenCalledWith({
+    commandId: 'cmd_interrupted_next',
+    responseId: 'resp_interrupted_next',
+  });
+  expect(h.interrupt).toHaveBeenCalledTimes(2);
+  const first = h.interrupt.mock.calls[0]![1]!;
+  const second = h.interrupt.mock.calls[1]![1]!;
+  expect(JSON.parse(String(first.body))).toMatchObject({
+    turn_sequence: 1,
+    expected_agent_revision: 10,
+  });
+  expect(JSON.parse(String(second.body))).toMatchObject({
+    turn_sequence: 1,
+    expected_agent_revision: 12,
+  });
+  expect(new Headers(second.headers).get('idempotency-key')).not.toBe(
+    new Headers(first.headers).get('idempotency-key'),
+  );
+  expect(h.observe).toHaveBeenCalledTimes(2);
+  expect(result.current.acceptedInterruptionMessage).toBe('Continue in a new turn');
+  unmount();
+});
 
 it('does not submit an interruption if the exact intent cannot be retained', async () => {
   const h = activeHarness(
