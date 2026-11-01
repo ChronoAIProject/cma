@@ -20,6 +20,18 @@ export async function submitV2Interruption(
   key: string,
   signal: AbortSignal,
 ) {
+  return submitV2InterruptionAttempt(session, target, text, key, signal, true);
+}
+
+/** Re-observe once when turn progress made the original revision stale. */
+async function submitV2InterruptionAttempt(
+  session: AgentV2Session,
+  target: ConversationState['responseBinding'],
+  text: string,
+  key: string,
+  signal: AbortSignal,
+  allowRevisionRetry: boolean,
+) {
   await session.authorize(signal);
   let intent;
   try {
@@ -27,7 +39,22 @@ export async function submitV2Interruption(
   } catch (cause) {
     throw new InterruptionNotSubmittedError(cause);
   }
-  return intent === undefined ? undefined : send(session, intent, signal);
+  if (intent === undefined) return undefined;
+  try {
+    return await send(session, intent, signal, false);
+  } catch (error) {
+    if (
+      allowRevisionRetry &&
+      error instanceof ApiError &&
+      error.status === 409 &&
+      error.code === 'response_interrupt_not_admitted'
+    ) {
+      session.journal.interruption.refused(intent.key);
+      return submitV2InterruptionAttempt(session, target, text, retryKey(), signal, false);
+    }
+    if (isDefinitiveRefusal(error)) session.journal.interruption.refused(intent.key);
+    throw error;
+  }
 }
 
 async function prepare(
@@ -92,7 +119,27 @@ export async function recoverV2Interruption(session: AgentV2Session, signal: Abo
   if (intent?.receipt === null) await send(session, intent, signal);
 }
 
-async function send(session: AgentV2Session, intent: InterruptionRecord, signal: AbortSignal) {
+function retryKey(): string {
+  return typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `interrupt-retry-${String(Date.now())}-${String(Math.random()).slice(2)}`;
+}
+
+function isDefinitiveRefusal(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    ((error.status === 409 && error.code === 'response_interrupt_not_admitted') ||
+      (error.status === 422 &&
+        ['invalid_interrupt_request', 'capability_unsupported'].includes(error.code ?? '')))
+  );
+}
+
+async function send(
+  session: AgentV2Session,
+  intent: InterruptionRecord,
+  signal: AbortSignal,
+  clearDefinitiveRefusal = true,
+) {
   await session.authorize(signal);
   let result;
   try {
@@ -103,12 +150,7 @@ async function send(session: AgentV2Session, intent: InterruptionRecord, signal:
       { idempotencyKey: intent.key, signal },
     );
   } catch (error) {
-    if (
-      error instanceof ApiError &&
-      ((error.status === 409 && error.code === 'response_interrupt_not_admitted') ||
-        (error.status === 422 &&
-          ['invalid_interrupt_request', 'capability_unsupported'].includes(error.code ?? '')))
-    ) {
+    if (clearDefinitiveRefusal && isDefinitiveRefusal(error)) {
       await session.authorize(signal);
       session.journal.interruption.refused(intent.key);
     }
