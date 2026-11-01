@@ -21,6 +21,7 @@ import { Sidebar } from './shell/Sidebar';
 import type { TreePermissions } from './shell/Tree';
 import { ManagerNavigation } from './shell/ManagerNavigation';
 import { navigationAgent, useNavigation } from './shell/navigation';
+import { CharacterColorContext } from './character/characterColor';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
@@ -246,26 +247,28 @@ function ConsoleContent({
         )}
       </section>
     ) : route.kind === 'agent' ? (
-      <AgentSurface
-        key={route.agentId}
-        user={user}
-        lifecycleClient={client}
-        draft={draft}
-        agentId={route.agentId}
-        viewerId={user.id}
-        controller={agent}
-        viewPosition={viewPosition}
-        accessUncertain={accessUncertain}
-        accessAuthorized={agentAccess.personalReady && !accessUncertain}
-        filesOpen={panel === 'files'}
-        onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
-        detailsOpen={detailsOpen}
-        onDetailsOpenChange={setDetailsOpen}
-        onNavigate={onNavigate}
-        permissions={permissions}
-        actionsBusy={actions.pending}
-        onAgentAction={actions.select}
-      />
+      <CharacterColorContext value={located?.sandbox.color}>
+        <AgentSurface
+          key={route.agentId}
+          user={user}
+          lifecycleClient={client}
+          draft={draft}
+          agentId={route.agentId}
+          viewerId={user.id}
+          controller={agent}
+          viewPosition={viewPosition}
+          accessUncertain={accessUncertain}
+          accessAuthorized={agentAccess.personalReady && !accessUncertain}
+          filesOpen={panel === 'files'}
+          onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
+          detailsOpen={detailsOpen}
+          onDetailsOpenChange={setDetailsOpen}
+          onNavigate={onNavigate}
+          permissions={permissions}
+          actionsBusy={actions.pending}
+          onAgentAction={actions.select}
+        />
+      </CharacterColorContext>
     ) : route.kind === 'sandbox' ? (
       <SandboxAccessPage
         key={route.sandboxId}

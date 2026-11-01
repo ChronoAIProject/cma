@@ -26,8 +26,15 @@ export function readPalette(
   );
 }
 
-/** The studio palette with the body taken from `bodyProperty`, resolved on `host`. */
-export function readCharacterPalette(host: HTMLElement, bodyProperty: string): CharacterPalette {
+/**
+ * The studio palette with the body taken from `bodyProperty`, resolved on `host`, unless an
+ * explicit `bodyColor` (a Sandbox's colour) replaces it.
+ */
+export function readCharacterPalette(
+  host: HTMLElement,
+  bodyProperty: string,
+  bodyColor?: string,
+): CharacterPalette {
   const styles = getComputedStyle(host);
   const read = (property: string) => {
     const value = styles.getPropertyValue(property).trim();
@@ -38,7 +45,7 @@ export function readCharacterPalette(host: HTMLElement, bodyProperty: string): C
   };
 
   return {
-    body: read(bodyProperty),
+    body: bodyColor === undefined ? read(bodyProperty) : new THREE.Color(bodyColor),
     lens: read('--dsw-static-zinc-950'),
     sky: read('--dsw-static-zinc-50'),
     ground: read('--dsw-static-zinc-800'),
