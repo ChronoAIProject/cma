@@ -114,6 +114,12 @@ pub struct SandboxView {
     pub owner: String,
     pub owner_name: Option<String>,
     pub name: String,
+    /// Colour every Agent in this Sandbox wears, as lowercase `#rrggbb`.
+    /// Absent until one is assigned, on shared-grant reads, or while colours
+    /// cannot be read; clients then show their default colour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(pattern = "^#[0-9a-f]{6}$")]
+    pub color: Option<String>,
     #[schema(value_type = String)]
     pub status: SandboxStatus,
     pub profile: ProfileReferenceView,
@@ -142,6 +148,7 @@ impl From<&Sandbox> for SandboxView {
             owner: value.owner.0.clone(),
             owner_name: None,
             name: value.name.clone(),
+            color: None,
             status: value.status,
             profile: ProfileReferenceView {
                 id: value.profile.id.to_string(),

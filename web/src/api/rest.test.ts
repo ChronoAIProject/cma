@@ -51,6 +51,16 @@ describe('public REST web binding', () => {
     });
     expect(test.fetch).toHaveBeenCalledTimes(2);
   });
+  it('carries the Sandbox colour into list and detail views, absent when the server omits it', async () => {
+    const test = restTransport();
+    const client = createRestWebClient(test.sdk);
+    test.reply({ items: [{ ...WIRE_SANDBOX_DETAIL, color: '#2f96fa' }] });
+    expect((await client.listSandboxes()).items[0]?.color).toBe('#2f96fa');
+    test.reply({ ...WIRE_SANDBOX_DETAIL, color: '#62d079' });
+    expect((await client.readSandbox(WIRE_SANDBOX.id)).color).toBe('#62d079');
+    test.reply(WIRE_SANDBOX_DETAIL);
+    expect((await client.readSandbox(WIRE_SANDBOX.id)).color).toBeUndefined();
+  });
   it('keeps title provenance and recorded first-message identity in detail and hierarchy reads', async () => {
     const test = restTransport();
     const client = createRestWebClient(test.sdk);
