@@ -1,6 +1,8 @@
 import { render, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CharacterAvatar, characterPhase } from './CharacterAvatar';
+import { CharacterColorContext } from './characterColor';
 import type { CharacterOptions } from './stage';
 
 const stage = vi.hoisted(() => ({
@@ -53,6 +55,35 @@ describe('CharacterAvatar', () => {
       phase: 1.5,
     });
     expect(stage.attach).toHaveBeenCalledTimes(1);
+  });
+
+  it('wears its Sandbox colour only in the brand tone, from a prop or its context', async () => {
+    const attached = handle();
+    stage.attach.mockReturnValue(attached);
+    const tree = (avatar: ReactNode) => (
+      <CharacterColorContext value="#2f96fa">{avatar}</CharacterColorContext>
+    );
+    const { container, rerender } = render(tree(<CharacterAvatar pose="idle" size={24} />));
+    const avatar = container.querySelector<HTMLElement>('.character-avatar');
+    await waitFor(() => {
+      expect(avatar).toHaveAttribute('data-status', 'ready');
+    });
+    expect(stage.attach).toHaveBeenCalledWith(
+      expect.any(HTMLCanvasElement),
+      expect.objectContaining({ tone: 'brand', color: '#2f96fa' }),
+      expect.any(Function),
+    );
+    expect(avatar?.style.color).toBe('rgb(47, 150, 250)');
+
+    rerender(tree(<CharacterAvatar pose="idle" size={24} color="#62d079" />));
+    expect(attached.update).toHaveBeenLastCalledWith(expect.objectContaining({ color: '#62d079' }));
+    expect(avatar?.style.color).toBe('rgb(98, 208, 121)');
+
+    rerender(tree(<CharacterAvatar pose="approval" size={24} tone="warning" color="#62d079" />));
+    expect(attached.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tone: 'warning', color: undefined }),
+    );
+    expect(avatar?.style.color).toBe('');
   });
 
   it('shows the still mark when the stage cannot draw', async () => {
