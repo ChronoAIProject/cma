@@ -18,7 +18,11 @@ function show(client: CmaWebClient, props: { workspaceId?: string; sandboxId?: s
 }
 
 it.each([
-  [{}, 'Start an Agent in a new Sandbox with an empty workspace.', {}],
+  [
+    {},
+    'Your Agent gets its own Sandbox, a private computer it works in, starting with an empty Workspace.',
+    {},
+  ],
   [
     { sandboxId: 'sbx_1' },
     'Start an Agent with a new workspace in this Sandbox.',

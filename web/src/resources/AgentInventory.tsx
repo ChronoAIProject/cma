@@ -33,7 +33,7 @@ interface Props {
 }
 
 const categories: readonly { value: Category; label: string }[] = [
-  { value: 'all', label: 'All creation origins' },
+  { value: 'all', label: 'Created any way' },
   ...Object.entries(creationLabels).map(([value, label]) => ({
     value: value as AgentCreationCategory,
     label,
@@ -151,7 +151,7 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
           ]}
           title="Agents"
           headingId="inventory-title"
-          description="Browse current and retained Agents by creation source and channel activity."
+          description="Find an Agent by how it was created, what it is doing now, or whether it is linked to a chat channel."
           actions={<Button onClick={inventory.reload}>Refresh</Button>}
         />
         <div className="agent-inventory__filters">

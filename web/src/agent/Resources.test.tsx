@@ -146,7 +146,9 @@ it('never displays a resource response for a different Agent', async () => {
       <Resources agentId="agt_1" sandboxId="sbx_1" availability={liveAvailability} />
     </CmaClientProvider>,
   );
-  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(
+    await screen.findByText('Usage readings are unavailable right now. Your Agent keeps working.'),
+  ).toBeInTheDocument();
   expect(screen.queryByText('RAM · 1 GiB / 8 GiB')).not.toBeInTheDocument();
 });
 
