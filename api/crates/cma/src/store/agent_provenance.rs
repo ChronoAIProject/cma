@@ -13,6 +13,8 @@ use super::sandbox_mongo::{
     DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 
+mod snapshot;
+
 pub(super) fn document(record: &AgentCreationProvenance) -> Result<Document, SandboxStoreError> {
     Ok(doc! {
         "_id": record.agent_id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -110,6 +112,19 @@ fn unavailable() -> SandboxStoreError {
 }
 
 pub(super) async fn read_snapshot(
+    store: &MongoSandboxStore,
+    id: &AgentId,
+    session: &mut ClientSession,
+) -> Result<AgentProvenanceSnapshot, ReadError> {
+    match snapshot::read(store, id, session).await? {
+        Some(snapshot) => Ok(snapshot),
+        // Large retained records still use the original readers in the same
+        // transaction; batching must not impose a new aggregate BSON limit.
+        None => read_snapshot_sequential(store, id, session).await,
+    }
+}
+
+async fn read_snapshot_sequential(
     store: &MongoSandboxStore,
     id: &AgentId,
     session: &mut ClientSession,
