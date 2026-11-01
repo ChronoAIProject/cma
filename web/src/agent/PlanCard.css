@@ -19,10 +19,7 @@
 
 .plan-card__eyebrow {
   color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 10px;
-  line-height: 15px;
-  text-transform: uppercase;
+  font: var(--dsw-font-xxs-strong-12);
 }
 
 .plan-card__steps {

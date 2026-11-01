@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { StateDot } from '../ui/StateDot';
+import { CharacterAvatar } from '../character/CharacterAvatar';
+import type { CharacterPose } from '../character/poses';
 import './Thinking.css';
 import { TurnUsage } from './TurnUsage';
 import type { VisibleText } from './tokenEstimate';
@@ -28,6 +29,8 @@ interface ThinkingProps {
   readonly usage?: { readonly inputTokens: number; readonly outputTokens: number };
   readonly visibleText?: readonly VisibleText[];
   readonly visibleAnchor?: readonly VisibleText[];
+  /** What the turn is doing right now (§28): thinking, working on a tool, or replying. */
+  readonly pose?: CharacterPose;
 }
 
 export function summaryOf(text: string): string {
@@ -64,6 +67,7 @@ export function Thinking({
   usage,
   visibleText,
   visibleAnchor,
+  pose = 'thinking',
 }: ThinkingProps) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now);
@@ -101,7 +105,7 @@ export function Thinking({
         aria-controls={open ? bodyId : undefined}
         onClick={() => setOpen((wasOpen) => !wasOpen)}
       >
-        <StateDot state="ongoing" size={10} />
+        <CharacterAvatar pose={pose} size={32} className="thinking__character" />
         <span className="thinking__title">Thinking</span>
         {seconds === undefined ? null : <span className="thinking__elapsed">for {seconds}s</span>}
         <TurnUsage usage={usage} visibleText={visibleText} visibleAnchor={visibleAnchor} />
