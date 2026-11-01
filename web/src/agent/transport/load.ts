@@ -17,8 +17,14 @@ export async function loadV2Agent(
   onProgress?: (ready: ReadyAgent) => void,
   lineage?: AgentLoadLineage,
   onInputReady?: (ready: ReadyAgent) => void,
+  onReadAuthorized?: () => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly [] }> {
   await v2.authorize(signal);
+  // The same fresh check can publish observed preparation and admit this batch.
+  // This synchronous callback cannot supply or retain authorization itself.
+  onReadAuthorized?.();
+  signal.throwIfAborted();
+  v2.journal.read();
   const readHierarchy = async () => {
     const detailRead = (async () => client.readAgent(agentId, { signal }))();
     const [detail, preparedWorkspace] = await Promise.all([
