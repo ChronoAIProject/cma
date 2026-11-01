@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import { readableError } from '../vocabulary/errors';
 
 export interface AuthorizedValue<Value> {
   readonly value: Value;
@@ -91,10 +92,9 @@ export function useAuthorizedRead<Value>(
             error instanceof TypeError
               ? { transient: true as const }
               : {}),
-            message:
-              error instanceof Error && !request.signal.aborted
-                ? error.message
-                : 'Current resource access could not be checked. Try again.',
+            message: request.signal.aborted
+              ? 'Current resource access could not be checked. Try again.'
+              : readableError(error, 'Current resource access could not be checked. Try again.'),
           });
         }
       } finally {

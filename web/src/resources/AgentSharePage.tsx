@@ -26,7 +26,10 @@ export function AgentSharePage({
     [onScope, onRefresh, onNavigate],
   );
   return client === undefined ? (
-    <UnavailableView title="Agent sharing unavailable" />
+    <UnavailableView
+      title="Agent sharing unavailable"
+      reason="This CMA deployment does not support shared Agent links. Ask the person who shared it to send the conversation another way."
+    />
   ) : (
     <AgentShareAccept client={client} shareId={shareId} onAccepted={accepted} />
   );

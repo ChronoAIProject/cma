@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { ApprovalDecision } from './controller';
 import { IconRightUpOutline16, IconThinkOutline16, IconWarningOutline16 } from '../ui/icons';
 import { MessageContent } from './MessageContent';
@@ -163,4 +164,3 @@ export const StreamEntry = memo(StreamEntryView, (previous, next) => {
     );
   return true;
 });
-import { memo } from 'react';
