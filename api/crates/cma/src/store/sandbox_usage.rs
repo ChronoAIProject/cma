@@ -2,7 +2,7 @@
 
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Sandbox, SandboxEvent};
-use layer2_core::sandbox_usage::{observe, SandboxUsage, UsageEvent};
+use layer2_core::sandbox_usage::{observe, rebaseline, SandboxUsage, UsageEvent};
 use mongodb::{
     bson::{doc, Document},
     ClientSession, IndexModel,
@@ -116,6 +116,7 @@ pub(super) async fn lifecycle_event(
     store: &MongoSandboxStore,
     session: &mut ClientSession,
     event: &SandboxEvent,
+    expected_revision: Option<u64>,
 ) -> Result<(), TransactionEventError> {
     let document = store
         .sandboxes
@@ -132,6 +133,10 @@ pub(super) async fn lifecycle_event(
         &sandbox,
         event.seq,
         &event.appended_at,
+        (
+            event.seq.saturating_sub(1),
+            expected_revision.unwrap_or(sandbox.revision),
+        ),
         false,
     )
     .await
@@ -143,6 +148,7 @@ pub(super) async fn record(
     sandbox: &Sandbox,
     source_seq: u64,
     at: &str,
+    expected_source: (u64, u64),
     checkpoint: bool,
 ) -> Result<(), TransactionEventError> {
     let current = store
@@ -156,10 +162,18 @@ pub(super) async fn record(
         .map(read_state)
         .transpose()
         .map_err(TransactionEventError::Domain)?;
-    let observation =
-        observe(previous.as_ref(), sandbox, source_seq, at, checkpoint).map_err(|error| {
-            TransactionEventError::Domain(SandboxStoreError::Corrupt(error.to_string()))
-        })?;
+    // Compare the usage watermark with the aggregate BEFORE this write. Legacy
+    // replicas can mutate it during the first rolling overlap; their missing
+    // allocation edges must never be charged as one continuous known interval.
+    let observation = match &previous {
+        Some(previous) if (previous.source_seq, previous.source_revision) != expected_source => {
+            rebaseline(previous, sandbox, source_seq, at)
+        }
+        _ => observe(previous.as_ref(), sandbox, source_seq, at, checkpoint),
+    }
+    .map_err(|error| {
+        TransactionEventError::Domain(SandboxStoreError::Corrupt(error.to_string()))
+    })?;
     let Some((state, event)) = observation else {
         return Ok(());
     };

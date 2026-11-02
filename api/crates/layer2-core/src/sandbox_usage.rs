@@ -241,7 +241,10 @@ pub fn observe(
     // Concurrent callers may carry a timestamp sampled before a newer committed
     // transition. Clamp to that transition; never manufacture negative usage.
     let ended_at = observed.max(previous.last_observed_at);
+    let source_advanced =
+        source_seq != previous.source_seq || sandbox.revision != previous.source_revision;
     if unchanged
+        && !source_advanced
         && (!checkpoint
             || ended_at == previous.last_observed_at
             || previous.allocation == Allocation::default())
@@ -302,6 +305,25 @@ pub fn observe(
         ..previous.clone()
     };
     Ok(Some((state, event)))
+}
+
+/// An older writer changed the aggregate without advancing its usage ledger.
+/// Preserve confirmed totals, exclude the uncertain tail and resume coverage.
+pub fn rebaseline(
+    previous: &SandboxUsage,
+    sandbox: &Sandbox,
+    source_seq: u64,
+    at: &str,
+) -> Result<Option<(SandboxUsage, UsageEvent)>, UsageError> {
+    let mut anchor = previous.clone();
+    anchor.last_observed_at = timestamp(at)?.max(previous.last_observed_at);
+    Ok(
+        observe(Some(&anchor), sandbox, source_seq, at, true)?.map(|(mut state, mut event)| {
+            state.complete_lifecycle = false;
+            event.kind = UsageEventKind::Baseline;
+            (state, event)
+        }),
+    )
 }
 
 pub fn timestamp(value: &str) -> Result<u64, UsageError> {

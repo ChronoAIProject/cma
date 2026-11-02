@@ -113,10 +113,11 @@ export function SandboxUsagePanel({
             <dd>{quantity.format(summary.totals.disk_gib_hours)} GiB-hours</dd>
           </dl>
           {summary.incomplete_lifecycle_count > 0 ? (
-            <Alert tone="info" title="Tracking starts at the recorded observation">
-              {summary.incomplete_lifecycle_count} existing{' '}
-              {summary.incomplete_lifecycle_count === 1 ? 'sandbox began' : 'sandboxes began'}{' '}
-              before usage tracking. Their earlier usage is unavailable.
+            <Alert tone="info" title="Some usage history is unavailable">
+              {summary.incomplete_lifecycle_count}{' '}
+              {summary.incomplete_lifecycle_count === 1 ? 'sandbox has' : 'sandboxes have'} partial
+              history. Totals include recorded intervals; usage before tracking or during gaps is
+              unavailable.
             </Alert>
           ) : null}
         </>

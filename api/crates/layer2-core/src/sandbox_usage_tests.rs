@@ -177,3 +177,57 @@ fn sandbox_usage_clock_skew_does_not_subtract_or_duplicate_time() {
     assert_eq!(event.started_at, event.ended_at);
     assert_eq!(paused.totals.uptime_seconds, 10);
 }
+
+#[test]
+fn sandbox_usage_rebaseline_preserves_confirmed_totals_and_excludes_unknown_tail() {
+    let mut value = sandbox();
+    let (first, _) = observe(None, &value, 1, &at(0), false).unwrap().unwrap();
+    let (confirmed, _) = observe(Some(&first), &value, 1, &at(60), true)
+        .unwrap()
+        .unwrap();
+    // An older replica paused this Sandbox at an unknown time after the checkpoint.
+    value.runtime = None;
+    value.status = SandboxStatus::Paused;
+    value.revision += 1;
+    let (resumed_coverage, gap) = rebaseline(&confirmed, &value, 2, &at(120))
+        .unwrap()
+        .unwrap();
+    assert!(!resumed_coverage.complete_lifecycle);
+    assert_eq!(resumed_coverage.totals, confirmed.totals);
+    assert_eq!(gap.kind, UsageEventKind::Baseline);
+    assert_eq!(gap.started_at, gap.ended_at);
+    assert_eq!(gap.quantity, UsageTotals::default());
+    assert_eq!(gap.revision, confirmed.revision + 1);
+    assert_eq!(
+        resumed_coverage.tracking_started_at,
+        first.tracking_started_at
+    );
+    assert_eq!(
+        resumed_coverage
+            .totals_at(timestamp(&at(180)).unwrap())
+            .unwrap(),
+        confirmed.totals
+    );
+}
+
+#[test]
+fn sandbox_usage_nonallocation_writes_advance_the_source_watermark() {
+    let mut value = sandbox();
+    let (first, _) = observe(None, &value, 1, &at(0), false).unwrap().unwrap();
+    value.revision += 1;
+    let (saved, _) = observe(Some(&first), &value, 1, &at(10), false)
+        .unwrap()
+        .unwrap();
+    let (appended, _) = observe(Some(&saved), &value, 2, &at(20), false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (appended.source_seq, appended.source_revision),
+        (2, value.revision)
+    );
+    assert!(appended.complete_lifecycle);
+    assert_eq!(appended.totals.uptime_seconds, 20);
+    assert!(observe(Some(&appended), &value, 2, &at(20), false)
+        .unwrap()
+        .is_none());
+}

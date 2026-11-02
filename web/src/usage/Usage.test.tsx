@@ -100,7 +100,7 @@ it('reports missing history and retries failed usage reads without presenting a 
   await screen.findByText('Usage unavailable');
   expect(screen.queryByText('0 core-hours')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Refresh usage' }));
-  await screen.findByText('Tracking starts at the recorded observation');
+  await screen.findByText('Some usage history is unavailable');
 });
 
 it('restores the Usage settings tab from its URL and supports tab keyboard navigation', async () => {

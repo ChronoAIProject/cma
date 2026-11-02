@@ -181,7 +181,7 @@ pub(super) async fn append_in_transaction(
                 TransactionEventError::Driver(error)
             }
         })?;
-    super::sandbox_usage::lifecycle_event(store, session, &event).await?;
+    super::sandbox_usage::lifecycle_event(store, session, &event, None).await?;
     Ok(event)
 }
 

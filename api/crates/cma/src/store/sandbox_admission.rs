@@ -182,7 +182,7 @@ where
         .map_err(classify_insert)?;
     super::resource_access::insert_admission_policy(store, resource_policy.as_ref(), session)
         .await?;
-    super::sandbox_usage::lifecycle_event(store, session, &event)
+    super::sandbox_usage::lifecycle_event(store, session, &event, None)
         .await
         .map_err(|error| match error {
             super::sandbox_events::TransactionEventError::Domain(error) => {

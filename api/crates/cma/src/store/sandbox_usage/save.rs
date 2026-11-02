@@ -58,6 +58,7 @@ async fn apply(
         .await
         .map_err(Driver)?
         .ok_or(Domain(SandboxStoreError::NotFound))?;
+    let previous_revision = expected;
     let expected = signed(expected, "sandbox revision")
         .map_err(|error| Domain(SandboxStoreError::Corrupt(error)))?;
     if current.get_i64("revision").ok() != Some(expected) {
@@ -81,7 +82,16 @@ async fn apply(
     if updated.matched_count != 1 {
         return Err(Domain(SandboxStoreError::Conflict));
     }
-    super::record(store, session, sandbox, seq, at, false).await
+    super::record(
+        store,
+        session,
+        sandbox,
+        seq,
+        at,
+        (seq, previous_revision),
+        false,
+    )
+    .await
 }
 
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
