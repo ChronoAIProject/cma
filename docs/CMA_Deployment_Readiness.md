@@ -1059,6 +1059,17 @@ starts at most one sweep per second; summaries contain no Agent or owner identit
 prompts or database payloads. Compare these counts and existing connection checkout
 metrics with actual UI timings before attributing production latency to this work.
 
+Empty v2 Agent event polls return the core's already-authorized window without
+running response-command and optional message-command correlation. No source
+entries exist to bind. The core still reads fresh ownership and ancestry, checks
+for an uncommitted log tail, and revalidates authority after its IO. Nonempty
+windows keep both correlation paths; every buffered durable or live frame keeps
+its existing release-time authorization and generation checks. This reduces an
+empty poll from three full authorization snapshots to two, or from four to two
+when message bindings are requested. Poll cadence, revocation/expiry checks and
+public response shapes are unchanged. Measure aggregate database checkouts and
+actual creation timings before attributing startup improvement to fewer reads.
+
 Prepared Open/Ready publication decides eligibility inside the same Mongo
 transaction that validates the current Agent and writes its parent fences. It
 reads the consumed preparation once and fences that exact revision before
