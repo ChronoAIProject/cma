@@ -48,7 +48,7 @@ impl AgentWorker {
             .await?
         {
             return self
-                .replay_prepared_resources(agent, context, now + started.elapsed())
+                .replay_and_open_prepared(agent, context, now + started.elapsed())
                 .await;
         }
         let request = WorktreeRequest::new(
@@ -216,10 +216,22 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        self.open_conversation_with_context(agent, None, now).await
+    }
+
+    pub(super) async fn open_conversation_with_context(
+        &self,
+        agent: Agent,
+        prepared: Option<AgentContext>,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
         let attempt_now = now;
         let mut timing = super::startup_timing::StartupTiming::new(&agent);
-        let context = match self.startup_context(&agent).await {
+        let context = match match prepared {
+            Some(context) => self.prepared_open_context(&agent, context).await,
+            None => self.startup_context(&agent).await,
+        } {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
