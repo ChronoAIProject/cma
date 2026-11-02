@@ -37,6 +37,8 @@ pub(crate) struct SandboxPageParams {
     #[serde(default)]
     shared: bool,
     status: Option<SandboxStatus>,
+    #[serde(default)]
+    exclude_retired: bool,
     cursor: Option<String>,
     limit: Option<u16>,
 }
@@ -129,6 +131,7 @@ pub(super) async fn create(
         ("organization" = Option<String>, Query),
         ("shared" = Option<bool>, Query, description = "Incoming whole-Sandbox grants across current organizations; mutually exclusive with organization"),
         ("status" = Option<String>, Query),
+        ("exclude_retired" = Option<bool>, Query, description = "Exclude retired Sandboxes before pagination; omitted or false retains historical inventory"),
         ("cursor" = Option<String>, Query),
         ("limit" = Option<u16>, Query)
     ),
@@ -157,6 +160,7 @@ pub(super) async fn list(
                 &resource.context,
                 resource.credential.as_ref().map(DelegatedCredential::value),
                 &OwnerSandboxQuery {
+                    exclude_retired: params.exclude_retired,
                     status: params.status,
                     page,
                 },
@@ -187,6 +191,7 @@ pub(super) async fn list(
                 resource.credential.as_ref().map(DelegatedCredential::value),
                 &layer2_core::SubjectId::new(organization),
                 &OwnerSandboxQuery {
+                    exclude_retired: params.exclude_retired,
                     status: params.status,
                     page,
                 },
@@ -210,6 +215,7 @@ pub(super) async fn list(
         .list_sandboxes(
             &caller,
             &OwnerSandboxQuery {
+                exclude_retired: params.exclude_retired,
                 status: params.status,
                 page,
             },

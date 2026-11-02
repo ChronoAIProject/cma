@@ -62,6 +62,9 @@ async fn read_scope(
     if let Some(status) = query.status {
         filter.insert("status", status.name());
     }
+    if query.exclude_retired {
+        filter.insert("$and", vec![doc! { "status": { "$ne": "retired" } }]);
+    }
     if let Some(cursor) = &query.page.cursor {
         filter.insert("_id", doc! {"$gt":cursor});
     }
