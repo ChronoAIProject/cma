@@ -1044,6 +1044,21 @@ validated against actual creation timings; it does not establish a five-second
 startup guarantee. Keep one Recreate replica while rate/quota counters remain
 process-local, and verify retained conversations and homes across the API rollout.
 
+Connection reconciliation carries the applied managed-guidance revision from the
+Agent record that its discovery scan already validated. For an attached Agent at
+the current revision, it skips the second full Agent read previously performed
+only to reject an unnecessary refresh. Applied guidance revisions cannot decrease;
+this observation only skips completed maintenance. Pending refreshes retain their
+fresh reads, idle checks and transaction/input fences. Missing connections still
+take the original recovery path regardless of their guidance revision. Discovery
+continues validating complete records and rejects corrupt metadata.
+
+Each completed reconciliation sweep logs only aggregate candidate, already-current,
+refresh-check and recovery counts plus elapsed milliseconds. The normal scheduler
+starts at most one sweep per second; summaries contain no Agent or owner identities,
+prompts or database payloads. Compare these counts and existing connection checkout
+metrics with actual UI timings before attributing production latency to this work.
+
 Prepared Open/Ready publication decides eligibility inside the same Mongo
 transaction that validates the current Agent and writes its parent fences. It
 reads the consumed preparation once and fences that exact revision before
