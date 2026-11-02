@@ -50,17 +50,8 @@ impl MongoRequestLimits {
             if result.is_some() {
                 return Ok(None);
             }
-            // The same server time used by admission also determines Retry-After.
-            let mut rows = self.limits.aggregate([
-                doc! { "$match": { "_id": key } },
-                doc! { "$project": { "wait_ms": { "$max": [1, { "$subtract": ["$tat", { "$add": [{ "$toLong": "$$NOW" }, tolerance] }] }] } } },
-            ]).await.map_err(unavailable)?;
-            use futures_util::TryStreamExt;
-            if let Some(row) = rows.try_next().await.map_err(unavailable)? {
-                let wait = row
-                    .get_i64("wait_ms")
-                    .map_err(|_| StoreError::Malformed("invalid request budget".into()))?;
-                return Ok(Some((wait.max(1) as u64).div_ceil(1000)));
+            if let Some(delay) = self.retry_after(key, tolerance).await? {
+                return Ok(Some(delay));
             }
             // Concurrent inserts are harmless: only the winner creates the empty bucket.
             let inserted = self
@@ -77,6 +68,25 @@ impl MongoRequestLimits {
             }
         }
         Err(StoreError::Unavailable("request budget contention".into()))
+    }
+
+    async fn retry_after(&self, key: &str, tolerance: i64) -> Result<Option<u64>, StoreError> {
+        // MongoDB returns the selected $max operand's BSON integer width. A
+        // newly inserted or refilled bucket can select the Int32 lower bound.
+        // The same server clock used by admission determines Retry-After.
+        let mut rows = self.limits.aggregate([
+            doc! { "$match": { "_id": key } },
+            doc! { "$project": { "wait_ms": { "$max": [1, { "$subtract": ["$tat", { "$add": [{ "$toLong": "$$NOW" }, tolerance] }] }] } } },
+        ]).await.map_err(unavailable)?;
+        use futures_util::TryStreamExt;
+        let Some(row) = rows.try_next().await.map_err(unavailable)? else {
+            return Ok(None);
+        };
+        let wait = row
+            .get_i64("wait_ms")
+            .or_else(|_| row.get_i32("wait_ms").map(i64::from))
+            .map_err(|_| StoreError::Malformed("invalid request budget".into()))?;
+        Ok(Some((wait.max(1) as u64).div_ceil(1000)))
     }
 }
 
