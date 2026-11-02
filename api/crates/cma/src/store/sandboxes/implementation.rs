@@ -128,10 +128,35 @@ impl SandboxStore for MongoSandboxStore {
         owner: &SubjectId,
         page: &PageRequest,
     ) -> Result<Page<Sandbox>, SandboxStoreError> {
+        self.sandbox_page(doc! { "owner": owner.as_str() }, page)
+            .await
+    }
+
+    async fn list_live_sandboxes(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<Sandbox>, SandboxStoreError> {
+        self.sandbox_page(
+            doc! {
+                "owner": owner.as_str(),
+                "status": { "$nin": ["retiring", "retired"] },
+            },
+            page,
+        )
+        .await
+    }
+}
+
+impl MongoSandboxStore {
+    async fn sandbox_page(
+        &self,
+        mut filter: Document,
+        page: &PageRequest,
+    ) -> Result<Page<Sandbox>, SandboxStoreError> {
         if page.limit == 0 || page.limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
-        let mut filter = doc! { "owner": owner.as_str() };
         if let Some(cursor) = &page.cursor {
             filter.insert("_id", doc! { "$gt": cursor });
         }

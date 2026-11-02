@@ -10,6 +10,8 @@ use super::{
     Workspace, Worktree,
 };
 
+mod sandbox;
+pub use sandbox::SandboxStore;
 mod service_traits;
 pub use super::binding::BindingStore;
 pub use service_traits::*;
@@ -190,43 +192,6 @@ pub enum SandboxStoreError {
     Unavailable(String),
     #[error("stored sandbox data is not usable: {0}")]
     Corrupt(String),
-}
-
-#[async_trait]
-pub trait SandboxStore: Send + Sync {
-    /// Current server-managed runtime; custom images and lost-runtime recovery stay pinned.
-    fn managed_runtime_version(&self) -> Option<&str> {
-        None
-    }
-
-    async fn unpublished_runtime_recovery_snapshot(
-        &self,
-        _id: &SandboxId,
-    ) -> Result<super::SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
-        Err(SandboxStoreError::InvalidTransaction(
-            "unpublished runtime recovery is unavailable",
-        ))
-    }
-    async fn admit_unpublished_runtime_recovery(
-        &self,
-        _request: super::SandboxUnpublishedRecoveryRequest,
-    ) -> Result<Sandbox, SandboxStoreError> {
-        Err(SandboxStoreError::InvalidTransaction(
-            "unpublished runtime recovery is unavailable",
-        ))
-    }
-    async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError>;
-    async fn get_sandbox(&self, id: &SandboxId) -> Result<Option<Sandbox>, SandboxStoreError>;
-    async fn save_sandbox(
-        &self,
-        expected_revision: u64,
-        sandbox: Sandbox,
-    ) -> Result<(), SandboxStoreError>;
-    async fn list_sandboxes(
-        &self,
-        owner: &SubjectId,
-        page: &PageRequest,
-    ) -> Result<Page<Sandbox>, SandboxStoreError>;
 }
 
 #[async_trait]
