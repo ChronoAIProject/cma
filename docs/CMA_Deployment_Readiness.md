@@ -1070,6 +1070,18 @@ when message bindings are requested. Poll cadence, revocation/expiry checks and
 public response shapes are unchanged. Measure aggregate database checkouts and
 actual creation timings before attributing startup improvement to fewer reads.
 
+Resource authorization reads the requested record, its authoritative ancestry,
+optional assigned Agent and policy with one bounded aggregation inside the same
+transaction snapshot. Every original record still passes its complete reader,
+indexed-field checks and lineage validation; applicable shares retain their
+separate bounded query and validation. Ordinary Agent reads use three database
+commands including transaction abort, down from seven. The aggregation emits
+individual source documents, so valid retained records need not fit together in
+one 16 MiB BSON row; oversized batches may require additional cursor reads in
+the same transaction. Fresh revocation checks and write fences remain mandatory.
+This reduces database round trips without caching permissions or establishing a
+five-second creation guarantee; actual UI timings remain the acceptance measure.
+
 Prepared Open/Ready publication decides eligibility inside the same Mongo
 transaction that validates the current Agent and writes its parent fences. It
 reads the consumed preparation once and fences that exact revision before
