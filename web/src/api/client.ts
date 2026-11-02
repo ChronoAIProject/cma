@@ -227,7 +227,9 @@ export interface CmaWebClient {
     options: CommandOptions,
   ) => Promise<void>;
   readonly botViews?: BotClient;
-  listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
+  listSandboxes(
+    options?: PageOptions & { readonly excludeRetired?: boolean },
+  ): Promise<ResourcePage<SandboxSummary>>;
   readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;
   readWorkspace(id: string, options?: ReadOptions): Promise<WorkspaceDetail>;
   readAgent(id: string, options?: ReadOptions): Promise<AgentDetail>;

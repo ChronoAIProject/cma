@@ -197,6 +197,7 @@ async fn status_is_filtered_before_owner_pagination() {
         .list_sandboxes(
             &caller("owner", true),
             &OwnerSandboxQuery {
+                exclude_retired: false,
                 status: Some(SandboxStatus::Active),
                 page: PageRequest::new(1, None).unwrap(),
             },
@@ -210,6 +211,7 @@ async fn status_is_filtered_before_owner_pagination() {
         .list_sandboxes(
             &caller("owner", true),
             &OwnerSandboxQuery {
+                exclude_retired: false,
                 status: Some(SandboxStatus::Active),
                 page: PageRequest::new(1, first.next).unwrap(),
             },
@@ -329,4 +331,56 @@ async fn authorization_and_child_lineage_fail_closed() {
         service.sandbox(&caller("owner", true), &parent.id).await,
         Err(HierarchyReadError::Corrupt(_))
     ));
+}
+
+#[tokio::test]
+async fn visible_inventory_excludes_only_retired_records_before_pagination() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    for (id, owner, status) in [
+        ("sbx_00", "owner", SandboxStatus::Retired),
+        ("sbx_01", "owner", SandboxStatus::Active),
+        ("sbx_02", "owner", SandboxStatus::Retired),
+        ("sbx_03", "owner", SandboxStatus::Retiring),
+        ("sbx_04", "foreign", SandboxStatus::Active),
+        ("sbx_05", "owner", SandboxStatus::Paused),
+        ("sbx_06", "owner", SandboxStatus::Retired),
+    ] {
+        insert_sandbox(&store, sandbox(id, owner, status)).await;
+    }
+    let service = HierarchyReadService::new(store);
+    let owner = caller("owner", true);
+    let mut query = OwnerSandboxQuery {
+        exclude_retired: true,
+        page: PageRequest::new(1, None).unwrap(),
+        ..Default::default()
+    };
+    for (id, next) in [
+        ("sbx_01", Some("sbx_01")),
+        ("sbx_03", Some("sbx_03")),
+        ("sbx_05", None),
+    ] {
+        let page = service.list_sandboxes(&owner, &query).await.unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].sandbox.id.as_str(), id);
+        assert_eq!(page.next.as_deref(), next);
+        query.page.cursor = page.next;
+    }
+    let retained = service
+        .list_sandboxes(&owner, &OwnerSandboxQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(retained.items.len(), 6);
+    assert_eq!(
+        service
+            .sandbox(&owner, &SandboxId("sbx_00".into()))
+            .await
+            .unwrap()
+            .sandbox
+            .status,
+        SandboxStatus::Retired
+    );
+    query.status = Some(SandboxStatus::Retired);
+    let empty = service.list_sandboxes(&owner, &query).await.unwrap();
+    assert!(empty.items.is_empty());
+    assert_eq!(empty.next, None);
 }

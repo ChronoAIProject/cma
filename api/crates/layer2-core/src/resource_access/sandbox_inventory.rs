@@ -107,7 +107,7 @@ impl ResourceAccessService {
                 Some(organization) => snapshot.organization_sandbox(organization)?,
                 None => snapshot.shared_sandbox(&context.caller.subject, &membership.ids())?,
             };
-            if query.status.is_some_and(|status| sandbox.status != status)
+            if !query.matches_status(sandbox.status)
                 || previous
                     .as_deref()
                     .is_some_and(|id| id >= sandbox.id.as_str())
@@ -173,10 +173,7 @@ impl ResourceAccessService {
                 ResourceCapability::ViewDetails,
             )
             .await?;
-        if query
-            .status
-            .is_some_and(|status| current.lineage.sandbox.status != status)
-        {
+        if !query.matches_status(current.lineage.sandbox.status) {
             return Err(ResourceAccessStoreError::Conflict.into());
         }
         Ok(())

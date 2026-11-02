@@ -53,6 +53,7 @@ async fn shared_sandbox_inventory_deduplicates_all_orgs_and_excludes_personal_an
     share(&f, &own, "org", "own").await;
     share(&f, &foreign, "org-two", "foreign").await;
     let query = OwnerSandboxQuery {
+        exclude_retired: false,
         page: PageRequest::new(1, None).unwrap(),
         status: None,
     };
@@ -71,6 +72,7 @@ async fn shared_sandbox_inventory_deduplicates_all_orgs_and_excludes_personal_an
         &f,
         "recipient",
         OwnerSandboxQuery {
+            exclude_retired: false,
             status: None,
             page: PageRequest::new(1, first.next).unwrap(),
         },
@@ -143,7 +145,7 @@ async fn shared_sandbox_inventory_requires_explicit_grants_and_fresh_discovery_e
 
 #[tokio::test]
 async fn shared_sandbox_inventory_fences_hidden_grants_and_original_deadline_after_count_io() {
-    for failure in ["revoke", "expire", "status"] {
+    for failure in ["revoke", "expire", "status", "retired"] {
         let f = fixture().await;
         grant(&f, true).await;
         let mut extra = sandbox("z_lookahead", "owner", SandboxStatus::Active);
@@ -167,7 +169,8 @@ async fn shared_sandbox_inventory_fences_hidden_grants_and_original_deadline_aft
                     &context("recipient"),
                     Some("request-credential"),
                     &OwnerSandboxQuery {
-                        status: Some(SandboxStatus::Active),
+                        exclude_retired: failure == "retired",
+                        status: (failure != "retired").then_some(SandboxStatus::Active),
                         page: PageRequest::new(1, None).unwrap(),
                     },
                 )
@@ -179,8 +182,12 @@ async fn shared_sandbox_inventory_fences_hidden_grants_and_original_deadline_aft
         if failure == "expire" {
             tokio::time::pause();
             tokio::time::advance(Duration::from_secs(2)).await;
-        } else if failure == "status" {
-            extra.status = SandboxStatus::Paused;
+        } else if failure == "status" || failure == "retired" {
+            extra.status = if failure == "retired" {
+                SandboxStatus::Retired
+            } else {
+                SandboxStatus::Paused
+            };
             extra.revision += 1;
             f.store.save_sandbox(1, extra).await.unwrap();
         } else {

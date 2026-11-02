@@ -22,11 +22,15 @@ fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
 fn owner_filter(
     owner: &SubjectId,
     status: Option<SandboxStatus>,
+    exclude_retired: bool,
     cursor: Option<&str>,
 ) -> Document {
     let mut filter = doc! { "owner": owner.as_str() };
     if let Some(status) = status {
         filter.insert("status", status.name());
+    }
+    if exclude_retired {
+        filter.insert("$and", vec![doc! { "status": { "$ne": "retired" } }]);
     }
     if let Some(cursor) = cursor {
         filter.insert("_id", doc! { "$gt": cursor });
@@ -111,13 +115,14 @@ impl HierarchyReadStore for MongoSandboxStore {
         &self,
         owner: &SubjectId,
         status: Option<SandboxStatus>,
+        exclude_retired: bool,
         page: &PageRequest,
     ) -> Result<Page<SandboxInventoryRecord>, SandboxStoreError> {
         if page.limit == 0 || page.limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
         let mut cursor = self.sandboxes.aggregate(vec![
-            doc! {"$match":owner_filter(owner, status, page.cursor.as_deref())},
+            doc! {"$match":owner_filter(owner, status, exclude_retired, page.cursor.as_deref())},
             doc! {"$sort":{"_id":1}},
             doc! {"$lookup":{"from":RESOURCE_POLICIES,"localField":"_id","foreignField":"_id","as":"inventory_policy"}},
             doc! {"$match":{"inventory_policy.owner_kind":{"$ne":"organization"}}},
@@ -211,6 +216,7 @@ mod tests {
             owner_filter(
                 &SubjectId::new("owner-a"),
                 Some(SandboxStatus::Paused),
+                false,
                 Some("sbx_after"),
             ),
             doc! {
@@ -220,7 +226,7 @@ mod tests {
             }
         );
         assert_eq!(
-            owner_filter(&SubjectId::new("owner-a"), None, None),
+            owner_filter(&SubjectId::new("owner-a"), None, false, None),
             doc! { "owner": "owner-a" }
         );
     }
