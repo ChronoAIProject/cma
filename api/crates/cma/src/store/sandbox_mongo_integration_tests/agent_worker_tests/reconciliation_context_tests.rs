@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use layer2_core::sandbox::{AgentOperationService, DurableAgentUpdateRecorder};
@@ -19,6 +20,19 @@ mod eligibility_tests;
 // These attached streams emit no updates. Keep their asynchronous checkpoint
 // restoration separate from the reconciliation reads measured by this test.
 struct IdleRecorder;
+
+struct LocalReadiness(Arc<AtomicBool>);
+
+#[async_trait::async_trait]
+impl layer3_adapter::ConversationSettingsSupport for LocalReadiness {
+    async fn system_prompt_supported(&self) -> bool {
+        false
+    }
+
+    async fn managed_context_may_be_ready(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
 
 #[async_trait::async_trait]
 impl layer2_core::sandbox::AgentUpdateRecorder for IdleRecorder {
@@ -86,6 +100,16 @@ async fn context_discovery_defers_ineligible_reads_but_preserves_refresh_and_rec
     replace_agent_fixture(&store, &detached).await;
     let detached_busy =
         idle_connection_fixture(&store, "detached_busy_context", AgentStatus::Working).await;
+    let mut local_blocked =
+        idle_connection_fixture(&store, "local_blocked_context", AgentStatus::Ready).await;
+    local_blocked.conversation.settings = Some(settings.clone());
+    local_blocked.revision += 1;
+    replace_agent_fixture(&store, &local_blocked).await;
+    let mut unsupported =
+        idle_connection_fixture(&store, "unsupported_context", AgentStatus::Ready).await;
+    unsupported.conversation.settings = Some(settings.clone());
+    unsupported.revision += 1;
+    replace_agent_fixture(&store, &unsupported).await;
 
     let registry = Arc::new(LiveAgentRegistry::default());
     let updates = DurableAgentUpdateRecorder::new(store.clone());
@@ -104,9 +128,26 @@ async fn context_discovery_defers_ineligible_reads_but_preserves_refresh_and_rec
         AgentWorkerConfig::new("reconcile-test", "reconcile-test").with_managed_documents(true),
     );
     let mut senders = Vec::new();
-    for agent in [&applied, &pending, &unconfigured, &busy] {
+    let local_ready = Arc::new(AtomicBool::new(false));
+    for agent in [
+        &applied,
+        &pending,
+        &unconfigured,
+        &busy,
+        &local_blocked,
+        &unsupported,
+    ] {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         senders.push(sender);
+        let mut input = ConversationInputSender::spawn(1, |_| async { Ok(()) });
+        if agent.id != unsupported.id {
+            let ready = if agent.id == local_blocked.id {
+                local_ready.clone()
+            } else {
+                Arc::new(AtomicBool::new(true))
+            };
+            input = input.with_settings_support(Arc::new(LocalReadiness(ready)));
+        }
         let attachment = registry
             .attach(
                 agent.id.clone(),
@@ -114,7 +155,7 @@ async fn context_discovery_defers_ineligible_reads_but_preserves_refresh_and_rec
                 agent.conversation.runtime_generation.unwrap(),
                 agent.work.next_fence - 1,
                 RuntimeCapabilities::new([RuntimeCapability::Conversation]),
-                ConversationInputSender::spawn(1, |_| async { Ok(()) }),
+                input,
                 receiver,
                 Arc::new(IdleRecorder),
             )
@@ -134,6 +175,8 @@ async fn context_discovery_defers_ineligible_reads_but_preserves_refresh_and_rec
     assert_eq!(observed.get(applied.id.as_str()), None);
     assert_eq!(observed.get(unconfigured.id.as_str()), None);
     assert_eq!(observed.get(busy.id.as_str()), None);
+    assert_eq!(observed.get(local_blocked.id.as_str()), None);
+    assert_eq!(observed.get(unsupported.id.as_str()), None);
     assert!(
         observed
             .get(pending.id.as_str())
@@ -170,20 +213,52 @@ async fn context_discovery_defers_ineligible_reads_but_preserves_refresh_and_rec
     settled.conversation.active_turn = None;
     settled.revision += 1;
     replace_agent_fixture(&store, &settled).await;
+    local_ready.store(true, Ordering::Release);
     reads.lock().unwrap().clear();
     worker
         .reconcile_connections(SystemTime::now())
         .await
         .unwrap();
     let observed = reads.lock().unwrap().clone();
-    for agent in [&configured, &settled] {
+    for agent in [&configured, &settled, &local_blocked] {
         assert!(observed.get(agent.id.as_str()).copied().unwrap_or_default() > 0);
     }
+    assert_eq!(observed.get(unsupported.id.as_str()), None);
+    // A positive local hint cannot admit maintenance without the actual receipt.
+    assert_eq!(
+        store.get_agent(&local_blocked.id).await.unwrap(),
+        Some(local_blocked.clone())
+    );
     assert_eq!(
         store.get_agent(&configured.id).await.unwrap(),
         Some(configured)
     );
     assert_eq!(store.get_agent(&settled.id).await.unwrap(), Some(settled));
+
+    // Neither direction is cached, and a locally deferred attachment still
+    // recovers through the ordinary durable path after it disappears.
+    local_ready.store(false, Ordering::Release);
+    reads.lock().unwrap().clear();
+    worker
+        .reconcile_connections(SystemTime::now())
+        .await
+        .unwrap();
+    assert_eq!(reads.lock().unwrap().get(local_blocked.id.as_str()), None);
+    registry.fence(
+        &local_blocked.id,
+        local_blocked.conversation.runtime_generation,
+        local_blocked.work.next_fence - 1,
+    );
+    assert_eq!(
+        worker
+            .reconcile_connections(SystemTime::now())
+            .await
+            .unwrap(),
+        1
+    );
+    let recovered_local = store.get_agent(&local_blocked.id).await.unwrap().unwrap();
+    assert_eq!(recovered_local.work.step, AgentWorkStep::PublishConnection);
+    assert_eq!(recovered_local.conversation, local_blocked.conversation);
 
     // A completed revision must not turn discovery into a partial, unchecked read.
     store
