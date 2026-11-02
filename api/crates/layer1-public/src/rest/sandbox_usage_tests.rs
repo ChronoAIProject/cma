@@ -12,6 +12,10 @@ use tower::ServiceExt;
 
 #[derive(Default)]
 struct Store(Mutex<Vec<Option<SubjectId>>>);
+
+pub(crate) fn router() -> Router {
+    sandbox_usage_router(SandboxUsageService::new(Arc::new(Store::default())))
+}
 #[async_trait]
 impl SandboxUsageStore for Store {
     async fn usage(&self, _: &SandboxId) -> Result<Option<SandboxUsage>, SandboxStoreError> {
