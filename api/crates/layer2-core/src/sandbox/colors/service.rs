@@ -156,7 +156,7 @@ impl SandboxColorService {
         loop {
             let page = self
                 .sandboxes
-                .list_sandboxes(
+                .list_live_sandboxes(
                     owner,
                     &PageRequest {
                         cursor,
