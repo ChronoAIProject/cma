@@ -1,0 +1,158 @@
+use super::*;
+use std::io::Write;
+
+#[derive(Clone, Default)]
+struct Output(Arc<Mutex<Vec<u8>>>);
+
+impl Write for Output {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Output {
+    type Writer = Self;
+    fn make_writer(&'a self) -> Self {
+        self.clone()
+    }
+}
+
+#[test]
+fn distribution_keeps_failures_and_non_overlapping_latency_buckets() {
+    let mut window = Window::new(Instant::now());
+    for elapsed in [
+        0, 1_000, 1_001, 5_000, 5_001, 25_000, 25_001, 100_000, 100_001, 250_000, 250_001,
+        1_000_000, 1_000_001,
+    ] {
+        window.record(0, Duration::from_micros(elapsed), elapsed == 1_000_001);
+    }
+    assert_eq!(window.samples[0].count, 13);
+    assert_eq!(window.samples[0].failures, 1);
+    assert_eq!(window.samples[0].buckets, [2, 2, 2, 2, 2, 2, 1]);
+    assert_eq!(window.samples[0].max_us, 1_000_001);
+    assert_eq!(window.samples[1], Sample::default());
+}
+
+#[test]
+fn summary_is_bounded_and_drops_unrecognized_command_names() {
+    let output = Output::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(output.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+    let untrusted = "private query text must never enter logs";
+    let span = tracing::info_span!("caller", private_context = untrusted);
+    let _entered = span.enter();
+    for _ in 0..10_000 {
+        observer.record(command_index(untrusted), Duration::from_millis(50), false);
+    }
+    assert!(output.0.lock().unwrap().is_empty());
+    observer.0.lock().unwrap().started = Instant::now() - WINDOW;
+    observer.record(command_index("find"), Duration::from_millis(2), true);
+    let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    assert_eq!(logs.lines().count(), 2);
+    assert!(logs.contains("other_command") && logs.contains("count=10000"));
+    assert!(logs.contains("failures=1"));
+    assert!(!logs.contains(untrusted));
+    assert!(observer
+        .0
+        .lock()
+        .unwrap()
+        .samples
+        .iter()
+        .all(|sample| *sample == Sample::default()));
+    observer.record(9, Duration::ZERO, false);
+    assert_eq!(
+        String::from_utf8(output.0.lock().unwrap().clone()).unwrap(),
+        logs
+    );
+}
+
+#[test]
+fn diagnostic_counter_overflow_cannot_panic_or_change_database_behavior() {
+    let mut window = Window::new(Instant::now());
+    window.samples[0] = Sample {
+        count: u64::MAX,
+        failures: u64::MAX,
+        total_us: u64::MAX,
+        max_us: 0,
+        buckets: [u64::MAX; 7],
+    };
+    window.record(0, Duration::MAX, true);
+    assert_eq!(window.samples[0].count, u64::MAX);
+    assert_eq!(window.samples[0].failures, u64::MAX);
+    assert_eq!(window.samples[0].max_us, u64::MAX);
+    assert_eq!(window.samples[0].total_us, u64::MAX);
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
+    use mongodb::{
+        bson::{doc, Document},
+        Client,
+    };
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+    let mut options = ClientOptions::parse(uri).await.unwrap();
+    attach(&mut options, observer.clone());
+    let client = Client::with_options(options).unwrap();
+    let name = format!("cma_latency_{}", uuid::Uuid::new_v4().simple());
+    let database = client.database(&name);
+    let collection = database.collection::<Document>("private_records");
+    let sentinel = "private diagnostic payload must not be logged";
+    collection
+        .insert_one(doc! { "_id": "one", "value": sentinel })
+        .await
+        .unwrap();
+    let mut session = client.start_session().await.unwrap();
+    super::super::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    collection
+        .update_one(doc! { "_id": "one" }, doc! { "$set": { "checked": true } })
+        .session(&mut session)
+        .await
+        .unwrap();
+    session.commit_transaction().await.unwrap();
+    let value = collection
+        .find_one(doc! { "_id": "one" })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(value.get_str("value").unwrap(), sentinel);
+    assert!(value.get_bool("checked").unwrap());
+    assert!(collection.insert_one(doc! { "_id": "one" }).await.is_err());
+    assert!(database.run_command(doc! { sentinel: 1 }).await.is_err());
+    database.drop().await.unwrap();
+    // Driver callbacks are synchronous. Reading these counters needs no extra
+    // production command, query, collection identifier, or credential access.
+    let samples = observer.0.lock().unwrap().samples;
+    for label in ["find", "insert", "update", "commitTransaction"] {
+        assert!(samples[command_index(label)].count > 0, "missing {label}");
+    }
+    assert!(samples[9].count > 0 && samples[10].count > 0);
+    assert!(samples[8].failures > 0);
+    let output = Output::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(output.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    observer.0.lock().unwrap().started = Instant::now() - WINDOW;
+    observer.record(9, Duration::ZERO, false);
+    let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    assert!(logs.contains("MongoDB client latency summary"));
+    for private in [sentinel, &name, "private_records", "127.0.0.1"] {
+        assert!(!logs.contains(private));
+    }
+}
