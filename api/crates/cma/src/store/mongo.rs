@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use layer2_core::StoreError;
-use mongodb::{bson::doc, Client};
+use mongodb::{bson::doc, options::ClientOptions, Client};
 
 use super::{
     AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoOperationStore,
@@ -73,8 +73,11 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     ) -> Result<Self, StoreError> {
-        let client = Client::with_uri_str(uri)
+        let mut options = ClientOptions::parse(uri)
             .await
+            .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+        super::mongo_latency::observe(&mut options);
+        let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         super::isolation::verify_with_authority(&client.database(database), authority).await?;
         Self::open(
