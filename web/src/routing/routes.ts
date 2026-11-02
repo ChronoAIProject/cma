@@ -34,6 +34,7 @@ export type AppRoute =
   | { readonly kind: 'public_trigger'; readonly publicId: string; readonly placementId?: string }
   | { readonly kind: 'launch'; readonly launchId: string }
   | { readonly kind: 'operations' }
+  | { readonly kind: 'settings'; readonly tab: 'general' | 'usage' }
   | { readonly kind: 'not_found'; readonly pathname: string };
 
 const PROFILE_KINDS: readonly ProfileKind[] = ['agent', 'workspace', 'sandbox'];
@@ -89,6 +90,8 @@ export function parseRoute(pathname: string): AppRoute {
         return { kind: 'marketplace' };
       case 'operations':
         return { kind: 'operations' };
+      case 'settings':
+        return { kind: 'settings', tab: 'general' };
       case 'developer':
         // Retired: the SDK reader it named no longer exists. Old links land on
         // the documentation that replaced it, and the address is rewritten.
@@ -100,6 +103,8 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 2) {
     const [resource = '', id = ''] = path;
+    if (resource === 'settings' && (id === 'general' || id === 'usage'))
+      return { kind: 'settings', tab: id };
     if (resource === 'docs' && id === 'event-gateway')
       return { kind: 'docs', view: 'event_gateway_protocol' };
     if (resource === 'shared' && id === 'agents') return { kind: 'inventory', shared: true };
@@ -210,6 +215,8 @@ export function routePath(route: AppRoute): string {
       return `/launches/${segment(route.launchId)}`;
     case 'operations':
       return '/operations';
+    case 'settings':
+      return `/settings/${route.tab}`;
     case 'not_found':
       return route.pathname;
   }
