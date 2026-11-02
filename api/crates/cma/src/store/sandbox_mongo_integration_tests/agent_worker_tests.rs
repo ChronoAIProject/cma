@@ -1,5 +1,7 @@
 use super::*;
 
+mod reconciliation_context_tests;
+
 async fn idle_connection_fixture(
     store: &MongoSandboxStore,
     suffix: &str,
