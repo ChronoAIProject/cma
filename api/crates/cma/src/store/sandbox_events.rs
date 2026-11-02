@@ -172,7 +172,7 @@ pub(super) async fn append_in_transaction(
     store
         .sandbox_events
         .insert_one(document)
-        .session(session)
+        .session(&mut *session)
         .await
         .map_err(|error| {
             if is_duplicate_key(&error) {
@@ -181,6 +181,7 @@ pub(super) async fn append_in_transaction(
                 TransactionEventError::Driver(error)
             }
         })?;
+    super::sandbox_usage::lifecycle_event(store, session, &event, None).await?;
     Ok(event)
 }
 

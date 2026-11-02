@@ -1,6 +1,6 @@
 import { Presence } from './ui/Presence';
 import { SkeletonRows } from './ui/Skeleton';
-import { Documents, Operations, TriggerPublisherPage } from './ConsolePages';
+import { Documents, Operations, Settings, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
@@ -13,8 +13,7 @@ import { useAgentController } from './agent/controller';
 import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { LegacyProfileNotice } from './profile/LegacyProfileNotice';
-import type { AppRoute } from './routing/routes';
-import { routePath } from './routing/routes';
+import { routePath, type AppRoute } from './routing/routes';
 import { useViewArrival } from './ui/arrivalMotion';
 import { AppFrame } from './shell/AppFrame';
 import { Sidebar } from './shell/Sidebar';
@@ -313,6 +312,8 @@ function ConsoleContent({
       <LegacyProfileNotice />
     ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
       <LegacyProfileNotice />
+    ) : route.kind === 'settings' && operator ? (
+      <Settings client={operator.usage} tab={route.tab} onNavigate={onNavigate} />
     ) : route.kind === 'operations' ? (
       operator !== undefined && canOpenOperations(user.capabilities) ? (
         <Suspense

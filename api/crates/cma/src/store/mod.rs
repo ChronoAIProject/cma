@@ -89,6 +89,7 @@ mod profile_index_tests;
 mod profile_operator_mongo_integration_tests;
 mod profile_references;
 mod profiles;
+pub(crate) mod request_limits;
 mod resource_access;
 mod sandbox_admission;
 #[cfg(test)]
@@ -107,6 +108,7 @@ mod sandbox_profiles;
 mod sandbox_reconciliation;
 mod sandbox_transactions;
 mod sandbox_unpublished_recovery;
+pub(crate) mod sandbox_usage;
 mod sandbox_worker_store;
 mod sandboxes;
 #[cfg(test)]

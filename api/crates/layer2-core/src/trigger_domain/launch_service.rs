@@ -78,6 +78,11 @@ impl LaunchPolicySource for LaunchPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LaunchServiceError {
+    #[error("daily visitor Launch allowance exhausted")]
+    VisitorQuota {
+        limit: u32,
+        reset_at: std::time::SystemTime,
+    },
     #[error("renewable Sandbox credential setup is required")]
     CredentialSetupRequired,
     #[error("forbidden")]
@@ -117,6 +122,7 @@ pub enum LaunchServiceError {
 impl LaunchServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::VisitorQuota { .. } => "resource_quota",
             Self::CredentialSetupRequired => "sandbox_credential_setup_required",
             Self::Forbidden => "forbidden",
             Self::Disabled => "triggers_disabled",

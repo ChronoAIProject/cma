@@ -170,6 +170,9 @@ pub(super) fn connection_error(error: ServiceConnectionError) -> LaunchServiceEr
 
 pub(super) fn store_error(error: LaunchStoreError) -> LaunchServiceError {
     match error {
+        LaunchStoreError::VisitorQuota { limit, reset_at } => {
+            LaunchServiceError::VisitorQuota { limit, reset_at }
+        }
         LaunchStoreError::NotFound => LaunchServiceError::NotFound,
         LaunchStoreError::CommandConflict => LaunchServiceError::IdempotencyKeyReused,
         LaunchStoreError::Conflict { .. } | LaunchStoreError::LeaseHeld => {

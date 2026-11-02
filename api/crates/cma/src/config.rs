@@ -22,10 +22,12 @@ pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
 mod documents;
+mod usage_billing;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
+pub(crate) use usage_billing::UsageBillingConfig;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
@@ -162,6 +164,7 @@ pub struct Config {
     pub auth_mode: AuthMode,
     pub features: FeatureFlags,
     pub gateway: Option<GatewayConfig>,
+    pub usage_billing: Option<UsageBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
 }
@@ -353,6 +356,7 @@ impl Config {
             auth_mode,
             features,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
+            usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage: DocumentStorageConfig::from_lookup(&mut lookup)?,
         })
