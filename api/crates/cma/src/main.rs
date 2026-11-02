@@ -25,6 +25,7 @@ mod sandbox;
 mod shutdown;
 mod store;
 mod trigger;
+mod usage_billing;
 mod warm_pools;
 
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
@@ -57,7 +58,8 @@ pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
 );
 
 const DEFAULT_LOG_FILTER: &str = "info";
-const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
+// Match the Gateway's longest accepted connection before draining workers.
+const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(660);
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 #[tokio::main]
@@ -148,7 +150,8 @@ async fn serve() -> Result<(), String> {
     shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
-    let http_signal = shutdown.subscribe();
+    composition.usage.spawn(&mut shutdown);
+    let (http_stop, http_signal) = tokio::sync::watch::channel(false);
     let server_result = {
         let server = axum::serve(
             listener,
@@ -160,7 +163,8 @@ async fn serve() -> Result<(), String> {
         tokio::select! {
             result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),
             () = shutdown_signal() => {
-                shutdown.signal();
+                // Existing streams still need their workers until HTTP finishes.
+                let _ = http_stop.send(true);
                 match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
                     Ok(result) => result.map_err(|error| format!("HTTP server failed: {error}")),
                     Err(_) => Err("HTTP server exceeded its shutdown drain deadline".into()),

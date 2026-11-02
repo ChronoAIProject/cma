@@ -7,6 +7,11 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  # Full provider API base, verified against NyxID's existing Lago installation.
+  # Recording remains active even while billing delivery is disabled.
+  CHRONO_USAGE_BILLING_ENABLED: "false"
+  CHRONO_USAGE_LAGO_API_URL: ""
+  CHRONO_USAGE_LAGO_PLAN_CODE: "starter"
   CHRONO_SANDBOX_PROVIDER: "agent-sandbox"
   CHRONO_RETAIN_OPENSANDBOX: "true"
   CHRONO_AGENT_SANDBOX_ENABLED: "true"

@@ -957,6 +957,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE` | Ordinary request budget/burst; default 600 |
 | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` | Creation request budget/burst; default 10 |
 | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` | Agent input request budget/burst; default 120 |
+| `CHRONO_USAGE_BILLING_ENABLED` | Default false. Enables durable delivery of recorded Sandbox resource-time to NyxID's existing Lago organization; metering remains active when false. |
+| `CHRONO_USAGE_LAGO_API_URL` | Complete HTTPS API base ending `/api/v1`; required when usage billing is enabled. Supply the effective API path used by NyxID, including any reverse-proxy prefix. |
+| `CHRONO_USAGE_LAGO_PLAN_CODE` | Existing NyxID Lago plan code, normally `starter`. Never creates customers, subscriptions, prices or wallets. |
+| `CHRONO_USAGE_LAGO_API_KEY` | Secret reference for that Lago organization. Required when usage billing is enabled; never exposed to browsers or Sandbox runtimes. |
 | `CHRONO_SERVER_TRUSTED_PROXY_CIDRS` | Exact trusted load-balancer peers; empty by default, production explicit |
 | `CHRONO_SERVER_TRUSTED_PROXY_HOPS` | Trusted rightmost forwarded hops, 1-16; default 1 |
 | `CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS` | Empty or the complete build-pinned set; must not overlap trusted peer ranges |

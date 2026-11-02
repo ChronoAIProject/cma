@@ -46,11 +46,14 @@ metadata:
     cma.chronoai.dev/source-tree: "d578ab272f0d840581caf5ffb1be4de8d376c5f6"
 spec:
   replicas: 1
-  # Quota reservations and rate counters are process-local. Keep one replica
-  # and no rollout overlap until those authorities have shared coordination.
-  # Durable worker leases and resume cursors survive the brief Recreate gap.
+  minReadySeconds: 30
+  # Shared request budgets and transactional visitor quotas permit overlap.
+  # The NEG readiness gate must be healthy before the old endpoint is removed.
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: cma-agent-manager
@@ -101,7 +104,8 @@ spec:
     spec:
       # Shutdown drains HTTP for up to 30s, then background workers for up to
       # 30s. Leave another five seconds for process and kubelet teardown.
-      terminationGracePeriodSeconds: 65
+      # 30s endpoint propagation + 660s HTTP + 30s workers + scheduling margin.
+      terminationGracePeriodSeconds: 735
       # The sandbox key is delivered by the platform's secret provider, which
       # identifies the workload by its service account. Running as "default"
       # would present the wrong principal and the mount would be refused
@@ -193,6 +197,10 @@ spec:
             timeoutSeconds: 3
             periodSeconds: 10
             failureThreshold: 180
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "30"]
           livenessProbe:
             httpGet:
               path: /livez
