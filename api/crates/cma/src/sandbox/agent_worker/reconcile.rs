@@ -21,6 +21,7 @@ impl AgentWorker {
         let mut scheduled = 0;
         let mut candidates = 0_u64;
         let mut context_current = 0_u64;
+        let mut context_deferred = 0_u64;
         let mut context_checks = 0_u64;
         loop {
             let page = self
@@ -42,6 +43,14 @@ impl AgentWorker {
                     if self.config.managed_documents_enabled {
                         if candidate.managed_guidance_revision >= MANAGED_GUIDANCE_REVISION {
                             context_current += 1;
+                            continue;
+                        }
+                        // Discovery already read and validated the complete Agent.
+                        // Deferring a busy/unconfigured Agent grants no authority:
+                        // the next sweep observes changes, and admission still
+                        // rereads all current state before any maintenance write.
+                        if !candidate.managed_context_eligible {
+                            context_deferred += 1;
                             continue;
                         }
                         context_checks += 1;
@@ -82,6 +91,7 @@ impl AgentWorker {
                     parent: None,
                     candidates,
                     context_current,
+                    context_deferred,
                     context_checks,
                     scheduled,
                     elapsed_ms = started.elapsed().as_millis() as u64,
