@@ -68,6 +68,11 @@ The OpenAPI documents include the `usage` tag and complete response schemas.
 TypeScript consumers use `client.usage.summary()`, `.sandboxes()`,
 `.sandbox(id)`, `.events(id)`, `.adminSummary({ owner })` and
 `.adminSandboxes({ owner, cursor, limit })`.
+Rust consumers use `client.usage().summary()`, `.sandboxes(&page)`,
+`.sandbox(id)`, `.events(id, &page)`, `.admin_summary(Some(owner))` and
+`.admin_sandboxes(Some(owner), &page)`. Rust retains exact integer quantities
+as `u64`; the TypeScript SDK rejects quantities beyond JavaScript’s safe integer
+range. Both SDKs replay the shared backend contract corpus.
 
 ## Persistence and verification
 

@@ -20,6 +20,8 @@ mod resources;
 mod responses_v2;
 #[path = "public_contract/triggers.rs"]
 mod triggers;
+#[path = "public_contract/usage.rs"]
+mod usage;
 #[path = "support/wire.rs"]
 mod wire;
 
@@ -28,7 +30,9 @@ use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.contains("/api/v1/documents") {
+    if op.contains("/api/v1/usage") || op.contains("/api/v1/admin/usage") {
+        usage::dispatch(c).await
+    } else if op.contains("/api/v1/documents") {
         documents::dispatch(c).await
     } else if op.contains("/event-worker-profiles") {
         event_workers::dispatch(c).await

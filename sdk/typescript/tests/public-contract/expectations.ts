@@ -3,6 +3,9 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['usage-sandboxes-zero-limit', 'invalid_query'],
+  ['usage-admin-sandboxes-zero-limit', 'invalid_query'],
+
   ['preparation-reserve-missing-key', 'invalid_binding'],
   ['document-source-invalid', 'invalid_document_request'],
   ['filesystem-content-reject-invalid-max-bytes', 'invalid_file_request'],
