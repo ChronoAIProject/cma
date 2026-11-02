@@ -1017,6 +1017,21 @@ worker invocation cannot reuse that observation. This removes one repeated full
 inspection from successful prepared startup; production measurements must still
 establish the end-to-end provisioning time.
 
+Agent Manager emits bounded `MongoDB client latency summary` records to separate
+driver command round trips from connection checkout and connection establishment.
+Each active category emits at most one record per ten-second observation window;
+the next completion flushes an idle window. `count`, `failures`, `total_us` and
+`max_us` include failed commands. `failures` counts driver command-failure events;
+write errors returned inside a successful command reply are not counted. The
+seven non-overlapping `buckets` have inclusive
+upper bounds of 1, 5, 25, 100, 250 and 1000 milliseconds, followed by an overflow
+bucket. Compare those windows with the existing admission and worker timings;
+command durations include network and client scheduling and cannot by themselves
+prove database execution time. Only fixed operation categories and numeric
+measurements enter these summaries: no query, reply, database/collection name,
+owner, server address, credential or driver error is recorded. The observer sends
+no diagnostic queries and changes no connection-pool, durability or retry policy.
+
 Prepared Open/Ready publication decides eligibility inside the same Mongo
 transaction that validates the current Agent and writes its parent fences. It
 reads the consumed preparation once and fences that exact revision before
