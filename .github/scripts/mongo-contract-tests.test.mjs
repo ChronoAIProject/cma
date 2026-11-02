@@ -45,6 +45,7 @@ const requiredPrefixes = [
   'sandbox::worker_tests::lifecycle_queue_contention_tests::',
   'store::sandbox_mongo_integration_tests::sandbox_lifecycle_tests::lifecycle_phase_reconciles_an_ambiguous_commit_without_duplicate_logs',
   'sandbox::agent_worker::prepared_open_ready::',
+  'store::mongo_latency::tests::',
 ];
 
 function fixture(scenario) {
