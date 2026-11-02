@@ -378,6 +378,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                     organization: c.q("organization"),
                     shared: c.number::<bool>("shared")?.unwrap_or(false),
                     filters: SandboxListOptions {
+                        exclude_retired: c.number::<bool>("exclude_retired")?.unwrap_or(false),
                         status: c.tag("status")?,
                         page: c.page()?,
                     },

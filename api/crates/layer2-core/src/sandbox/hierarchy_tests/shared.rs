@@ -259,6 +259,7 @@ async fn organization_owner_is_never_personal_or_a_personal_inventory_lookahead(
         .list_sandboxes(
             &caller("owner", true),
             &OwnerSandboxQuery {
+                exclude_retired: false,
                 status: None,
                 page: PageRequest::new(1, None).unwrap(),
             },

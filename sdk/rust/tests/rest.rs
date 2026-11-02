@@ -200,6 +200,7 @@ async fn sandbox_workspace_and_worktree_contracts() {
     );
     let listed = sandboxes
         .list(&SandboxListOptions {
+            exclude_retired: false,
             page: page(),
             status: Some(SandboxStatus::Active),
         })
