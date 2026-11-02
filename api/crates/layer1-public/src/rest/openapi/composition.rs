@@ -4,6 +4,7 @@ use utoipa::OpenApi as _;
 pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = super::ApiDoc::openapi();
     document.merge(crate::rest::documents::document());
+    document.merge(crate::rest::sandbox_usage::document());
     document.merge(crate::rest::bindings::preparation::document());
     document.merge(crate::rest::bindings::inspection::document());
     document.merge(crate::rest::binding_media::document());

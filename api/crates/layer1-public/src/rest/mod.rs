@@ -31,6 +31,8 @@ pub use agent_artifacts::agent_artifacts_router;
 #[cfg(test)]
 mod agent_artifacts_tests;
 mod agent_channel_usage;
+mod sandbox_usage;
+pub use sandbox_usage::sandbox_usage_router;
 mod agent_provider_associations;
 pub use agent_provider_associations::agent_provider_associations_router;
 mod agent_command_admission;
