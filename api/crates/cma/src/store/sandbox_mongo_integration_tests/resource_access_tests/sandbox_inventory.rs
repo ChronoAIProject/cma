@@ -87,9 +87,19 @@ async fn sandbox_inventory_uses_one_snapshot_and_excludes_narrow_grants_before_p
         .collect();
     assert_eq!(
         aggregates.len(),
-        2,
-        "ownership and whole-parent grants only"
+        2 + page.len(),
+        "ownership and whole-parent grants, then each candidate's ancestry"
     );
+    assert_eq!(
+        aggregates[..2]
+            .iter()
+            .map(|(_, command)| command.get_str("aggregate").unwrap())
+            .collect::<Vec<_>>(),
+        [store.resource_policies.name(), store.resource_shares.name()]
+    );
+    assert!(aggregates[2..]
+        .iter()
+        .all(|(_, command)| command.get_str("aggregate").unwrap() == store.sandboxes.name()));
     assert!(command_uses_snapshot_read(&aggregates[0].1));
     for (_, command) in &commands {
         assert_eq!(
