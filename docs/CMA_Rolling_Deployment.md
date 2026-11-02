@@ -43,7 +43,8 @@ healthy; verify its actual backend health before switching traffic. A readiness
 gate satisfied by an unhealthchecked alias is insufficient evidence.
 
 Event Gateway retains its existing zero-unavailable rolling strategy and durable
-turn drain, with the same 30-second readiness/endpoint margin, 660-second backend
+turn drain, raised to 660 seconds to cover the full request window, with the same
+30-second readiness/endpoint margin, 660-second backend
 connection drain and 735-second pod grace. Image Manager declares those rollout
 and drain margins for activation; this change preserves its zero replica count
 and does not activate an unpublished image.

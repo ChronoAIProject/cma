@@ -65,7 +65,7 @@ impl Default for ScheduleConfig {
             queue_capacity: 512,
             page_delay: Duration::from_millis(250),
             sweep_delay: Duration::from_secs(5),
-            drain_timeout: Duration::from_secs(600),
+            drain_timeout: Duration::from_secs(660),
         }
     }
 }
@@ -75,8 +75,23 @@ impl ScheduleConfig {
             && (1..=4096).contains(&self.queue_capacity)
             && (Duration::from_millis(10)..=Duration::from_secs(60)).contains(&self.page_delay)
             && (Duration::from_millis(10)..=Duration::from_secs(300)).contains(&self.sweep_delay)
-            && (Duration::from_millis(10)..=Duration::from_secs(600)).contains(&self.drain_timeout)
+            && (Duration::from_millis(10)..=Duration::from_secs(660)).contains(&self.drain_timeout)
     }
+}
+
+#[test]
+fn application_drain_fits_the_routed_scheduler_bound() {
+    let config = ScheduleConfig {
+        drain_timeout: crate::TurnConfig::default().drain,
+        ..ScheduleConfig::default()
+    };
+    assert_eq!(config.drain_timeout, Duration::from_secs(660));
+    assert!(config.valid());
+    assert!(!ScheduleConfig {
+        drain_timeout: Duration::from_secs(661),
+        ..config
+    }
+    .valid());
 }
 
 #[derive(Clone)]
