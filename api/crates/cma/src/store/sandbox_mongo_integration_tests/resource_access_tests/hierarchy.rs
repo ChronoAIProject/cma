@@ -104,7 +104,12 @@ async fn personal_hierarchy_inventory_excludes_organization_before_limit_and_loo
     };
     store.resource_policies.insert_one(doc! {"_id":org_root.id.as_str(),"document_schema_version":DOCUMENT_SCHEMA_VERSION,"owner_kind":"organization","owner_subject":org_root.owner.as_str(),"revision":1_i64,"record":crate::store::sandbox_mongo::record_bson(&policy).unwrap()}).await.unwrap();
     let page = store
-        .list_owner_sandbox_inventory(&root.owner, None, &PageRequest::new(1, None).unwrap())
+        .list_owner_sandbox_inventory(
+            &root.owner,
+            None,
+            false,
+            &PageRequest::new(1, None).unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(page.items.len(), 1);
@@ -125,7 +130,12 @@ async fn personal_hierarchy_inventory_excludes_organization_before_limit_and_loo
         .unwrap();
     assert!(matches!(
         store
-            .list_owner_sandbox_inventory(&root.owner, None, &PageRequest::new(1, None).unwrap())
+            .list_owner_sandbox_inventory(
+                &root.owner,
+                None,
+                false,
+                &PageRequest::new(1, None).unwrap()
+            )
             .await,
         Err(SandboxStoreError::Corrupt(_))
     ));

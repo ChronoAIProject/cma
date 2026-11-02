@@ -12,6 +12,7 @@ async fn list(
             Some("request-credential"),
             &SubjectId::new(org),
             &OwnerSandboxQuery {
+                exclude_retired: false,
                 status: None,
                 page: PageRequest::new(limit, cursor.map(str::to_owned)).unwrap(),
             },
@@ -180,6 +181,7 @@ async fn organization_inventory_rechecks_hidden_lookahead_after_buffered_count_i
                     Some("request-credential"),
                     &SubjectId::new("org"),
                     &OwnerSandboxQuery {
+                        exclude_retired: false,
                         status: None,
                         page: PageRequest::new(1, None).unwrap(),
                     },
