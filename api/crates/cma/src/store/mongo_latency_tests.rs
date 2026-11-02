@@ -39,7 +39,7 @@ fn distribution_keeps_failures_and_non_overlapping_latency_buckets() {
 }
 
 #[test]
-fn summary_is_bounded_and_drops_unrecognized_command_names() {
+fn summary_is_bounded_and_excludes_parent_span_payloads() {
     let output = Output::default();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
@@ -52,14 +52,14 @@ fn summary_is_bounded_and_drops_unrecognized_command_names() {
     let span = tracing::info_span!("caller", private_context = untrusted);
     let _entered = span.enter();
     for _ in 0..10_000 {
-        observer.record(command_index(untrusted), Duration::from_millis(50), false);
+        observer.record(0, Duration::from_millis(50), false);
     }
     assert!(output.0.lock().unwrap().is_empty());
     observer.0.lock().unwrap().started = Instant::now() - WINDOW;
-    observer.record(command_index("find"), Duration::from_millis(2), true);
+    observer.record(0, Duration::from_millis(2), true);
     let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-    assert_eq!(logs.lines().count(), 2);
-    assert!(logs.contains("other_command") && logs.contains("count=10000"));
+    assert_eq!(logs.lines().count(), 1);
+    assert!(logs.contains("checkout") && logs.contains("count=10001"));
     assert!(logs.contains("failures=1"));
     assert!(!logs.contains(untrusted));
     assert!(observer
@@ -69,7 +69,7 @@ fn summary_is_bounded_and_drops_unrecognized_command_names() {
         .samples
         .iter()
         .all(|sample| *sample == Sample::default()));
-    observer.record(9, Duration::ZERO, false);
+    observer.record(0, Duration::ZERO, false);
     assert_eq!(
         String::from_utf8(output.0.lock().unwrap().clone()).unwrap(),
         logs
@@ -104,6 +104,10 @@ async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
     let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
     let mut options = ClientOptions::parse(uri).await.unwrap();
     attach(&mut options, observer.clone());
+    // Installing a command callback would eagerly decode full BSON payloads
+    // inside the driver even if our callback ignores them.
+    assert!(options.command_event_handler.is_none());
+    assert!(options.cmap_event_handler.is_some());
     let client = Client::with_options(options).unwrap();
     let name = format!("cma_latency_{}", uuid::Uuid::new_v4().simple());
     let database = client.database(&name);
@@ -136,11 +140,9 @@ async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
     // Driver callbacks are synchronous. Reading these counters needs no extra
     // production command, query, collection identifier, or credential access.
     let samples = observer.0.lock().unwrap().samples;
-    for label in ["find", "insert", "update", "commitTransaction"] {
-        assert!(samples[command_index(label)].count > 0, "missing {label}");
-    }
-    assert!(samples[9].count > 0 && samples[10].count > 0);
-    assert!(samples[8].failures > 0);
+    assert!(samples[0].count > 0 && samples[1].count > 0);
+    // A rejected database command is not a connection checkout failure.
+    assert_eq!(samples[0].failures, 0);
     let output = Output::default();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
@@ -149,7 +151,7 @@ async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
     observer.0.lock().unwrap().started = Instant::now() - WINDOW;
-    observer.record(9, Duration::ZERO, false);
+    observer.record(0, Duration::ZERO, false);
     let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
     assert!(logs.contains("MongoDB client latency summary"));
     for private in [sentinel, &name, "private_records", "127.0.0.1"] {
