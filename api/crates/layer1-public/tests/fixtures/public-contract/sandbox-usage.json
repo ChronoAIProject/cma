@@ -1,0 +1,1137 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "usage-summary-success",
+      "operation": "GET /api/v1/usage",
+      "scenario": "usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "as_of": 2000000000,
+          "measurement": "allocated_resource_time",
+          "sandbox_count": 1,
+          "running_count": 0,
+          "incomplete_lifecycle_count": 0,
+          "tracking_started_at": 100,
+          "totals": {
+            "uptime_seconds": 3600,
+            "cpu_core_hours": 2.0,
+            "memory_gib_hours": 1.0,
+            "disk_gib_hours": 10.0,
+            "cpu_millis_seconds": 7200000,
+            "memory_mib_seconds": 3686400,
+            "disk_gib_seconds": 36000
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    },
+    {
+      "id": "usage-summary-anonymous",
+      "operation": "GET /api/v1/usage",
+      "scenario": "usage_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-summary-forbidden",
+      "operation": "GET /api/v1/usage",
+      "scenario": "usage_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "Usage access is not permitted.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-summary-unavailable",
+      "operation": "GET /api/v1/usage",
+      "scenario": "usage_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "Usage is temporarily unavailable.",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-sandboxes-success",
+      "operation": "GET /api/v1/usage/sandboxes",
+      "scenario": "usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "sandbox_id": "sbx_usage_contract",
+              "owner": "owner",
+              "name": "Retained usage",
+              "status": "deleted",
+              "allocation": {
+                "running": false,
+                "cpu_millis": 0,
+                "memory_mib": 0,
+                "disk_gib": 0
+              },
+              "created_at": 100,
+              "tracking_started_at": 100,
+              "as_of": 2000000000,
+              "complete_lifecycle": true,
+              "totals": {
+                "uptime_seconds": 3600,
+                "cpu_core_hours": 2.0,
+                "memory_gib_hours": 1.0,
+                "disk_gib_hours": 10.0,
+                "cpu_millis_seconds": 7200000,
+                "memory_mib_seconds": 3686400,
+                "disk_gib_seconds": 36000
+              }
+            }
+          ],
+          "next": null,
+          "as_of": 2000000000
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    },
+    {
+      "id": "usage-sandboxes-anonymous",
+      "operation": "GET /api/v1/usage/sandboxes",
+      "scenario": "usage_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-sandboxes-forbidden",
+      "operation": "GET /api/v1/usage/sandboxes",
+      "scenario": "usage_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "Usage access is not permitted.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-sandboxes-unavailable",
+      "operation": "GET /api/v1/usage/sandboxes",
+      "scenario": "usage_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "Usage is temporarily unavailable.",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-sandboxes-zero-limit",
+      "operation": "GET /api/v1/usage/sandboxes",
+      "scenario": "usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Use a valid cursor and a limit from 1 through 200.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-sandbox-success",
+      "operation": "GET /api/v1/usage/sandboxes/{id}",
+      "scenario": "usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "sandbox_id": "sbx_usage_contract",
+          "owner": "owner",
+          "name": "Retained usage",
+          "status": "deleted",
+          "allocation": {
+            "running": false,
+            "cpu_millis": 0,
+            "memory_mib": 0,
+            "disk_gib": 0
+          },
+          "created_at": 100,
+          "tracking_started_at": 100,
+          "as_of": 2000000000,
+          "complete_lifecycle": true,
+          "totals": {
+            "uptime_seconds": 3600,
+            "cpu_core_hours": 2.0,
+            "memory_gib_hours": 1.0,
+            "disk_gib_hours": 10.0,
+            "cpu_millis_seconds": 7200000,
+            "memory_mib_seconds": 3686400,
+            "disk_gib_seconds": 36000
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    },
+    {
+      "id": "usage-sandbox-anonymous",
+      "operation": "GET /api/v1/usage/sandboxes/{id}",
+      "scenario": "usage_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-sandbox-cross-owner",
+      "operation": "GET /api/v1/usage/sandboxes/{id}",
+      "scenario": "usage_other_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "Sandbox usage was not found.",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-sandbox-unavailable",
+      "operation": "GET /api/v1/usage/sandboxes/{id}",
+      "scenario": "usage_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "Usage is temporarily unavailable.",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-sandbox-missing",
+      "operation": "GET /api/v1/usage/sandboxes/{id}",
+      "scenario": "usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "Sandbox usage was not found.",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-sandbox-operator",
+      "operation": "GET /api/v1/usage/sandboxes/{id}",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "sandbox_id": "sbx_usage_contract",
+          "owner": "owner",
+          "name": "Retained usage",
+          "status": "deleted",
+          "allocation": {
+            "running": false,
+            "cpu_millis": 0,
+            "memory_mib": 0,
+            "disk_gib": 0
+          },
+          "created_at": 100,
+          "tracking_started_at": 100,
+          "as_of": 2000000000,
+          "complete_lifecycle": true,
+          "totals": {
+            "uptime_seconds": 3600,
+            "cpu_core_hours": 2.0,
+            "memory_gib_hours": 1.0,
+            "disk_gib_hours": 10.0,
+            "cpu_millis_seconds": 7200000,
+            "memory_mib_seconds": 3686400,
+            "disk_gib_seconds": 36000
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    },
+    {
+      "id": "usage-events-success",
+      "operation": "GET /api/v1/usage/sandboxes/{id}/events",
+      "scenario": "usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "transaction_id": "cma-usage:sbx_usage_contract:2",
+              "revision": 2,
+              "source_seq": 4,
+              "kind": "terminated",
+              "started_at": 100,
+              "ended_at": 3700,
+              "status": "deleted",
+              "allocation": {
+                "running": true,
+                "cpu_millis": 2000,
+                "memory_mib": 1024,
+                "disk_gib": 10
+              },
+              "next_allocation": {
+                "running": false,
+                "cpu_millis": 0,
+                "memory_mib": 0,
+                "disk_gib": 0
+              },
+              "quantity": {
+                "uptime_seconds": 3600,
+                "cpu_core_hours": 2.0,
+                "memory_gib_hours": 1.0,
+                "disk_gib_hours": 10.0,
+                "cpu_millis_seconds": 7200000,
+                "memory_mib_seconds": 3686400,
+                "disk_gib_seconds": 36000
+              }
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-events-anonymous",
+      "operation": "GET /api/v1/usage/sandboxes/{id}/events",
+      "scenario": "usage_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-events-cross-owner",
+      "operation": "GET /api/v1/usage/sandboxes/{id}/events",
+      "scenario": "usage_other_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "Sandbox usage was not found.",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-events-unavailable",
+      "operation": "GET /api/v1/usage/sandboxes/{id}/events",
+      "scenario": "usage_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "Usage is temporarily unavailable.",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-events-missing",
+      "operation": "GET /api/v1/usage/sandboxes/{id}/events",
+      "scenario": "usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/missing/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "Sandbox usage was not found.",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-events-operator",
+      "operation": "GET /api/v1/usage/sandboxes/{id}/events",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "transaction_id": "cma-usage:sbx_usage_contract:2",
+              "revision": 2,
+              "source_seq": 4,
+              "kind": "terminated",
+              "started_at": 100,
+              "ended_at": 3700,
+              "status": "deleted",
+              "allocation": {
+                "running": true,
+                "cpu_millis": 2000,
+                "memory_mib": 1024,
+                "disk_gib": 10
+              },
+              "next_allocation": {
+                "running": false,
+                "cpu_millis": 0,
+                "memory_mib": 0,
+                "disk_gib": 0
+              },
+              "quantity": {
+                "uptime_seconds": 3600,
+                "cpu_core_hours": 2.0,
+                "memory_gib_hours": 1.0,
+                "disk_gib_hours": 10.0,
+                "cpu_millis_seconds": 7200000,
+                "memory_mib_seconds": 3686400,
+                "disk_gib_seconds": 36000
+              }
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-events-invalid-cursor",
+      "operation": "GET /api/v1/usage/sandboxes/{id}/events",
+      "scenario": "usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/sbx_usage_contract/events?cursor=invalid",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Use a valid cursor and a limit from 1 through 200.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-admin-summary-success",
+      "operation": "GET /api/v1/admin/usage",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "as_of": 2000000000,
+          "measurement": "allocated_resource_time",
+          "sandbox_count": 1,
+          "running_count": 0,
+          "incomplete_lifecycle_count": 0,
+          "tracking_started_at": 100,
+          "totals": {
+            "uptime_seconds": 3600,
+            "cpu_core_hours": 2.0,
+            "memory_gib_hours": 1.0,
+            "disk_gib_hours": 10.0,
+            "cpu_millis_seconds": 7200000,
+            "memory_mib_seconds": 3686400,
+            "disk_gib_seconds": 36000
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    },
+    {
+      "id": "usage-admin-summary-anonymous",
+      "operation": "GET /api/v1/admin/usage",
+      "scenario": "usage_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-admin-summary-forbidden",
+      "operation": "GET /api/v1/admin/usage",
+      "scenario": "usage_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "Usage access is not permitted.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-admin-summary-unavailable",
+      "operation": "GET /api/v1/admin/usage",
+      "scenario": "usage_operator_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "Usage is temporarily unavailable.",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-admin-summary-owner-filter",
+      "operation": "GET /api/v1/admin/usage",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage?owner=owner",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "as_of": 2000000000,
+          "measurement": "allocated_resource_time",
+          "sandbox_count": 1,
+          "running_count": 0,
+          "incomplete_lifecycle_count": 0,
+          "tracking_started_at": 100,
+          "totals": {
+            "uptime_seconds": 3600,
+            "cpu_core_hours": 2.0,
+            "memory_gib_hours": 1.0,
+            "disk_gib_hours": 10.0,
+            "cpu_millis_seconds": 7200000,
+            "memory_mib_seconds": 3686400,
+            "disk_gib_seconds": 36000
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    },
+    {
+      "id": "usage-admin-summary-empty-owner-filter",
+      "operation": "GET /api/v1/admin/usage",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage?owner=other-owner",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "as_of": 2000000000,
+          "measurement": "allocated_resource_time",
+          "sandbox_count": 0,
+          "running_count": 0,
+          "incomplete_lifecycle_count": 0,
+          "tracking_started_at": null,
+          "totals": {
+            "uptime_seconds": 0,
+            "cpu_core_hours": 0.0,
+            "memory_gib_hours": 0.0,
+            "disk_gib_hours": 0.0,
+            "cpu_millis_seconds": 0,
+            "memory_mib_seconds": 0,
+            "disk_gib_seconds": 0
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    },
+    {
+      "id": "usage-admin-sandboxes-success",
+      "operation": "GET /api/v1/admin/usage/sandboxes",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "sandbox_id": "sbx_usage_contract",
+              "owner": "owner",
+              "name": "Retained usage",
+              "status": "deleted",
+              "allocation": {
+                "running": false,
+                "cpu_millis": 0,
+                "memory_mib": 0,
+                "disk_gib": 0
+              },
+              "created_at": 100,
+              "tracking_started_at": 100,
+              "as_of": 2000000000,
+              "complete_lifecycle": true,
+              "totals": {
+                "uptime_seconds": 3600,
+                "cpu_core_hours": 2.0,
+                "memory_gib_hours": 1.0,
+                "disk_gib_hours": 10.0,
+                "cpu_millis_seconds": 7200000,
+                "memory_mib_seconds": 3686400,
+                "disk_gib_seconds": 36000
+              }
+            }
+          ],
+          "next": null,
+          "as_of": 2000000000
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    },
+    {
+      "id": "usage-admin-sandboxes-anonymous",
+      "operation": "GET /api/v1/admin/usage/sandboxes",
+      "scenario": "usage_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-admin-sandboxes-forbidden",
+      "operation": "GET /api/v1/admin/usage/sandboxes",
+      "scenario": "usage_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "Usage access is not permitted.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-admin-sandboxes-unavailable",
+      "operation": "GET /api/v1/admin/usage/sandboxes",
+      "scenario": "usage_operator_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "Usage is temporarily unavailable.",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-admin-sandboxes-zero-limit",
+      "operation": "GET /api/v1/admin/usage/sandboxes",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/sandboxes?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Use a valid cursor and a limit from 1 through 200.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "usage-admin-sandboxes-owner-filter",
+      "operation": "GET /api/v1/admin/usage/sandboxes",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/sandboxes?owner=owner",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "sandbox_id": "sbx_usage_contract",
+              "owner": "owner",
+              "name": "Retained usage",
+              "status": "deleted",
+              "allocation": {
+                "running": false,
+                "cpu_millis": 0,
+                "memory_mib": 0,
+                "disk_gib": 0
+              },
+              "created_at": 100,
+              "tracking_started_at": 100,
+              "as_of": 2000000000,
+              "complete_lifecycle": true,
+              "totals": {
+                "uptime_seconds": 3600,
+                "cpu_core_hours": 2.0,
+                "memory_gib_hours": 1.0,
+                "disk_gib_hours": 10.0,
+                "cpu_millis_seconds": 7200000,
+                "memory_mib_seconds": 3686400,
+                "disk_gib_seconds": 36000
+              }
+            }
+          ],
+          "next": null,
+          "as_of": 2000000000
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    },
+    {
+      "id": "usage-admin-sandboxes-empty-owner-filter",
+      "operation": "GET /api/v1/admin/usage/sandboxes",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/sandboxes?owner=other-owner",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "next": null,
+          "as_of": 2000000000
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "usage_as_of": "/as_of"
+      }
+    }
+  ]
+}

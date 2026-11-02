@@ -14,6 +14,8 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("usage-sandboxes-zero-limit", Classification::Local),
+    ("usage-admin-sandboxes-zero-limit", Classification::Local),
     (
         "binding-media-missing-length",
         Classification::BinaryHeaders,

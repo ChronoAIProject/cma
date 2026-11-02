@@ -10,6 +10,12 @@ const METHODS: &[&str] = &[
 /// Exact method selection prevents unrelated operations sharing a path from
 /// leaking into this contract. The full compatibility document is unchanged.
 const OPERATIONS: &[(&str, &[&str])] = &[
+    ("/api/v1/usage", &["get"]),
+    ("/api/v1/usage/sandboxes", &["get"]),
+    ("/api/v1/usage/sandboxes/{id}", &["get"]),
+    ("/api/v1/usage/sandboxes/{id}/events", &["get"]),
+    ("/api/v1/admin/usage", &["get"]),
+    ("/api/v1/admin/usage/sandboxes", &["get"]),
     ("/api/v1/documents", &["get", "post"]),
     ("/api/v1/documents/{id}", &["get", "patch"]),
     ("/api/v1/documents/{id}/source", &["get"]),

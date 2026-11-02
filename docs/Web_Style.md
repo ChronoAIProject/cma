@@ -22,7 +22,8 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | Profiles | One library for personal Sandbox, Workspace and Agent Profiles, public Marketplace discovery, and versioned Event Worker Profiles. |
 | CMA Trigger | Signed-in authoring, publication, placements and integration snippets. |
 | Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
-| Operations | Capability-gated inventory, Profiles, activity and settings. |
+| Operations | Capability-gated inventory, usage, Profiles, activity and settings. |
+| Settings | Browser appearance and the owner’s Sandbox usage. |
 | Bots | Owner Bot configuration and lifecycle through CMAEG, opened from Consumers in Event Gateway navigation. |
 
 Each view has a canonical route. Refresh and browser history restore it without
@@ -4233,3 +4234,12 @@ still mark's `currentColor`, applied inline. It never colours text, rows, border
 controls, and no stylesheet refers to it.
 
 | 2026-11-01 | Dress every Agent's character in its Sandbox's server-assigned colour in the sidebar, Thinking row and empty conversation, with approval amber and failure red still taking over and brand lime when a Sandbox has no colour. |
+
+### 2026-11-03 — Sandbox usage
+
+Settings exposes General and Usage through the existing underlined tab pattern.
+Usage reuses the Operations scrollport, definition lists, filters and record tables.
+Operations adds an independently capability-gated Usage tab with all-owner totals,
+owner filtering and retained Sandbox rows. CPU core-hours, RAM GiB-hours, disk
+GiB-hours, uptime and tracking coverage use explicit units. Partial histories and
+failed reads are stated; unavailable values never become zero.

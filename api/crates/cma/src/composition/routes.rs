@@ -104,6 +104,9 @@ pub(super) fn agent_metadata(
     .merge(rest::agent_channel_usage_router(
         AgentChannelUsageService::new(stores.sandbox_model.clone(), access.clone()),
     ))
+    .merge(rest::sandbox_usage_router(
+        layer2_core::sandbox_usage_service::SandboxUsageService::new(stores.sandbox_model.clone()),
+    ))
     .merge(rest::agent_provider_associations_router(
         AgentProviderAssociationService::new(stores.sandbox_model.clone(), access.clone()),
     ))

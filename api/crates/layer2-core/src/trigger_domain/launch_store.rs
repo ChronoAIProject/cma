@@ -170,6 +170,11 @@ pub struct LaunchCommit {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LaunchStoreError {
+    #[error("daily visitor Launch allowance exhausted")]
+    VisitorQuota {
+        limit: u32,
+        reset_at: std::time::SystemTime,
+    },
     #[error("launch not found")]
     NotFound,
     #[error("launch id already exists")]
@@ -197,6 +202,7 @@ pub enum LaunchStoreError {
 impl LaunchStoreError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::VisitorQuota { .. } => "resource_quota",
             Self::NotFound => "launch_not_found",
             Self::Duplicate => "launch_already_exists",
             Self::CommandConflict => "launch_idempotency_conflict",
