@@ -214,3 +214,31 @@ Shared recipients cannot retire the owner’s Sandbox. The server rechecks autho
 before scheduling; receipt reads require the requesting actor and current Sandbox
 visibility. The five-minute queue deadline never renews. HTTP 409 busy and HTTP
 503 unavailable responses require reading/retrying; they do not establish success.
+
+## Allocation usage
+
+`client.usage` reads CMA's allocated Sandbox resource-time independently of
+Agent token usage. CPU is measured in core-hours, RAM and retained disk in
+GiB-hours, and uptime in seconds. Integer source quantities are included for
+integrations that need exact arithmetic.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+const client = createClient();
+const totals = await client.usage.summary();
+const first = await client.usage.sandboxes({ limit: 50 });
+const sandbox = await client.usage.sandbox('sbx_example');
+const intervals = await client.usage.events('sbx_example', { limit: 100 });
+// cma:admin:sandboxes is required for cross-owner queries.
+const allUsers = await client.usage.adminSummary();
+const ownerSandboxes = await client.usage.adminSandboxes({ owner: 'owner-subject' });
+```
+
+Pass `next` back as `cursor` for subsequent pages. These reads support the usual
+`signal` and request options. `complete_lifecycle: false` means tracking started
+after the Sandbox was created; earlier usage is unknown. Retained rows remain
+readable after a Sandbox is deleted. Live totals include the currently open
+interval as of the returned timestamp. Paused Sandboxes retain disk accrual.
+
+Allocated capacity is distinct from actual CPU load, memory in use and files
+stored. Prices and invoice totals are not inferred from these resource counts.
