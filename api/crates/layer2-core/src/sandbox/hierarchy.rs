@@ -23,7 +23,16 @@ use super::{
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OwnerSandboxQuery {
     pub status: Option<SandboxStatus>,
+    /// Exclude terminal history before pagination; historical inventory remains the default.
+    pub exclude_retired: bool,
     pub page: PageRequest,
+}
+
+impl OwnerSandboxQuery {
+    pub fn matches_status(&self, status: SandboxStatus) -> bool {
+        self.status.is_none_or(|expected| status == expected)
+            && (!self.exclude_retired || status != SandboxStatus::Retired)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +76,7 @@ pub trait HierarchyReadStore: Send + Sync {
         &self,
         owner: &SubjectId,
         status: Option<SandboxStatus>,
+        exclude_retired: bool,
         page: &PageRequest,
     ) -> Result<Page<SandboxInventoryRecord>, SandboxStoreError>;
 
@@ -276,7 +286,12 @@ impl HierarchyReadService {
         PageRequest::new(query.page.limit, query.page.cursor.clone()).map_err(store_error)?;
         let stored = self
             .store
-            .list_owner_sandbox_inventory(&caller.subject, query.status, &query.page)
+            .list_owner_sandbox_inventory(
+                &caller.subject,
+                query.status,
+                query.exclude_retired,
+                &query.page,
+            )
             .await
             .map_err(store_error)?;
         if stored.items.len() > usize::from(query.page.limit)
@@ -293,9 +308,7 @@ impl HierarchyReadService {
         let mut previous = query.page.cursor.clone();
         for record in &stored.items {
             if record.sandbox.owner != caller.subject
-                || query
-                    .status
-                    .is_some_and(|status| record.sandbox.status != status)
+                || !query.matches_status(record.sandbox.status)
             {
                 return Err(corrupt("owner sandbox inventory escaped its query"));
             }
@@ -314,9 +327,7 @@ impl HierarchyReadService {
                 if self.access.is_some() {
                     let current = self.sandbox_personal(caller, &record.sandbox.id).await?;
                     if current.sandbox.created_at != record.sandbox.created_at
-                        || query
-                            .status
-                            .is_some_and(|status| current.sandbox.status != status)
+                        || !query.matches_status(current.sandbox.status)
                     {
                         return Err(HierarchyReadError::Access(
                             crate::resource_access::ResourceAccessStoreError::Conflict.into(),

@@ -54,7 +54,7 @@ unavailable_port!(AgentReadQueryStore {
 });
 unavailable_port!(HierarchyReadStore {
     fn read_snapshot_archive(sandbox_id: &SandboxId, checkpoint: &SandboxCheckpointRef) -> SandboxSnapshotDownload;
-    fn list_owner_sandbox_inventory(owner: &SubjectId, status: Option<SandboxStatus>, page: &PageRequest) -> Page<SandboxInventoryRecord>;
+    fn list_owner_sandbox_inventory(owner: &SubjectId, status: Option<SandboxStatus>, exclude_retired: bool, page: &PageRequest) -> Page<SandboxInventoryRecord>;
     fn read_sandbox_hierarchy(id: &SandboxId) -> Option<SandboxHierarchyRecord>;
     fn read_workspace_hierarchy(id: &WorkspaceId) -> Option<WorkspaceHierarchyRecord>;
     fn read_hierarchy_worktree(id: &WorktreeId) -> Option<Worktree>;

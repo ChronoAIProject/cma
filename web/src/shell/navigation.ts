@@ -25,7 +25,7 @@ async function allSandboxes(client: CmaWebClient, signal: AbortSignal) {
   const seen = new Set<string>();
   let cursor: string | undefined;
   do {
-    const page = await client.listSandboxes({ cursor, signal });
+    const page = await client.listSandboxes({ cursor, signal, excludeRetired: true });
     items.push(...page.items);
     cursor = page.next;
     if (cursor !== undefined && seen.has(cursor)) {
