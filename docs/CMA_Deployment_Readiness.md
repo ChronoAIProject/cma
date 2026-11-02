@@ -1053,11 +1053,26 @@ fresh reads, idle checks and transaction/input fences. Missing connections still
 take the original recovery path regardless of their guidance revision. Discovery
 continues validating complete records and rejects corrupt metadata.
 
+That same validated scan also defers refresh checks while an attached Agent is
+busy or has no valid, explicitly selected model. The next sweep recomputes this
+eligibility; an owner model selection or settled turn is not hidden by a cache.
+Eligible refreshes still reread the current Agent and retain all admission and
+input fences. Missing connections recover even when maintenance is ineligible.
+
 Each completed reconciliation sweep logs only aggregate candidate, already-current,
-refresh-check and recovery counts plus elapsed milliseconds. The normal scheduler
+deferred, refresh-check and recovery counts plus elapsed milliseconds. The normal scheduler
 starts at most one sweep per second; summaries contain no Agent or owner identities,
 prompts or database payloads. Compare these counts and existing connection checkout
 metrics with actual UI timings before attributing production latency to this work.
+
+Browser hierarchy, transcript and live-head publication checks begin independently
+after each projection's own data is complete. They do not wait for the hierarchy's
+publication check to finish first. Each still obtains fresh account identity;
+no result or in-flight identity request is shared with later reads. Final snapshot
+publication waits for every early callback and a further fresh identity check.
+The deterministic 250 ms identity/300 ms parallel-read fixture completes in
+1,050 ms rather than 1,300 ms. This is a scheduling regression test, not a
+production latency measurement or five-second acceptance claim.
 
 Empty v2 Agent event polls return the core's already-authorized window without
 running response-command and optional message-command correlation. No source
