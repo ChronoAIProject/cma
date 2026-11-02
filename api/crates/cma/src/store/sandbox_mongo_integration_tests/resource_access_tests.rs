@@ -10,6 +10,8 @@ mod provenance;
 mod sandbox_inventory;
 #[path = "resource_access_tests/share_links.rs"]
 mod share_links;
+#[path = "resource_access_tests/snapshot_reads.rs"]
+mod snapshot_reads;
 use layer2_core::resource_access::*;
 use sha2::{Digest as _, Sha256};
 
