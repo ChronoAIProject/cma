@@ -17,6 +17,8 @@ mod head_tests;
 mod message_binding_tests;
 mod parse;
 mod projection;
+#[cfg(test)]
+mod projection_tests;
 mod shapes;
 mod snapshot;
 mod stream;
