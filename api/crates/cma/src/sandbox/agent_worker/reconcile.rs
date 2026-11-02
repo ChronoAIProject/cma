@@ -8,14 +8,20 @@ use layer2_core::sandbox::store::{
 use super::AgentWorker;
 use crate::sandbox::live_agents::LiveAgentTarget;
 
+const MANAGED_GUIDANCE_REVISION: u64 = 1;
+
 impl AgentWorker {
     /// Reconcile every durable live conversation into the process-local registry.
     pub(crate) async fn reconcile_connections(
         &self,
         now: SystemTime,
     ) -> Result<usize, SandboxStoreError> {
+        let started = std::time::Instant::now();
         let mut cursor = None;
         let mut scheduled = 0;
+        let mut candidates = 0_u64;
+        let mut context_current = 0_u64;
+        let mut context_checks = 0_u64;
         loop {
             let page = self
                 .dependencies
@@ -23,21 +29,28 @@ impl AgentWorker {
                 .live_agent_connections(&PageRequest::new(MAX_PAGE_SIZE, cursor).expect("valid"))
                 .await?;
             for candidate in page.items {
+                candidates += 1;
                 let target = LiveAgentTarget {
                     agent_id: candidate.agent_id.clone(),
                     conversation_id: candidate.conversation_id.clone(),
                     runtime_generation: candidate.runtime_generation,
                 };
                 if self.dependencies.registry.target_is_attached(&target) {
-                    // The service cheaply skips applied revisions and active work.
-                    // Admission and the ordered writer recheck every mutable fence.
+                    // The scan already validated this monotonic applied revision.
+                    // Skip completed maintenance without rereading the entire Agent.
+                    // Pending refreshes still reread and fence all mutable authority.
                     if self.config.managed_documents_enabled {
+                        if candidate.managed_guidance_revision >= MANAGED_GUIDANCE_REVISION {
+                            context_current += 1;
+                            continue;
+                        }
+                        context_checks += 1;
                         if let Err(error) = self
                             .dependencies
                             .operations
                             .refresh_managed_context(
                                 &candidate.agent_id,
-                                1,
+                                MANAGED_GUIDANCE_REVISION,
                                 crate::agent_lifecycle::guidance::managed_v3(),
                                 &[
                                     crate::agent_lifecycle::guidance::managed_v3().into(),
@@ -63,6 +76,17 @@ impl AgentWorker {
                 }
             }
             let Some(next) = page.next else {
+                // One content-free summary per completed scheduler sweep (at most
+                // once per second), not one record per Agent or database call.
+                tracing::info!(
+                    parent: None,
+                    candidates,
+                    context_current,
+                    context_checks,
+                    scheduled,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "Agent connection reconciliation completed"
+                );
                 return Ok(scheduled);
             };
             cursor = Some(next);
