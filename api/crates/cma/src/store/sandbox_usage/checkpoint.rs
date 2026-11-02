@@ -117,7 +117,16 @@ async fn checkpoint(
         .map_err(|error| Domain(SandboxStoreError::Corrupt(error.to_string())))?;
     let seq = unsigned(seq, "sandbox sequence")
         .map_err(|error| Domain(SandboxStoreError::Corrupt(error)))?;
-    record(store, session, &sandbox, seq, at, true).await
+    record(
+        store,
+        session,
+        &sandbox,
+        seq,
+        at,
+        (seq, sandbox.revision),
+        true,
+    )
+    .await
 }
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable(error.to_string())

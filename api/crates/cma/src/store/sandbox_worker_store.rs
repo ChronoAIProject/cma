@@ -225,6 +225,7 @@ async fn purge_in_transaction(
         &sandbox,
         seq,
         &layer2_core::now_rfc3339(),
+        (seq, sandbox.revision),
         true,
     )
     .await

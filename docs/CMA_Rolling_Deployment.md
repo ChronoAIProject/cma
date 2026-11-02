@@ -78,6 +78,11 @@ admissions exclusively to the upgraded API before ending migration, monitor this
 bounded overlap, and retain the durable Launch count as the migration floor.
 Subsequent rollouts of compatible binaries use the normal shared authorities.
 
+Legacy workers also lack usage writes. Usage source watermarks detect their
+unmetered transitions during this overlap, exclude uncertain intervals and retain
+an explicit partial baseline before continuing. Keep billing disabled throughout
+the first migration and verify coverage before enabling provider delivery.
+
 Verify public web, API readiness, authenticated reads and active conversation
 replay continuously during the promotion. Compare retained Sandbox runtime/home
 identities and Agent IDs before and after, and check worker recovery and usage

@@ -53,7 +53,7 @@ pub struct SandboxUsage {
     pub tracking_started_at: u64,
     /// Time through which the open interval is projected, in Unix seconds.
     pub as_of: u64,
-    /// False for resources predating metering; earlier usage is unknown.
+    /// False when earlier usage or an interval during migration is unknown.
     pub complete_lifecycle: bool,
     /// Lifetime metered quantities.
     pub totals: UsageTotals,

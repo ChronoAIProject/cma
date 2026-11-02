@@ -42,6 +42,13 @@ The UI shows the tracking start and identifies partial histories. Usage state
 and events are retained after the Sandbox aggregate and its ordinary event log
 are purged. Purge refuses any remaining runtime or home allocation.
 
+During the first rolling upgrade, older replicas can still write lifecycle state
+without metering. Every new write checks the ledger's source sequence and revision
+against the aggregate before mutation. A mismatch preserves confirmed totals,
+excludes the unknown open interval, emits a new baseline and marks lifecycle
+coverage partial. Checkpoints apply the same check. No usage is invented or
+exported for an unobserved transition, even when the final allocation is unchanged.
+
 ## Integration API
 
 Every endpoint requires the usual CMA authentication. Owner reads require

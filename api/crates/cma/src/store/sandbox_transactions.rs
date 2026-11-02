@@ -250,7 +250,8 @@ async fn apply_transaction(
                 .session(&mut *session)
                 .await
                 .map_err(classify_sequence_write)?;
-            super::sandbox_usage::lifecycle_event(store, session, &event).await?;
+            super::sandbox_usage::lifecycle_event(store, session, &event, Some(*expected_revision))
+                .await?;
             Ok(Receipt::SaveSandbox(event, revival_receipt))
         }
         SandboxTransaction::SaveWorkspaceAndAppend {

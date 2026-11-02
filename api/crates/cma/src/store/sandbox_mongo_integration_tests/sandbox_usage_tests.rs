@@ -78,11 +78,17 @@ async fn sandbox_usage_aborted_lifecycle_transaction_cannot_leave_billable_usage
     parent.revision += 1;
     let mut session = client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
-    assert!(
-        crate::store::sandbox_usage::record(&store, &mut session, &parent, 2, MINUTE, false)
-            .await
-            .is_ok()
-    );
+    assert!(crate::store::sandbox_usage::record(
+        &store,
+        &mut session,
+        &parent,
+        2,
+        MINUTE,
+        (1, parent.revision - 1),
+        false
+    )
+    .await
+    .is_ok());
     session.abort_transaction().await.unwrap();
     assert_eq!(store.usage(&parent.id).await.unwrap().unwrap(), before);
     assert_eq!(
@@ -101,6 +107,113 @@ async fn sandbox_usage_aborted_lifecycle_transaction_cannot_leave_billable_usage
         .unwrap()
         .runtime
         .is_some());
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_usage_legacy_writer_gap_is_excluded_before_new_lifecycle_append() {
+    let (client, name, store, mut parent) = fixture("usage_legacy_gap").await;
+    store
+        .checkpoint_usage_one(parent.id.as_str(), MINUTE)
+        .await
+        .unwrap();
+    let confirmed = store.usage(&parent.id).await.unwrap().unwrap();
+    // Reproduce the old binary's direct aggregate save: its ledger stays behind.
+    parent.runtime = None;
+    parent.status = SandboxStatus::Paused;
+    parent.lifecycle.checkpoints.latest = Some(
+        layer2_core::sandbox::SandboxCheckpointRef::seal(
+            &layer3_adapter::CheckpointReceipt {
+                epoch: 1,
+                object_reference: "checkpoints/usage".into(),
+                sha256: "b".repeat(64),
+                writers: layer3_adapter::WriterState::Held,
+            },
+            &[],
+            NOW,
+        )
+        .unwrap(),
+    );
+    parent.credential.delivered = false;
+    parent.credential.current = None;
+    parent.revision += 1;
+    parent.updated_at = TWO_MINUTES.into();
+    store
+        .sandboxes
+        .update_one(
+            doc! { "_id": parent.id.as_str() },
+            doc! {
+                "$set": crate::store::sandboxes::sandbox_replacement_fields(&parent).unwrap()
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .append_sandbox_event(
+            &parent.id,
+            TWO_MINUTES.into(),
+            SandboxEventKind::StatusChanged {
+                from: SandboxStatus::Active,
+                to: SandboxStatus::Paused,
+            },
+        )
+        .await
+        .unwrap();
+    let recovered = store.usage(&parent.id).await.unwrap().unwrap();
+    assert!(!recovered.complete_lifecycle);
+    assert_eq!(recovered.totals, confirmed.totals);
+    assert_eq!(
+        (recovered.source_seq, recovered.source_revision),
+        (2, parent.revision)
+    );
+    let events = store
+        .usage_events(&parent.id, &PageRequest::default())
+        .await
+        .unwrap();
+    let gap = events.items.last().unwrap();
+    assert_eq!(
+        gap.kind,
+        layer2_core::sandbox_usage::UsageEventKind::Baseline
+    );
+    assert_eq!(gap.quantity, UsageTotals::default());
+    assert_eq!(gap.started_at, gap.ended_at);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_usage_legacy_writer_gap_is_excluded_by_checkpoint() {
+    let (client, name, store, mut parent) = fixture("usage_legacy_checkpoint").await;
+    store
+        .checkpoint_usage_one(parent.id.as_str(), MINUTE)
+        .await
+        .unwrap();
+    parent.revision += 1;
+    store
+        .sandboxes
+        .update_one(
+            doc! { "_id": parent.id.as_str() },
+            doc! {
+                "$set": crate::store::sandboxes::sandbox_replacement_fields(&parent).unwrap()
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .checkpoint_usage_one(parent.id.as_str(), TWO_MINUTES)
+        .await
+        .unwrap();
+    let recovered = store.usage(&parent.id).await.unwrap().unwrap();
+    assert!(!recovered.complete_lifecycle);
+    assert_eq!(recovered.totals.uptime_seconds, 60);
+    assert_eq!(
+        recovered
+            .totals_at(timestamp(TWO_MINUTES).unwrap() + 30)
+            .unwrap()
+            .uptime_seconds,
+        90
+    );
     client.database(&name).drop().await.unwrap();
 }
 
