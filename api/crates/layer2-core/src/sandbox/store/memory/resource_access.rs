@@ -15,7 +15,7 @@ impl ResourceAccessStore for InMemorySandboxStore {
             .map_err(|_| ResourceAccessStoreError::Invalid)?;
         let state = self.lock();
         let mut candidates: Vec<_> = state.sandboxes.values().filter(|sandbox| {
-            if query.status.is_some_and(|status| sandbox.status != status)
+            if !query.matches_status(sandbox.status)
                 || query.page.cursor.as_deref().is_some_and(|id| sandbox.id.as_str() <= id) {
                 return false;
             }
@@ -56,7 +56,7 @@ impl ResourceAccessStore for InMemorySandboxStore {
             .map_err(|_| ResourceAccessStoreError::Invalid)?;
         let state = self.lock();
         let mut candidates: Vec<_> = state.sandboxes.values().filter(|sandbox| {
-            query.status.is_none_or(|status| sandbox.status == status)
+            query.matches_status(sandbox.status)
                 && query.page.cursor.as_deref().is_none_or(|cursor| sandbox.id.as_str() > cursor)
                 && state.resource_shares.values().any(|receipt| {
                     receipt.sandbox_id == sandbox.id
