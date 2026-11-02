@@ -32,6 +32,16 @@ workers and margin. Web requests nginx graceful quit after propagation and keeps
 the hook running until its master exits. Existing versioned web asset retention
 must be preserved during image promotion.
 
+Inspect the gate's reason, not only its boolean. Production inspection also found
+the legacy `cma-api` Service alias advertising an unused standalone NEG. GKE marked
+the shared Pod gate true with `LoadBalancerNegWithoutHealthCheck` for that alias
+while the public API was unavailable. Verify that no Gateway or other backend
+references the alias NEG, remove its stale `cloud.google.com/neg` annotation, and
+wait for its endpoints to detach. Preserve the alias Service and DNS for existing
+ChannelPointers. The canonical `cma-agent-manager` NEG must remain attached and
+healthy; verify its actual backend health before switching traffic. A readiness
+gate satisfied by an unhealthchecked alias is insufficient evidence.
+
 Event Gateway retains its existing zero-unavailable rolling strategy and durable
 turn drain, with the same 30-second readiness/endpoint margin, 660-second backend
 connection drain and 735-second pod grace. Image Manager declares those rollout
@@ -53,6 +63,13 @@ to it, retain the old endpoint for the complete connection-drain window, then
 finish the canonical Deployment rollout. Preserve current image/runtime pins and
 compare the live resource versions before each mutation so concurrent releases
 are not overwritten.
+
+Include both `cma-agent-manager` and the `cma-api` compatibility Service when
+moving new requests onto the replacement. Preserve their original selectors for
+restoration, and retain the old process until both Service endpoint sets and the
+canonical NEG have removed it and the full drain interval has elapsed. Copy all
+existing web asset init containers, retain the outgoing image's assets, and add
+the incoming image's assets to the shared asset volume before routing web traffic.
 
 The old binary cannot participate in shared request budgets. Its remaining
 in-flight Launches can race the initial shared-quota observation. Route new
