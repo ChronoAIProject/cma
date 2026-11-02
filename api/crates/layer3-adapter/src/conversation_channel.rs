@@ -35,6 +35,12 @@ pub trait ConversationInputGuard: Send + Sync {
 #[async_trait::async_trait]
 pub trait ConversationSettingsSupport: Send + Sync {
     async fn system_prompt_supported(&self) -> bool;
+    /// A local, negative-only maintenance hint. Implementations must not perform
+    /// runtime IO here. True still requires fresh admission and an exact receipt;
+    /// unknown implementations retain the ordinary admission path.
+    async fn managed_context_may_be_ready(&self) -> bool {
+        true
+    }
     async fn managed_context_receipt(&self, _sequence: u64) -> Option<String> {
         None
     }
@@ -168,6 +174,15 @@ impl ConversationInputSender {
             .as_ref()?
             .managed_context_receipt(sequence)
             .await
+    }
+
+    /// Defer impossible maintenance without reading or mutating the runtime.
+    /// This observation never authorizes a refresh and is not cached by callers.
+    pub async fn managed_context_may_be_ready(&self) -> bool {
+        match &self.settings_support {
+            Some(support) => support.managed_context_may_be_ready().await,
+            None => false,
+        }
     }
 
     /// Wait for the local writer to confirm the operation was written.

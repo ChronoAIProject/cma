@@ -22,6 +22,7 @@ impl AgentWorker {
         let mut candidates = 0_u64;
         let mut context_current = 0_u64;
         let mut context_deferred = 0_u64;
+        let mut context_runtime_deferred = 0_u64;
         let mut context_checks = 0_u64;
         loop {
             let page = self
@@ -52,6 +53,25 @@ impl AgentWorker {
                         if !candidate.managed_context_eligible {
                             context_deferred += 1;
                             continue;
+                        }
+                        let runtime_target = layer2_core::sandbox::AgentRuntimeTarget {
+                            agent_id: candidate.agent_id.clone(),
+                            conversation_id: candidate.conversation_id.clone(),
+                            runtime_generation: candidate.runtime_generation,
+                        };
+                        if let Ok(connection) = layer2_core::sandbox::AgentRuntimeRegistry::resolve(
+                            self.dependencies.registry.as_ref(),
+                            &runtime_target,
+                        )
+                        .await
+                        {
+                            // A local refusal grants no authority and performs no
+                            // runtime IO. Recheck it every sweep; a positive hint
+                            // still takes the ordinary fresh admission/write path.
+                            if !connection.input.managed_context_may_be_ready().await {
+                                context_runtime_deferred += 1;
+                                continue;
+                            }
                         }
                         context_checks += 1;
                         if let Err(error) = self
@@ -92,6 +112,7 @@ impl AgentWorker {
                     candidates,
                     context_current,
                     context_deferred,
+                    context_runtime_deferred,
                     context_checks,
                     scheduled,
                     elapsed_ms = started.elapsed().as_millis() as u64,
