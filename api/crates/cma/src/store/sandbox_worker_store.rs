@@ -210,6 +210,28 @@ async fn purge_in_transaction(
     if sandbox.status != SandboxStatus::Retired || !sandbox.credential.revoke_debt.is_empty() {
         return Err(PurgeError::Conflict);
     }
+    if layer2_core::sandbox_usage::Allocation::from_sandbox(&sandbox)
+        != layer2_core::sandbox_usage::Allocation::default()
+    {
+        return Err(PurgeError::Conflict);
+    }
+    let seq = aggregate
+        .get_i64("last_seq")
+        .map_err(|_| PurgeError::Conflict)?;
+    let seq = u64::try_from(seq).map_err(|_| PurgeError::Conflict)?;
+    super::sandbox_usage::record(
+        store,
+        session,
+        &sandbox,
+        seq,
+        &layer2_core::now_rfc3339(),
+        true,
+    )
+    .await
+    .map_err(|error| match error {
+        super::sandbox_events::TransactionEventError::Driver(error) => PurgeError::Driver(error),
+        super::sandbox_events::TransactionEventError::Domain(_) => PurgeError::Conflict,
+    })?;
 
     let mut cursor = store
         .agents

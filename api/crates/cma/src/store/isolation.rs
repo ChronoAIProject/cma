@@ -6,6 +6,8 @@ use mongodb::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const COLLECTIONS: &[&str] = &[
+    super::request_limits::COLLECTION,
+    "visitor_launch_days",
     crate::document_artifacts::COLLECTION,
     super::native_warm_pools::COLLECTION,
     super::native_prepared::COLLECTION,
@@ -114,6 +116,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_credential_revocations",
     "sandbox_credentials",
     "sandbox_events",
+    super::sandbox_usage::STATES,
+    super::sandbox_usage::EVENTS,
     "sandbox_profile_revisions",
     "sandbox_profiles",
     "sandbox_retained_availability",
