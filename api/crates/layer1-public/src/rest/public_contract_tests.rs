@@ -56,6 +56,7 @@ mod source_cases;
 mod state_cases;
 mod symbols;
 mod trigger_cases;
+mod usage_cases;
 mod warm_pool_cases;
 mod workspace_prepare_recovery_cases;
 
@@ -156,6 +157,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = usage_cases::scenario(name) {
+        return scenario;
+    }
     if let Some(scenario) = binding_media_cases::scenario(name) {
         return scenario;
     }
