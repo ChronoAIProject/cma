@@ -347,6 +347,58 @@ async fn new_colour_keeps_clear_of_unlisted_live_sandboxes_only() {
 }
 
 #[tokio::test]
+async fn colour_scan_follows_empty_filtered_pages_to_later_live_sandboxes() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    let owner = SubjectId::new("owner");
+    for index in 0..crate::sandbox::store::MAX_PAGE_SIZE {
+        store
+            .create_sandbox(sandbox(
+                &format!("sbx_a{index:04}"),
+                "owner",
+                "2026-11-01T00:00:00Z",
+                SandboxStatus::Retired,
+            ))
+            .await
+            .unwrap();
+    }
+    let kept = sandbox(
+        "sbx_y",
+        "owner",
+        "2026-11-01T00:01:00Z",
+        SandboxStatus::Active,
+    );
+    let fresh = sandbox(
+        "sbx_z",
+        "owner",
+        "2026-11-01T00:02:00Z",
+        SandboxStatus::Provisioning,
+    );
+    store.create_sandbox(kept.clone()).await.unwrap();
+    store.create_sandbox(fresh.clone()).await.unwrap();
+    let first = store
+        .list_live_sandboxes(&owner, &crate::sandbox::store::PageRequest::default())
+        .await
+        .unwrap();
+    assert!(first.items.is_empty());
+    assert!(first.next.is_some());
+    let palettes = Arc::new(InMemorySandboxColorStore::default());
+    let occupied = choose(&[], &Seeded::new(17)).unwrap();
+    palettes
+        .record(&owner, 0, &[(kept.id, occupied)])
+        .await
+        .unwrap();
+    let expected = choose(&[occupied], &Seeded::new(17)).unwrap();
+    assert_ne!(expected, occupied);
+    assert_eq!(
+        service(palettes, store, 17)
+            .colors(&owner, &[&fresh])
+            .await
+            .get(&fresh.id),
+        Some(&expected)
+    );
+}
+
+#[tokio::test]
 async fn retiring_sandboxes_are_never_given_a_colour() {
     let retired = sandbox(
         "sbx_retired",
