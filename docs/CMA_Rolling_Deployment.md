@@ -72,6 +72,15 @@ canonical NEG have removed it and the full drain interval has elapsed. Copy all
 existing web asset init containers, retain the outgoing image's assets, and add
 the incoming image's assets to the shared asset volume before routing web traffic.
 
+Stage the temporary web Deployment with the outgoing web container image and the
+incoming asset initializer. It serves the old page while both asset versions are
+available. Verify the initializer's immutable image and every incoming asset hash
+in the served volume. Route traffic to this staged pod and drain the original web
+endpoints before promoting the canonical Deployment to the incoming web image.
+Both remaining backends then serve the new page's assets during overlap. Retaining
+old assets only in new pods does not protect a new page whose asset request reaches
+an old pod. This staging order also applies to subsequent web upgrades.
+
 The old binary cannot participate in shared request budgets. Its remaining
 in-flight Launches can race the initial shared-quota observation. Route new
 admissions exclusively to the upgraded API before ending migration, monitor this
