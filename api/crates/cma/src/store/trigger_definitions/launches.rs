@@ -26,6 +26,7 @@ pub(super) mod input_protocol;
 mod queries;
 mod transactions;
 mod validation;
+mod visitor_quota;
 
 pub(super) const LAUNCHES: &str = "trigger_launches";
 pub(super) const LAUNCH_EVENTS: &str = "trigger_launch_events";
@@ -35,6 +36,8 @@ pub(super) const TRANSACTION_ATTEMPTS: usize = 8;
 
 #[derive(Clone)]
 pub(in crate::store) struct LaunchCollections {
+    visitor_days: Collection<Document>,
+    settings: Collection<Document>,
     launches: Collection<Document>,
     events: Collection<Document>,
     handoffs: Collection<Document>,
@@ -45,16 +48,25 @@ impl LaunchCollections {
     pub(super) async fn open(database: &Database) -> Result<Self, StoreError> {
         initialize_collections(
             database,
-            &[LAUNCHES, LAUNCH_EVENTS, SERVICE_HANDOFFS, INPUT_PROTOCOLS],
+            &[
+                LAUNCHES,
+                LAUNCH_EVENTS,
+                SERVICE_HANDOFFS,
+                INPUT_PROTOCOLS,
+                visitor_quota::COLLECTION,
+            ],
         )
         .await?;
         let collections = Self {
+            visitor_days: majority_collection(database, visitor_quota::COLLECTION),
+            settings: majority_collection(database, "platform_settings"),
             launches: majority_collection(database, LAUNCHES),
             events: majority_collection(database, LAUNCH_EVENTS),
             handoffs: majority_collection(database, SERVICE_HANDOFFS),
             input_protocols: majority_collection(database, INPUT_PROTOCOLS),
         };
         indexes::ensure(&collections).await?;
+        visitor_quota::ensure_indexes(&collections).await?;
         Ok(collections)
     }
 }

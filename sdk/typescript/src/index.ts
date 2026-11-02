@@ -2,6 +2,7 @@
 
 export { Cma, createClient } from './client.js';
 export * from './resource-access.js';
+export * from './usage.js';
 export * from './agent-files.js';
 export * from './bots.js';
 export * from './bot-setups.js';

@@ -47,6 +47,7 @@ pub(crate) struct ControlPlaneComposition {
     pub auth: Arc<AuthState>,
     pub launch_scheduler: super::trigger::LaunchScheduler,
     pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
+    pub usage: crate::usage_billing::UsageWorkers,
     pub command_scheduler: super::commands::CommandScheduler,
     pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
@@ -260,7 +261,11 @@ impl ControlPlaneComposition {
             }
         };
 
-        let limits = RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
+        let limits = RateLimiters::from_config(
+            config.rate_limits,
+            config.trusted_proxies.clone(),
+            stores.request_limits.clone(),
+        );
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
         let sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
@@ -461,6 +466,7 @@ impl ControlPlaneComposition {
         };
         let provenance_backfill =
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
+        let usage = crate::usage_billing::UsageWorkers::new(&stores, config)?;
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -481,6 +487,7 @@ impl ControlPlaneComposition {
             bots,
             actor_continuations,
             provenance_backfill,
+            usage,
             launch_scheduler,
             command_scheduler,
             sandbox_control_scheduler,

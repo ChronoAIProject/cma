@@ -1530,6 +1530,23 @@ See [Agent sharing](Agent_Sharing.md) for audience and permission semantics.
 | `POST /api/v1/agents/{id}/interrupt` | -; key | - | 202 empty |
 | `POST /api/v1/agents/{id}/steer` | AgentTextRequest; key | - | 202 empty |
 
+### Sandbox allocation usage
+
+All quantities measure allocated resource-time. CPU and RAM accrue while the
+runtime is bound; disk accrues while the persistent home remains allocated,
+including while paused. Existing Sandboxes report partial lifecycle coverage.
+See [Sandbox usage](CMA_Sandbox_Usage.md) for units, authorization, retention,
+billing integration and TypeScript examples. Responses are private and no-store.
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/usage` | - | - | 200 UsageSummaryView |
+| `GET /api/v1/usage/sandboxes` | - | cursor, limit | 200 UsagePageView |
+| `GET /api/v1/usage/sandboxes/{id}` | - | - | 200 SandboxUsageView |
+| `GET /api/v1/usage/sandboxes/{id}/events` | - | cursor, limit | 200 UsageEventsView |
+| `GET /api/v1/admin/usage` | - | owner | 200 UsageSummaryView |
+| `GET /api/v1/admin/usage/sandboxes` | - | owner, cursor, limit | 200 UsagePageView |
+
 ### Agent usage
 
 | Operation | Body / Key | Query | Response |

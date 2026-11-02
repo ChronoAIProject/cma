@@ -5,6 +5,12 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
+The current rolling-deployment implementation and its first-upgrade drain
+procedure are specified in [CMA rolling deployment](CMA_Rolling_Deployment.md).
+That procedure supersedes the process-local quota/Recreate restrictions in the
+dated observations below once the shared-budget binary is promoted. It does not
+retroactively change those deployment records or claim the promotion is complete.
+
 The current deployment is recorded in the linked verification document and
 immutable manifests. On 15 October at 22:31 SGT, Web `dfc4d128` (generation 121)
 and Agent Manager `b28d39c0` (generation 45) are verified live. Web provides

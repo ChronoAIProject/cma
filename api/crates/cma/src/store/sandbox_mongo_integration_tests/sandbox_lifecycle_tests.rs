@@ -569,15 +569,18 @@ async fn lifecycle_recapture_atomically_fences_already_paused_rows_without_dupli
         stored.lifecycle.checkpoints.latest.as_ref().unwrap().epoch,
         2
     );
+    // Publication retains the complete replacement and reclaims superseded
+    // metadata. Recapture must not restore the historical two-generation policy.
+    assert!(stored.lifecycle.checkpoints.previous.is_none());
     assert_eq!(
-        stored
-            .lifecycle
+        store
             .checkpoints
-            .previous
-            .as_ref()
-            .unwrap()
-            .epoch,
-        1
+            .count_documents(doc! {
+                "sandbox_id": claimed.id.as_str(), "record.epoch": 1_i64,
+            })
+            .await
+            .unwrap(),
+        0
     );
     let events = store.sandbox_events(&claimed.id, 0, 100).await.unwrap();
     assert_eq!(

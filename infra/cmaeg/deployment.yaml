@@ -20,6 +20,7 @@ metadata:
     cma.chronoai.dev/source-tree: "674ab5a55000aa49433715f0668df743488fe2fb"
 spec:
   replicas: 1
+  minReadySeconds: 30
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -53,9 +54,9 @@ spec:
     spec:
       serviceAccountName: cmaeg-ksa
       automountServiceAccountToken: false
-      # Five seconds of routing propagation, 600 seconds of application drain,
-      # and ten seconds for process and kubelet teardown.
-      terminationGracePeriodSeconds: 615
+      # Thirty seconds of routing propagation, 660 seconds of connection drain,
+      # and 45 seconds for process and kubelet teardown.
+      terminationGracePeriodSeconds: 735
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -167,7 +168,7 @@ spec:
           lifecycle:
             preStop:
               sleep:
-                seconds: 5
+                seconds: 30
       volumes:
         - name: media-jobs
           emptyDir:

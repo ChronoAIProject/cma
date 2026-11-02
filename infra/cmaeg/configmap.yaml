@@ -225,7 +225,7 @@ data:
   CMAEG_ACK_TEXT: "Working on it…"
   CMAEG_HEARTBEAT_MS: "60000"
   CMAEG_FAILURE_TEXT: "Sorry, I couldn’t finish that request. Please try again."
-  CMAEG_DRAIN_SECONDS: "600"
+  CMAEG_DRAIN_SECONDS: "660"
   CMAEG_BUSY_RETRY_MAX_MS: "180000"
   CMAEG_CONSOLE_ENABLED: "true"
   CMAEG_CONSOLE_CLIENT_ID: "85619590-ec86-40bb-a96b-657bb89b4aa8"
