@@ -25,6 +25,7 @@ impl AgentWorker {
         let mut candidates = 0_u64;
         let mut context_current = 0_u64;
         let mut context_deferred = 0_u64;
+        let mut context_runtime_deferred = 0_u64;
         let mut context_checks = 0_u64;
         let mut context_throttled = 0_u64;
         let mut transport_attempts = 0_u64;
@@ -73,6 +74,25 @@ impl AgentWorker {
                         if !self.maintenance.should_check(&candidate, desired_revision) {
                             context_throttled += 1;
                             continue;
+                        }
+                        let runtime_target = layer2_core::sandbox::AgentRuntimeTarget {
+                            agent_id: candidate.agent_id.clone(),
+                            conversation_id: candidate.conversation_id.clone(),
+                            runtime_generation: candidate.runtime_generation,
+                        };
+                        if let Ok(connection) = layer2_core::sandbox::AgentRuntimeRegistry::resolve(
+                            self.dependencies.registry.as_ref(),
+                            &runtime_target,
+                        )
+                        .await
+                        {
+                            // A local refusal grants no authority and performs no
+                            // runtime IO. Recheck it every sweep; a positive hint
+                            // still takes the ordinary fresh admission/write path.
+                            if !connection.input.managed_context_may_be_ready().await {
+                                context_runtime_deferred += 1;
+                                continue;
+                            }
                         }
                         context_checks += 1;
                         let result = self
@@ -125,6 +145,7 @@ impl AgentWorker {
                     recovery_deferred,
                     context_current,
                     context_deferred,
+                    context_runtime_deferred,
                     context_checks,
                     context_throttled,
                     transport_attempts,
