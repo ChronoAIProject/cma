@@ -2,9 +2,12 @@ use super::*;
 use layer2_core::sandbox::OwnerSandboxQuery;
 #[path = "sandbox_inventory/shared.rs"]
 mod shared;
+#[path = "sandbox_inventory/visible.rs"]
+mod visible;
 
 fn query(limit: u16, cursor: Option<&str>) -> OwnerSandboxQuery {
     OwnerSandboxQuery {
+        exclude_retired: false,
         status: None,
         page: PageRequest::new(limit, cursor.map(str::to_owned)).unwrap(),
     }

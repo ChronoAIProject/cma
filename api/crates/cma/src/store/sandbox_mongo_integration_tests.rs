@@ -84,6 +84,7 @@ mod command_ledger_tests;
 mod conversation_fixtures;
 mod live_sandbox_pages;
 pub(in crate::store) mod resource_access_tests;
+mod visible_inventory;
 use conversation_fixtures::*;
 const MINUTE: &str = "2026-09-05T00:01:00Z";
 const TWO_MINUTES: &str = "2026-09-05T00:02:00Z";

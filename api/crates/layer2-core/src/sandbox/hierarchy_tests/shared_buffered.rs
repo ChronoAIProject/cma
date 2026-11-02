@@ -19,10 +19,11 @@ impl HierarchyReadStore for BufferedStore {
         &self,
         owner: &SubjectId,
         status: Option<SandboxStatus>,
+        exclude_retired: bool,
         page: &PageRequest,
     ) -> Result<Page<SandboxInventoryRecord>, SandboxStoreError> {
         self.inner
-            .list_owner_sandbox_inventory(owner, status, page)
+            .list_owner_sandbox_inventory(owner, status, exclude_retired, page)
             .await
     }
     async fn read_sandbox_hierarchy(
