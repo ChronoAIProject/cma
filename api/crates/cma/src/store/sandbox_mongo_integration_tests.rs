@@ -82,6 +82,7 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 mod background_checkpoint_tests;
 mod command_ledger_tests;
 mod conversation_fixtures;
+mod live_sandbox_pages;
 pub(in crate::store) mod resource_access_tests;
 use conversation_fixtures::*;
 const MINUTE: &str = "2026-09-05T00:01:00Z";
