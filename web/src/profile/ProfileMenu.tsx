@@ -38,6 +38,7 @@ interface ProfileMenuProps {
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
   docs: { kind: 'docs' },
   operations: { kind: 'operations' },
+  settings: { kind: 'settings', tab: 'general' },
 };
 
 export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>): string {
@@ -65,6 +66,7 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
     { id: 'docs', icon: <IconBrowseOutline16 />, label: 'Docs' },
+    { id: 'settings', icon: <IconSettingsOutline16 />, label: 'Settings' },
     ...(canOperate
       ? [{ id: 'operations', icon: <IconSettingsOutline16 />, label: 'Operations' }]
       : []),

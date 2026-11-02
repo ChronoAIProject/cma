@@ -247,9 +247,11 @@ async fn apply_transaction(
             store
                 .sandbox_events
                 .insert_one(event_document(&event).map_err(ApplyError::Domain)?)
-                .session(session)
+                .session(&mut *session)
                 .await
                 .map_err(classify_sequence_write)?;
+            super::sandbox_usage::lifecycle_event(store, session, &event, Some(*expected_revision))
+                .await?;
             Ok(Receipt::SaveSandbox(event, revival_receipt))
         }
         SandboxTransaction::SaveWorkspaceAndAppend {
