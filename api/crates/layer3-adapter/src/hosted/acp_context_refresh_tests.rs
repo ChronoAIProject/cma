@@ -49,12 +49,22 @@ async fn managed_context_unknown_or_native_goal_never_writes_or_closes_the_threa
                 .observe_context_goal("retained-session", &update)
                 .await;
         }
+        let status_reads = files.status_reads.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(!opened.channel.input.managed_context_may_be_ready().await);
+        assert_eq!(
+            files.status_reads.load(std::sync::atomic::Ordering::SeqCst),
+            status_reads
+        );
         assert!(opened
             .channel
             .input
             .managed_context_receipt(1)
             .await
             .is_none());
+        assert_eq!(
+            files.status_reads.load(std::sync::atomic::Ordering::SeqCst),
+            status_reads
+        );
         let outcome = opened
             .channel
             .input
@@ -139,6 +149,43 @@ async fn managed_context_null_goal_loads_exact_thread_and_settings_after_file_ac
     )
     .await
     .unwrap();
+    assert!(opened.channel.input.managed_context_may_be_ready().await);
+    assert_eq!(
+        files.status_reads.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    *opened.bridge.context_goal.lock().await = None;
+    assert!(!opened.channel.input.managed_context_may_be_ready().await);
+    opened
+        .bridge
+        .observe_context_goal(
+            "retained-session",
+            &serde_json::json!({
+                "sessionUpdate":"session_info_update", "_meta":{"goal":null}
+            }),
+        )
+        .await;
+    assert!(opened.channel.input.managed_context_may_be_ready().await);
+    opened
+        .bridge
+        .owned_prompt_waiters
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    assert!(!opened.channel.input.managed_context_may_be_ready().await);
+    assert!(opened
+        .channel
+        .input
+        .managed_context_receipt(1)
+        .await
+        .is_none());
+    opened
+        .bridge
+        .owned_prompt_waiters
+        .store(0, std::sync::atomic::Ordering::SeqCst);
+    assert!(opened.channel.input.managed_context_may_be_ready().await);
+    assert_eq!(
+        files.status_reads.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
     let receipt = opened
         .channel
         .input

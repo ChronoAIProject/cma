@@ -6,9 +6,23 @@ use crate::{AdapterError, PermissionLevel, ReasoningEffort};
 
 impl Bridge {
     pub(super) async fn context_readiness_receipt(&self, sequence: u64) -> Option<String> {
+        if sequence == 0 {
+            return None;
+        }
+        let session = self.context_readiness_session().await?;
+        self.context_refresh
+            .as_ref()?
+            .readiness_receipt(&session, sequence)
+            .await
+            .ok()
+    }
+
+    /// Inspect only this attachment's local state. Receipt issuance and all
+    /// runtime IO remain behind the caller's fresh admission checks.
+    pub(super) async fn context_readiness_session(&self) -> Option<String> {
+        self.context_refresh.as_ref()?;
         let session = self.session().await.ok()?;
-        if sequence == 0
-            || self.context_busy().await
+        if self.context_busy().await
             || !self
                 .context_goal
                 .lock()
@@ -18,11 +32,7 @@ impl Bridge {
         {
             return None;
         }
-        self.context_refresh
-            .as_ref()?
-            .readiness_receipt(&session, sequence)
-            .await
-            .ok()
+        Some(session)
     }
 
     pub(super) async fn context_busy(&self) -> bool {
