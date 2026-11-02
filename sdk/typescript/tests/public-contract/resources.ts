@@ -239,6 +239,13 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/sandboxes': ({ client, options, query }) =>
     client.sandboxes.listAccessible({
       ...(options as AccessibleSandboxListOptions),
+      excludeRetired: query.has('exclude_retired')
+        ? query.get('exclude_retired') === 'true'
+          ? true
+          : query.get('exclude_retired') === 'false'
+            ? false
+            : (query.get('exclude_retired') as never)
+        : undefined,
       shared: query.has('shared')
         ? query.get('shared') === 'true'
           ? true

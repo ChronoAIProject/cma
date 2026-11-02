@@ -118,7 +118,11 @@ describe('navigation hierarchy loading', () => {
     ]);
     expect(listSandboxes).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ cursor: 'next-page' }),
+      expect.objectContaining({ cursor: 'next-page', excludeRetired: true }),
+    );
+    expect(listSandboxes).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ excludeRetired: true }),
     );
     expect(readSandbox).toHaveBeenCalledWith('sbx_1', expect.any(Object));
     expect(readWorkspace).toHaveBeenCalledWith('wsp_1', expect.any(Object));
