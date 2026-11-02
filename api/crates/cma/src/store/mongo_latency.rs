@@ -1,4 +1,4 @@
-//! Bounded driver latency summaries. Never retain or log commands, replies,
+//! Bounded connection-pool latency summaries. Never retain or log commands, replies,
 //! addresses, identifiers, credentials, database names, or driver errors.
 use std::{
     sync::{Arc, Mutex},
@@ -6,25 +6,12 @@ use std::{
 };
 
 use mongodb::{
-    event::{cmap::CmapEvent, command::CommandEvent, EventHandler},
+    event::{cmap::CmapEvent, EventHandler},
     options::ClientOptions,
 };
 
 const WINDOW: Duration = Duration::from_secs(10);
-const LABELS: [&str; 12] = [
-    "find",
-    "aggregate",
-    "getMore",
-    "insert",
-    "update",
-    "delete",
-    "findAndModify",
-    "commitTransaction",
-    "other_command",
-    "checkout",
-    "connection_ready",
-    "pool_cleared",
-];
+const LABELS: [&str; 3] = ["checkout", "connection_ready", "pool_cleared"];
 const LIMITS_US: [u64; 6] = [1_000, 5_000, 25_000, 100_000, 250_000, 1_000_000];
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -95,34 +82,20 @@ impl Observer {
     }
 }
 
-fn command_index(name: &str) -> usize {
-    LABELS[..8]
-        .iter()
-        .position(|label| *label == name)
-        .unwrap_or(8)
-}
-
 pub(super) fn observe(options: &mut ClientOptions) {
     let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
     attach(options, observer);
 }
 
 fn attach(options: &mut ClientOptions, observer: Observer) {
-    let commands = observer.clone();
-    options.command_event_handler = Some(EventHandler::callback(move |event| match event {
-        CommandEvent::Succeeded(event) => {
-            commands.record(command_index(&event.command_name), event.duration, false);
-        }
-        CommandEvent::Failed(event) => {
-            commands.record(command_index(&event.command_name), event.duration, true);
-        }
-        _ => {}
-    }));
+    // Command monitoring makes mongodb 3.9 decode complete commands and replies
+    // before invoking the callback, even when it only reads duration. Keep it
+    // disabled so diagnostics do not add BSON decoding to every database call.
     options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
-        CmapEvent::ConnectionCheckedOut(event) => observer.record(9, event.duration, false),
-        CmapEvent::ConnectionCheckoutFailed(event) => observer.record(9, event.duration, true),
-        CmapEvent::ConnectionReady(event) => observer.record(10, event.duration, false),
-        CmapEvent::PoolCleared(_) => observer.record(11, Duration::ZERO, false),
+        CmapEvent::ConnectionCheckedOut(event) => observer.record(0, event.duration, false),
+        CmapEvent::ConnectionCheckoutFailed(event) => observer.record(0, event.duration, true),
+        CmapEvent::ConnectionReady(event) => observer.record(1, event.duration, false),
+        CmapEvent::PoolCleared(_) => observer.record(2, Duration::ZERO, false),
         _ => {}
     }));
 }
