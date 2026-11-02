@@ -52,12 +52,15 @@ impl HierarchyReadStore for InMemorySandboxStore {
         &self,
         owner: &SubjectId,
         status: Option<SandboxStatus>,
+        exclude_retired: bool,
         request: &PageRequest,
     ) -> Result<Page<SandboxInventoryRecord>, SandboxStoreError> {
         let state = self.lock();
         let mut values = Vec::new();
         for sandbox in state.sandboxes.values().filter(|sandbox| {
-            &sandbox.owner == owner && status.is_none_or(|expected| sandbox.status == expected)
+            &sandbox.owner == owner
+                && status.is_none_or(|expected| sandbox.status == expected)
+                && (!exclude_retired || sandbox.status != SandboxStatus::Retired)
         }) {
             if let Some(policy) = state.resource_policies.get(&sandbox.id) {
                 if !policy.personal_owner_of(sandbox).map_err(|_| {

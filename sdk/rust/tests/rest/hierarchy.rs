@@ -226,6 +226,7 @@ async fn shared_sandbox_inventory_preserves_safe_summaries_and_personal_method_t
         organization: Some("org".into()),
         shared: false,
         filters: SandboxListOptions {
+            exclude_retired: false,
             status: Some(SandboxStatus::Active),
             page: PageOptions {
                 cursor: None,
@@ -322,6 +323,7 @@ async fn aggregate_shared_sandbox_scope_pages_and_refuses_mixed_scope_locally() 
         shared: true,
         organization: None,
         filters: SandboxListOptions {
+            exclude_retired: false,
             status: Some(SandboxStatus::Active),
             page: PageOptions {
                 cursor: Some("sandbox-0".into()),
@@ -355,6 +357,58 @@ async fn aggregate_shared_sandbox_scope_pages_and_refuses_mixed_scope_locally() 
             .client
             .sandboxes()
             .list_accessible(&AccessibleSandboxListOptions::default())
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn visible_inventory_filter_is_explicit_and_combines_with_scope_and_cursor() {
+    let server = Server::new().await;
+    let options = SandboxListOptions {
+        exclude_retired: true,
+        page: PageOptions {
+            cursor: Some("next".into()),
+            limit: Some(1),
+        },
+        ..Default::default()
+    };
+    server.expect(
+        "GET",
+        "/sandboxes?cursor=next&limit=1&exclude_retired=true",
+        None,
+        200,
+        Some(json!({"items":[]})),
+    );
+    assert!(
+        server
+            .client
+            .sandboxes()
+            .list(&options)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    server.expect(
+        "GET",
+        "/sandboxes?cursor=next&limit=1&exclude_retired=true&shared=true",
+        None,
+        200,
+        Some(json!({"items":[]})),
+    );
+    assert!(
+        server
+            .client
+            .sandboxes()
+            .list_accessible(&AccessibleSandboxListOptions {
+                shared: true,
+                filters: options,
+                ..Default::default()
+            })
             .await
             .unwrap()
             .items

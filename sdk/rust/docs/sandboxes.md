@@ -2,6 +2,14 @@
 
 <!-- nav: 4 Sandboxes -->
 
+Sandbox lists include retained history by default. Set `exclude_retired: true` in the
+list options to omit only `retired` records before pagination; keep the same filter
+when following a cursor. Paused, failing, and retiring Sandboxes remain visible.
+The option applies to personal, organization, and incoming shared inventories,
+combines with the exact status filter, and does not delete any retained record.
+The public query parameter is `exclude_retired=true`; false or omission preserves
+the historical listing. Combining it with `status=retired` returns an empty page.
+
 Agent Sandbox persists a Sandbox on its attached persistent volume. CMA does not
 create, schedule, expose, download, or delete Sandbox snapshot archives. Pause,
 revive, and retirement delegate runtime and volume lifecycle to Agent Sandbox;
