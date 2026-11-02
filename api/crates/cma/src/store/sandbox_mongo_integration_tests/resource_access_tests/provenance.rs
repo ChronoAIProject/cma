@@ -27,28 +27,36 @@ async fn observed_fixture(prefix: &str) -> (Client, String, MongoSandboxStore, A
     (admin, name, store, agent_id, trace)
 }
 
-fn assert_snapshot_commands(trace: &Trace, finds: usize) {
+fn assert_snapshot_commands(trace: &Trace, fallback: bool, extra_batches: usize) {
     let commands = trace.lock().unwrap().clone();
+    let mut expected = if fallback {
+        // The large-record fallback now batches ancestry in the same snapshot.
+        vec![
+            "aggregate",
+            "aggregate",
+            "find",
+            "find",
+            "find",
+            "abortTransaction",
+        ]
+    } else {
+        vec!["aggregate", "abortTransaction"]
+    };
+    // The cursor's 16 MiB batch limit still applies to separate legal rows.
+    for _ in 0..extra_batches {
+        expected.insert(2, "getMore");
+    }
     assert_eq!(
-        commands.len(),
-        finds + 2,
-        "one aggregate, optional fallback, abort: {commands:?}"
+        commands
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        expected
     );
-    assert_eq!(commands[0].0, "aggregate");
     let first = &commands[0].1;
     assert!(command_uses_snapshot_read(first));
     assert!(first.get_bool("startTransaction").unwrap());
-    for (index, (name, command)) in commands.iter().enumerate() {
-        assert_eq!(
-            name,
-            if index == 0 {
-                "aggregate"
-            } else if index == finds + 1 {
-                "abortTransaction"
-            } else {
-                "find"
-            }
-        );
+    for (_, command) in &commands {
         assert_eq!(
             command.get_document("lsid").unwrap(),
             first.get_document("lsid").unwrap()
@@ -105,7 +113,7 @@ async fn provenance_batch_uses_one_read_only_snapshot_and_preserves_creation_evi
             store.agent_provenance_snapshot(&id).await.unwrap(),
             expected
         );
-        assert_snapshot_commands(&trace, 0);
+        assert_snapshot_commands(&trace, false, 0);
         assert_eq!(baseline(&store, &id).await, expected);
     }
     // Historical absence remains optional; callers retain their existing
@@ -374,7 +382,7 @@ async fn provenance_batch_bounds_applicable_shares_without_hiding_capacity_or_co
         store.agent_provenance_snapshot(&id).await.unwrap(),
         expected
     );
-    assert_snapshot_commands(&trace, 0);
+    assert_snapshot_commands(&trace, false, 0);
     store
         .resource_shares
         .insert_one(original.clone())
@@ -416,13 +424,16 @@ async fn provenance_batch_large_retained_records_fall_back_in_the_same_transacti
     let before = baseline(&store, &id).await;
     // Valid individual BSON documents whose combined result would exceed
     // 16 MiB must remain readable. Extra stored metadata is historically valid.
-    for (collection, key) in [
+    for (extra_batches, (collection, key)) in [
         (
             &store.sandboxes,
             before.resource.lineage.sandbox.id.as_str(),
         ),
         (&store.agents, id.as_str()),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         collection
             .update_one(
                 doc! {"_id": key},
@@ -432,7 +443,7 @@ async fn provenance_batch_large_retained_records_fall_back_in_the_same_transacti
             .unwrap();
         trace.lock().unwrap().clear();
         assert_eq!(store.agent_provenance_snapshot(&id).await.unwrap(), before);
-        assert_snapshot_commands(&trace, 8);
+        assert_snapshot_commands(&trace, true, extra_batches);
     }
     // Returning to ordinary records must also return to one fresh query.
     for collection in [&store.agents, &store.sandboxes] {
@@ -443,6 +454,6 @@ async fn provenance_batch_large_retained_records_fall_back_in_the_same_transacti
     }
     trace.lock().unwrap().clear();
     assert_eq!(store.agent_provenance_snapshot(&id).await.unwrap(), before);
-    assert_snapshot_commands(&trace, 0);
+    assert_snapshot_commands(&trace, false, 0);
     admin.database(&name).drop().await.unwrap();
 }

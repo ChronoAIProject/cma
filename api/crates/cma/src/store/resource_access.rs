@@ -25,6 +25,7 @@ pub(super) use mutation::fence_lineage;
 pub(super) mod records;
 mod sandbox_inventory;
 mod snapshot;
+mod snapshot_lineage;
 
 pub(super) async fn read_execution_snapshot(
     store: &MongoSandboxStore,
