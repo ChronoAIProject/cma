@@ -141,10 +141,10 @@ spec:
             - secretRef:
                 name: cma-agent-manager
           env:
-            # Keep interactive IO schedulable when one async task performs CPU
-            # work. The one-CPU quota otherwise selects a single Tokio worker.
+            # Keep interactive IO schedulable alongside reconciliation and BSON
+            # decoding. Match workers to the four-core burst limit below.
             - name: TOKIO_WORKER_THREADS
-              value: "2"
+              value: "4"
             - name: CHRONO_AGENT_SANDBOX_API_SERVER
               valueFrom:
                 configMapKeyRef:
@@ -176,10 +176,10 @@ spec:
               drop: ["ALL"]
           resources:
             requests:
-              cpu: 500m
+              cpu: "2"
               memory: 256Mi
             limits:
-              cpu: "2"
+              cpu: "4"
               # Four lifecycle sweeps can each hold bounded upload buffers.
               # All restore downloads share a four-part (128 MiB) buffer cap.
               memory: 1Gi

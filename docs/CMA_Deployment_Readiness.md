@@ -1017,20 +1017,32 @@ worker invocation cannot reuse that observation. This removes one repeated full
 inspection from successful prepared startup; production measurements must still
 establish the end-to-end provisioning time.
 
-Agent Manager emits bounded `MongoDB client latency summary` records to separate
-driver command round trips from connection checkout and connection establishment.
+Agent Manager emits bounded `MongoDB client latency summary` records for
+connection checkout, connection establishment and pool clears. Command monitoring
+is deliberately absent: MongoDB driver 3.9 decodes full commands and replies
+before invoking those callbacks, adding CPU/allocation work even when a callback
+reads only timing fields.
 Each active category emits at most one record per ten-second observation window;
 the next completion flushes an idle window. `count`, `failures`, `total_us` and
-`max_us` include failed commands. `failures` counts driver command-failure events;
-write errors returned inside a successful command reply are not counted. The
+`max_us` include failed checkouts. `failures` counts only connection checkout
+failures; database command and write errors are not checkout failures. The
 seven non-overlapping `buckets` have inclusive
 upper bounds of 1, 5, 25, 100, 250 and 1000 milliseconds, followed by an overflow
 bucket. Compare those windows with the existing admission and worker timings;
-command durations include network and client scheduling and cannot by themselves
-prove database execution time. Only fixed operation categories and numeric
+checkout durations include client scheduling and do not measure database execution
+time. Only fixed connection categories and numeric
 measurements enter these summaries: no query, reply, database/collection name,
 owner, server address, credential or driver error is recorded. The observer sends
 no diagnostic queries and changes no connection-pool, durability or retry policy.
+
+The singleton Agent Manager requests two CPU cores, permits a four-core burst and
+uses four Tokio workers. Production observations on the prior two-core limit
+averaged approximately 1.56 cores without command monitoring and 1.84 cores with
+it over separate 49/48-second windows. These overlapping application workloads
+are not a controlled benchmark. The additional scheduler capacity must still be
+validated against actual creation timings; it does not establish a five-second
+startup guarantee. Keep one Recreate replica while rate/quota counters remain
+process-local, and verify retained conversations and homes across the API rollout.
 
 Prepared Open/Ready publication decides eligibility inside the same Mongo
 transaction that validates the current Agent and writes its parent fences. It
