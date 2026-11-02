@@ -351,4 +351,4 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
 
 #[cfg(test)]
 #[path = "sandbox_usage_tests.rs"]
-mod tests;
+pub(crate) mod tests;
