@@ -336,6 +336,9 @@ mod rotate_tests;
 #[cfg(test)]
 mod runtime_generation_tests;
 #[cfg(test)]
+#[path = "../sandbox_usage_tests.rs"]
+mod sandbox_usage_tests;
+#[cfg(test)]
 mod service_tests;
 #[cfg(test)]
 mod tests;
