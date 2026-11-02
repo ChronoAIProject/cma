@@ -114,8 +114,9 @@ export function SandboxUsagePanel({
           </dl>
           {summary.incomplete_lifecycle_count > 0 ? (
             <Alert tone="info" title="Tracking starts at the recorded observation">
-              {summary.incomplete_lifecycle_count} existing sandboxes began before usage tracking.
-              Their earlier usage is unavailable.
+              {summary.incomplete_lifecycle_count} existing{' '}
+              {summary.incomplete_lifecycle_count === 1 ? 'sandbox began' : 'sandboxes began'}{' '}
+              before usage tracking. Their earlier usage is unavailable.
             </Alert>
           ) : null}
         </>

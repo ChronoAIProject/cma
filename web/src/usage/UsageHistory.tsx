@@ -53,9 +53,9 @@ export function UsageHistory({
           { header: 'Event' },
           { header: 'Time (SGT)' },
           { header: 'Interval uptime' },
-          { header: 'CPU (millicores)' },
-          { header: 'RAM (MiB)' },
-          { header: 'Disk (GiB)' },
+          { header: 'Interval CPU (millicores)' },
+          { header: 'Interval RAM (MiB)' },
+          { header: 'Interval disk (GiB)' },
         ]}
       >
         {result?.page?.items.map((event) => (
@@ -63,9 +63,9 @@ export function UsageHistory({
             <TableCell>{stateWord(event.kind)}</TableCell>
             <TableCell>{usageTime(event.ended_at)}</TableCell>
             <TableCell>{uptime(event.quantity.uptime_seconds)}</TableCell>
-            <TableCell>{event.next_allocation.cpu_millis}</TableCell>
-            <TableCell>{event.next_allocation.memory_mib}</TableCell>
-            <TableCell>{event.next_allocation.disk_gib}</TableCell>
+            <TableCell>{event.allocation.cpu_millis}</TableCell>
+            <TableCell>{event.allocation.memory_mib}</TableCell>
+            <TableCell>{event.allocation.disk_gib}</TableCell>
           </tr>
         ))}
       </Table>
