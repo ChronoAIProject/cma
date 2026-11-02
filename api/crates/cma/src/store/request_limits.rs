@@ -51,6 +51,11 @@ impl MongoRequestLimits {
                 return Ok(None);
             }
             if let Some(delay) = self.retry_after(key, tolerance).await? {
+                // A concurrent insert or refill may have made room since the
+                // failed admission. Retry its atomic predicate before refusing.
+                if delay == 0 {
+                    continue;
+                }
                 return Ok(Some(delay));
             }
             // Concurrent inserts are harmless: only the winner creates the empty bucket.
@@ -76,7 +81,7 @@ impl MongoRequestLimits {
         // The same server clock used by admission determines Retry-After.
         let mut rows = self.limits.aggregate([
             doc! { "$match": { "_id": key } },
-            doc! { "$project": { "wait_ms": { "$max": [1, { "$subtract": ["$tat", { "$add": [{ "$toLong": "$$NOW" }, tolerance] }] }] } } },
+            doc! { "$project": { "wait_ms": { "$max": [0, { "$subtract": ["$tat", { "$add": [{ "$toLong": "$$NOW" }, tolerance] }] }] } } },
         ]).await.map_err(unavailable)?;
         use futures_util::TryStreamExt;
         let Some(row) = rows.try_next().await.map_err(unavailable)? else {
@@ -86,7 +91,7 @@ impl MongoRequestLimits {
             .get_i64("wait_ms")
             .or_else(|_| row.get_i32("wait_ms").map(i64::from))
             .map_err(|_| StoreError::Malformed("invalid request budget".into()))?;
-        Ok(Some((wait.max(1) as u64).div_ceil(1000)))
+        Ok(Some((wait.max(0) as u64).div_ceil(1000)))
     }
 }
 
