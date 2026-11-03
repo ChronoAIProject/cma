@@ -164,6 +164,11 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly readSuggestedReplies?: (
+    agentId: string,
+    scope: { readonly turn_sequence: number; readonly answer_sequence: number },
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<import('../agent/useContextualSuggestions').SuggestedReplyReading>;
   readonly documents?: DocumentsClient;
   readonly files?: AgentFilesClient;
   readonly readMessageFeedback?: (
