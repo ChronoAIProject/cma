@@ -31,6 +31,7 @@ import '../agent/Agent.css';
 import './AgentShareLinks.css';
 
 interface Props {
+  readonly viewerId?: string;
   readonly computerObservation?: AgentComputerObservation;
   readonly client: ResourceViewsClient;
   readonly web: CmaWebClient;
@@ -44,6 +45,7 @@ interface Props {
 }
 
 export function SharedAgent({
+  viewerId,
   client,
   web,
   detail,
@@ -398,6 +400,11 @@ export function SharedAgent({
       <div className="agent-surface__conversation">
         {conversation === undefined ? null : (
           <MessageStream
+            deliverables={
+              web.deliverables && viewerId && basis
+                ? { agentId, viewerId, client: web.deliverables, authority: basis }
+                : undefined
+            }
             media={
               web.files && can('view_files')
                 ? {
