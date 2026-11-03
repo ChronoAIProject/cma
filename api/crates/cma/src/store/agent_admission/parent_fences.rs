@@ -56,10 +56,12 @@ pub(super) async fn advance_sandbox(
                 "$inc": { "workspace_admission_fence": 1_i64 },
             },
         )
-        .session(session)
+        .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?;
     if advanced.matched_count == 1 {
+        crate::store::sandbox_usage::save::record_saved(store, session, next, previous.revision)
+            .await?;
         Ok(())
     } else {
         Err(ApplyError::Domain(SandboxStoreError::Conflict))
