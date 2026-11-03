@@ -33,6 +33,7 @@ import {
   type UpdateAgentServiceAccessRequest,
 } from './agents/access-requests.js';
 import type { ResolvedConfig } from './config.js';
+import { readSuggestions } from './agents/suggestions.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { ProtocolError } from './errors.js';
 import { array, boolean, integer, object, optional, type Parser } from './schema.js';
@@ -124,6 +125,14 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  suggestions(
+    id: string,
+    scope: import('./answer-context.js').AnswerContext,
+    options: OperationOptions = {},
+  ) {
+    return readSuggestions(this.config, id, scope, options);
+  }
 
   feedbackDetails(id: string, messageId: string, options: OperationOptions = {}) {
     return feedbackDetails(this.config, id, messageId, options);

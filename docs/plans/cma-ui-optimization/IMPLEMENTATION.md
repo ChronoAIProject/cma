@@ -185,3 +185,24 @@
 - 同命令重跑实际 10 passed、0 failed、0 ignored、428 filtered；包含新旧操作、feedback schema、answer-bound deliverables 和实际 router 选择检查。另执行 `cargo +1.96.1 test --offline --locked --manifest-path api/Cargo.toml -p layer1-public --lib rest::openapi::tests::every_exported_operation_appears_in_the_rest_documentation_inventory -- --exact --nocapture`，实际 1 passed、0 failed、0 ignored、437 filtered。证据保存在集成 `api/target/integration10-openapi-{clean,test,recheck}.log` 和 `api/target/integration10-doc-inventory.log`；无共享 target 清理、0-test 证据或其他 Rust/SDK/Mongo/native 重复。
 - 冲突解决后的 cached diff check、`git diff --check 01656f54f0c42a9e891b906a29172d9e1cbe1d24 HEAD`、本批 `git diff --check d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8 HEAD` 与记录提交前的 worktree diff check 通过。已确认 07/12/10 三个交付 SHA 均为最终集成祖先。
 - parent 的独立 repair worker 继续负责重复 CSS、filesystem/conversation 行数、environment shared JSON inventory、AppPublic/TaskHome/URL 断言与 task-status 查询成本；不重复这些任务，不将其称作原始基线。原始 508 行 Agent service、skill/Core/格式/LocalAgentV2 head-404 限制保持独立。08 已由 parent 从 `01656f54f` 启动；本次只写集成 worktree，无原工作区/其他 worker 源码编辑，无推送、部署或全仓绿色声明。
+
+
+## Ticket 13 worker delivery（2026-11-03）
+
+- 独立 worktree `/Users/liuyitian/code/cma-ui-worktrees/ticket-13`、分支 `codex/cma-ui-13`，起点 `424b1534e`。先提交 Web Style `1455d4d06`，再提交 public/UI late-A red→green `f958b0bae`、生产持久化/模型适配/SDK/实际样本 `d0cff82a0`，以及可见曝光和恢复回执指标修正 `3a1aa9a46`。
+- 已在本票分支合入最新集成 `d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8`，merge `543ea035e`；仅 Web Style 追加点冲突，最终文件严格保留集成全文前缀并原样追加本票块。未写原工作区、集成 worktree 或其他 worker；无 push/PR/deploy。
+- 确认最终回答后同事务保存有界生成任务；既有授权模型代理异步生成；稳定 owner/Agent/canonical answer/strategy identity；GET/history 不生成、不启动 Agent turn。一次持久 claim、重启明确失败、晚到结果及新 input/authority fence、用量/延迟/provider 明示费用保存已实现。复用 11 `SuggestedReplySet` 和 conditional normal-send；12 独占编辑行为。
+- 固定 rubric 先于样本；最终 5 次实际调用覆盖比较、文档修改、中文澄清、无合适建议、错误成果声明，公开 GET 与重新打开的 Mongo store 核实保存值。共 2,200 input / 270 output tokens，35,629ms 总生成时间；实际费用字段缺失，保存 null，未推算费用。早期失败质量样本完整保留。样本已交 parent 独立复核，不将实现 AI 或 parent AI 评价称作人工审批。
+- 最终合并态：8 public generation tests、4 Mongo tests、6 条本票 public contract cases、53 Web U tests、7 选定 TypeScript SDK tests、2 Rust SDK tests 通过；Web/E2E types 与 focused lint 通过。此前合并态真实 Chrome 5 tests 通过，1440/320 px 双主题截图已保留。日志与明细见 [13-EVIDENCE](13-EVIDENCE.md)。不重复无改变风险的付费模型样本或广泛测试。
+- 该早期 checkpoint 的 12 编辑接线已在下述最终整合中完成；状态仅为 literal human quality signoff 保留 in-progress。provider 实际金额仍未知，明确保留限制，不虚构费用。13 的生成、保存、读取和本地有界指标实现均已交付；不建立 analytics 平台。
+- 独立报告 incoming 14 的 shared public-contract inventory 缺口：`GET /api/v1/agents/{id}/environment` 无 entry/cases，合并态实际 229 vs inventory 228；本票 endpoint + 6 cases 完整通过。04 已修正 REST 文档 inventory 和 OpenAPI source-size，并修复其负责的 AppCreation/Console 问题；这些与原始 skill fixtures/format/508-line Agent service 基线分开记录，不扩大本票修复范围。
+- 自有 preview/model servers 已停止；本票测试数据库已清空，shared Mongo ping=1，未停止 VM/container。保留 worktree 和私有 Rust targets 供 parent 清理。独立人审样本入口：[13-MODEL-SAMPLES](13-MODEL-SAMPLES.md)。
+
+### Ticket 13 最终整合交接
+
+- 已合并最新 integration `f793a41518fa969af068d7913ff6310dee7e040b`，包括 07、12、10；`6de02dae9` 为最终基线合并。12 的编辑行为与正常 admission/recovery 保留，13 只接入保存建议和 edited receipt/outcome 指标，无重复 editor、answer identity 或消息协议。
+- 编辑指标先红后绿：直接确认及丢回执恢复两例最初因缺失指标失败；最终真实 AgentSurface/transport 证明未确认不计数、原 body/key/condition 恢复、新草稿保留、一次 edited confirmation 和独立的后续任务 outcome。组合 U 88 passed，最终 hook 生命周期复验 40 passed；Chrome 6 passed，含真实样本文本的编辑与 late-A。
+- 最新合并态 public lifecycle 8、Mongo 4、shared HTTP 1 test/6 cases、focused OpenAPI 10、REST docs 1、TS SDK 7、Rust SDK 2 named tests 均通过；types/lint/局部格式/secret scan 通过。精确日志和环境边界见 [13-EVIDENCE](13-EVIDENCE.md)。OpenAPI 13 新增一个 GET 的精确 count 已调为 65 paths / 80 operations；保留全部 identity/schema 检查。
+- parent 已独立读取固定 rubric、五例实际 raw output 与 saved public JSON，全部 v3 样本通过。报告原样保存在 [13-PARENT-AI-REVIEW](13-PARENT-AI-REVIEW.md)，仅为 AI review，绝不称 human approval。所有机器工作完成；仅 literal human 质量验收留待整套 19 交付用户评审，tracker 仍明确 in-progress。实际账单缺失仍为 null/unknown，不虚构费用，不阻塞 16–19。
+- 共享 inventory 235 actual / 230 declared 的缺口由 incoming 14 environment 和 07 四个 deliverable operation 组成；13 自身 entry/cases 完整。已报告 parent repair，未改 gate 或重复 CSS/size/task-status/AppPublic 修复。原始 baseline 限制仍分开记录。
+- 13 自有 source ≤500（AgentSurface/OpenAPI 均 495）、test ≤2000；owned preview/model proxy 已停止，无遗留 13 测试库，shared Mongo/VM 保留运行。保留 worktree/private targets 供 parent 清理；无 push、PR、部署或原/其他 worker 工作区修改。

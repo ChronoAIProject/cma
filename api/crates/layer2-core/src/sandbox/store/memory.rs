@@ -65,6 +65,7 @@ mod queued_cancellations_tests;
 mod queued_inputs;
 #[cfg(test)]
 mod queued_inputs_tests;
+mod suggestions;
 use events::{append_sandbox_event, bounded_events};
 #[cfg(test)]
 mod launch_command_tests;
@@ -399,6 +400,7 @@ impl AgentLogStore for InMemorySandboxStore {
             kind,
         };
         log.push(event.clone());
+        suggestions::enqueue(&mut state, agent_id);
         Ok(event)
     }
 

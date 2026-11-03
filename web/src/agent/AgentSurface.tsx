@@ -1,5 +1,6 @@
 import { SuggestedReplies } from './SuggestedReplies';
-import { useSuggestedReplies, type SuggestedReplySet } from './suggestions';
+import type { SuggestedReplySet } from './suggestions';
+import { useAgentSuggestions } from './useAgentSuggestions';
 import { Presence } from '../ui/Presence';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
@@ -42,7 +43,6 @@ import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
 import { AgentHeaderProgress } from './AgentHeaderProgress';
 import { messageSubmission } from './messageSubmission';
-import { useSuggestionEditing } from './useSuggestionEditing';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -114,14 +114,6 @@ export function AgentSurface({
     !readOnly && (state.status === 'ready' || (accessAuthorized && state.status !== 'error')),
   );
   const verified = connection.verified;
-  const selectedSuggestions = useSuggestedReplies(
-    state.status === 'ready' ? state.conversation : undefined,
-    viewerId ?? verified?.owner ?? '',
-    agentId,
-    suggestedReplies,
-  );
-  const editing = useSuggestionEditing(selectedSuggestions, controller);
-  const suggestions = editing.source;
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
   const optimistic = useOptimisticMessages(
@@ -134,6 +126,16 @@ export function AgentSurface({
     controller.readSuggestionRequest,
   );
   const discardPrepared = connection.discardPrepared;
+  const editing = useAgentSuggestions({
+    conversation: state.status === 'ready' ? state.conversation : undefined,
+    viewerId: viewerId ?? verified?.owner ?? '',
+    agentId,
+    enabled: !readOnly && verified !== undefined,
+    acceptedInput: optimistic.messages.some((message) => message.state === 'accepted'),
+    provided: suggestedReplies,
+    controller,
+  });
+  const suggestions = editing.source;
   useLayoutEffect(() => {
     discardPrepared();
   }, [detailsOpen, discardPrepared]);

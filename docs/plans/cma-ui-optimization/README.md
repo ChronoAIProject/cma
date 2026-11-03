@@ -56,7 +56,7 @@
 10. [10 负向原因与说明](issues/10-feedback-reasons.md) — Blocked by：09。多选原因、500 字说明独立保存，晚到请求不会复活已清除原因。
 11. [11 场景建议与直接发送](issues/11-suggested-reply-send.md) — Blocked by：无。明确适用场景下提供 0—3 条模板建议，精确发送与恢复。
 12. [12 编辑建议并保留草稿](issues/12-suggested-reply-edit.md) — Blocked by：11。编辑入口、合并/替换选择及失败恢复不丢已有输入。
-13. [13 上下文建议生成](issues/13-contextual-suggestions.md) — Blocked by：11。异步生成、保存和读取上下文建议；严格过滤错误、重复及失效内容。
+13. [13 上下文建议生成](issues/13-contextual-suggestions.md) — Blocked by：11。异步生成、保存和读取上下文建议；严格过滤错误、重复及失效内容。[实现证据](13-EVIDENCE.md)、[实际样本](13-MODEL-SAMPLES.md) 和 12 编辑整合已交付；[独立 parent AI 评审](13-PARENT-AI-REVIEW.md) 通过五个 v3 样本。仅 literal human 质量验收留待整套交付评审；实际费用未知，不虚构账单或阻塞后续票。
 14. [14 Agent 电脑的文件与操作输出](issues/14-computer-files-activity.md) — Blocked by：无。宽屏常驻能力面板，保留文件功能，真实只读终端活动。
 15. [15 浏览器实时画面](issues/15-browser-live.md) — Blocked by：14。支持的环境提供真实浏览器帧、Live 状态与断线恢复。
 16. [16 首页桌面选项](issues/16-desktop-creation.md) — Blocked by：03、15。选项进入创建与恢复契约，创建出的浏览器环境可以实际观察。
