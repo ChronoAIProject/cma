@@ -2,7 +2,7 @@
 
 日期：2026-11-02（Asia/Singapore）
 
-状态：draft-review；粒度、依赖和测试边界待评审，尚未发布为 ready-for-agent 任务。
+状态：2026-11-03 用户已确认全部 19 张票的粒度、依赖和测试边界；使用本目录作为本地 tracker，进入 implement-spec 执行。各票正文记录当前状态。
 
 依据：[技术设计 Draft](../../CMA_UI_Optimization_Tech_Design.md)，以及当前工作树 `677c27440` 上的代码和未提交改动。此次交付只拆解任务，没有实现功能。
 
@@ -12,7 +12,7 @@
 
 票号是标识及拓扑排序，不是必须串行执行的顺序。Blocked by 只列直接的功能依赖；共同编辑一个组件是集成风险，不自动构成阻塞。每张实现票同时完成所需的公开契约、持久化、用户入口和验证，不另拆“全部后端”“全部前端”“最后补测试”。当前未发现需要先做的大范围机械重构；必要的小幅整理在其功能票内完成。
 
-本轮按既有讨论产出本地评审草案。仓库未发现 issue tracker/triage 配置；若后续需要配置发布目的地，可运行 `/setup-matt-pocock-skills`。草案留在仓库允许的 docs 目录，不创建 skill 默认的根目录 .scratch，也不修改 tracker 配置、远端 issues 或源设计。确认后再决定是否发布及标记 ready-for-agent。
+用户明确指定本目录为本地 tracker；每票一文件，依赖以 Blocked by 为准。状态按 ready-for-agent → in-progress → done 记录，缺少验收证据时保留 in-progress 或 blocked，并说明具体缺口。本次允许创建集成分支、独立 worktree 和提交，原工作区未提交改动须保留。执行与验证记录见 [实施记录](IMPLEMENTATION.md)。
 
 ## 本次核实后需要修正的设计假设
 
@@ -40,7 +40,7 @@
 
 每张票列出使用哪些边界及遗漏。U 的大部分行为可用现有组件集成测试，布局/焦点/移动端用真实浏览器；A 使用真实服务与测试持久化，通过公开查询断言，不偷查数据库当成功证据；R 在隔离的测试 Agent 上运行，注明版本和能力。只在外部网络、模型、时间等系统边界替换依赖，不 mock 自己的 reducer/controller 来证明自己的行为。
 
-这些 seam 是待确认提案，尚未新增测试。确认后每次只写一个真实会失败的行为测试，再实现最小链路使其通过，然后进入下一个行为；不先批量写完所有测试。每张票保存最小代表性验收证据，不将验证延期到 19。
+这些 seam 已于 2026-11-03 经用户确认。每次只写一个真实会失败的行为测试，再实现最小链路使其通过，然后进入下一个行为；不先批量写完所有测试。每张票保存最小代表性验收证据，不将验证延期到 19。
 
 ## 编号任务清单
 
@@ -159,8 +159,8 @@ flowchart TD
 - [生命周期请求](../../../api/crates/layer1-public/src/rest/agent_lifecycle.rs)、[创建 intent](../../../web/src/create/lifecycleIntent.ts)、[会话草稿](../../../web/src/agent/draft.ts)。
 - [反馈服务](../../../api/crates/layer2-core/src/sandbox/message_feedback.rs)、[当前反馈展示](../../../web/src/agent/StreamEntry.tsx)、[终端拒绝契约](../../API_PTY.md)。
 
-## 评审问题
+## 评审结论
 
-这 19 张票的粒度、Blocked by 和候选测试边界是否合适，哪些需要合并或再拆？确认后才进入 ticket 发布/ready-for-agent；这次拆分不自动授权开始实现、提交、开分支或发布远端 issues。
+2026-11-03 用户确认全部 19 张票的拆分、依赖和测试边界，指定现有本地文件为 tracker，并授权按 implement-spec 创建集成分支、worktree 和提交；保留原工作区未提交改动。
 
-`to-tickets` 第 4 步明确要求："Iterate until the user approves the breakdown." 这里要求确认的是拆分方案，草案已可逐票评审。
+拆分评审已完成；后续以逐票验收证据和依赖图推进实现。

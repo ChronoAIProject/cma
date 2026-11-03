@@ -4,7 +4,7 @@
 
 **Blocked by:** None（复用现有文件侧栏和工具事件）。
 
-**Status:** draft-review
+**Status:** ready-for-agent
 
 **优先级:** P3
 
@@ -19,7 +19,7 @@
 - [ ] Agent/账号/权限改变立即隔离旧数据与晚到回调；不会展示同 Sandbox 其他 Agent 的文件、进程或输出。
 - [ ] 详情、文件预览与电脑面板保持单一可理解的选中状态；其更新不重挂载会话、不清空文本/附件/滚动位置。
 
-## Testing boundaries（待确认）
+## Testing boundaries（2026-11-03 已确认）
 
 - **U/A：** 面板切换→真实文件读取/活动流→权限变化，验证文件修改保护和 Agent 隔离；输出必须来自可回读的实际事件。fixture 无法证明 runtime 报告完整性。
 - **R：** 固定 runtime 执行已知无害命令，页面读到对应输出；明确缺失时展示未报告。该证据只证明日志观察，不证明 PTY 能力。

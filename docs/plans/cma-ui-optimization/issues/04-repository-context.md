@@ -4,7 +4,7 @@
 
 **Blocked by:** 03（首页任务原文、创建身份与恢复链路）。
 
-**Status:** draft-review
+**Status:** ready-for-agent
 
 **优先级:** P0
 
@@ -18,7 +18,7 @@
 - [ ] 重复点击、刷新及准备期间服务恢复仍对同一任务/同一实际代码版本负责；沿用已有来源检出与文件保护规则。
 - [ ] 公开契约接受的上下文组合与服务端一致；UI 不允许服务器不支持的 Workspace/Sandbox/repository 组合。
 
-## Testing boundaries（待确认）
+## Testing boundaries（2026-11-03 已确认）
 
 - **U/A：** 从仓库选择到连接、创建、失败恢复及公开读取的实际版本；捕获串上下文和多次创建。不能证明外部 GitHub 当前可用性。
 - **R：** 隔离仓库的指定 commit 能在 Agent 中实际读取并执行首条任务，已有文件保持完整；不操作用户生产仓库。
