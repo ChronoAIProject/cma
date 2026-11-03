@@ -147,7 +147,13 @@ impl AgentBrowser<'_> {
                 .is_some_and(|context| value.context_id.as_deref() != Some(context) && !empty_state)
             || !matches!(
                 value.state.as_str(),
-                "not_enabled" | "unsupported" | "loading" | "ready" | "live" | "paused" | "disconnected"
+                "not_enabled"
+                    | "unsupported"
+                    | "loading"
+                    | "ready"
+                    | "live"
+                    | "paused"
+                    | "disconnected"
             )
             || !matches!(
                 value.location.as_str(),
