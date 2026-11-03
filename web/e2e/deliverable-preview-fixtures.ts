@@ -71,6 +71,9 @@ export async function previewBoundary(page: Page, baseURL: string) {
     ].map((entry) => ({ ...entry, appended_at: '2026-11-03T01:00:00Z' }));
   }).flat();
   await boundary.route(page, baseURL);
+  await page.route('**/api/v1/agents/agt_contract/suggestions?*', (route) =>
+    route.fulfill({ json: { status: 'empty', set: null } }),
+  );
   const control = {
     revoked: false,
     saveStarted: false,
