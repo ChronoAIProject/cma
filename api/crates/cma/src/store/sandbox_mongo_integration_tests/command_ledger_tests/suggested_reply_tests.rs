@@ -4,11 +4,23 @@ use super::*;
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn suggested_reply_mongo_replicas_admit_one_scope_and_recover_its_original_receipt() {
     let (client, name) = database("suggested_reply").await;
-    let (store, mut agent, parent) = fixture(&name, &client).await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let parent = active_sandbox("sbx_suggestion");
+    let mut agent = ready_agent(&parent, "agt_suggestion");
+    store.create_sandbox(parent.clone()).await.unwrap();
+    store.create_agent(agent.clone()).await.unwrap();
     for kind in [
+        AgentLogKind::Created {
+            workspace_id: agent.workspace_id.clone(),
+            worktree_id: agent.worktree_id.clone(),
+        },
+        AgentLogKind::ConversationOpened {
+            conversation_id: agent.conversation.conversation_id.clone().unwrap(),
+            runtime_generation: 1,
+        },
         AgentLogKind::TurnStarted {
             model: None,
-            turn_sequence: 2,
+            turn_sequence: 3,
             origin_key: None,
         },
         AgentLogKind::OwnerMessage {
@@ -17,7 +29,7 @@ async fn suggested_reply_mongo_replicas_admit_one_scope_and_recover_its_original
         AgentLogKind::AgentMessage {
             content: "The comparison is complete.".into(),
         },
-        AgentLogKind::TurnCompleted { turn_sequence: 2 },
+        AgentLogKind::TurnCompleted { turn_sequence: 3 },
     ] {
         store
             .append_agent_log(&agent.id, NOW.into(), kind)
@@ -26,14 +38,14 @@ async fn suggested_reply_mongo_replicas_admit_one_scope_and_recover_its_original
     }
     let revision = agent.revision;
     agent.revision += 1;
-    agent.conversation.last_seq = 5;
+    agent.conversation.last_seq = 6;
     store.save_agent(revision, agent.clone()).await.unwrap();
     let conditional = |key| {
         let mut value = request(&agent, &parent, key);
         value.envelope.command = AgentCommand::message("Add criteria.\nKeep limits.");
         AnswerContext {
-            turn_sequence: 2,
-            answer_sequence: 4,
+            turn_sequence: 3,
+            answer_sequence: 5,
         }
         .bind(&mut value.envelope.command)
         .unwrap();

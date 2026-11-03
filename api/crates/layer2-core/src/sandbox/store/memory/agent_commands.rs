@@ -253,16 +253,15 @@ pub(super) fn reserve(
         }) {
             return Err(CommandLedgerError::NotAdmissible);
         }
-        let mut answer = crate::sandbox::agent_io::AnswerObservation::default();
-        for entry in state.agent_logs.get(&agent.id).into_iter().flatten() {
-            answer.observe(entry);
-        }
-        crate::sandbox::agent_io::require_answer_context(
-            request,
+        let answer = crate::sandbox::agent_io::answer_context_for_log(
             agent,
-            waiting as u64,
-            answer.current(),
+            state
+                .agent_logs
+                .get(&agent.id)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
         )?;
+        crate::sandbox::agent_io::require_answer_context(request, agent, waiting as u64, answer)?;
     }
     if state
         .agent_commands
