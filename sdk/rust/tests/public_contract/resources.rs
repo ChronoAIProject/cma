@@ -212,6 +212,15 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "GET /api/v1/agent-lifecycle/{id}" => {
             c.check(client.agents().read_lifecycle(c.param("id")).await)
         }
+        "GET /api/v1/desktop-capability" => c.check(
+            client
+                .agents()
+                .desktop_capability(&cma_sdk::agents::DesktopCreationScope {
+                    workspace_id: c.query.get("workspace_id").cloned(),
+                    sandbox_id: c.query.get("sandbox_id").cloned(),
+                })
+                .await,
+        ),
         "POST /api/v1/sandboxes/{id}/workspaces/inline" => c.check(
             client
                 .workspaces()

@@ -21,7 +21,7 @@ async fn task_home_create_child() {
         &database,
         &client,
         "owner",
-        false,
+        true,
     )
     .await;
     let (status, receipt) = create(&service, &body, "process-restart-task").await;

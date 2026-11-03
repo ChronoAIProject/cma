@@ -77,6 +77,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
         .route("/api/v1/workspaces/{id}/agents", post(create))
         .route("/api/v1/agents", get(list).post(create_lifecycle))
         .route(
+            "/api/v1/desktop-capability",
+            get(super::desktop_creation::read),
+        )
+        .route(
             "/api/v1/agent-lifecycle/{id}",
             get(read_lifecycle_operation),
         )
@@ -178,6 +182,12 @@ pub(crate) async fn create_lifecycle(
         Ok(body) => body,
         Err(error) => return error.into_response(),
     };
+    if request.desktop && request.initial_message.is_none() {
+        return AgentLifecycleProvisioningError::Invalid(
+            "desktop creation requires initial_message".into(),
+        )
+        .into_response();
+    }
     provisioner
         .create(
             &caller,

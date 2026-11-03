@@ -14,18 +14,21 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
         text?: unknown;
         repositoryUrl?: unknown;
         repositoryRef?: unknown;
+        desktop?: unknown;
       };
       if (
         value.version !== 1 ||
         typeof value.text !== 'string' ||
         (value.repositoryUrl !== undefined && typeof value.repositoryUrl !== 'string') ||
-        (value.repositoryRef !== undefined && typeof value.repositoryRef !== 'string')
+        (value.repositoryRef !== undefined && typeof value.repositoryRef !== 'string') ||
+        (value.desktop !== undefined && typeof value.desktop !== 'boolean')
       )
         throw new Error();
       return {
         text: value.text,
         repositoryUrl: value.repositoryUrl,
         repositoryRef: value.repositoryRef,
+        desktop: value.desktop,
       };
     } catch {
       return {
@@ -39,13 +42,25 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
   const [repositoryUrl, setRepositoryUrl] = useState(initial.repositoryUrl ?? '');
   const [repositoryRef, setRepositoryRef] = useState(initial.repositoryRef ?? '');
   const [error, setError] = useState(initial.error);
-  const persist = (value: string, url = repositoryUrl, reference = repositoryRef) => {
+  const [desktop, setDesktop] = useState(initial.desktop ?? false);
+  const persist = (
+    value: string,
+    url = repositoryUrl,
+    reference = repositoryRef,
+    enabled = desktop,
+  ) => {
     try {
       requireTaskStorage();
       if (!owner) throw new Error();
       sessionStorage.setItem(
         key,
-        JSON.stringify({ version: 1, text: value, repositoryUrl: url, repositoryRef: reference }),
+        JSON.stringify({
+          version: 1,
+          text: value,
+          repositoryUrl: url,
+          repositoryRef: reference,
+          desktop: enabled,
+        }),
       );
       setError(undefined);
       return true;
@@ -60,6 +75,11 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
     text,
     repositoryUrl,
     repositoryRef,
+    desktop,
+    changeDesktop: (enabled: boolean) => {
+      setDesktop(enabled);
+      persist(text, repositoryUrl, repositoryRef, enabled);
+    },
     changeRepository: (url: string, reference: string) => {
       setRepositoryUrl(url);
       setRepositoryRef(reference);
