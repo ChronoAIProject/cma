@@ -23,9 +23,24 @@ not an id or a concurrency fence.
 optional GitHub repository, and inline Agent settings. The browser's Agent
 Manager proxy exposes this at `/api/agent-manager/v1/agents`. `Idempotency-Key`
 is required. A `202` receipt contains an **operation** ID; read
-`GET /api/v1/agent-lifecycle/{id}` until `status` is `succeeded` and then use its
-`agent_id` to open the Agent. A phase event marked `ready` does not complete the
-operation. Workspace/runtime readiness is reported only after Agent preparation.
+`GET /api/v1/agent-lifecycle/{id}` for its exact `agent_id`. Once that Agent and
+its owned parent hierarchy are readable, the client can open the preparing
+conversation. Continue observing provisioning there. A phase event marked
+`ready` does not complete the operation; operation success means preparation
+is ready, and does not mean the user's task completed.
+
+Optional `initial_message` admits the user's first task in the same durable
+request. Its exact text, including leading/trailing whitespace and newlines,
+participates in idempotency comparison and reaches the durable first-message
+queue with `purpose: task`. Input must contain non-whitespace text and at most
+262144 UTF-8 bytes. It replaces the automatic readiness turn after environment
+preparation; omission preserves the captured `purpose: setup` behavior for old
+clients and stored operations. Combining an initial task with `repository` is
+not supported in this slice. Invalid input is rejected before admission.
+Check the served `AgentLifecycleCreateRequest` schema for `initial_message`
+before offering this capability against an older service. Task delivery and
+results remain observable through Agent detail and transcript; the client must
+never send a second, unrecorded message after receiving the Agent identity.
 
 To add an Agent to an existing owned, ready Workspace, pass `workspace_id` to
 the same lifecycle endpoint. This path retains the Workspace and parent Sandbox;
