@@ -37,11 +37,12 @@ export function DeliverablePreviewFrame({
   const invalidate = useCallback((access: DeliverableSelection['access']) => {
     setSelected((current) => (current?.access === access ? undefined : current));
   }, []);
+  const { onDetailsClose } = props;
   const close = useCallback(() => {
     returnFocus.current = selected?.trigger;
     setSelected(undefined);
-    props.onDetailsClose?.();
-  }, [selected, props.onDetailsClose]);
+    onDetailsClose?.();
+  }, [selected, onDetailsClose]);
   useEffect(() => {
     if (!selected) return;
     const escape = (event: KeyboardEvent) => {
