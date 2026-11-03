@@ -43,7 +43,7 @@ import {
   type EventOptions,
   type PageOptions,
 } from './resources.js';
-import { agentStatus, type AgentStatus } from './instances/types.js';
+import { agentStatus, agentTaskStatus, type AgentStatus } from './instances/types.js';
 import {
   agent,
   agentResources,
@@ -105,6 +105,7 @@ export interface AccessibleAgentListOptions extends AgentListOptions {
 }
 
 export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOptions {
+  readonly taskStatus?: import('./instances/types.js').AgentTaskStatus;
   /** Explicit incoming shares across current organizations; mutually exclusive with organization. */
   readonly shared?: boolean;
   /** Immutable category. Continue with `next` even after an empty filtered page. */
@@ -259,6 +260,7 @@ export class Agents {
 
   /** Safe creation inventory. Omit organization and shared for personal scope. */
   provenanceInventory(options: AgentProvenanceInventoryOptions = {}) {
+    if (options.taskStatus !== undefined) input(agentTaskStatus, options.taskStatus);
     if (options.status !== undefined) input(agentStatus, options.status);
     if (options.creationOrigin !== undefined) input(agentCreationCategory, options.creationOrigin);
     if (options.channelActive !== undefined) input(boolean, options.channelActive);
@@ -272,6 +274,7 @@ export class Agents {
         workspace: options.workspace,
         status: options.status,
         creation_origin: options.creationOrigin,
+        task_status: options.taskStatus,
         channel_active:
           options.channelActive === undefined ? undefined : String(options.channelActive),
         channel_history:
@@ -381,12 +384,13 @@ export class Agents {
     return this.operate(id, '', 'DELETE', options);
   }
 
-  events(id: string, options: EventOptions = {}) {
+  events(id: string, options: EventOptions & { readonly toolOutput?: boolean } = {}) {
     return read(
       this.config,
       query(`/api/v1/agents/${segment(id)}/events`, {
         after: options.after,
         limit: options.limit,
+        tool_output: options.toolOutput ? 'true' : undefined,
       }),
       object({ items: array(agentEvent), next: optional(integer) }),
       options,

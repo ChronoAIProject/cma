@@ -1,6 +1,7 @@
 /** Typed, repository-only client for CMA's public resource APIs. */
 
 export { Cma, createClient } from './client.js';
+export { answerContext, type AnswerContext } from './answer-context.js';
 export * from './resource-access.js';
 export * from './agent-files.js';
 export * from './bots.js';
@@ -121,3 +122,9 @@ export type {
 export * from './documents.js';
 
 export type { AgentPreferences, UpdateAgentPreferencesRequest } from './agents/preferences.js';
+export {
+  agentEnvironment,
+  environmentFeature,
+  type AgentEnvironment,
+  type EnvironmentFeature,
+} from './agent-environment.js';

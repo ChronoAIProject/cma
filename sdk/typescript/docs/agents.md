@@ -13,6 +13,7 @@ import type { Cma, AgentLifecycleCreateRequest } from '@chronoai/cma-sdk';
 export async function provisionAgent(client: Cma, idempotencyKey: string) {
   const request: AgentLifecycleCreateRequest = {
     name: 'Research',
+    initial_message: 'Compare three tools and cite your sources.',
     profile: { permission_mode: 'guarded', reasoning_effort: 'medium' },
   };
   const receipt = await client.agents.createLifecycle(request, { idempotencyKey });
@@ -20,13 +21,24 @@ export async function provisionAgent(client: Cma, idempotencyKey: string) {
 }
 ```
 
-The receipt acknowledges durable admission. Poll `readLifecycle(receipt.id)`
-until the global `status` is `succeeded` before opening `agent_id`. A phase event
-whose status is `ready` is only one gate. `waiting_for_connection` includes the
+The receipt acknowledges durable admission. Read `readLifecycle(receipt.id)`
+and verify its exact `agent_id` and owned parent hierarchy before opening the
+preparing conversation. Operation `succeeded` means preparation, not task
+completion. A phase event whose status is `ready` is only one gate.
+`waiting_for_connection` includes the
 missing services and an owner-bound target for the connection flow. After the
 owner verifies those connections, repeat the original `createLifecycle` call
 with its exact request and key to resume the same operation and child resources.
 `failed` is terminal; surface its safe error to the caller.
+
+`initial_message` preserves exact text, including whitespace and newlines, in
+the original idempotent request. It must contain non-whitespace text and fit
+262144 UTF-8 bytes. The server queues it durably as `purpose: task` after
+environment preparation, replacing the readiness prompt. Omission retains
+legacy `setup` behavior. Do not combine it with `repository` or send a separate
+first message after creation. Discover support in the served OpenAPI request
+schema; older services cannot admit this field. Read Agent detail/transcript
+for delivery, recovery and results.
 
 Set `workspace_id` to add an Agent to an existing Workspace owned by the caller.
 The Workspace must be ready. Omit `image` and `repository` because the selected
@@ -556,6 +568,21 @@ server contents; retain the local draft and reread before explicitly retrying.
 need no command key and are never retried automatically. The owner or a current
 view-write link may write; view links may browse and download. An old runtime
 returns `file_runtime_unsupported` until it is updated while idle.
+
+### Computer observation
+
+`client.agentFiles.environment(agentId, { signal })` reads current feature states,
+reasons and scopes for files, operation output, browser, replay and control. It
+validates the returned Agent identity. The observation includes policy revision,
+an opaque runtime incarnation and a renewal deadline; it never grants authority
+to a later operation. Files retain the authorized mounted-home scope. Browser,
+replay and control are currently unsupported.
+
+Pass `{ toolOutput: true }` to `agentEventsV2.snapshot` / `agentEventsV2.events`
+or `agents.events` to read bounded recorded output. `tool_output_reported` has no
+status; preserve the known call status and replace its output snapshot. Missing
+output remains unknown. Responses v2 exposes the same `{text, truncated}` value
+through the optional `cma:output` activity extension, preserving `output: null`.
 
 ### Answer deliverables
 

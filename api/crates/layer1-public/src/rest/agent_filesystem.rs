@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 const MAX_AGENT_FILE_BYTES: u64 = 32 * 1024 * 1024;
+#[path = "agent_environment.rs"]
+pub(crate) mod environment;
 use utoipa::ToSchema;
 
 #[derive(Deserialize)]
@@ -72,6 +74,7 @@ pub(crate) struct FileMutationView {
 
 pub fn agent_filesystem_router(service: Arc<AgentFileService>) -> Router {
     Router::new()
+        .route("/api/v1/agents/{id}/environment", get(environment::read))
         .route(
             "/api/v1/agents/{id}/files",
             post(write)

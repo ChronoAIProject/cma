@@ -13,6 +13,8 @@ import { streamLaunchEvents, type LaunchStreamOptions } from '../launch/stream.j
 import { agentSandboxSnapshot, aguiCapabilities } from './companions.js';
 import { connection } from './transport.js';
 import { commandStreamInput } from '../command-stream-input.js';
+import { answerContext } from '../answer-context.js';
+import { record } from '../schema.js';
 import type {
   AgentConversationEvent,
   AgentReplayOptions,
@@ -60,6 +62,14 @@ export class AgentConversations {
   async run(request: AgentRunRequest, options: AgentRunOptions): Promise<void> {
     const captured = commandStreamInput(request, options.idempotencyKey);
     validateThread(captured.body?.threadId);
+    if (captured.body.forwardedProps !== undefined) {
+      const props = record(captured.body.forwardedProps);
+      if (props.answerContext !== undefined) {
+        answerContext(props.answerContext);
+        if (captured.body.resume?.length)
+          throw new ValidationError('Answer context requires user input');
+      }
+    }
     const stream = connection(
       this.config,
       '/api/v1/agui/run',

@@ -25,6 +25,7 @@ export function AgentHeader({
   filesOpen = false,
   onFilesOpenChange,
   onShare,
+  progress,
 }: {
   readonly title: string;
   readonly status: AgentStatus;
@@ -43,6 +44,7 @@ export function AgentHeader({
   readonly filesOpen?: boolean;
   readonly onFilesOpenChange?: (open: boolean) => void;
   readonly onShare?: () => void;
+  readonly progress?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const items: MenuEntry[] = [
@@ -94,6 +96,7 @@ export function AgentHeader({
         </h1>
         {sandbox}
       </div>
+      {progress}
       <div className="agent-toolbar__actions">
         {onShare ? (
           <Button size="sm" variant="ghost" icon={<IconShareOutline16 />} onClick={onShare}>
@@ -105,12 +108,14 @@ export function AgentHeader({
             size="sm"
             variant="ghost"
             icon={<IconFolderOpenOutline16 />}
-            aria-label={filesOpen ? 'Hide files' : 'Show files'}
-            title={filesOpen ? 'Hide files' : 'Show files'}
+            aria-label={filesOpen ? 'Hide Agent computer' : 'Show Agent computer'}
+            title={filesOpen ? 'Hide Agent computer' : 'Show Agent computer'}
             aria-expanded={filesOpen}
             aria-controls="agent-files-panel"
             onClick={() => onFilesOpenChange(!filesOpen)}
-          />
+          >
+            Computer
+          </Button>
         ) : null}
       </div>
     </header>

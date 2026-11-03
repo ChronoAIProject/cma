@@ -8,29 +8,38 @@ request and key before submission so an uncertain result can be retried safely.
 
 ```rust,no_run
 use cma_sdk::{Client, IdempotencyKey};
-use cma_sdk::agents::{AgentLifecycleCreateRequest, AgentLifecycleStatus};
+use cma_sdk::agents::AgentLifecycleCreateRequest;
 # async fn provision(client: Client) -> Result<(), Box<dyn std::error::Error>> {
 let key = IdempotencyKey::new(std::env::var("CMA_CREATE_KEY")?)?;
 let request = AgentLifecycleCreateRequest {
+    initial_message: Some("Compare three tools and cite your sources.".into()),
     workspace_id: None,
     sandbox_id: None,
     name: "Research".into(), image: None, repository: None, profile: None,
 };
 let receipt = client.agents().create_lifecycle(&request, &key).await?;
-let operation = client.agents().read_lifecycle(&receipt.id).await?;
-if operation.status == AgentLifecycleStatus::Succeeded {
-    // Only now is operation.agent_id ready to open.
-}
+let _operation = client.agents().read_lifecycle(&receipt.id).await?;
 # Ok(())
 # }
 ```
 
-The receipt acknowledges durable admission. Poll `read_lifecycle` until global
-success; a phase event's `ready` state is only one gate. `WaitingForConnection`
+The receipt acknowledges durable admission. Read `read_lifecycle` and verify
+its exact `agent_id` and owned parent hierarchy before opening the preparing
+conversation. Operation success means preparation, not task completion;
+a phase event's `ready` state is only one gate. `WaitingForConnection`
 supplies missing services and an owner-bound connection target. After the owner
 verifies those connections, repeat `create_lifecycle` with the original request
 and key to resume the same operation. `Failed` is terminal and includes a safe
 error when available.
+
+`initial_message` preserves exact text, including whitespace and newlines, in
+the original idempotent request. It must contain non-whitespace text and fit
+262144 UTF-8 bytes. The server queues it durably as `purpose: task` after
+environment preparation, replacing the readiness prompt. Omission retains
+legacy `setup` behavior. Do not combine it with `repository` or send a separate
+first message after creation. Discover support in the served OpenAPI request
+schema; older services cannot admit this field. Read Agent detail/transcript
+for delivery, recovery and results.
 
 Set `workspace_id: Some(existing_id)` to add an Agent to an owned, ready Workspace.
 Omit `image` and `repository` in this mode. The Agent inherits the existing
@@ -515,6 +524,21 @@ is automatically retried. Retain local edits after a conflict and reread before
 an explicit retry. View links may browse/download; only owners and current
 view-write links may change files. Older runtimes return
 `file_runtime_unsupported` until updated while idle.
+
+### Computer observation
+
+`client.agent_files().environment(agent_id)` reads current feature availability,
+reasons and scopes with a policy revision, opaque runtime incarnation and renewal
+deadline. The SDK validates the Agent identity. Each later operation still
+checks authorization. Files retain the mounted-home scope; browser, replay and
+control are currently unsupported.
+
+Use `SnapshotOptions { tool_output: true, ..Default::default() }` and
+`TailOptions { tool_output: true, ..Default::default() }` for Agent events v2, or
+`agents().events_with_output(agent_id, options)` for legacy event reads. Reported
+output is a bounded `{text, truncated}` replacement snapshot. Output-only events
+do not carry a status. Responses v2 `ActivityItem.recorded_output` reads the
+additive `cma:output` extension while the standard `output` remains absent.
 
 ### Answer deliverables
 

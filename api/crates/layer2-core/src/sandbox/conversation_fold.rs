@@ -290,7 +290,6 @@ fn fold_semantic_update(
             kind: wire_name(&call.kind),
             status: wire_name(&call.status),
         },
-        // Output-only updates carry no durable tool fields; do not invent a status change.
         SessionUpdate::ToolCallUpdate(update)
             if update.fields.status.is_some() || update.fields.title.is_some() =>
         {
@@ -302,7 +301,29 @@ fn fold_semantic_update(
                     .as_ref()
                     .map(wire_name)
                     .unwrap_or_else(|| "updated".into()),
+                output: recorded_tool_output(&update.fields),
                 title: update.fields.title.map(|value| bounded(value, 4 * 1024)),
+            }
+        }
+        SessionUpdate::ToolCallUpdate(update) => {
+            let Some(output) = recorded_tool_output(&update.fields) else {
+                return if logs.is_empty() {
+                    Ok(FoldedConversationUpdate::Quiet(assembly.clone()))
+                } else {
+                    changed(
+                        agent,
+                        logs,
+                        AgentMessageAssembly::default(),
+                        None,
+                        current.conversation.active_turn,
+                        false,
+                        appended_at,
+                    )
+                };
+            };
+            AgentLogKind::ToolOutputReported {
+                call_id: update.tool_call_id.0.to_string(),
+                output,
             }
         }
         SessionUpdate::UsageUpdate(usage) => AgentLogKind::Usage {
@@ -371,6 +392,24 @@ fn fold_semantic_update(
         false,
         appended_at,
     )
+}
+
+fn recorded_tool_output(
+    fields: &layer3_adapter::ToolCallUpdateFields,
+) -> Option<super::RecordedToolOutput> {
+    let mut text = String::new();
+    let mut reported = false;
+    let mut truncated = false;
+    for block in layer3_adapter::reported_tool_text(fields) {
+        if reported {
+            truncated |= text.len() == 16 * 1024;
+            append_bounded(&mut text, "\n", 16 * 1024);
+        }
+        reported = true;
+        truncated |= text.len().saturating_add(block.len()) > 16 * 1024;
+        append_bounded(&mut text, block, 16 * 1024);
+    }
+    reported.then_some(super::RecordedToolOutput { text, truncated })
 }
 
 pub(super) fn changed(

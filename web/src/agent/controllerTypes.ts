@@ -1,4 +1,7 @@
 import type { AgentSummary } from '../api/types';
+import type { AnswerContext } from '@chronoai/cma-sdk';
+import type { LegacySuggestionRecord } from './transport/legacySuggestionJournal';
+import type { InputRecord } from './transport/journalRecord';
 import type { AgentLoadLineage, ReadyAgent } from './loadAgent';
 import type {
   useSandboxInput,
@@ -21,6 +24,7 @@ export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete'
 export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
+  readonly readSuggestionRequest?: () => LegacySuggestionRecord | InputRecord | null | undefined;
   readonly applyAgentTitle?: (title: string) => void;
   readonly queuedMessage?: QueuedMessageControl;
   readonly queuedInputs?: QueuedInputsControl;
@@ -44,12 +48,17 @@ export interface AgentController {
     content: string,
     onAccepted?: (receipt?: MessageAcceptance) => void,
     onReceiptObserved?: (receipt: MessageAcceptance) => void,
-    onRefused?: () => void,
+    onRefused?: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
+    answerContext?: AnswerContext,
   ) => Promise<void>;
   readonly interrupt: () => Promise<void>;
   readonly steer?: AgentController['send'];
   readonly interruptWithMessage?: (
-    ...args: [...Parameters<AgentController['send']>, onOrdinaryInput?: () => void]
+    content: string,
+    onAccepted?: (receipt?: MessageAcceptance) => void,
+    onReceiptObserved?: (receipt: MessageAcceptance) => void,
+    onRefused?: () => void,
+    onOrdinaryInput?: () => void,
   ) => Promise<void>;
   readonly approve: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   readonly stop: () => Promise<void>;

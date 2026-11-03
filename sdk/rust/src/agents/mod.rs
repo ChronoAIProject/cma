@@ -97,6 +97,9 @@ impl Agents<'_> {
         if let Some(category) = options.creation_origin {
             query.push(("creation_origin", category.as_str().into()));
         }
+        if let Some(status) = options.task_status {
+            query.push(("task_status", status.as_str().into()));
+        }
         if let Some(active) = options.channel_active {
             query.push(("channel_active", active.to_string()));
         }
@@ -261,6 +264,16 @@ impl Agents<'_> {
         let value: AgentTranscript = self.client.get(&["agents", id, "transcript"], &[]).await?;
         identity(&value.agent_id, id)?;
         Ok(value)
+    }
+    #[doc = "Read durable events including bounded reported tool output when supported."]
+    pub async fn events_with_output(
+        &self,
+        id: &str,
+        options: EventOptions,
+    ) -> Result<ResourcePage<AgentEvent, u64>> {
+        let mut query = options.query();
+        query.push(("tool_output", "true".into()));
+        self.client.get(&["agents", id, "events"], &query).await
     }
     /// Read durably recorded model token usage.
     pub async fn usage(&self, id: &str) -> Result<AgentUsage> {

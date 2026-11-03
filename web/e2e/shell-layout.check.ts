@@ -95,8 +95,7 @@ for (const width of [390, 360, 320]) {
         const form = page.getByRole('form', { name: 'Message Agent' });
         const box = (await page.locator('.agent-composer__box').boundingBox())!;
         for (const control of [
-          form.getByRole('button', { name: /^Model and reasoning effort/ }),
-          form.getByRole('button', { name: 'Permission mode', exact: true }),
+          form.getByRole('button', { name: /^Agent settings:/ }),
           form.getByRole('button', { name: 'Context usage', exact: true }),
         ]) {
           await insideViewport(control);
