@@ -113,7 +113,7 @@ async fn recorded_tool_output_is_readable_only_in_the_authorized_agent_stream() 
     .unwrap();
     insert_agent(
         &store,
-        seeded_agent("agt_output", AgentStatus::Ready, 7, None),
+        seeded_agent("agt_output", AgentStatus::Ready, 8, None),
         vec![
             AgentLogKind::TurnStarted {
                 model: None,
@@ -128,6 +128,13 @@ async fn recorded_tool_output_is_readable_only_in_the_authorized_agent_stream() 
                 title: "printf computer-proof".into(),
                 kind: "execute".into(),
                 status: "in_progress".into(),
+            },
+            AgentLogKind::ToolOutputReported {
+                call_id: "proof".into(),
+                output: layer2_core::sandbox::RecordedToolOutput {
+                    text: "partial proof".into(),
+                    truncated: false,
+                },
             },
             output,
             AgentLogKind::TurnCompleted { turn_sequence: 3 },
@@ -156,6 +163,15 @@ async fn recorded_tool_output_is_readable_only_in_the_authorized_agent_stream() 
     assert!(frames.iter().any(|frame| frame["cma:output"]
         == json!({"text":"computer-proof", "truncated":false})
         && frame["runId"] == "3"));
+    let partial = frames
+        .iter()
+        .find(|frame| frame["name"] == "cma.tool_output_reported")
+        .unwrap();
+    assert_eq!(
+        partial["value"],
+        json!({"toolCallId":"proof", "output":{"text":"partial proof", "truncated":false}})
+    );
+    assert!(partial.get("cma:status").is_none());
     let (status, body) = response(
         &router,
         request(
