@@ -1,0 +1,29 @@
+.suggested-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+.suggested-replies__source {
+  font-size: 12px;
+  line-height: 18px;
+}
+.suggested-replies button {
+  min-height: 44px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.suggested-replies button:disabled {
+  cursor: default;
+}

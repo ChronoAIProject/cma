@@ -10,6 +10,22 @@ function aguiSse() {
   });
 }
 
+it('refuses an invalid suggestion answer condition before AG-UI admission', async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => aguiSse());
+  const client = createClient({ fetch });
+  await expect(
+    client.agui.run(
+      {
+        threadId: agentId,
+        messages: [{ role: 'user', content: 'Add criteria.' }],
+        forwardedProps: { answerContext: { turn_sequence: 4, answer_sequence: 2 } },
+      },
+      { idempotencyKey: 'suggestion-key', onEvent: () => {} },
+    ),
+  ).rejects.toThrow();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it.each(['agui', 'responses'] as const)(
   '%s captures input, Agent identity and key before credential resolution',
   async (protocol) => {
