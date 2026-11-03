@@ -3816,33 +3816,6 @@ purpose without repeating that explanation.
 
 | 2026-10-28 | Remove the redundant tool catalog heading and overview availability copy while retaining the Event tools section anchor and accessible catalog region. |
 
-### Suggested follow-up questions (2026-11-03)
-
-The latest durable, successfully completed answer may have one **Next you can ask**
-region after its answer and artifacts. Its source is explicitly **Scenario templates**
-until contextual generation is available. An explicit comparison request is the
-initial bounded scenario; unrelated, unfinished, failed and superseded answers
-have no region. Read-only and shared views have no sending entry point.
-
-The region contains zero to three full-text buttons in rank order. Use existing
-secondary text, layer-1 background, border-l1, radius 8, 13/20 type, 8px gaps and
-12px padding. Buttons have a minimum 44px touch target, wrap without truncation,
-and use the standard focus ring. The region has no fixed height or horizontal
-overflow on narrow screens. A caption reports Sending, Not sent, or Awaiting
-confirmation through a polite status region. Template attribution uses 12/18
-secondary text. No generated-intelligence claim accompanies templates.
-
-An explicit click sends exactly the displayed text through the selected normal
-conversation controller and connection gate. Preserve the manual composer draft
-and attachments. Disable the whole suggestion group synchronously while sending;
-collapse it only on authoritative acceptance or when its answer loses eligibility.
-An uncertain request retains its original text, scope and idempotency identity;
-explicit recovery verifies that same request. Definite refusal permits retry.
-Account, Agent, permission and answer changes invalidate late callbacks. Feedback
-actions never submit suggestions. Editing and contextual generation are separate
-extensions of the same viewer/Agent/turn/answer/source-version/item contract.
-
-| 2026-11-03 | Specify bounded comparison-template suggestions, exact-text sending, retained manual drafts, group pending/recovery states, answer scoping and accessible wrapping controls for ticket 11. |
 Answer feedback appears only below a recorded final Assistant answer in a
 successfully completed turn, identified by its durable turn and message sequence.
 Intermediate replies, active turns, errors, reasoning and tools retain no vote
@@ -3982,3 +3955,31 @@ status region, using the card's existing 8px column gap. Only plan or turn-state
 changes update it; streamed message tokens do not rerender this region.
 
 | 2026-11-03 | Make reported plan updates and terminal summaries one atomic polite status announcement for ticket 06. |
+
+### Suggested follow-up questions (2026-11-03)
+
+The latest durable, successfully completed answer may have one **Next you can ask**
+region after its answer and artifacts. Its source is explicitly **Scenario templates**
+until contextual generation is available. An explicit comparison request is the
+initial bounded scenario; unrelated, unfinished, failed and superseded answers
+have no region. Read-only and shared views have no sending entry point.
+
+The region contains zero to three full-text buttons in rank order. Use existing
+secondary text, layer-1 background, border-l1, radius 8, 13/20 type, 8px gaps and
+12px padding. Buttons have a minimum 44px touch target, wrap without truncation,
+and use the standard focus ring. The region has no fixed height or horizontal
+overflow on narrow screens. A caption reports Sending, Not sent, or Awaiting
+confirmation through a polite status region. Template attribution uses 12/18
+secondary text. No generated-intelligence claim accompanies templates.
+
+An explicit click sends exactly the displayed text through the selected normal
+conversation controller and connection gate. Preserve the manual composer draft
+and attachments. Disable the whole suggestion group synchronously while sending;
+collapse it only on authoritative acceptance or when its answer loses eligibility.
+An uncertain request retains its original text, scope and idempotency identity;
+explicit recovery verifies that same request. Definite refusal permits retry.
+Account, Agent, permission and answer changes invalidate late callbacks. Feedback
+actions never submit suggestions. Editing and contextual generation are separate
+extensions of the same viewer/Agent/turn/answer/source-version/item contract.
+
+| 2026-11-03 | Specify bounded comparison-template suggestions, exact-text sending, retained manual drafts, group pending/recovery states, answer scoping and accessible wrapping controls for ticket 11. |
