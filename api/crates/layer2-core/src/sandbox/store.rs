@@ -384,6 +384,7 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_key_history: std::collections::HashSet<String>,
     bindings: std::collections::BTreeMap<String, super::binding::ProviderBinding>,
     binding_conversations: std::collections::BTreeMap<String, super::binding::BindingConversation>,
