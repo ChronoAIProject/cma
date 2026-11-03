@@ -11,6 +11,8 @@ class DevTools {
       '--disable-dev-shm-usage', '--window-size=1280,720', '--user-data-dir=' + profile,
     ], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
     this.child.stderr.resume();
+    this.child.stdio[3].on('error', () => this.stop());
+    this.child.stdio[4].on('error', () => this.stop());
     this.child.once('error', () => this.stop());
     this.child.once('exit', () => this.stop());
     let buffered = '';

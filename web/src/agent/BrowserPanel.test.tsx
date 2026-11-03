@@ -6,7 +6,69 @@ import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import { agentClient } from '../test/agent';
 import { AgentSidePanel } from './AgentSidePanel';
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+});
+
+it('releases hidden and closed observation, reconnects without enablement, and withdraws revoked frames', async () => {
+  vi.useFakeTimers();
+  let revoked = false;
+  const fetch = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    if (String(input).endsWith('/environment')) return Response.json(environment('available'));
+    if (options?.method === 'DELETE')
+      return Response.json({ ...observation(1), state: 'ready', frame: null });
+    if (revoked) return Response.json({ title: 'Forbidden', status: 403 }, { status: 403 });
+    return Response.json(observation(2));
+  });
+  const sdk = createClient({ baseUrl: 'https://fixture.invalid', fetch });
+  const client = agentClient({
+    files: {
+      ...emptyFiles,
+      environment: (agent, options) => sdk.agentFiles.environment(agent, options),
+    },
+    browser: sdk.agentBrowser,
+  });
+  const scope = new ArtifactPublicationScope();
+  const view = (open: boolean) => (
+    <CmaClientProvider client={client}>
+      <AgentSidePanel
+        agentId="agent-a"
+        shared={false}
+        panel={open ? 'browser' : undefined}
+        onClose={() => {}}
+        onAccessChanged={() => {}}
+        publicationScope={scope}
+      />
+    </CmaClientProvider>
+  );
+  const { rerender } = render(view(true));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByAltText('Agent browser page')).toBeInTheDocument();
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+  fireEvent(document, new Event('visibilitychange'));
+  expect(screen.queryByAltText('Agent browser page')).not.toBeInTheDocument();
+  expect(screen.getByText('Browser observation paused.')).toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  const count = fetch.mock.calls.length;
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(fetch).toHaveBeenCalledTimes(count);
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  fireEvent(document, new Event('visibilitychange'));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByAltText('Agent browser page')).toBeInTheDocument();
+  revoked = true;
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(screen.queryByAltText('Agent browser page')).not.toBeInTheDocument();
+  expect(screen.getByText('Browser access is not permitted.')).toBeInTheDocument();
+  rerender(view(false));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  const closed = fetch.mock.calls.length;
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(fetch).toHaveBeenCalledTimes(closed);
+  expect(fetch.mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(false);
+  expect(fetch.mock.calls.at(-1)?.[1]?.method).toBe('DELETE');
+});
 
 it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resumes the same context', async () => {
   vi.useFakeTimers();
@@ -102,11 +164,85 @@ it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resum
   expect(screen.queryByAltText('Agent browser page')).not.toBeInTheDocument();
 });
 
+it('enables only after owner action, exposes failure, and defaults an enabled Computer to Browser once', async () => {
+  vi.useFakeTimers();
+  let enabled = false;
+  let fail = true;
+  const fetch = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    if (String(input).endsWith('/environment'))
+      return Response.json(environment(enabled ? 'available' : 'not_enabled'));
+    if (options?.method === 'PUT') {
+      expect(JSON.parse(String(options.body))).toEqual({
+        runtime_incarnation: 'incarnation',
+        enabled: true,
+      });
+      if (fail) return Response.json({ title: 'Unavailable', status: 503 }, { status: 503 });
+      enabled = true;
+      return Response.json({ ...observation(1), state: 'loading', frame: null });
+    }
+    return Response.json(observation(2));
+  });
+  const sdk = createClient({ baseUrl: 'https://fixture.invalid', fetch });
+  const client = agentClient({
+    files: {
+      ...emptyFiles,
+      environment: (agent, options) => sdk.agentFiles.environment(agent, options),
+    },
+    browser: sdk.agentBrowser,
+  });
+  const scope = new ArtifactPublicationScope();
+  const onSelect = vi.fn();
+  const view = (panel: 'browser' | 'files') => (
+    <CmaClientProvider client={client}>
+      <AgentSidePanel
+        agentId="agent-a"
+        shared={false}
+        panel={panel}
+        onSelect={onSelect}
+        onClose={() => {}}
+        onAccessChanged={() => {}}
+        publicationScope={scope}
+      />
+    </CmaClientProvider>
+  );
+  const first = render(view('browser'));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(fetch.mock.calls.every(([input]) => String(input).endsWith('/environment'))).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Enable browser' }));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByRole('alert')).toHaveTextContent('Browser could not be enabled. Try again.');
+  expect(screen.queryByAltText('Agent browser page')).not.toBeInTheDocument();
+  fail = false;
+  fireEvent.click(screen.getByRole('button', { name: 'Enable browser' }));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByAltText('Agent browser page')).toBeInTheDocument();
+  first.unmount();
+  render(view('files'));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith('browser');
+  fireEvent.click(screen.getByRole('tab', { name: 'Operation output' }));
+  fireEvent(window, new Event('focus'));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(onSelect.mock.calls).toEqual([['browser'], ['activity']]);
+  expect(fetch.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(2);
+});
+
 const feature = (state: string) => ({
   state,
   reason: 'proof',
   scope: 'agent_browser',
   writable: false,
+});
+const environment = (state: string) => ({
+  agent_id: 'agent-a',
+  policy_revision: 1,
+  runtime_incarnation: 'incarnation',
+  revalidate_at: null,
+  files: feature('available'),
+  operation_output: feature('available'),
+  browser: feature(state),
+  replay: feature('unsupported'),
+  control: feature('unsupported'),
 });
 const emptyFiles = {
   list: async () => [],

@@ -20,6 +20,9 @@ mod runtime;
 #[path = "filesystem_scope_tests.rs"]
 mod scope_tests;
 
+#[path = "browser_cases.rs"]
+mod browser_cases;
+
 #[tokio::test]
 async fn browser_public_contract_requires_explicit_owner_enablement_and_current_incarnation() {
     use crate::rest::agents_tests::request;

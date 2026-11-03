@@ -190,7 +190,12 @@ impl AgentFileService {
             || request.context_id.as_ref().is_some_and(|value| {
                 receipt.observation.context_id.as_ref() != Some(value)
                     && !(receipt.observation.frame.is_none()
-                        && receipt.observation.state == BrowserState::Paused)
+                        && matches!(
+                            receipt.observation.state,
+                            BrowserState::Paused
+                                | BrowserState::NotEnabled
+                                | BrowserState::Unsupported
+                        ))
             })
         {
             return Err(AgentFileError::Conflict);
