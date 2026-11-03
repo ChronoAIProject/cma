@@ -30,6 +30,9 @@
   font-size: 12px;
   line-height: 18px;
 }
+.agent-browser__audit ol {
+  padding-inline-start: 20px;
+}
 .agent-browser img {
   display: block;
   width: 100%;
