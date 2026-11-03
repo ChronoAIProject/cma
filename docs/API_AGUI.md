@@ -44,6 +44,20 @@ Ordinary input always reserves a Message in the common command queue. Input
 submitted while the Agent is Working waits for a later turn. Use the explicit
 public control operations when steering the current turn is intended.
 
+For a reply conditional on the latest completed answer, supply
+`forwardedProps: {"answerContext":{"turn_sequence":3,"answer_sequence":5}}`.
+Both sequences must be positive integers; the final assistant message must follow
+its turn start. This extension applies only to a user message, never an approval.
+It cannot override a profile or authorize a different Agent. New admission checks
+the current successful final answer and rejects active, superseded or already
+consumed answers atomically. A newer admitted message consumes that answer even
+if it is subsequently cancelled or rejected. Invalid scope returns 422
+`invalid_answer_context`; a stale answer returns 409 `agent_not_ready` with no
+new admission. Preserve the exact text, scope and `Idempotency-Key` through an
+uncertain response. Same-key recovery observes the original receipt under fresh
+authority, even after its answer becomes stale. Different keys never deduplicate
+by text. Ordinary clients omit `forwardedProps`.
+
 CMA checks personal owner access and current credential authority, reserves a
 common durable receipt, and lets the worker own readiness, checkpoint waits,
 revival and dispatch. The stream opens only after that exact command has a
