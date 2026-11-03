@@ -81,6 +81,11 @@ impl From<layer2_core::profiles::AgentProfileContent> for AgentProfileContentBod
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkspaceLocationBody {
+    RepositorySnapshot {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+    },
     GitRepository {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,6 +99,9 @@ pub enum WorkspaceLocationBody {
 impl From<WorkspaceLocationBody> for layer2_core::profiles::WorkspaceLocation {
     fn from(value: WorkspaceLocationBody) -> Self {
         match value {
+            WorkspaceLocationBody::RepositorySnapshot { url, reference } => {
+                Self::RepositorySnapshot { url, reference }
+            }
             WorkspaceLocationBody::GitRepository { url, reference } => {
                 Self::GitRepository { url, reference }
             }
@@ -105,6 +113,9 @@ impl From<WorkspaceLocationBody> for layer2_core::profiles::WorkspaceLocation {
 impl From<layer2_core::profiles::WorkspaceLocation> for WorkspaceLocationBody {
     fn from(value: layer2_core::profiles::WorkspaceLocation) -> Self {
         match value {
+            layer2_core::profiles::WorkspaceLocation::RepositorySnapshot { url, reference } => {
+                Self::RepositorySnapshot { url, reference }
+            }
             layer2_core::profiles::WorkspaceLocation::GitRepository { url, reference } => {
                 Self::GitRepository { url, reference }
             }

@@ -70,6 +70,12 @@ fn valid_prepare_request(
                         crate::paths::validate_selector(reference, "clone reference").is_ok()
                     })
             }
+            layer3_adapter::WorkspaceSource::RepositorySnapshot { url, reference } => {
+                crate::workspace_source::validate_clone_url(url, false).is_ok()
+                    && reference.as_deref().is_none_or(|reference| {
+                        crate::paths::validate_selector(reference, "repository ref").is_ok()
+                    })
+            }
             layer3_adapter::WorkspaceSource::Init => true,
         }
 }
@@ -132,6 +138,12 @@ fn valid_workspace_receipt(
         && receipt.name == request.name
         && Path::new(&receipt.path) == home.join(&request.name)
         && valid_commit(&receipt.resolved_commit)
+        && match request.source {
+            layer3_adapter::WorkspaceSource::RepositorySnapshot { .. } => {
+                receipt.source_commit.as_deref().is_some_and(valid_commit)
+            }
+            _ => receipt.source_commit.is_none(),
+        }
 }
 
 fn valid_setup_receipt(

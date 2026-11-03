@@ -20,9 +20,10 @@
 - 已确认 19 张票及 22 条依赖，无循环；初始 frontier：01、02、03、05、06、07、09、11、14。
 - 已隔离并保存原工作区内容；原文件哈希清单保存在工作区外，交付时复核。
 - 首批任务 01、03、07、09、11、14 已在独立 worktree 启动；共享回答区域的改动合并时逐项检查。
-- 01、02、03、06、09、11 已验收合入，六个已完成 worker 的 worktree 已清理。当前实施：04、05、07、10、13、14；04 基于首页链路、10 基于反馈身份、13 基于建议身份与条件发送契约继续开发，其余票依赖满足后排入可用执行槽。
+- 01、02、03、05、06、09、11、14 已验收合入，八个已完成 worker 的 worktree 已清理。当前实施：04、07、10、12、13、15；12 与 13 复用建议契约分别实现编辑与生成，15 从已验证的电脑面板继续打通真实浏览器，18 等待执行名额。
 - 11 的广泛验证暴露两处本轮集成遗漏：01 移动导航后 `AppCreation.test.tsx` 仍查找旧 Sandboxes 按钮，03 使 `Console.tsx` 增至 503 行。已交由 04 在首页上下文工作中修复并回归；这两项不是原始基线问题，不以单票通过掩盖它们。
-- 02 的隔离复跑另确认 7 个与本轮折叠操作展示相关的断言失败，已交由 14 核实实际行为后修复；03 导致的旧首页/创建浏览器断言由 04 处理。14 的同 Sandbox 文件范围验收仍未完成，继续补齐授权共享工作区与 Agent 私有状态边界；15、18 尚未启动，不将部分实现视为其依赖已完成。
+- 02 的隔离复跑确认的 7 个折叠操作断言已由 14 修复，合并态 54 个相关 Web 测试无排除通过；03 导致的旧首页/创建浏览器断言及 Console 的集成行数超限继续由 04 处理。14 已按既有资源归属契约区分共享 Workspace/worktree 与 Agent 私有目录、上传空间和 runtime 状态，并验证公开读写限制；不将这解释为 OS 进程隔离或新增用户澄清。
+- 在 `826de20e9` 对全部 19 张票执行验收条款文本审计：仅规范化 checkbox，所有原始条款与快照基线逐字相同，没有以改写条款代替功能交付。
 
 ## 基线验证
 
@@ -133,3 +134,15 @@
 - `git diff --check ef5e20c1f51b57833f115a61da55e57a70a4fe2a HEAD` 与记录提交前的 `git diff --check` 通过。未重复 worker 已有的私有 target 非零 Rust/file-boundary/managed-settings 或广泛/native 检查，本次没有 Rust 运行；新增 durable 输出记录仍要求兼容 reader，具体证据边界和限制见票文档。
 - 04 继续负责本轮 Home/创建集成修复；Console 随本票面板接线由 506 行增至 524 行，行数超限亦继续交由 04。已修复的七项披露断言及这些待修复项均不是原始基线缺陷；原始 skill contract/Core fixture、格式及 508 行 Agent service 问题独立保留。
 - 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。
+
+## Ticket 04 集成（2026-11-03）
+
+- 合并前 `codex/cma-ui-optimization` 工作区干净，HEAD 为 `a426b87ee5852866850cab192b37d14f9f2087c6`；该状态已包含于票分支。已读取票文档及 `04-EVIDENCE.md`，64 路径 manifest 与实际 diff 完全匹配。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-04` 的 `60e312a48ee2ad6c5ff3ba7481df1e95e6388c4c`，merge commit 为 `60af70f63fd3e621298fb50649f96e1ac5d53633`。无冲突，初始合并树与票分支完全一致；Web Style 保留既有全文为原样前缀，仅追加 35 行，无需样式修正。
+- 本票交付仓库/ref 与原任务冻结、真实 checkout receipt 及原请求恢复；其实际 candidate/native 证据及限制见 04 文档，本 merger 未重复。原 01/03 首页/创建断言已按实际导航修复，Console 通过职责提取回到 494 行，OpenAPI schema inventory 为 498 行；05 名称、14 computer 观察及其他既有功能保留。私有文件 guard 和内部 managed-instruction 实现与合并前逐字一致。
+- 按 parent 明确授权，独立修正 14 遗漏的 REST checked inventory：`docs/API_REST.md` 增加 `GET /api/v1/agents/{id}/environment`，无 body/query、200 `EnvironmentView`，与实际公开 OpenAPI 相符。修正提交 `54a7414b6e8fe2e71adcc1dba5d2b132456393f0`，只增加该行，没有修改或弱化检查器；这是 14 集成遗漏，不是原始基线缺陷。
+- 合并态 Web 检查：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/create/TaskHome.test.tsx src/agent/Details.test.tsx src/AppCreation.test.tsx src/Console.test.tsx` 通过，4 文件 / 41 tests；`npm --prefix web run typecheck` 通过。测试输出有两条 jsdom 跨 Document 导航未实现提示，无失败或跳过。
+- 库存修正使用集成独有、非 symlink 的 `api/target`，从 04 使用的缓存 APFS clone 后执行 `cargo +1.96.1 clean --offline --manifest-path api/Cargo.toml -p layer1-public`，仅清理私有 target；实际移除 12,139 文件，随后日志显示从 integration 路径重编译 Layer 3、2、1。环境：`CARGO_BUILD_JOBS=2`、`CARGO_TARGET_DIR=/Users/liuyitian/code/cma-ui-integration/api/target`、`RUSTFLAGS='--cfg cma_ui_ticket04'`、`RUST_MIN_STACK=33554432`。
+- 实际命令：`cargo +1.96.1 test --offline --locked --manifest-path api/Cargo.toml -p layer1-public --lib rest::openapi::tests::every_exported_operation_appears_in_the_rest_documentation_inventory -- --exact --nocapture`；实际 1 passed、0 failed、0 ignored、421 filtered。日志为集成工作区 `api/target/integration04-inventory-clean.log` 与 `api/target/integration04-inventory-test.log`；无其他 Rust/broad/native 重跑。
+- `git diff --check a426b87ee5852866850cab192b37d14f9f2087c6 HEAD` 与记录提交前的 `git diff --check` 通过。LocalAgentV2 head-404 已由 04 在原始 `60fc98ee5` 实测确认，保留为原始 fixture 缺陷；其他已记录原始 skill/Core/格式/508 行 service 限制未混入修正，不宣称全仓或生产环境绿色。
+- 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，没有清理共享 Cargo target，无推送、部署或生产操作。

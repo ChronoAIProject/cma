@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
+import { validRepository } from './repository';
 import { useLifecycleIntent } from './lifecycleIntent';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
@@ -56,6 +58,19 @@ function TaskComposer({
   const draft = useTaskDraft(viewerId, workspaceId, sandboxId);
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<string>();
+  const [repositorySupported, setRepositorySupported] = useState(false);
+  useEffect(() => {
+    const abort = new AbortController();
+    void client.readTaskRepositorySupport?.({ signal: abort.signal }).then(
+      (value) => {
+        if (!abort.signal.aborted) setRepositorySupported(value);
+      },
+      () => {
+        if (!abort.signal.aborted) setRepositorySupported(false);
+      },
+    );
+    return () => abort.abort();
+  }, [client]);
   const [supported, setSupported] = useState<boolean | undefined>(() =>
     client.readTaskCreationSupport ? undefined : false,
   );
@@ -107,13 +122,28 @@ function TaskComposer({
             ? 'Describe a task before starting.'
             : new TextEncoder().encode(draft.text).length > 262144
               ? 'Your task exceeds the 262144-byte limit.'
-              : undefined;
+              : draft.repositoryUrl && !repositorySupported
+                ? 'Repository tasks are unavailable on this service. Clear the repository to start an empty workspace.'
+                : !validRepository(draft.repositoryUrl)
+                  ? 'Enter an HTTPS GitHub repository URL.'
+                  : draft.repositoryRef &&
+                      (!draft.repositoryUrl || !validRepositoryRef(draft.repositoryRef))
+                    ? 'Enter a valid repository ref with a repository URL.'
+                    : undefined;
           setValidation(invalid);
           if (invalid) return;
           if (!draft.persist()) return;
           void lifecycle.submit({
             name: 'New task',
             initial_message: draft.text,
+            ...(!workspaceId && !sandboxId && draft.repositoryUrl
+              ? {
+                  repository: {
+                    url: draft.repositoryUrl,
+                    ...(draft.repositoryRef ? { ref: draft.repositoryRef } : {}),
+                  },
+                }
+              : {}),
             ...(workspaceId ? { workspace_id: workspaceId } : {}),
             ...(sandboxId ? { sandbox_id: sandboxId } : {}),
           });
@@ -136,6 +166,41 @@ function TaskComposer({
             }}
           />
         </div>
+        {!workspaceId &&
+        !sandboxId &&
+        (repositorySupported || draft.repositoryUrl || draft.repositoryRef) ? (
+          <>
+            <label className="field__label" htmlFor={`${inputId}-repository`}>
+              GitHub repository
+            </label>
+            <Input
+              id={`${inputId}-repository`}
+              type="url"
+              value={draft.repositoryUrl}
+              placeholder="Optional · https://github.com/owner/repository"
+              onChange={(event) => draft.changeRepository(event.target.value, draft.repositoryRef)}
+            />
+            <label className="field__label" htmlFor={`${inputId}-ref`}>
+              Repository ref
+            </label>
+            <Input
+              id={`${inputId}-ref`}
+              value={draft.repositoryRef}
+              placeholder="Default branch"
+              onChange={(event) => draft.changeRepository(draft.repositoryUrl, event.target.value)}
+            />
+            <p>The requested ref is verified during preparation.</p>
+            {draft.repositoryUrl || draft.repositoryRef ? (
+              <Button onClick={() => draft.changeRepository('', '')}>Clear repository</Button>
+            ) : null}
+          </>
+        ) : (
+          <p>
+            {workspaceId || sandboxId
+              ? 'Repository context is inherited. Start from Home to choose another repository.'
+              : 'Repository tasks are unavailable on this service.'}
+          </p>
+        )}
         <Button
           type="submit"
           variant="primary"
@@ -171,6 +236,13 @@ function TaskComposer({
         <section aria-label="Retained task">
           <h2>Submitted task</h2>
           <pre>{intent.body.initial_message}</pre>
+          {intent.body.repository ? (
+            <>
+              <pre>{intent.body.repository.url}</pre>
+              <p>Requested ref: {intent.body.repository.ref ?? 'Default branch'}</p>
+              <p>Checkout commit: {agent?.workspace.resolvedCommit ?? 'Not prepared yet'}</p>
+            </>
+          ) : null}
         </section>
       ) : null}
       {intent && !intent.receipt && !lifecycle.connection ? (
@@ -228,5 +300,21 @@ function TaskComposer({
       ) : null}
       {connections.error ? <p role="alert">{connections.error}</p> : null}
     </section>
+  );
+}
+
+function validRepositoryRef(value: string) {
+  return (
+    new TextEncoder().encode(value).length <= 255 &&
+    !value.startsWith('-') &&
+    ![...value].some(
+      (character) =>
+        character.charCodeAt(0) < 33 ||
+        character.charCodeAt(0) === 127 ||
+        /\s/.test(character) ||
+        '~^:?*[\\'.includes(character),
+    ) &&
+    !value.includes('..') &&
+    !value.includes('@{')
   );
 }

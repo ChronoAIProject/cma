@@ -3,6 +3,15 @@ use layer2_core::sandbox::agent_environment::{
     BrowserObservationView, BrowserSelection, BrowserState,
 };
 
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(read, configure, release), components(schemas(BrowserView, BrowserFrameView, BrowserEnablement)))]
+struct BrowserApi;
+
+pub(crate) fn document() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi as _;
+    BrowserApi::openapi()
+}
+
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BrowserQuery {
