@@ -95,6 +95,9 @@ impl Agents<'_> {
         if let Some(category) = options.creation_origin {
             query.push(("creation_origin", category.as_str().into()));
         }
+        if let Some(status) = options.task_status {
+            query.push(("task_status", status.as_str().into()));
+        }
         if let Some(active) = options.channel_active {
             query.push(("channel_active", active.to_string()));
         }

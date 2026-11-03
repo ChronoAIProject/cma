@@ -1,6 +1,6 @@
 import { resourceActor } from '../resource-access.js';
 import { channelUsageSummary } from './channel-usage.js';
-import { agentStatus } from '../instances/types.js';
+import { agentStatus, agentTaskStatus } from '../instances/types.js';
 import { enumeration, integer, nullable, object, optional, text, type Output } from '../schema.js';
 
 /** Immutable creation category; later Trigger or channel use does not relabel it. */
@@ -33,6 +33,7 @@ export type AgentProvenance = Output<typeof agentProvenance>;
 
 /** Safe inventory row; private creation details are available only by point read. */
 export const agentProvenanceInventoryItem = object({
+  task_status: optional(agentTaskStatus),
   agent_id: text,
   title: optional(text),
   status: agentStatus,
