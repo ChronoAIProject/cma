@@ -11,6 +11,8 @@ function fixture() {
   let revision = 0;
   let owner: string | null = null;
   let dropped = false;
+  let replacement: Record<string, unknown> = {};
+  let responseStatus = 200;
   let pause: (() => Promise<void>) | undefined;
   const sdk = createClient({
     baseUrl: 'https://fixture.invalid',
@@ -28,21 +30,30 @@ function fixture() {
           throw new TypeError('lost response');
         }
       } else if (pause) await pause();
-      return Response.json({
-        agent_id: 'agent-a',
-        runtime_incarnation: 'current',
-        context_id: context,
-        state: owner ? 'user' : 'agent',
-        revision,
-        client_id: owner,
-        lease_token: owner && value.operation_id ? token : null,
-        expires_at: owner ? new Date(Date.now() + 15000).toISOString() : null,
-        lease_duration_ms: 15000,
-        operation_id: value.operation_id ?? null,
-        operation_revision: value.operation_id ? revision : null,
-        audit: [],
-        audit_truncated_before: null,
-      });
+      if (responseStatus !== 200)
+        return Response.json(
+          { code: 'forbidden', detail: 'Control permission revoked', status: responseStatus },
+          { status: responseStatus },
+        );
+      return Response.json(
+        {
+          agent_id: 'agent-a',
+          runtime_incarnation: 'current',
+          context_id: context,
+          state: owner ? 'user' : 'agent',
+          revision,
+          client_id: owner,
+          lease_token: owner && value.operation_id ? token : null,
+          expires_at: owner ? new Date(Date.now() + 15000).toISOString() : null,
+          lease_duration_ms: 15000,
+          operation_id: value.operation_id ?? null,
+          operation_revision: value.operation_id ? revision : null,
+          audit: [],
+          audit_truncated_before: null,
+          ...replacement,
+        },
+        { status: responseStatus },
+      );
     },
   });
   return {
@@ -54,10 +65,19 @@ function fixture() {
     hold: (value?: () => Promise<void>) => {
       pause = value;
     },
+    replaceReceipt: (value: Record<string, unknown>, status = 200) => {
+      replacement = value;
+      responseStatus = status;
+    },
   };
 }
 
-function panel(client: AgentBrowserControlClient, accountId = 'owner-a', admissionAllowed = true) {
+function panel(
+  client: AgentBrowserControlClient,
+  accountId = 'owner-a',
+  admissionAllowed = true,
+  active = true,
+) {
   return (
     <BrowserControl
       client={client}
@@ -65,7 +85,7 @@ function panel(client: AgentBrowserControlClient, accountId = 'owner-a', admissi
       agentId="agent-a"
       incarnation="current"
       contextId={context}
-      active
+      active={active}
       admissionAllowed={admissionAllowed}
     >
       <img alt="Agent browser page" src="data:image/jpeg;base64,/9j/" />
@@ -97,6 +117,31 @@ it('stops new input on policy closure while keeping mounted control and explicit
   ).toEqual(['acquire', 'return']);
   expect(screen.getByRole('button', { name: 'Take control' })).toBeDisabled();
 });
+
+it.each([
+  ['expired', { expires_at: '2026-01-01T00:00:00Z' }, 200, 'Control state unknown'],
+  ['foreign client', { client_id: 'another-client' }, 200, 'Another client is controlling'],
+  ['different Agent', { agent_id: 'agent-b' }, 200, 'Control state unknown'],
+  ['old incarnation', { runtime_incarnation: 'old' }, 200, 'Control state unknown'],
+  ['old context', { context_id: 'old-context' }, 200, 'Control state unknown'],
+  ['revoked permission', {}, 403, 'Browser control is not permitted.'],
+] as const)(
+  'does not adopt %s control authority when the frame is stale',
+  async (_, receipt, status, label) => {
+    const runtime = fixture();
+    const view = render(panel(runtime.client));
+    fireEvent.click(await screen.findByRole('button', { name: 'Take control' }));
+    await screen.findByText('You are controlling');
+    view.rerender(panel(runtime.client, 'owner-a', true, false));
+    runtime.replaceReceipt(receipt, status);
+    fireEvent(window, new Event('online'));
+    expect(await screen.findByText(label)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Return to Agent' })).not.toBeInTheDocument();
+    expect(screen.getByRole('application')).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.keyDown(screen.getByRole('application'), { key: 'X' });
+    expect(runtime.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+  },
+);
 
 it('keeps the acquisition action unavailable while its current-state read is settling', async () => {
   const runtime = fixture();
