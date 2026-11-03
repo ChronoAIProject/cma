@@ -9,6 +9,27 @@
 .agent-browser figure {
   margin: 0;
 }
+.agent-browser__control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+.agent-browser__control p {
+  margin: 0;
+}
+.agent-browser__control input {
+  max-width: 100%;
+}
+.agent-browser__input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.agent-browser__audit {
+  font-size: 12px;
+  line-height: 18px;
+}
 .agent-browser img {
   display: block;
   width: 100%;

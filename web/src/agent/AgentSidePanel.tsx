@@ -297,8 +297,13 @@ export function AgentSidePanel({
           client.browser &&
           (!shared || authorized?.capabilities.includes('view_history') === true) ? (
             <BrowserPanel
-              key={`${agentId}:${features.runtime_incarnation}`}
+              key={`${agentId}:${features.runtime_incarnation}:${features.policy_revision}:${observation?.scope.subject}`}
               client={client.browser}
+              controlClient={
+                !shared && features.control.state === 'available' && features.control.writable
+                  ? client.browserControl
+                  : undefined
+              }
               agentId={agentId}
               incarnation={features.runtime_incarnation}
               active={panel === 'browser'}
