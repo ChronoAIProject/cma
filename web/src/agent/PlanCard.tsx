@@ -12,6 +12,7 @@ import type { ConversationState, PlanSnapshot } from './model';
 import { planAnchor, reportedPlanProgress } from './plans';
 import '../ui/Badge.css';
 import './PlanCard.css';
+import { Button } from '../ui/Button';
 
 /**
  * The step words the rest of the product uses for progress. A status this
@@ -35,9 +36,11 @@ export function PlanCard({
   plan,
   active = true,
   outcome,
+  onReplay,
 }: {
   readonly plan: PlanSnapshot;
   readonly active?: boolean;
+  readonly onReplay?: (turn: string) => void;
   readonly outcome?: NonNullable<ConversationState['turnOutcomes']>[string];
 }) {
   const [chosen, setChosen] = useState<boolean>();
@@ -95,6 +98,11 @@ export function PlanCard({
         {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
         View plan and operations
       </button>
+      {onReplay && plan.runId ? (
+        <Button size="sm" onClick={() => onReplay(plan.runId!)}>
+          View plan and replay
+        </Button>
+      ) : null}
       {open ? (
         <ol className="plan-card__steps" id={stepsId}>
           {plan.entries.map((entry, index) => {

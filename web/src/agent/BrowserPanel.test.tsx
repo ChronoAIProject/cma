@@ -5,6 +5,7 @@ import { CmaClientProvider } from '../api/context';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import { agentClient } from '../test/agent';
 import { AgentSidePanel } from './AgentSidePanel';
+import { AgentComputerObservation } from './environment/observation';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -225,6 +226,41 @@ it('enables only after owner action, exposes failure, and defaults an enabled Co
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(onSelect.mock.calls).toEqual([['browser'], ['activity']]);
   expect(fetch.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(2);
+});
+
+it('keeps an explicit operation replay selection when an enabled browser becomes available', async () => {
+  vi.useFakeTimers();
+  const client = agentClient({
+    files: { ...emptyFiles, environment: async () => environment('available') },
+  });
+  const selected = new AgentComputerObservation({ client, subject: 'owner', agentId: 'agent-a' });
+  selected.selectReplay('turn-1');
+  const onSelect = vi.fn();
+  const view = (panel: 'activity' | 'files' | undefined) => (
+    <CmaClientProvider client={client}>
+      <AgentSidePanel
+        agentId="agent-a"
+        shared={false}
+        panel={panel}
+        onSelect={onSelect}
+        observation={selected}
+        onClose={() => {}}
+        onAccessChanged={() => {}}
+        publicationScope={new ArtifactPublicationScope()}
+      />
+    </CmaClientProvider>
+  );
+  const { rerender } = render(view('activity'));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(onSelect).not.toHaveBeenCalledWith('browser');
+  act(() => selected.clearReplaySelection());
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  rerender(view(undefined));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  rerender(view('files'));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(onSelect).not.toHaveBeenCalledWith('browser');
+  expect(onSelect).toHaveBeenCalledWith('activity');
 });
 
 const feature = (state: string) => ({

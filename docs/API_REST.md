@@ -1492,9 +1492,14 @@ an Agent-private directory. `writable` requires owner authority or an accepted
 current typed write link. Recorded output has `agent_turn_history` scope and
 requires `view_history`. Browser observations use `agent_browser` scope and
 require `view_history`; `writable` remains false. Older runtimes without the
-browser protocol report unsupported. Replay and control still report
-`unsupported`, `not_supported_by_contract`, `none`, and `false`. No runtime
-address, boot identifier, replay resource or PTY is exposed.
+browser protocol report unsupported. Operation record replay uses `view_history`
+and `agent_turn_history` scope, with `available`, `operation_records_only` and
+`writable: false`; missing authority reports `forbidden`. Replay reuses bounded
+Agent events v2 snapshots with `Prefer: cma-tool-output`, durable turn sequences
+and opaque cursors. It is a pure history query without execution or recovery;
+it contains no historical browser frames. Control still reports `unsupported`,
+`not_supported_by_contract`, `none`, and `false`. No runtime address, boot
+identifier or PTY is exposed.
 
 Browser enablement is explicit and owner-only (`manage_sharing` authority):
 `PUT /api/v1/agents/{id}/browser` accepts

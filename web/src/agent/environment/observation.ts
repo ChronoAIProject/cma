@@ -13,10 +13,30 @@ export class AgentComputerObservation {
       readonly subject: string;
       readonly agentId?: string;
     },
+    private readonly openReplay?: () => void,
   ) {}
 
   private value: OperationObservation | undefined;
   private readonly listeners = new Set<() => void>();
+  private replay: { readonly turn: string } | undefined;
+  private readonly replayListeners = new Set<() => void>();
+  readonly replaySnapshot = () => this.replay;
+  readonly subscribeReplay = (listener: () => void) => {
+    this.replayListeners.add(listener);
+    return () => {
+      this.replayListeners.delete(listener);
+    };
+  };
+  readonly selectReplay = (turn: string) => {
+    this.replay = { turn };
+    for (const listener of this.replayListeners) listener();
+    this.openReplay?.();
+  };
+  readonly clearReplaySelection = () => {
+    if (!this.replay) return;
+    this.replay = undefined;
+    for (const listener of this.replayListeners) listener();
+  };
 
   readonly snapshot = () => this.value;
   readonly subscribe = (listener: () => void) => {
@@ -38,4 +58,11 @@ const idle = () => () => {};
 
 export function useComputerObservation(observation?: AgentComputerObservation) {
   return useSyncExternalStore(observation?.subscribe ?? idle, observation?.snapshot ?? empty);
+}
+
+export function useReplaySelection(observation?: AgentComputerObservation) {
+  return useSyncExternalStore(
+    observation?.subscribeReplay ?? idle,
+    observation?.replaySnapshot ?? empty,
+  );
 }

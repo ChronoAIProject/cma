@@ -400,6 +400,7 @@ export function SharedAgent({
       <div className="agent-surface__conversation">
         {conversation === undefined ? null : (
           <MessageStream
+            onReplay={web?.operationReplay ? computerObservation?.selectReplay : undefined}
             deliverables={
               web.deliverables && viewerId && basis
                 ? { agentId, viewerId, client: web.deliverables, authority: basis }
