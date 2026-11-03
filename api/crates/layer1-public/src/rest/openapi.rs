@@ -1,6 +1,7 @@
 use utoipa::OpenApi;
 pub mod agent_delegations;
 mod agent_manager;
+mod composition;
 mod identity;
 mod projections;
 use self::projections::{
@@ -490,17 +491,7 @@ use super::trigger_openapi_shapes::*;
 )]
 struct ApiDoc;
 pub fn document() -> utoipa::openapi::OpenApi {
-    let mut document = ApiDoc::openapi();
-    document
-        .extensions
-        .get_or_insert_with(Default::default)
-        .insert("x-cma-task-repository".into(), serde_json::json!(true));
-    document.merge(super::documents::document());
-    document.merge(crate::responses::document());
-    document.merge(crate::agui::document());
-    document.merge(crate::agent_v2::document());
-    identity::secure_operations(&mut document);
-    document
+    composition::compose(ApiDoc::openapi())
 }
 pub use agent_manager::document as agent_manager_document;
 #[cfg(test)]
