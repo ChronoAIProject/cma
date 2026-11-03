@@ -112,9 +112,9 @@ export function RevisionContents({
     return (
       <dl className="marketplace-facts" data-compact={compact || undefined}>
         <Fact label="Location">
-          {content.location.type === 'git_repository' ? 'GitHub repository' : 'Empty directory'}
+          {content.location.type !== 'directory' ? 'GitHub repository' : 'Empty directory'}
         </Fact>
-        {content.location.type === 'git_repository' ? (
+        {content.location.type !== 'directory' ? (
           <>
             <Fact label="Repository URL">{content.location.url}</Fact>
             <Fact label="Branch or tag">{content.location.reference ?? 'Default branch'}</Fact>

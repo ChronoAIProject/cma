@@ -9,9 +9,24 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
       if (!owner) throw new Error();
       const raw = sessionStorage.getItem(key);
       if (raw === null) return { text: '' };
-      const value = JSON.parse(raw) as { version?: unknown; text?: unknown };
-      if (value.version !== 1 || typeof value.text !== 'string') throw new Error();
-      return { text: value.text };
+      const value = JSON.parse(raw) as {
+        version?: unknown;
+        text?: unknown;
+        repositoryUrl?: unknown;
+        repositoryRef?: unknown;
+      };
+      if (
+        value.version !== 1 ||
+        typeof value.text !== 'string' ||
+        (value.repositoryUrl !== undefined && typeof value.repositoryUrl !== 'string') ||
+        (value.repositoryRef !== undefined && typeof value.repositoryRef !== 'string')
+      )
+        throw new Error();
+      return {
+        text: value.text,
+        repositoryUrl: value.repositoryUrl,
+        repositoryRef: value.repositoryRef,
+      };
     } catch {
       return {
         text: '',
@@ -21,12 +36,17 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
     }
   });
   const [text, setText] = useState(initial.text);
+  const [repositoryUrl, setRepositoryUrl] = useState(initial.repositoryUrl ?? '');
+  const [repositoryRef, setRepositoryRef] = useState(initial.repositoryRef ?? '');
   const [error, setError] = useState(initial.error);
-  const persist = (value: string) => {
+  const persist = (value: string, url = repositoryUrl, reference = repositoryRef) => {
     try {
       requireTaskStorage();
       if (!owner) throw new Error();
-      sessionStorage.setItem(key, JSON.stringify({ version: 1, text: value }));
+      sessionStorage.setItem(
+        key,
+        JSON.stringify({ version: 1, text: value, repositoryUrl: url, repositoryRef: reference }),
+      );
       setError(undefined);
       return true;
     } catch {
@@ -38,6 +58,13 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
   };
   return {
     text,
+    repositoryUrl,
+    repositoryRef,
+    changeRepository: (url: string, reference: string) => {
+      setRepositoryUrl(url);
+      setRepositoryRef(reference);
+      persist(text, url, reference);
+    },
     error,
     persist: () => persist(text),
     change: (value: string) => {
