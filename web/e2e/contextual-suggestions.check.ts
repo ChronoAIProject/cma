@@ -35,6 +35,11 @@ async function open(page: Page, baseURL: string) {
   });
   fixture.append({ type: 'turn_completed', turn_sequence: 1 });
   await fixture.route(page, baseURL);
+  await page.route('**/api/v1/agents/agt_contract/answers/*/deliverables', (route) =>
+    route.fulfill({
+      json: { agent_id: 'agt_contract', answer_id: 'event:3', turn_sequence: 1, items: [] },
+    }),
+  );
   await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
     route.fulfill({
       json: {
