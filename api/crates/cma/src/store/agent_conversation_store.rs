@@ -194,6 +194,7 @@ async fn apply_mutation(
     replace_agent(store, &current, mutation, session).await?;
     checkpoint::carry(store, &current_row, &current, &mutation.agent, session).await?;
     insert_logs(store, &logs, session).await?;
+    super::suggestions::enqueue(store, &mutation.agent, &logs, session).await?;
     Ok(ConversationReceipt {
         command_dispatch,
         agent: mutation.agent.clone(),

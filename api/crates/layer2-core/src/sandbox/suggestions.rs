@@ -3,17 +3,17 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{AgentId, Caller, SubjectId};
 use super::{agent_io::AnswerContext, AgentReadError, AgentReadService};
+use crate::{AgentId, Caller, SubjectId};
 
 mod context;
 mod generation;
 mod quality;
-pub use generation::*;
-pub use context::{authority_digest, work_from_turn, SuggestionContext, MAX_CONTEXT_EVENTS};
 pub use context::work_is_current;
+pub use context::{authority_digest, work_from_turn, SuggestionContext, MAX_CONTEXT_EVENTS};
+pub use generation::*;
 
-pub const STRATEGY_VERSION: &str = "contextual-v1";
+pub const STRATEGY_VERSION: &str = "contextual-v3";
 pub const GENERATION_TIMEOUT_SECONDS: u64 = 60;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,34 +83,60 @@ pub struct SuggestionWork {
 #[async_trait]
 pub trait SuggestionStore: Send + Sync {
     async fn read_suggestions(
-        &self, owner: &SubjectId, agent: &AgentId, scope: AnswerContext,
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        scope: AnswerContext,
     ) -> Result<SuggestionReading, AgentReadError>;
-    async fn claim_suggestions(&self, now_ms: u64) -> Result<Option<SuggestionWork>, AgentReadError>;
-    async fn complete_suggestions(&self, work: &SuggestionWork, completion: SuggestionCompletion) -> Result<(), AgentReadError>;
+    async fn claim_suggestions(
+        &self,
+        now_ms: u64,
+    ) -> Result<Option<SuggestionWork>, AgentReadError>;
+    async fn complete_suggestions(
+        &self,
+        work: &SuggestionWork,
+        completion: SuggestionCompletion,
+    ) -> Result<(), AgentReadError>;
 }
 
 impl SuggestionWork {
     pub fn reading(&self, current: bool, now_ms: u64) -> SuggestionReading {
-        let status = if !current { SuggestionStatus::Expired }
-            else if self.status == SuggestionStatus::Running && self.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
-                SuggestionStatus::Failed
-            } else { self.status };
+        let status = if !current {
+            SuggestionStatus::Expired
+        } else if self.status == SuggestionStatus::Running
+            && self.deadline_ms.is_some_and(|deadline| deadline <= now_ms)
+        {
+            SuggestionStatus::Failed
+        } else {
+            self.status
+        };
         SuggestionReading {
-            status, set: (status == SuggestionStatus::Ready).then(|| self.set.clone()).flatten(),
+            status,
+            set: (status == SuggestionStatus::Ready)
+                .then(|| self.set.clone())
+                .flatten(),
             observation: self.observation.clone(),
         }
     }
 
     pub fn claim(&mut self, current: bool, now_ms: u64) -> bool {
-        if self.status == SuggestionStatus::Running && self.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
+        if self.status == SuggestionStatus::Running
+            && self.deadline_ms.is_some_and(|deadline| deadline <= now_ms)
+        {
             self.status = SuggestionStatus::Failed;
             self.observation = Some(SuggestionObservation {
                 elapsed_ms: now_ms.saturating_sub(self.started_at_ms.unwrap_or(now_ms)),
-                failure: Some(SuggestionFailure::Interrupted), usage: SuggestionUsage::default(),
+                failure: Some(SuggestionFailure::Interrupted),
+                usage: SuggestionUsage::default(),
             });
         }
-        if self.status != SuggestionStatus::Pending { return false; }
-        if !current || now_ms.saturating_sub(self.created_at_ms) > 120_000 {
+        if self.status != SuggestionStatus::Pending {
+            return false;
+        }
+        if !current
+            || self.strategy_version != STRATEGY_VERSION
+            || now_ms.saturating_sub(self.created_at_ms) > 120_000
+        {
             self.status = SuggestionStatus::Expired;
             return false;
         }
@@ -122,8 +148,14 @@ impl SuggestionWork {
 
     pub fn complete(&mut self, current: bool, completion: SuggestionCompletion) {
         self.observation = Some(completion.observation);
-        self.status = if !current { SuggestionStatus::Expired } else { completion.status };
-        self.set = (self.status == SuggestionStatus::Ready).then_some(completion.set).flatten();
+        self.status = if !current {
+            SuggestionStatus::Expired
+        } else {
+            completion.status
+        };
+        self.set = (self.status == SuggestionStatus::Ready)
+            .then_some(completion.set)
+            .flatten();
     }
 }
 
@@ -138,10 +170,15 @@ impl SuggestionService {
     }
 
     pub async fn read(
-        &self, caller: &Caller, agent: &AgentId, scope: AnswerContext,
+        &self,
+        caller: &Caller,
+        agent: &AgentId,
+        scope: AnswerContext,
     ) -> Result<SuggestionReading, AgentReadError> {
         scope.validate().map_err(|_| AgentReadError::NotFound)?;
         self.reads.read(caller, agent).await?;
-        self.store.read_suggestions(&caller.subject, agent, scope).await
+        self.store
+            .read_suggestions(&caller.subject, agent, scope)
+            .await
     }
 }
