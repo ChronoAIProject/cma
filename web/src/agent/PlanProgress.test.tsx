@@ -40,6 +40,7 @@ it('replays one current plan with completed count and current step after reconne
   expect(cards).toHaveLength(1);
   expect(within(cards[0]!).getByText('Completed 1/3 steps')).toBeVisible();
   expect(within(cards[0]!).getByText('Current step 2: Implement the change')).toBeVisible();
+  expect(within(cards[0]!).getByRole('status')).toHaveTextContent('Completed 1/3 steps');
   const progress = within(cards[0]!).getByRole('progressbar', { name: 'Reported plan progress' });
   expect(progress).toHaveAttribute('aria-valuenow', '1');
   expect(progress).toHaveAttribute('aria-valuemax', '3');

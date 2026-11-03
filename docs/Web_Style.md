@@ -3919,3 +3919,9 @@ association with a plan step. There is no reliable ETA in the current public
 contract, so no estimated remaining time is rendered.
 
 | 2026-11-03 | Add factual turn-scoped plan counts, accessible progress, ambiguous-state fallback, terminal process disclosure and the shared compact header slot for ticket 06; keep approvals visible and omit unsupported ETA. |
+
+Plan counts, current-step text and terminal summaries share one atomic polite
+status region, using the card's existing 8px column gap. Only plan or turn-state
+changes update it; streamed message tokens do not rerender this region.
+
+| 2026-11-03 | Make reported plan updates and terminal summaries one atomic polite status announcement for ticket 06. |
