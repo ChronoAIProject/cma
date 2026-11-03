@@ -4521,3 +4521,40 @@ operation identity for an authorized status read. The next dispatched request
 resolves current SDK authorization.
 
 | 2026-11-03 | Bound queued computer requests and preserve immediate cancellation and exact uncertain-operation recovery under stalled HTTP responses. |
+
+### Reviewed replay navigation and explicit browser return (2026-11-03)
+
+Next operation considers recorded updates to operations that began before the
+selected cursor. Preserve their recorded identity, title and output across that
+boundary, keep cursor order and the existing 50-record window, and never expose
+future output when restoring an exact historical cursor.
+
+A stale browser frame disables acquisition, input and renewal. It does not
+disable explicit **Return to Agent** under a still-current authorized lease.
+Return and original receipt recovery remain available when new admission closes;
+account, Agent, incarnation, browser context, client and permission fences still
+apply. Do not infer release before a receipt or rebuild the browser or task.
+
+| 2026-11-03 | Clarify overlapping-operation navigation and explicit authorized return while browser observation is stale, following final SPEC review. |
+
+### Reviewed preview bounds and incomplete task outcomes (2026-11-03)
+
+Authorize preview metadata before applying the 1 MiB limit. Oversized or
+unsupported previews do not request byte-reading verification. Permitted
+downloads still verify the exact answer resource, revision, size and digest.
+
+A recorded output gap inside a turn prevents successful completion for that
+turn. Retain its messages and reported plan steps, show the existing failed
+response outcome, and omit the completion duration. Task navigation uses the
+same incomplete outcome. A gap in an earlier turn does not fail a later complete
+turn; incomplete answers cannot authorize deliverable reads or downloads.
+
+| 2026-11-03 | Clarify metadata-first preview bounds and consistent current-turn gap outcomes across completion, plans, task navigation and answer deliverables after Standards review. |
+
+Live-file preview downloads bound runtime reads to the saved reference size, so
+a file that grows after metadata authorization cannot trigger a larger read or
+hash. An empty reference uses the existing minimum one-byte read allowance and
+still requires exactly zero returned bytes. Growth or changed content reports
+the existing changed-resource outcome; initial path capture keeps its normal cap.
+
+| 2026-11-03 | Close the live-file growth race after preview metadata authorization without extending the preview byte budget. |
