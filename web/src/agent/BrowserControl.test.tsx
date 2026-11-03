@@ -63,6 +63,7 @@ it('waits for acquisition receipt, sends real viewport input through the public 
     <BrowserPanel
       client={sdk.agentBrowser}
       controlClient={sdk.agentBrowserControl}
+      controlAccountId="owner-a"
       agentId="agent-a"
       incarnation="current"
       active

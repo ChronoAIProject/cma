@@ -299,6 +299,7 @@ export function AgentSidePanel({
             <BrowserPanel
               key={`${agentId}:${features.runtime_incarnation}:${features.policy_revision}:${observation?.scope.subject}`}
               client={client.browser}
+              controlAccountId={observation?.scope.subject}
               controlClient={
                 !shared && features.control.state === 'available' && features.control.writable
                   ? client.browserControl
