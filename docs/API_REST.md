@@ -1130,6 +1130,28 @@ and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
 advancing cursors and combine transcript fallback without duplicating messages.
 
+`GET /api/v1/agents/{id}/suggestions?turn_sequence=3&answer_sequence=5`
+reads owner-scoped contextual suggestions for a canonical final answer. It never
+starts generation, admits input or creates an Agent turn. A confirmed successful
+turn atomically records bounded background work; only the existing authorized
+sandbox model proxy is used. The result has `status` (`pending`, `running`,
+`ready`, `empty`, `failed`, `expired`, `unavailable`), nullable `set`, and nullable
+`observation`. A ready set uses the shared `SuggestedReplySet` identity and exact
+text/rank/source version. Send selected text through normal conditional input
+with the same `answer_context`; edited text uses the existing normal admission
+contract. No new suggestion-send protocol exists.
+
+Generation uses at most 128 events from the completed turn, 4 KiB goal / 8 KiB
+answer, three candidates, 1,024 output tokens, a 60-second generation deadline,
+and two concurrent workers per process. Generation attempts are claimed durably
+once per owner/Agent/answer/strategy. Interrupted or uncertain attempts become
+failed, without automatic billing retries; old unclaimed work expires after two
+minutes. Current authority and newer admissions fence reads and late completion.
+Usage and elapsed milliseconds are saved separately from the Agent conversation;
+`usage.cost` contains an explicit provider-reported decimal amount and currency
+only when supplied, otherwise null (unknown). A GET never repairs or regenerates
+missing results. Browser pending reads stop after 50 attempts / 75 seconds.
+
 Message feedback is private, durable metadata for the Agent owner.
 `GET /api/v1/agents/{id}/messages/{message_id}/feedback` reads the current vote,
 version, six-choice negative reasons, optional comment, update time and request
@@ -1393,6 +1415,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
+| `GET /api/v1/agents/{id}/suggestions` | - | turn_sequence, answer_sequence | 200 SuggestionReadingView |
 | `GET /api/v1/agents/{id}/message-feedback` | - | after, limit | 200 MessageFeedbackPageView |
 | `GET /api/v1/agents/{id}/messages/{message_id}/feedback` | - | - | 200 FeedbackDetailsView |
 | `PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons` | SetFeedbackReasonsRequest | - | 200 FeedbackDetailsView; 409 stale version; 422 invalid reasons |

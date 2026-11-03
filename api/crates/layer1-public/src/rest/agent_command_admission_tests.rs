@@ -23,6 +23,8 @@ use std::{
 #[path = "agent_command_admission_tests/fixtures.rs"]
 mod fixtures;
 use fixtures::*;
+#[path = "agent_command_admission_tests/contextual_suggestions.rs"]
+mod contextual_suggestions;
 
 #[tokio::test]
 async fn shared_admin_routes_admit_once_with_actual_actor_and_bound_control_turn() {

@@ -18,6 +18,8 @@ mod events;
 mod feedback_reasons;
 mod lifecycle;
 mod message_feedback;
+mod suggestions;
+pub use suggestions::*;
 mod models;
 mod preferences;
 mod provenance;
