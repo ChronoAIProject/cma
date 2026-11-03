@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 227,
+  "openapi_operations": 229,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -3230,6 +3230,30 @@
         "not_authenticated",
         "sandbox_checkpoint_in_progress",
         "store_failed"
+      ]
+    },
+    "GET /api/v1/agents/{id}/messages/{message_id}/feedback": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback_reasons.rs# Conditional owner feedback metadata.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_agent_request"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback_reasons.rs# Conditional owner feedback metadata.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "feedback_version_conflict",
+        "invalid_json"
       ]
     }
   }
