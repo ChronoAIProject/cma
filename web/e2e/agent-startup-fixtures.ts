@@ -62,6 +62,20 @@ export class LocalStartup {
         });
       if (url.pathname === '/auth/connections/check')
         return reply({ owner: 'local-owner', ready: true, checked_at: localTime, services: [] });
+      if (url.pathname === '/openapi.json')
+        return reply({
+          openapi: '3.1.0',
+          info: { title: 'CMA', version: '1' },
+          paths: {},
+          'x-cma-task-repository': true,
+          components: {
+            schemas: {
+              AgentLifecycleCreateRequest: {
+                properties: { name: { type: 'string' }, initial_message: { type: 'string' } },
+              },
+            },
+          },
+        });
       if (!url.pathname.startsWith('/api/')) return route.continue();
       if (url.pathname === `/api/v1/agents/${this.agent.id}/channel-usage`)
         return reply({
