@@ -9,6 +9,11 @@ import {
   type MessageVote,
 } from './agents/message-feedback.js';
 import {
+  feedbackDetails,
+  setFeedbackReasons,
+  type FeedbackReasonRequest,
+} from './agents/feedback-reasons.js';
+import {
   readAgentSettings,
   changeAgentSettings,
   type UpdateAgentSettingsRequest,
@@ -28,6 +33,7 @@ import {
   type UpdateAgentServiceAccessRequest,
 } from './agents/access-requests.js';
 import type { ResolvedConfig } from './config.js';
+import { readSuggestions } from './agents/suggestions.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { ProtocolError } from './errors.js';
 import { array, boolean, integer, object, optional, type Parser } from './schema.js';
@@ -119,6 +125,26 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  suggestions(
+    id: string,
+    scope: import('./answer-context.js').AnswerContext,
+    options: OperationOptions = {},
+  ) {
+    return readSuggestions(this.config, id, scope, options);
+  }
+
+  feedbackDetails(id: string, messageId: string, options: OperationOptions = {}) {
+    return feedbackDetails(this.config, id, messageId, options);
+  }
+  setFeedbackReasons(
+    id: string,
+    messageId: string,
+    body: FeedbackReasonRequest,
+    options: OperationOptions = {},
+  ) {
+    return setFeedbackReasons(this.config, id, messageId, body, options);
+  }
 
   /** Read saved owner votes; use next as after until pagination completes. */
   messageFeedback(id: string, options: EventOptions = {}) {
