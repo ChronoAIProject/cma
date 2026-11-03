@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { execFileSync, spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
-const { mkdtemp, mkdir, writeFile, rm } = require('node:fs/promises');
+const { mkdtemp, mkdir, writeFile, readFile, rm } = require('node:fs/promises');
 const { createServer } = require('node:http');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -15,6 +15,8 @@ test('pinned native Agent navigates A then B; fresh bounded frames retain contex
   const bridgePath = process.env.CMA_ACP_TEST_BRIDGE;
   assert(binary && bridgePath, 'Pinned provider and bridge must be explicitly supplied');
   assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
+  assert.equal(createHash('sha256').update(await readFile(bridgePath)).digest('hex'),
+    '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c');
   const directory = await mkdtemp(join(tmpdir(), 'cma-browser-native-'));
   const home = join(directory, 'agent');
   await mkdir(home);
@@ -64,7 +66,8 @@ test('pinned native Agent navigates A then B; fresh bounded frames retain contex
       const functions = declared.flatMap(tool => tool.tools ?? [tool]);
       const tool = functions.find(tool => ['exec_command', 'shell_command', 'shell', 'exec'].includes(tool.name));
       assert(tool, 'native execution tool is declared: ' + JSON.stringify(declared.map(tool => tool.name)));
-      const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(__dirname, 'command.cjs'))} navigate ${JSON.stringify(origin + '/' + requestedPage)}`;
+      const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+      const command = `${quote(process.execPath)} ${quote(join(__dirname, 'command.cjs'))} navigate ${quote(origin + '/' + requestedPage)}`;
       const argumentsValue = tool.name === 'shell' ? { command: ['/bin/sh', '-c', command] }
         : tool.name === 'shell_command' ? { command, timeout_ms: 10000 }
           : { cmd: command, yield_time_ms: 10000, max_output_tokens: 1000 };
@@ -142,6 +145,7 @@ test('pinned native Agent navigates A then B; fresh bounded frames retain contex
     }
     assert(deliveries <= 16, 'repeated reads cannot deliver unbounded cached frames');
     await call('release', { observer: 'bounded-delivery' });
+    await delay(1000);
     if (process.env.CMA_BROWSER_PROOF_DIRECTORY) {
       const budgets = [];
       for (const [mode, count] of [['normal', 1], ['hidden', 0], ['closed', 0], ['multiple', 4]]) {
@@ -149,15 +153,19 @@ test('pinned native Agent navigates A then B; fresh bounded frames retain contex
         const started = Date.now();
         let transferred = 0;
         let peakMemory = 0;
-        const initialCpu = processResources(mediator.pid).cpuSeconds;
+        const sample = () => {
+          const resources = processResources(mediator.pid);
+          peakMemory = Math.max(peakMemory, resources.rssKiB);
+        };
         for (let tick = 0; tick < 5; tick += 1) {
           for (let index = 0; index < count; index += 1) {
             const observation = await call('observe', { observer: 'budget-' + index });
             transferred += Buffer.byteLength(JSON.stringify(observation));
           }
-          peakMemory = Math.max(peakMemory, processResources(mediator.pid).rssKiB);
+          sample();
           await delay(1000);
         }
+        sample();
         const after = await call('status');
         const seconds = (Date.now() - started) / 1000;
         assert(after.captures - before.captures <= 6);
@@ -165,8 +173,10 @@ test('pinned native Agent navigates A then B; fresh bounded frames retain contex
         if (count === 0) assert.equal(after.captures, before.captures);
         budgets.push({ mode, observers: after.observers, elapsedSeconds: seconds,
           captures: after.captures - before.captures, responseBytes: transferred,
-          bytesPerSecond: transferred / seconds, peakRssKiB: peakMemory,
-          cpuPercentOfOneCore: (processResources(mediator.pid).cpuSeconds - initialCpu) / seconds * 100 });
+          bytesPerSecond: transferred / seconds, peakProcessTreeRssKiB: peakMemory,
+          cpuPercentOfOneCore: null,
+          cpuMeasurement: 'Unknown: process-tree churn prevents stable cumulative CPU accounting',
+          memoryMeasurement: 'Sum of sampled process RSS; shared pages can be counted more than once; not browser working memory' });
         for (let index = 0; index < count; index += 1) await call('release', { observer: 'budget-' + index });
       }
       const proof = process.env.CMA_BROWSER_PROOF_DIRECTORY;
@@ -193,11 +203,10 @@ test('pinned native Agent navigates A then B; fresh bounded frames retain contex
 });
 
 function processResources(root) {
-  const rows = execFileSync('ps', ['-axo', 'pid=,ppid=,time=,rss='], { encoding: 'utf8' })
+  const rows = execFileSync('ps', ['-axo', 'pid=,ppid=,rss='], { encoding: 'utf8' })
     .trim().split('\n').map(line => {
-      const [pid, parent, time, memory] = line.trim().split(/\s+/);
-      const seconds = time.split(':').map(Number).reduce((total, part) => total * 60 + part, 0);
-      return { pid: Number(pid), parent: Number(parent), seconds, memory: Number(memory) };
+      const [pid, parent, memory] = line.trim().split(/\s+/);
+      return { pid: Number(pid), parent: Number(parent), memory: Number(memory) };
     });
   const selected = new Set([root]);
   for (let previous = -1; previous !== selected.size;) {
@@ -205,6 +214,6 @@ function processResources(root) {
     for (const row of rows) if (selected.has(row.parent)) selected.add(row.pid);
   }
   return rows.filter(row => selected.has(row.pid)).reduce((total, row) => ({
-    cpuSeconds: total.cpuSeconds + row.seconds, rssKiB: total.rssKiB + row.memory,
-  }), { cpuSeconds: 0, rssKiB: 0 });
+    rssKiB: total.rssKiB + row.memory,
+  }), { rssKiB: 0 });
 }

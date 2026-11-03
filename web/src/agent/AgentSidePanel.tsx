@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import { useCmaClient } from '../api/context';
 import { SharedAgentDetails } from '../resources/SharedAgentDetails';
@@ -53,14 +53,25 @@ export function AgentSidePanel({
   const computerOpen = panel !== undefined && panel !== 'details';
   const environment = useAgentEnvironment(client.files, agentId, computerOpen);
   const features = environment.state.status === 'ready' ? environment.state.value : undefined;
-  const selection = useMemo(() => ({ chosen: false }), [client, agentId]);
+  const selection = useRef<
+    { client: typeof client; agentId: string; tab: AgentPanel; open: boolean } | undefined
+  >(undefined);
   useEffect(() => {
-    if (!computerOpen || !features || selection.chosen) return;
-    selection.chosen = true;
-    if (features.browser.state === 'available' && panel === 'files') onSelect?.('browser');
-  }, [computerOpen, features, selection, panel, onSelect]);
+    const chosen =
+      selection.current?.client === client && selection.current.agentId === agentId
+        ? selection.current
+        : undefined;
+    if (!computerOpen) {
+      if (chosen) selection.current = { ...chosen, open: false };
+      return;
+    }
+    if (!features || chosen?.open) return;
+    const tab = chosen?.tab ?? (features.browser.state === 'available' ? 'browser' : panel);
+    selection.current = { client, agentId, tab, open: true };
+    if (tab !== panel && panel === 'files') onSelect?.(tab);
+  }, [computerOpen, features, client, agentId, panel, onSelect]);
   const select = (tab: AgentPanel) => {
-    selection.chosen = true;
+    selection.current = { client, agentId, tab, open: computerOpen };
     onSelect?.(tab);
   };
   const observed = useComputerObservation(shared ? observation : undefined);

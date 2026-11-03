@@ -9,6 +9,9 @@ use super::*;
 
 struct FilesystemFixture(PathBuf);
 
+#[path = "supervisor_browser_http_tests.rs"]
+mod browser_http;
+
 impl Drop for FilesystemFixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);

@@ -4186,3 +4186,8 @@ observation releases it without navigating, reopening a task or resetting its pa
 Agent, account, runtime or permission changes remove the old image immediately.
 
 | 2026-11-03 | Define bounded real browser observation, fresh decoded Live state, explicit enablement and scoped withdrawal for ticket 15. |
+
+Reopening Computer for the same Agent retains the selected tab. Explicitly
+choosing Files or Operation output takes precedence over the Browser default.
+
+| 2026-11-03 | Retain the selected Computer tab across closing and reopening observation. |

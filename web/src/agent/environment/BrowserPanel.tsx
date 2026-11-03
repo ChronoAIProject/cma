@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, type AgentBrowserClient, type BrowserObservation } from '@chronoai/cma-sdk';
 import { Button } from '../../ui/Button';
 
@@ -35,14 +35,19 @@ export function BrowserPanel({
     let generation = 0;
     let pending: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let freshness: ReturnType<typeof setInterval> | undefined;
     let contextId: string | undefined;
     let frame: Frame | undefined;
     let location: string | undefined;
     let failures = 0;
     let terminal = false;
     const observer = crypto.randomUUID();
-    const publish = (state: BrowserStatus, retained = frame) => {
-      if (alive) setStored({ scope, state, frame: retained, location });
+    const publish = (state: BrowserStatus, retained: Frame | null | undefined = frame) => {
+      if (alive) setStored({ scope, state, frame: retained ?? undefined, location });
+    };
+    const startClock = () => {
+      setClock(Date.now());
+      freshness = setInterval(() => setClock(Date.now()), 250);
     };
     const release = () => {
       void client.release(agentId, { runtime_incarnation: incarnation, observer }).catch(() => {});
@@ -50,6 +55,7 @@ export function BrowserPanel({
     const stop = () => {
       generation += 1;
       clearTimeout(timer);
+      clearInterval(freshness);
       pending?.abort();
       pending = undefined;
       release();
@@ -114,8 +120,9 @@ export function BrowserPanel({
     };
     const visibility = () => {
       stop();
-      if (document.visibilityState === 'hidden') publish('paused', undefined);
+      if (document.visibilityState === 'hidden') publish('paused', null);
       else if (!terminal) {
+        startClock();
         publish('loading');
         void read();
       }
@@ -123,7 +130,7 @@ export function BrowserPanel({
     document.addEventListener('visibilitychange', visibility);
     publish('loading');
     void read();
-    const freshness = setInterval(() => setClock(Date.now()), 250);
+    if (!hidden()) startClock();
     return () => {
       alive = false;
       stop();
@@ -195,22 +202,24 @@ export function EnableBrowser({
   readonly incarnation: string;
   readonly onEnabled: () => void;
 }) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState(false);
-  useEffect(() => {
-    setError(false);
-    setPending(false);
-  }, [client, agentId, incarnation]);
+  const scope = useMemo(() => ({ client, agentId, incarnation }), [client, agentId, incarnation]);
+  const [attempt, setAttempt] = useState<{ scope: typeof scope; state: 'pending' | 'failed' }>();
+  const request = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => request.current?.abort(), [scope]);
+  const pending = attempt?.scope === scope && attempt.state === 'pending';
+  const error = attempt?.scope === scope && attempt.state === 'failed';
   const enable = async () => {
-    setPending(true);
-    setError(false);
+    const controller = new AbortController();
+    request.current = controller;
+    setAttempt({ scope, state: 'pending' });
     try {
-      await client.configure(agentId, incarnation, true);
-      onEnabled();
+      await client.configure(agentId, incarnation, true, { signal: controller.signal });
+      if (!controller.signal.aborted) {
+        setAttempt(undefined);
+        onEnabled();
+      }
     } catch {
-      setError(true);
-    } finally {
-      setPending(false);
+      if (!controller.signal.aborted) setAttempt({ scope, state: 'failed' });
     }
   };
   return (

@@ -12,6 +12,7 @@ pub(crate) struct Browser {
     child: Child,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
+    incoming: Vec<u8>,
     sequence: u64,
     _managed: crate::writer_fence::ManagedChild,
 }
@@ -72,6 +73,7 @@ impl Browser {
             child,
             input,
             output,
+            incoming: Vec::new(),
             sequence: 0,
             _managed: managed,
         })
@@ -91,20 +93,27 @@ impl Browser {
                 .write_all(&encoded)
                 .await
                 .map_err(|_| unavailable())?;
-            let mut encoded = Vec::new();
-            (&mut self.output)
-                .take(360000)
-                .read_until(b'\n', &mut encoded)
-                .await
-                .map_err(|_| unavailable())?;
-            if encoded.last() != Some(&b'\n') {
-                return Err(unavailable());
-            }
-            let value: serde_json::Value =
-                serde_json::from_slice(&encoded).map_err(|_| unavailable())?;
-            if value["id"].as_u64() != Some(self.sequence) || value.get("error").is_some() {
-                return Err(unavailable());
-            }
+            let value = loop {
+                (&mut self.output)
+                    .take(360000_u64.saturating_sub(self.incoming.len() as u64))
+                    .read_until(b'\n', &mut self.incoming)
+                    .await
+                    .map_err(|_| unavailable())?;
+                if self.incoming.last() != Some(&b'\n') {
+                    return Err(unavailable());
+                }
+                let encoded = std::mem::take(&mut self.incoming);
+                let value: serde_json::Value =
+                    serde_json::from_slice(&encoded).map_err(|_| unavailable())?;
+                let identifier = value["id"].as_u64().ok_or_else(unavailable)?;
+                if identifier < self.sequence {
+                    continue;
+                }
+                if identifier != self.sequence || value.get("error").is_some() {
+                    return Err(unavailable());
+                }
+                break value;
+            };
             let observation: BrowserObservation =
                 serde_json::from_value(value["value"].clone()).map_err(|_| unavailable())?;
             if !observation.valid() {
@@ -112,13 +121,9 @@ impl Browser {
             }
             Ok(observation)
         };
-        match tokio::time::timeout(Duration::from_secs(12), operation).await {
-            Ok(result) => result,
-            Err(_) => {
-                let _ = self.child.kill().await;
-                Err(unavailable())
-            }
-        }
+        tokio::time::timeout(Duration::from_secs(12), operation)
+            .await
+            .map_err(|_| unavailable())?
     }
 }
 

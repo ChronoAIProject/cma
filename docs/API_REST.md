@@ -1435,6 +1435,9 @@ Directory creation uses `directory: true`. File operations do not require an
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/agents/{id}/environment` | - | - | 200 EnvironmentView |
+| `GET /api/v1/agents/{id}/browser` | - | runtime_incarnation*, observer, context_id | 200 BrowserView |
+| `PUT /api/v1/agents/{id}/browser` | BrowserEnablement | - | 200 BrowserView |
+| `DELETE /api/v1/agents/{id}/browser` | - | runtime_incarnation*, observer* | 200 BrowserView |
 | `GET /api/v1/agents/{id}/files/tree` | - | path | 200 FileListView |
 | `GET /api/v1/agents/{id}/files/content` | - | path*, max_bytes | 200 FileReadView |
 | `GET /api/v1/agents/{id}/files/download` | - | path* | 200 application/octet-stream |
@@ -1453,9 +1456,64 @@ caller. Responses use the existing private/no-store file-route policy.
 Files retain the existing `mounted_home` scope, including `/home/`; this is not
 an Agent-private directory. `writable` requires owner authority or an accepted
 current typed write link. Recorded output has `agent_turn_history` scope and
-requires `view_history`. Browser, replay and control currently report
+requires `view_history`. Browser observations use `agent_browser` scope and
+require `view_history`; `writable` remains false. Older runtimes without the
+browser protocol report unsupported. Replay and control still report
 `unsupported`, `not_supported_by_contract`, `none`, and `false`. No runtime
-address, boot identifier, browser stream, replay resource or PTY is exposed.
+address, boot identifier, replay resource or PTY is exposed.
+
+Browser enablement is explicit and owner-only (`manage_sharing` authority):
+`PUT /api/v1/agents/{id}/browser` accepts
+`{"runtime_incarnation":"<environment observation>","enabled":true}`. False
+closes this browser. No browser starts at Sandbox startup, Agent startup or
+environment read. The running Agent must already exist; at most one Agent
+browser is enabled per Sandbox. Enablement belongs to this runtime incarnation
+and is not persisted or automatically replayed after restart. It does not
+restart the Agent, create a task, or enable user control. Ticket 16 owns any
+Home creation integration. The runtime's private `cma-browser navigate URL`
+command operates this same Agent context via its injected Unix socket; the
+public API accepts no navigation, script, pointer or keyboard operation.
+
+GET without `observer` reads status without capturing. GET with an observer
+identifier (1–64 ASCII letters, digits or hyphens) requests a bounded real frame.
+The service scopes that identifier to the caller and credential identity,
+authorizes before reading, and revalidates policy and runtime after reading.
+`runtime_incarnation` is mandatory; stale runtime identity returns 409. After
+the first frame, clients send its opaque UUID `context_id` to fence later reads.
+An empty paused, disabled or unsupported observation may withdraw that context;
+a different live context cannot replace it. Current unauthorized reads return
+403 or undisclosing 404. These fields are correlation values, never access grants.
+
+`BrowserView` contains Agent/incarnation/context, `state`, a sanitized `location`
+(`Blank page`, `Local page` or `Web page`), nullable `frame`, and bounded counters.
+It exposes no CDP address, Unix socket, profile path, URL query or credentials.
+Frame content is the authorized page image, not a recording or historical replay.
+States distinguish `not_enabled`, `unsupported`, `loading`, `ready` (enabled,
+without a delivered frame), `live`, `paused`, and `disconnected`. A sandbox
+startup failure reports unsupported; it never substitutes a fixture image.
+The existing production namespace/security policy must permit Chromium's own
+sandbox. The ticket 15 evidence records the current Linux policy blocker.
+
+Each JPEG is 1280×720, at most 262144 decoded bytes, with a strictly increasing
+sequence and actual `captured_at`. Captures are at least 1000 ms apart, including
+across navigation; no more than 16 image deliveries occur in a rolling second.
+There is one cached frame, 16 observer leases of 4000 ms, 32 queued mediator
+operations, and a 360000-byte SDK response limit. Existing public file-route
+capacity limits apply. `captures` counts real capture attempts returning image
+data; `bytes` counts accepted decoded capture bytes, not wire bandwidth. There
+is no capture timer when nobody requests observation. Page activity can continue
+while observation is hidden or closed; browser CPU/memory do not necessarily
+fall to zero. Disablement explicitly ends that page.
+
+DELETE releases only the caller's observer lease; it preserves the page and
+context. Web polls at one second while visible, aborts after four seconds, backs
+off failures at 2/4/8 seconds, and releases on hiding, closing or scope changes.
+Only a decoded frame less than 3000 ms old can display Live. Duplicate, delayed
+or older-sequence frames cannot renew freshness or roll the image backward.
+Transient failure retains a labeled last frame; permission/runtime loss removes
+it. The TypeScript `agentBrowser` and Rust `agent_browser()` APIs implement the
+same bounded read/configure/release contract. No request is automatically retried
+as an enablement mutation.
 
 Agent event reads opt into recorded output with `tool_output=true`. A tool update
 may include `output: {text, truncated}`; `tool_output_reported` contains `call_id`
