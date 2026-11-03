@@ -4324,3 +4324,25 @@ recheck visible previews on focus and periodically, clearing content while acces
 is uncertain or revoked. Conversation sharing does not grant file/document access.
 
 | 2026-11-03 | Add answer-bound safe read-only previews, bounded rendering, resource access renewal, accessible return focus and persistent conversation/file editing for ticket 08. |
+
+### Operation record replay (2026-11-03)
+
+Operation output gains **Operation record replay** only when the public replay
+contract is available. Reuse the computer panel's spacing, typography and plain
+preformatted output. A labelled navigation group offers **Previous operation**,
+**Next operation**, and **Return Live**, using existing small buttons and visible
+focus. Left/Right arrows navigate when this group has focus; End returns Live.
+Show the selected durable cursor and turn, recorded command, output, status,
+timestamp, and the plan recorded at that point. Missing fields say **Not
+recorded**; truncated output, gaps and expired history have explicit text.
+There are no historical browser images or file contents without snapshots.
+
+Live events continue receiving while a historical cursor stays selected. Live
+shows the latest durable operation, and Return Live reads the latest public
+cursor. Reload keeps only the scoped cursor and obtains fresh authorized data.
+History is read-only: command entry, approvals, feedback, suggestions and control
+are unavailable in the replay view. Completed turns and plan cards can open
+**View plan and replay** for their actual turn, including turns without plans.
+Permission changes clear the selected content before another authorized read.
+
+| 2026-11-03 | Define durable operation record replay, keyboard navigation, exact Live return, recorded-only snapshots, scoped reload and read-only history for ticket 18. |
