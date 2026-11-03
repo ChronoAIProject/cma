@@ -51,6 +51,7 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
+mod suggestions;
 mod bindings;
 mod channel_usage;
 mod command_audit;
@@ -399,6 +400,7 @@ impl AgentLogStore for InMemorySandboxStore {
             kind,
         };
         log.push(event.clone());
+        suggestions::enqueue(&mut state, agent_id);
         Ok(event)
     }
 

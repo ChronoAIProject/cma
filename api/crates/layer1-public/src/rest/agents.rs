@@ -81,6 +81,7 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
             get(read_lifecycle_operation),
         )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
+        .route("/api/v1/agents/{id}/suggestions", get(super::suggestions::read))
         .route(
             "/api/v1/agents/{id}/message-feedback",
             get(super::message_feedback::list),
