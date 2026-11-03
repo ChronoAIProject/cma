@@ -4,11 +4,7 @@ export function TurnCompletion({ conversation }: { readonly conversation: Conver
   const latest = conversation.latestRunId;
   const outcome = latest === undefined ? undefined : conversation.turnOutcomes?.[latest];
   const timing = latest === undefined ? undefined : conversation.turnTiming?.[latest];
-  if (
-    conversation.activeRunId !== undefined ||
-    outcome !== 'completed' ||
-    !timing?.finishedAt
-  )
+  if (conversation.activeRunId !== undefined || outcome !== 'completed' || !timing?.finishedAt)
     return null;
   const elapsed = Date.parse(timing.finishedAt) - Date.parse(timing.startedAt);
   if (!Number.isFinite(elapsed) || elapsed < 0) return null;
