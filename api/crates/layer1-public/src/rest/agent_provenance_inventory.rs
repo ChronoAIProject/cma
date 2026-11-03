@@ -29,6 +29,7 @@ pub fn agent_provenance_inventory_router(service: Arc<AgentProvenanceInventorySe
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Params {
+    task_status: Option<layer2_core::sandbox::AgentTaskStatus>,
     organization: Option<String>,
     #[serde(default)]
     shared: bool,
@@ -44,6 +45,8 @@ pub(crate) struct Params {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct AgentProvenanceInventoryItemView {
+    #[schema(value_type = String)]
+    task_status: layer2_core::sandbox::AgentTaskStatus,
     agent_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
@@ -66,7 +69,7 @@ pub(crate) struct AgentProvenanceInventoryPageView {
 
 #[utoipa::path(get, path = "/api/v1/agents/provenance", tag = "agents",
     params(("shared" = Option<bool>, Query, description = "Explicit incoming shares across current organizations; mutually exclusive with organization"), ("organization" = Option<String>, Query), ("sandbox" = Option<String>, Query),
-        ("workspace" = Option<String>, Query), ("status" = Option<String>, Query),
+        ("workspace" = Option<String>, Query), ("status" = Option<String>, Query), ("task_status" = Option<String>, Query),
         ("creation_origin" = Option<AgentCreationCategoryView>, Query),
         ("channel_active" = Option<bool>, Query), ("channel_history" = Option<bool>, Query),
         ("cursor" = Option<String>, Query), ("limit" = Option<u16>, Query)),
@@ -85,6 +88,7 @@ pub(crate) async fn list(
         return invalid();
     };
     let query = AgentProvenanceInventoryQuery {
+        task_status: params.task_status,
         organization: params.organization.map(SubjectId::new),
         shared: params.shared,
         agents: AgentListQuery {
@@ -129,6 +133,7 @@ fn invalid() -> Response {
 impl From<AgentProvenanceInventoryRow> for AgentProvenanceInventoryItemView {
     fn from(value: AgentProvenanceInventoryRow) -> Self {
         Self {
+            task_status: value.task_status,
             agent_id: value.agent_id.to_string(),
             title: value.title,
             status: value.status,

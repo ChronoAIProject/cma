@@ -38,6 +38,7 @@ pub(super) fn snapshot(
         }
     };
     let snapshot = AgentChannelUsageSnapshot {
+        task_status: Default::default(),
         provenance,
         state: usage,
     };
