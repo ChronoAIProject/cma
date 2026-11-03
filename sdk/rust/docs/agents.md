@@ -482,7 +482,10 @@ Some(MessageVote::Up))` sets a positive vote; use `MessageVote::Down` to switch 
 These idempotent metadata writes need no command key and never create turns.
 Serialize changes to one message and avoid replaying an old write after a newer
 choice. Current owner authority is required; shared readers cannot inspect or
-change these votes.
+change these votes. New writes accept only the nonempty Assistant message with
+the greatest durable sequence in a successfully completed turn. Other targets
+return 404; historical votes remain readable, and the up/down/null request and
+response shapes remain unchanged.
 
 ### Agent session share links
 
