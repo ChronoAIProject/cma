@@ -107,6 +107,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "provider_bindings",
     "provider_binding_preparations",
     "provider_tool_opens",
+    "provider_tool_relays",
     "resource_policies",
     "resource_share_commands",
     "resource_shares",
