@@ -346,6 +346,11 @@ export function AgentSurface({
           />
         ) : null}
         <MessageStream
+          deliverables={
+            lifecycleClient?.deliverables && viewerId && !accessUncertain && accessAuthorized
+              ? { agentId, viewerId, client: lifecycleClient.deliverables }
+              : undefined
+          }
           media={
             lifecycleClient?.files && !accessUncertain && accessAuthorized
               ? {
