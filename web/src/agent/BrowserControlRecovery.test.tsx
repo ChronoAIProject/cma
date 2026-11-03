@@ -77,6 +77,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it('keeps the acquisition action unavailable while its current-state read is settling', async () => {
+  const runtime = fixture();
+  render(panel(runtime.client));
+  const acquire = await screen.findByRole('button', { name: 'Take control' });
+  let finish: (() => void) | undefined;
+  runtime.hold(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  fireEvent(window, new Event('online'));
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(acquire).toBeDisabled();
+  runtime.hold();
+  await act(async () => finish?.());
+  expect(acquire).toBeEnabled();
+  fireEvent.click(acquire);
+  await screen.findByText('You are controlling');
+  expect(runtime.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+});
+
 it('drains keyboard input queued while a status read is in flight', async () => {
   const runtime = fixture();
   render(panel(runtime.client));

@@ -147,6 +147,7 @@ export function BrowserControl({
     if (busy.current || !lifetime.current.alive || !visible()) return;
     const version = lifetime.current;
     busy.current = true;
+    setSending(true);
     try {
       const pending = current.current.pending ?? recovery.read();
       const value = await client.read(
@@ -168,6 +169,7 @@ export function BrowserControl({
     } finally {
       if (version.alive) {
         busy.current = false;
+        setSending(false);
         queueMicrotask(() => actions.current.drain());
       }
     }
