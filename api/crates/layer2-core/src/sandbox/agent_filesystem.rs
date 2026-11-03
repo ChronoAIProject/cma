@@ -4,11 +4,11 @@
 //! resolves the current Agent lineage, and asks the layer-3 runtime adapter to
 //! perform a path-confined operation.
 use super::{Sandbox, SandboxStatus};
-use crate::AgentId;
 use crate::resource_access::{
     AccessError, AccessPurpose, AuthorizedResource, CallerContext, ResourceAccessError,
     ResourceAccessService, ResourceCapability, ResourceTarget,
 };
+use crate::AgentId;
 use layer3_adapter::{
     AdapterError, AgentFileDeleteReceipt, AgentFileDeleteRequest, AgentFileListReceipt,
     AgentFileListRequest, AgentFileReadReceipt, AgentFileReadRequest, AgentFileWriteReceipt,
