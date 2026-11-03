@@ -4420,3 +4420,56 @@ or offline; show the runtime-confirmed expiry/return on reconnect. Closing the
 panel attempts exact return without resetting its browser or conversation draft.
 
 | 2026-11-03 | Define receipt-confirmed exclusive browser input, exact recovery, same-context return, bounded control audit and accessible desktop/mobile input for ticket 17. |
+
+### Task experience availability and retained work (ticket 19 policy component)
+
+Task Home, suggested follow-up admission, browser enablement, takeover and replay
+presentation follow the current authenticated public eligibility response.
+Refresh it on identity changes, focus and reconnect. While unavailable or unknown,
+disable new entry and offer the ordinary **New agent** path and existing manual
+conversation. Do not expose operator cohorts or configuration terminology.
+Keep an already submitted task and its **Recover original task** action mounted;
+never reset its exact intent, draft, transport or accepted Agent on availability changes.
+Suggestions already edited into the composer keep their text and answer context;
+show **Suggested follow-ups are unavailable. Your draft is kept.** when new scoped
+submission is unavailable. Original uncertain requests retain explicit recovery.
+
+Browser eligibility is separate from live observation and ownership. Closing
+new takeover/input/renewal keeps the mounted control status, **Return to Agent**,
+and original receipt recovery visible. It does not claim release or clear the
+browser context. Keep disabled controls and status readable using existing
+button, caption, wrapping and focus patterns; no new visual tokens. Replay is
+presentation only: closing it returns to ordinary operation output without
+clearing retained replay positions or changing history access.
+
+| 2026-11-03 | Define default-off task entry, manual fallback, preserved drafts/recovery, and mounted browser return when task experience availability closes. |
+
+### Runtime readiness during task preparation (ticket 19 policy component)
+
+Keep stored Agent settings and the conversation mounted during preparation.
+Read the runtime model catalog only once the current Agent is ready, working,
+or waiting for approval; ordinary task activity is not runtime unavailability.
+Files wait for current environment availability before their first read. An
+explicit older-service environment 404 or a connection without that capability
+retains the existing file path. Keep loaded file selection and drafts across
+authorized computer-tab changes; current authorization and identity still fence
+every read. Use existing preparation/unavailable status text and retry actions,
+without inventing readiness or suppressing actual service errors.
+
+| 2026-11-03 | Defer runtime-dependent file/model reads during preparation while retaining conversation, settings and authorized tab state. |
+
+Model discovery is also available before Agent readiness when the current Sandbox
+is active or its recorded credential-delivery step completed. Previous readiness,
+including working, approval, paused or stopped Agents, keeps corrective model
+selection reachable. Do not make a failed initial model choice prevent recovery.
+
+| 2026-11-03 | Ground model discovery in delivered Sandbox credentials or prior initialization, not only an idle Agent status. |
+
+During a temporary file-authority refresh failure or expiry, keep an already
+loaded unsaved draft in its exact account/Agent/connection component, hide the
+file contents and actions, and show **Checking file access. Your unsaved changes
+are kept.** Resume only after current authorization succeeds. Initial unknown
+availability never starts a file read; revoked authority or an identity change
+withdraws that component. A retained draft is not permission to perform file IO.
+
+| 2026-11-03 | Preserve quarantined file drafts through temporary readiness/authority outages without retaining stale read or write authority. |

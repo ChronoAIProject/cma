@@ -7,6 +7,27 @@ receipt, and render conversation history from the Agent event stream. Response
 
 ## Transport eligibility
 
+Task experience eligibility is independent of transport selection. Authenticated
+`GET /api/v2/ui/task-experience` returns `Cache-Control: private, no-store` and:
+
+```json
+{"object":"cma.ui.task_experience","schema_version":1,"account_id":"current-caller","capabilities":{"task_home_admission":false,"suggested_followup_admission":false,"desktop_enable":false,"browser_takeover":false,"replay_presentation":false}}
+```
+
+Only the authenticated caller's identity and selected capabilities are disclosed;
+cohort ids are never returned. Fence this observation to the current viewer and
+refresh on identity/focus changes. Errors, unsupported servers and unknown schemas
+do not authorize new entry. Policy eligibility does not prove an environment's
+capability. New task creation, answer-scoped follow-ups, desktop enablement and
+takeover are enforced by the server after current authorization and exact accepted
+recovery. Replay is a presentation switch; authorized history remains readable.
+Closing takeover stops new acquire/input/renew, while status, original receipt
+recovery and explicit return remain available under current authority. Keep the
+mounted return UI and the unchanged native15-second lease. Never clear pending
+keys, transport selection, drafts or retained records on eligibility changes.
+See the bounded `19-ROLLOUT-POLICY.md` component in the UI optimization plan for
+configuration and reader-floor requirements; it is not combined19 acceptance.
+
 `GET /api/v2/ui/transport` requires authentication and returns
 `Cache-Control: private, no-store`. Its `enabled` value is the process-start
 `CHRONO_V2_UI_TRANSPORT_ENABLED` flag combined with composed Responses,

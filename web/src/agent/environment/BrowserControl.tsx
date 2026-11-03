@@ -32,6 +32,7 @@ export function BrowserControl({
   incarnation,
   contextId,
   active,
+  admissionAllowed = false,
   children,
 }: {
   readonly client: AgentBrowserControlClient;
@@ -40,6 +41,7 @@ export function BrowserControl({
   readonly incarnation: string;
   readonly contextId: string;
   readonly active: boolean;
+  readonly admissionAllowed?: boolean;
   readonly children: ReactNode;
 }) {
   const binding = useMemo(
@@ -61,6 +63,7 @@ export function BrowserControl({
   const current = useRef<View>({ phase: 'loading' });
   const busy = useRef(false);
   const ready = useRef(active);
+  const admission = useRef(admissionAllowed);
   const inputs = useRef<BrowserInput[]>([]);
   const draining = useRef(false);
   const renewAt = useRef(0);
@@ -124,6 +127,7 @@ export function BrowserControl({
     }
   };
   const command = (command: BrowserControlChange['command'], input?: BrowserInput) => {
+    if (command !== 'return' && !admission.current) return Promise.resolve(false);
     const value = current.current;
     if (!ready.current || !visible() || value.phase !== 'ready' || !value.value)
       return Promise.resolve(false);
@@ -193,6 +197,8 @@ export function BrowserControl({
   useEffect(() => {
     actions.current = { read, command, drain };
     ready.current = active;
+    admission.current = admissionAllowed;
+    if (!admissionAllowed) inputs.current = [];
   });
   useEffect(() => {
     const version = { alive: true };
@@ -252,7 +258,7 @@ export function BrowserControl({
     view.value.client_id === scope.client_id &&
     !!view.token &&
     Date.parse(view.value.expires_at ?? '') > clock;
-  const canInput = owned && active && visible();
+  const canInput = owned && active && admissionAllowed && visible();
   const enqueue = async (input: BrowserInput) => {
     if (!canInput) return;
     if (inputs.current.length >= 32) {
@@ -284,7 +290,7 @@ export function BrowserControl({
         {view.phase === 'ready' && view.value?.state === 'agent' ? (
           <Button
             size="sm"
-            disabled={!active || sending}
+            disabled={!active || !admissionAllowed || sending}
             onClick={() => {
               void command('acquire');
             }}
@@ -304,7 +310,7 @@ export function BrowserControl({
             Return to Agent
           </Button>
         ) : null}
-        {view.phase === 'unknown' ? (
+        {view.phase === 'unknown' || (view.phase === 'forbidden' && view.pending) ? (
           <>
             <Button
               size="sm"
@@ -318,7 +324,7 @@ export function BrowserControl({
             {view.pending ? (
               <Button
                 size="sm"
-                disabled={sending}
+                disabled={sending || (!admissionAllowed && view.pending.command !== 'return')}
                 onClick={() => {
                   if (view.pending) void execute(view.pending);
                 }}

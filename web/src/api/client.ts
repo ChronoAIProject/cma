@@ -219,6 +219,7 @@ export interface CmaWebClient {
   readonly resourceViews?: ResourceViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly taskExperience?: import('@chronoai/cma-sdk').TaskExperienceClient;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly readDesktopCapability?: (
     scope: { readonly workspace_id?: string; readonly sandbox_id?: string },
