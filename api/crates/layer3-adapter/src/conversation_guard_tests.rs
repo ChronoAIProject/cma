@@ -2,14 +2,14 @@ use super::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use tokio::sync::{Notify, Semaphore};
 
-struct Guard {
+pub(super) struct Guard {
     allowed: AtomicBool,
-    entered: Notify,
+    pub(super) entered: Notify,
     release: Semaphore,
 }
 
 impl Guard {
-    fn new(allowed: bool, permits: usize) -> Arc<Self> {
+    pub(super) fn new(allowed: bool, permits: usize) -> Arc<Self> {
         Arc::new(Self {
             allowed: AtomicBool::new(allowed),
             entered: Notify::new(),
