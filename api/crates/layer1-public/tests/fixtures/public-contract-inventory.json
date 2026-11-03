@@ -2215,7 +2215,7 @@
     },
     "GET /api/v2/agents/{agent_id}/events/snapshot": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors.",
+      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent operation replay uses current-policy frame fences, distinct incarnation-bound cursors and opt-in cma-tool-output; operation-replay.json covers commands, recorded output, plan and fixed page boundaries through the real handler and both typed SDKs.",
       "required_problems": [
         "not_authenticated",
         "agent_not_found",
@@ -2229,7 +2229,7 @@
     },
     "GET /api/v2/agents/{agent_id}/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors.",
+      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors; operation-replay.json covers finite read-only catch-up with after_cursor and opt-in cma-tool-output through the real handler and both typed SDKs.",
       "required_problems": [
         "not_authenticated",
         "agent_not_found",
