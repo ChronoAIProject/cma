@@ -140,6 +140,7 @@ export function AgentSurface({
     state.status === 'ready' ? state.conversation : undefined,
     viewerId ?? verified?.owner ?? '',
     agentId,
+    !readOnly && verified ? controller.readSuggestionRequest?.() : null,
   );
   useLayoutEffect(() => {
     discardPrepared();
