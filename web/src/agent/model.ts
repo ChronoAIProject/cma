@@ -11,6 +11,7 @@ export interface ConversationMessage {
   readonly status: 'streaming' | 'complete' | 'error';
   readonly at?: string;
   readonly liveOnly?: boolean;
+  readonly finalAnswer?: boolean;
   /** Exact durable Responses command that owns this message, when available. */
   readonly commandId?: string;
   readonly finalAnswer?: boolean;
