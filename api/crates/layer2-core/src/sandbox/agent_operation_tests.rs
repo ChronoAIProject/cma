@@ -14,6 +14,7 @@ mod managed_context_tests;
 mod observation_tests;
 mod preferences_tests;
 mod queued_message_tests;
+mod retired_prompt_tests;
 mod settings_tests;
 
 use std::sync::atomic::Ordering;

@@ -277,7 +277,9 @@ pub(super) fn bump_log_sequence(agent: &mut Agent, count: usize) -> Result<(), S
 
 pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     match error {
-        AdapterError::InputAuthorityUnavailable(detail) | AdapterError::Unavailable(detail) => {
+        AdapterError::InputAuthorityUnavailable(detail)
+        | AdapterError::PromptNotWritten(detail)
+        | AdapterError::Unavailable(detail) => {
             WorkerFailure::retryable("agent_runtime_unavailable", detail)
         }
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
