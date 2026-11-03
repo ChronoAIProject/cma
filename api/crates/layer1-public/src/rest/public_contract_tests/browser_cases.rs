@@ -15,6 +15,12 @@ impl BrowserAdapter for super::runtime::Files {
         handle: &RuntimeHandle,
         request: &BrowserRequest,
     ) -> Result<BrowserReceipt> {
+        if self.kind == "browser_unavailable" {
+            return Err(AdapterError::Unavailable("browser unavailable".into()));
+        }
+        if self.kind == "browser_adapter_unsupported" {
+            return Err(AdapterError::Unsupported("browser unsupported".into()));
+        }
         assert_eq!(handle.as_str(), "runtime-route");
         assert_eq!(request.sandbox_id, "sbx_route");
         assert_eq!(request.runtime_generation, 1);
@@ -30,6 +36,40 @@ impl BrowserAdapter for super::runtime::Files {
             observation: self.browser_reply.lock().unwrap().clone(),
         })
     }
+}
+
+pub(super) async fn scenario(name: &str) -> Option<super::Scenario> {
+    let kind = name.strip_prefix("browser_")?;
+    let runtime = Arc::new(super::runtime::Files::new(name));
+    let observation = match kind {
+        "live" | "viewer" => controlled_frame(),
+        "not_enabled" => BrowserObservation::idle(BrowserState::NotEnabled),
+        "unsupported" => BrowserObservation::idle(BrowserState::Unsupported),
+        "loading" | "paused" | "disconnected" | "ready" => {
+            let state = match kind {
+                "loading" => BrowserState::Loading,
+                "paused" => BrowserState::Paused,
+                "disconnected" => BrowserState::Disconnected,
+                _ => BrowserState::Ready,
+            };
+            let mut observed = BrowserObservation::idle(state);
+            observed.context_id = Some("e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24".into());
+            observed
+        }
+        "foreign"
+        | "anonymous"
+        | "not_ready"
+        | "revoked"
+        | "unavailable"
+        | "adapter_unsupported" => BrowserObservation::idle(BrowserState::NotEnabled),
+        _ => panic!("unknown browser scenario {kind}"),
+    };
+    *runtime.browser_reply.lock().unwrap() = observation;
+    let access = match kind {
+        "foreign" | "anonymous" | "not_ready" | "revoked" | "viewer" => kind,
+        _ => "owner",
+    };
+    super::scenario_with_runtime(&format!("filesystem_{access}"), runtime).await
 }
 
 async fn read(router: &Router, path: &str, subject: &str) -> (StatusCode, Value) {
