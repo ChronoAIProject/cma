@@ -65,13 +65,13 @@ async fn suggested_reply_recovers_one_exact_message_after_the_receipt_is_lost() 
         let (path, body) = if protocol == "agui" {
             (
                 "/api/v1/agui/run",
-                json!({"threadId":"agt_suggestion", "messages":[{"role":"user", "content":"Add criteria.\nKeep the original limits."}],
+                json!({"threadId":"agt_suggestion", "messages":[{"role":"user", "content":"Add criteria.\nKeep the café limits.  "}],
             "forwardedProps":{"answerContext":scope}}),
             )
         } else {
             (
                 "/api/v2/responses",
-                json!({"conversation":"agt_suggestion", "input":"Add criteria.\nKeep the original limits.",
+                json!({"conversation":"agt_suggestion", "input":"Add criteria.\nKeep the café limits.  ",
             "stream":true, "answer_context":scope}),
             )
         };
@@ -145,7 +145,7 @@ async fn suggested_reply_recovers_one_exact_message_after_the_receipt_is_lost() 
         assert_eq!(
             String::from_utf8(history.to_vec())
                 .unwrap()
-                .matches("Add criteria.\\nKeep the original limits.")
+                .matches("Add criteria.\\nKeep the café limits.  \"")
                 .count(),
             1
         );
