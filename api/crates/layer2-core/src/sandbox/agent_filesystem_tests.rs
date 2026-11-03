@@ -2,7 +2,7 @@ use super::attachments::runtime;
 use super::*;
 use crate::sandbox::agent_filesystem::*;
 use crate::{resource_access::*, Authorization, Caller, Capability};
-struct NoOrganizations;
+pub(super) struct NoOrganizations;
 #[async_trait::async_trait]
 impl OrganizationAuthority for NoOrganizations {
     async fn organization_context(
@@ -21,7 +21,7 @@ impl OrganizationAuthority for NoOrganizations {
         Ok(vec![])
     }
 }
-fn context(subject: &str) -> CallerContext {
+pub(super) fn context(subject: &str) -> CallerContext {
     CallerContext {
         credential_source: CredentialSource::Retained,
         caller: Caller::new(
@@ -71,14 +71,17 @@ async fn fixture_with_authority(
     (
         AgentFileService::new(
             access.clone(),
-            Arc::new(runtime::UnusedRuntime { status: None }),
+            Arc::new(runtime::UnusedRuntime {
+                status: None,
+                file_root: None,
+            }),
         ),
         access,
         context("owner"),
     )
 }
 
-struct OrganizationAdmin;
+pub(super) struct OrganizationAdmin;
 #[async_trait::async_trait]
 impl OrganizationAuthority for OrganizationAdmin {
     async fn organization_context(
