@@ -15,6 +15,9 @@ impl BrowserAdapter for super::runtime::Files {
         _handle: &RuntimeHandle,
         request: &BrowserControlRequest,
     ) -> Result<BrowserControlReceipt> {
+        if let Some(directory) = &self.browser_relay {
+            return super::native_browser_chain::forward_control(directory, request).await;
+        }
         super::browser_control_cases::runtime_reply(self, request).await
     }
 
