@@ -412,6 +412,7 @@ async fn page_bytes_and_query_header_disagreement_fail_without_mutation() {
                     last_event_id: Some(AgentCursor::parse(cursor(2)).unwrap()),
                     follow: None,
                     live_timestamps: false,
+                    tool_output: false,
                 }
             )
             .await,

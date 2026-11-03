@@ -137,6 +137,16 @@ pub enum AgentEventKind {
         /// The public `title` observation from this record.
         #[serde(deserialize_with = "super::types::required_nullable")]
         title: Option<String>,
+        #[doc = "Reported text when cma-tool-output was requested and available."]
+        #[serde(default)]
+        output: Option<crate::agents::RecordedToolOutput>,
+    },
+    #[doc = "Reported text without an invented status transition."]
+    ToolOutputReported {
+        #[doc = "Tool call identity in this Agent conversation."]
+        call_id: String,
+        #[doc = "Bounded reported output."]
+        output: crate::agents::RecordedToolOutput,
     },
     /// Safe durable approval requested record.
     ApprovalRequested {
