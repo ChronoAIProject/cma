@@ -35,6 +35,9 @@ pub struct HostedAgentOpenSettings {
     pub access_tool: Option<super::HostedAccessToolBinding>,
     /// Control-plane correlation for an already admitted turn; not launch data.
     pub recovered_prompt: Option<crate::PromptIdentity>,
+    /// Control-plane admitted context replay; input stays restricted to this
+    /// operation until its tools and settings have been acknowledged.
+    pub recovered_context_sequence: Option<u64>,
 }
 
 /// Provider-specific rendering needed by the otherwise shared hosted adapter.
@@ -53,6 +56,7 @@ pub trait HostedAgentRuntime: Send + Sync {
             provider_tool: None,
             access_tool: None,
             recovered_prompt: None,
+            recovered_context_sequence: None,
         })
     }
 }
