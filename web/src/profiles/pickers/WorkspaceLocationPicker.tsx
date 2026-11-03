@@ -114,7 +114,7 @@ export function WorkspaceLocationPicker({
       <p id="profile-location-help" className="profile-field__help">
         Start from a GitHub repository or a new empty directory.
       </p>
-      {location.type === 'git_repository' ? (
+      {location.type !== 'directory' ? (
         <>
           <Field
             id="profile-repositoryUrl"

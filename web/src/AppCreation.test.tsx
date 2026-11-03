@@ -27,7 +27,7 @@ it('retires the profile-driven Sandbox creation entry from the Agent Manager hom
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await screen.findByRole('heading', { name: 'Welcome to CMA' });
+  await screen.findByRole('heading', { name: 'What would you like to do?' });
   expect(screen.getAllByRole('button', { name: 'New agent' }).length).toBeGreaterThan(0);
   expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
@@ -69,7 +69,7 @@ it('does not offer Sandbox creation without its distinct capability', async () =
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await screen.findByRole('heading', { name: 'Welcome to CMA' });
+  await screen.findByRole('heading', { name: 'What would you like to do?' });
   expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
 it('creates the Agent in the Workspace whose row opened New agent', async () => {
@@ -77,23 +77,29 @@ it('creates the Agent in the Workspace whose row opened New agent', async () => 
   const createAgentLifecycle = vi.fn().mockRejectedValue(new Error('Lost create response'));
   render(
     <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
-      <CmaClientProvider client={agentClient({ createAgentLifecycle })} creation={creationClient()}>
+      <CmaClientProvider
+        client={agentClient({ createAgentLifecycle, readTaskCreationSupport: async () => true })}
+        creation={creationClient()}
+      >
         <App />
       </CmaClientProvider>
     </AuthContextProvider>,
   );
   const actor = userEvent.setup();
-  await actor.click(await screen.findByRole('button', { name: 'Sandboxes' }));
+  await actor.click(await screen.findByRole('button', { name: 'Settings' }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
   await actor.click(
     await screen.findByRole('button', { name: 'Options for /workspaces/chrono-bot' }),
   );
   await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
-  const dialog = await screen.findByRole('dialog', { name: 'New agent' });
-  expect(within(dialog).getByText('Start an Agent in the selected workspace.')).toBeInTheDocument();
-  await actor.click(within(dialog).getByRole('button', { name: 'Create agent' }));
+  const dialog = await screen.findByRole('dialog', { name: 'New task' });
+  expect(within(dialog).getByText('Creating in Workspace wsp_1')).toBeInTheDocument();
+  await actor.type(within(dialog).getByLabelText('Your task'), 'Read the selected workspace');
+  await actor.click(within(dialog).getByRole('button', { name: 'Start task' }));
   await waitFor(() => expect(createAgentLifecycle).toHaveBeenCalledOnce());
   expect(createAgentLifecycle.mock.calls[0]?.[0]).toEqual({
-    name: 'New agent',
+    name: 'New task',
+    initial_message: 'Read the selected workspace',
     workspace_id: 'wsp_1',
   });
 });
