@@ -164,6 +164,10 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly operationReplay?: Pick<
+    import('@chronoai/cma-sdk').Cma['agentEventsV2'],
+    'snapshot' | 'head' | 'events'
+  >;
   readonly documents?: DocumentsClient;
   readonly files?: AgentFilesClient;
   readonly readMessageFeedback?: (

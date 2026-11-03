@@ -94,7 +94,11 @@ async fn computer_environment_reports_authorized_scope_without_runtime_addresses
     assert_eq!(value["files"]["writable"], true);
     assert_eq!(value["operation_output"]["scope"], "agent_turn_history");
     assert_eq!(value["operation_output"]["state"], "available");
-    for feature in ["browser", "replay", "control"] {
+    assert_eq!(value["replay"]["state"], "available");
+    assert_eq!(value["replay"]["scope"], "agent_turn_history");
+    assert_eq!(value["replay"]["reason"], "operation_records_only");
+    assert_eq!(value["replay"]["writable"], false);
+    for feature in ["browser", "control"] {
         assert_eq!(value[feature]["state"], "unsupported");
     }
     for secret in ["runtime-test", &"b".repeat(32)] {
