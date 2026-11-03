@@ -275,7 +275,20 @@ test('real Web input exclusively controls the native Agent browser through publi
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
       true,
     );
-    await expect(page.getByRole('button', { name: 'Take control' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Take control' })).toBeInViewport({ ratio: 1 });
+    await expect
+      .poll(() =>
+        image.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          return (
+            bounds.left >= 0 &&
+            bounds.right <= innerWidth &&
+            bounds.top >= 0 &&
+            bounds.bottom <= innerHeight
+          );
+        }),
+      )
+      .toBe(true);
     await page.screenshot({ path: info.outputPath(`control-mobile-${width}.png`), fullPage: true });
   }
   await page.getByRole('button', { name: 'Take control' }).click();
