@@ -4293,6 +4293,38 @@ identity remains available to the separate suggestion-edit extension.
 
 | 2026-11-03 | Define saved contextual follow-ups, unobtrusive asynchronous delivery, bounded reads and stale-result suppression for ticket 13. |
 
+### Answer deliverable preview (2026-11-03)
+
+Answer delivery names are keyboard and touch buttons opening **Deliverable preview**
+in the existing conversation right column (300–520px), or its existing narrow
+overlay. The selected button uses the accent label and border, `aria-pressed`,
+the standard focus ring and a 44px minimum target. Selection includes Agent,
+answer and delivery identity; it never resolves an arbitrary prose path.
+
+The panel uses the existing file header (48px minimum), 16px padding, 8px gaps,
+layer-1 ground, border-l1 and normal body typography. It shows the resource name,
+revision/status, **Download**, **Retry preview**, and **Close preview**. Opening
+focuses Close preview; Escape and close return focus to the exact originating
+card without moving its conversation scroll. Keep history, composer, attachments
+and the visited file editor mounted while switching panels, including pending saves.
+
+Preview is read-only. Reuse the existing safe text and raster file renderer and
+the existing Markdown renderer in inert-link/media mode. Use the existing 1 MiB
+file preview bound before reading bytes; larger resources retain their separately
+bounded authorized download. Raw HTML, SVG and executable documents are shown as
+plain text when safe to decode; untrusted links and embedded media are inert.
+PDF and other unsupported formats explain **Preview is not supported; download
+to view this file**; no same-origin document frame or active page is introduced.
+
+Loading, failed reads, preview size limits, deleted files, changed live files,
+newer document revisions and revoked permission have distinct status text.
+An older document revision stays explicit and exact. Switching resources cancels
+the prior read. Every read/download uses current independent resource authority;
+recheck visible previews on focus and periodically, clearing content while access
+is uncertain or revoked. Conversation sharing does not grant file/document access.
+
+| 2026-11-03 | Add answer-bound safe read-only previews, bounded rendering, resource access renewal, accessible return focus and persistent conversation/file editing for ticket 08. |
+
 ### Agent browser observation (2026-11-03)
 
 An explicitly enabled Agent browser selects Browser on the first Computer opening,
