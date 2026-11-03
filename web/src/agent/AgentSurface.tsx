@@ -12,6 +12,7 @@ import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentController, AgentResourceState } from './controller';
 import { Composer } from './Composer';
 import { SessionSettings } from './SessionSettings';
+import { modelCatalogReady } from './modelReadiness';
 import { useMessageFeedback } from './useMessageFeedback';
 import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
@@ -208,12 +209,10 @@ export function AgentSurface({
   // A subscription Agent can be signed in again from the header menu.
   const signInAgain =
     !readOnly && verified?.services.some((service) => service.service === subscriptionService);
-
   const uploadAttachment = agentAttachmentUploader(
     agentId,
     readOnly || verified === undefined ? undefined : lifecycleClient,
   );
-
   return (
     <section className="agent-surface">
       {connections.dialog}
@@ -381,11 +380,12 @@ export function AgentSurface({
         >
           {suggestions && !readOnly && verified && !historyIncomplete ? (
             <SuggestedReplies
-              onEdit={editing.edit}
+              onEdit={editing.admissionAllowed ? editing.edit : undefined}
               key={suggestions.id}
               suggestions={suggestions}
               controller={controller}
               disabled={
+                !editing.admissionAllowed ||
                 connections.pending ||
                 !controller.inputAvailability.allowed ||
                 controller.pending !== undefined ||
@@ -434,6 +434,7 @@ export function AgentSurface({
                 key={`settings:${viewerId}:${agentId}`}
                 agentId={agentId}
                 active={!accessUncertain}
+                runtimeReady={modelCatalogReady(detail, observed, state.sandboxEvents)}
                 busy={status !== 'ready' || controller.pending !== undefined || historyIncomplete}
               />
             )
@@ -475,7 +476,7 @@ export function AgentSurface({
                 }
               : verified === undefined
                 ? { ...controller.inputAvailability, allowed: false }
-                : controller.inputAvailability
+                : editing.inputAvailability(controller.inputAvailability)
           }
           busy={
             connections.pending ||

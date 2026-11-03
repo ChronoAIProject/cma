@@ -61,6 +61,36 @@ impl AgentFileService {
             return Err(AgentFileError::Invalid);
         }
         self.finish(&authorized, agent_id, capability).await?;
+        if !matches!(
+            request.command,
+            BrowserControlCommand::Status | BrowserControlCommand::Return
+        ) && !self.task_experience.allows(
+            &caller.subject,
+            crate::sandbox::task_experience::TaskExperienceCapability::BrowserTakeover,
+        ) {
+            let lookup = BrowserControlRequest {
+                command: BrowserControlCommand::Status,
+                expected_revision: None,
+                lease_token: None,
+                input: None,
+                ..request.clone()
+            };
+            let recovered = self.send_browser_control(&authorized, &lookup).await;
+            self.finish(&authorized, agent_id, capability).await?;
+            match recovered {
+                Ok(receipt)
+                    if receipt.control.operation_revision.is_some_and(|revision| {
+                        request
+                            .expected_revision
+                            .is_some_and(|expected| revision > expected)
+                            && revision <= receipt.control.revision
+                    }) => {}
+                Ok(_) | Err(AgentFileError::Conflict) => {
+                    return Err(ResourceAccessError::Access(AccessError::Forbidden).into())
+                }
+                Err(error) => return Err(error),
+            }
+        }
         let receipt = self.send_browser_control(&authorized, &request).await?;
         self.finish(&authorized, agent_id, capability).await?;
         Ok(BrowserControlView {
