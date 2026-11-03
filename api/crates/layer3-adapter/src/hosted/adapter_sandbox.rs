@@ -2,6 +2,9 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
+        Some(self)
+    }
     async fn upload_agent_attachment(
         &self,
         handle: &RuntimeHandle,

@@ -8,6 +8,11 @@ mod adapter;
 mod agent;
 mod agent_attachment;
 mod agent_filesystem;
+mod browser;
+pub use browser::{
+    BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,
+    BrowserRequest, BrowserState,
+};
 mod agent_skill_install;
 pub use agent_skill_install::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
 mod agent_provider;

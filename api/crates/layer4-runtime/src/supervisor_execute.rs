@@ -42,6 +42,7 @@ impl Supervisor {
             }
         }
         match request {
+            RequestFrame::Browser(_) => unreachable!("browser observation dispatches separately"),
             RequestFrame::UploadAgentAttachment(upload) => self
                 .upload_attachment(upload)
                 .await
