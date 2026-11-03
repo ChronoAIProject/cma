@@ -13,6 +13,8 @@ pub(super) struct OpenRecord {
     /// Derived from the stored capability hash, never trusted from persisted data.
     #[serde(skip)]
     pub authority: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_origin: Option<String>,
     pub scope: Scope,
     pub request: AgentOpenRequest,
     pub fence: u64,
@@ -65,6 +67,14 @@ impl MongoAgentAccessToolSource {
             .iter()
             .position(|id| document.get_str("_id").ok() == Some(id.as_str()))
             .ok_or(Error::Refused)?;
+        if record.transport_origin.as_ref().is_some_and(|origin| {
+            !(0..=self.retained_origins.len()).any(|index| {
+                self.authority(index)
+                    .is_ok_and(|(known, _)| known == origin)
+            })
+        }) {
+            return Err(Error::Refused);
+        }
         if document.get_str("agent_id").ok() != Some(record.scope.creation.agent_id.as_str())
             || !record.request.has_valid_sha256()
             || record.request.options.slot.0 != record.scope.creation.agent_id.as_str()
@@ -77,6 +87,13 @@ impl MongoAgentAccessToolSource {
             return Err(Error::Refused);
         }
         Ok(record)
+    }
+
+    pub(super) fn transport_origin<'a>(&'a self, record: &'a OpenRecord) -> Result<&'a str> {
+        match &record.transport_origin {
+            Some(origin) => Ok(origin),
+            None => self.authority(record.authority).map(|(origin, _)| origin),
+        }
     }
 
     pub(super) async fn save(
