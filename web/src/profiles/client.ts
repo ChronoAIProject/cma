@@ -21,6 +21,7 @@ export interface AgentProfileContent {
 }
 
 export type WorkspaceLocation =
+  | { readonly type: 'repository_snapshot'; readonly url: string; readonly reference?: string }
   | { readonly type: 'git_repository'; readonly url: string; readonly reference?: string }
   | { readonly type: 'directory'; readonly name: string };
 

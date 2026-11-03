@@ -46,6 +46,7 @@ export type AgentProfileContent = Output<typeof agentProfileContent>;
 
 export const workspaceLocation = tagged({
   git_repository: variant('git_repository', { url: text, reference: optional(text) }),
+  repository_snapshot: variant('repository_snapshot', { url: text, reference: optional(text) }),
   directory: variant('directory', { name: text }),
 });
 export type WorkspaceLocation = Output<typeof workspaceLocation>;
