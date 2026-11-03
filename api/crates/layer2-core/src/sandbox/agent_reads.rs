@@ -41,6 +41,10 @@ pub use window::{
     AgentEventStreamHeader, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
 };
 
+#[path = "agent_reads/answer.rs"]
+mod answer;
+pub use answer::AgentFinalAnswer;
+
 impl AgentReadService {
     pub fn new<S, R>(store: Arc<S>, resources: Arc<R>) -> Arc<Self>
     where

@@ -67,6 +67,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
+    deliverables: sdk.agents,
     documents: documentsClient(),
     browser: sdk.agentBrowser,
     files: {
@@ -83,6 +84,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     ...agentSettingsClient(),
     ...messageFeedbackClient(),
+    readSuggestedReplies: (agentId, scope, options) =>
+      sdk.agents.suggestions(agentId, scope, options),
     ...agentSkillsClient(),
     grantSandboxServiceAccess: async (id, services, options) => {
       await sdk.sandboxes.grantServiceAccess(id, { services: [...services] }, options);

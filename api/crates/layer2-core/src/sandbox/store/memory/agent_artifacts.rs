@@ -4,6 +4,19 @@ use crate::sandbox::agent_artifacts::*;
 
 #[async_trait]
 impl AgentArtifactStore for InMemorySandboxStore {
+    async fn agent_artifact_metadata(
+        &self,
+        binding: &ArtifactBinding,
+        id: &str,
+    ) -> Result<Option<StoredAgentArtifactMetadata>, ResourceAccessStoreError> {
+        Ok(self
+            .lock()
+            .agent_artifacts
+            .get(id)
+            .filter(|row| &row.binding == binding)
+            .map(StoredAgentArtifact::metadata_record))
+    }
+
     async fn publish_artifact(
         &self,
         request: &ArtifactPublication,
@@ -58,6 +71,9 @@ impl AgentArtifactStore for InMemorySandboxStore {
         binding: &ArtifactBinding,
         id: &str,
     ) -> Result<Option<StoredAgentArtifact>, ResourceAccessStoreError> {
+        #[cfg(test)]
+        self.artifact_body_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(self
             .lock()
             .agent_artifacts
