@@ -94,6 +94,20 @@ impl Client {
     }
 }
 impl AgentFiles<'_> {
+    #[doc = "Read current computer capabilities without opening a runtime stream."]
+    pub async fn environment(
+        &self,
+        agent_id: &str,
+    ) -> Result<crate::agent_environment::AgentEnvironment> {
+        let value: crate::agent_environment::AgentEnvironment = self
+            .client
+            .get(&["agents", agent_id, "environment"], &[])
+            .await?;
+        if value.agent_id != agent_id {
+            return Err(Error::protocol("Agent environment identity changed"));
+        }
+        Ok(value)
+    }
     /// List exactly one directory. Empty path names /home.
     pub async fn list(&self, agent_id: &str, path: &str) -> Result<AgentFileList> {
         self.client

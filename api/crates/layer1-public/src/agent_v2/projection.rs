@@ -31,15 +31,35 @@ pub(super) async fn window(
 
 /// Reserve envelope overhead and stop before a row that does not fit. That
 /// row retains its own cursor and is the first row fetched by the next page.
-pub(super) fn items(window: &AgentReplayWindow, identity: &str) -> Result<Vec<EventItem>, Error> {
+pub(super) fn items(
+    window: &AgentReplayWindow,
+    identity: &str,
+    tool_output: bool,
+) -> Result<Vec<EventItem>, Error> {
     let mut bytes = 2048;
     let mut result = Vec::new();
     for entry in &window.entries {
+        let mut kind = entry.kind.clone();
+        if !tool_output {
+            if matches!(
+                kind,
+                Some(layer2_core::sandbox::agent_io::AgentEventKind::ToolOutputReported { .. })
+            ) {
+                kind = None;
+            }
+            if let Some(layer2_core::sandbox::agent_io::AgentEventKind::ToolUpdated {
+                output,
+                ..
+            }) = &mut kind
+            {
+                *output = None;
+            }
+        }
         let item = EventItem {
             cursor: cursor::event(identity, entry.sequence),
             sequence: entry.sequence,
             appended_at: entry.appended_at.clone(),
-            kind: entry.kind.clone(),
+            kind,
             response_binding: entry.response_binding.clone().map(Into::into),
             message_command_id: entry.message_command_id.as_ref().map(ToString::to_string),
         };
@@ -63,6 +83,10 @@ pub(super) fn message_bindings(headers: &axum::http::HeaderMap) -> bool {
 
 pub(super) fn live_timestamps(headers: &axum::http::HeaderMap) -> bool {
     preference(headers, "cma-live-observed-at")
+}
+
+pub(super) fn tool_output(headers: &axum::http::HeaderMap) -> bool {
+    preference(headers, "cma-tool-output")
 }
 
 fn preference(headers: &axum::http::HeaderMap, requested: &str) -> bool {

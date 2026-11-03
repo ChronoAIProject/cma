@@ -1,4 +1,5 @@
 import type { ReadOptions } from './client';
+import type { AgentEnvironment } from '@chronoai/cma-sdk';
 
 export interface AgentFileEntry {
   readonly path: string;
@@ -26,6 +27,7 @@ export interface AgentFileMutation {
   readonly deleted?: boolean | null;
 }
 export interface AgentFilesClient {
+  environment?(agent: string, options?: ReadOptions): Promise<AgentEnvironment>;
   list(agent: string, path: string, options?: ReadOptions): Promise<readonly AgentFileEntry[]>;
   read(agent: string, path: string, options?: ReadOptions): Promise<AgentFileContent>;
   download(agent: string, path: string, options?: ReadOptions): Promise<Blob>;
