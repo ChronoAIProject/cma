@@ -18,7 +18,7 @@ it('loads composer settings independently of optional creation provenance', asyn
   });
   const draw = (open: boolean) => (
     <CmaClientProvider client={client}>
-      <SessionSettings agentId={AGENT_DETAIL.id} active={open} busy={false} />
+      <SessionSettings agentId={AGENT_DETAIL.id} active={open} runtimeReady busy={false} />
     </CmaClientProvider>
   );
   const view = render(draw(false));

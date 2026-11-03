@@ -10,7 +10,6 @@ mod event_routing;
 mod profiles;
 mod routes;
 mod runtime;
-use crate::auth::service_portal;
 use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
@@ -24,7 +23,7 @@ use layer2_core::{
 
 use crate::{
     activity::ActivityRecorder,
-    auth::{AuthMode, AuthState},
+    auth::{service_portal, AuthMode, AuthState},
     config::Config,
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
@@ -83,7 +82,6 @@ impl ControlPlaneComposition {
         };
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
-
         let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
         let sandbox_operators = Arc::new(SandboxOperatorService::new(
             stores.sandbox_model.clone(),
@@ -182,7 +180,8 @@ impl ControlPlaneComposition {
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
             Some(adapter::desktop_creation(config, adapter.clone())?),
-        );
+        )
+        .with_task_experience(config.task_experience.clone());
         inline_lifecycle.resume_pending();
         let projections = projections
             .with_lifecycle(inline_lifecycle.clone())
@@ -362,6 +361,7 @@ impl ControlPlaneComposition {
                 documents: config.document_storage.as_ref().map(|_| documents.clone()),
                 deliverables: deliverables.clone(),
                 public_origin: config.public_url.clone(),
+                task_experience: config.task_experience.clone(),
             },
         );
         let command_service = agent_access.commands;
@@ -396,6 +396,7 @@ impl ControlPlaneComposition {
                 stores.sandbox_model.clone(),
                 resource_access.clone(),
                 adapter.clone(),
+                config.task_experience.clone(),
             ))
             .merge(layer1_public::rest::sandbox_commands_router(
                 sandbox_control_service,
@@ -437,8 +438,7 @@ impl ControlPlaneComposition {
             profile_bounds: authoring_bounds,
             profile_scanner,
         })?;
-        let resource_routes = resource_routes.merge(bot_routes);
-        let mut actor_continuations = None;
+        let (resource_routes, mut actor_continuations) = (resource_routes.merge(bot_routes), None);
         let resource_routes = if config.bot_father.is_some() {
             let bot_service = bots
                 .as_ref()
