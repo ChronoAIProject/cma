@@ -1247,6 +1247,38 @@
       "captures": {}
     },
     {
+      "id": "agent-skills-install-version-upgrade-unsupported",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_installed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-version-upgrade-unsupported"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.1"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-skill-version-upgrade-unsupported",
+          "title": "agent skill version upgrade unsupported",
+          "status": 409,
+          "detail": "Skill \"research\" is already installed at version \"1.0\"; changing it to version \"1.1\" is unsupported on an existing Agent. Create a replacement Agent with the requested profile.",
+          "code": "agent_skill_version_upgrade_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "agent-skills-install-accepted",
       "operation": "POST /api/v1/agents/{id}/skills",
       "scenario": "agent_customization_admission",

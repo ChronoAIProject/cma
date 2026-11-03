@@ -103,6 +103,83 @@
       }
     },
     {
+      "id": "binding-put-skill-version-update-unsupported",
+      "operation": "PUT /api/v1/cmaeg/bindings/{binding_id}",
+      "scenario": "binding_management_skill_version",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/cmaeg/bindings/binding-contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "route-test",
+              "owner": {
+                "kind": "human",
+                "subject": "owner"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded"
+            },
+            "context": {
+              "skills": [
+                {
+                  "id": "research",
+                  "source": "ornn",
+                  "version": "1.1"
+                }
+              ]
+            },
+            "environment": {
+              "size": {
+                "cpu_cores": 1,
+                "memory_gib": 2
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              }
+            }
+          },
+          "profile_digest": "sha256:98f6261c41a34621e907b88f6f201cc64ff200322402fdbfc4fbf8c480e86d9b",
+          "agent_key": "$ephemeral_credential",
+          "tools": {
+            "native_mcp_url": "https://gateway.example/mcp",
+            "nyxid_service_slug": "cmaeg"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_skill_version_update_unsupported",
+          "title": "binding_skill_version_update_unsupported",
+          "status": 409,
+          "detail": "skill \"research\" is installed at version \"1.0\"; changing it to version \"1.1\" is unsupported for an existing binding",
+          "code": "binding_skill_version_update_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "binding-get",
       "operation": "GET /api/v1/cmaeg/bindings/{binding_id}",
       "scenario": "binding_management_new",

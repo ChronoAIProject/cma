@@ -415,6 +415,10 @@ fn error(error: BindingError) -> Response {
         BindingError::NotFound => (StatusCode::NOT_FOUND, "binding_not_found"),
         BindingError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "invalid_binding"),
         BindingError::Conflict => (StatusCode::CONFLICT, "binding_not_ready"),
+        BindingError::SkillVersionUpdateUnsupported { .. } => (
+            StatusCode::CONFLICT,
+            "binding_skill_version_update_unsupported",
+        ),
         BindingError::ReconfigurationUnsupported => {
             (StatusCode::CONFLICT, "binding_reconfiguration_unsupported")
         }
@@ -450,6 +454,25 @@ mod error_tests {
             .as_str()
             .unwrap()
             .contains("have not been changed"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_skill_version_update_has_a_named_conflict_code() {
+        let response = error(BindingError::SkillVersionUpdateUnsupported {
+            id: "research".into(),
+            installed: "1.0".into(),
+            requested: "1.1".into(),
+        });
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "binding_skill_version_update_unsupported");
+        assert!(body["detail"]
+            .as_str()
+            .unwrap()
+            .contains("version \"1.0\""));
     }
 
     #[tokio::test]

@@ -174,6 +174,12 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::ProviderRejected,
             "The channel's sandbox or workspace is missing or removed. Reconnect the channel to an available agent.".into(),
         ),
+        ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 409, code })
+            if code == "binding_skill_version_update_unsupported" => (
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            "The selected skill version cannot be changed on an existing channel Agent. Create a replacement channel with the requested profile.".into(),
+        ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { .. }) => (
             StatusCode::BAD_GATEWAY,
             ProblemCode::ProviderRejected,
@@ -245,6 +251,26 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Reconnect the channel"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_skill_version_update_stays_a_typed_conflict() {
+        let response = management_error(ManagementError::Provider(
+            crate::providers::ProviderError::Rejected {
+                status: 409,
+                code: "binding_skill_version_update_unsupported".into(),
+            },
+        ));
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "conflict");
+        assert!(body["detail"]
+            .as_str()
+            .unwrap()
+            .contains("skill version"));
     }
 
     #[test]
