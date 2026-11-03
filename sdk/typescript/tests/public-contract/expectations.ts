@@ -138,6 +138,14 @@ const protectedQueries = new Map([
 export function expectation(
   fixture: ContractCase,
 ): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
+  if (fixture.id === 'desktop-capability-owner-400') {
+    assert.equal(fixture.operation, 'GET /api/v1/desktop-capability');
+    assert.equal(problemBody(fixture).code, 'invalid_instance_query');
+    assert(
+      new URL(fixture.request.path, 'https://contract.example').searchParams.has('unexpected'),
+    );
+    return 'raw-wire-only';
+  }
   if (fixture.id === 'filesystem-delete-reject-invalid-recursive') {
     assert.equal(problemBody(fixture).code, 'invalid_file_request');
     assert.equal(

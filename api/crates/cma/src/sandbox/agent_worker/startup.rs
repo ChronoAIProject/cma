@@ -345,6 +345,21 @@ impl AgentWorker {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
+        if let Err(detail) = layer2_core::sandbox::desktop_creation::prepare_desktop(
+            self.dependencies.adapter.as_ref(),
+            &agent,
+            &context.sandbox,
+        )
+        .await
+        {
+            return self
+                .handle_failure(
+                    agent,
+                    WorkerFailure::retryable("desktop_preparation_unavailable", detail),
+                    now + started.elapsed(),
+                )
+                .await;
+        }
         let target = match live_target(&agent) {
             Ok(target) => target,
             Err(failure) => return self.handle_failure(agent, failure, now).await,

@@ -102,7 +102,8 @@ async fn identity_provider() -> (String, tokio::task::JoinHandle<()>) {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
 async fn initial_task_public_default_environment_delivers_exact_task_after_preparation() {
-    initial_task_environment(None, None).await;
+    initial_task_environment(None, None, false).await;
+    initial_task_environment(None, None, true).await;
 }
 
 #[tokio::test]
@@ -111,6 +112,7 @@ async fn repository_task_public_preparation_pins_checkout_before_exact_task_and_
     initial_task_environment(
         Some(json!({"url":"https://github.com/example/project", "ref":"proof/fixed"})),
         None,
+        false,
     )
     .await;
 }
@@ -126,12 +128,17 @@ async fn repository_task_public_source_failure_preserves_identity_without_dispat
         initial_task_environment(
             Some(json!({"url":"https://github.com/example/project", "ref":"proof/fixed"})),
             Some(failure),
+            false,
         )
         .await;
     }
 }
 
-async fn initial_task_environment(repository: Option<Value>, source_failure: Option<&str>) {
+async fn initial_task_environment(
+    repository: Option<Value>,
+    source_failure: Option<&str>,
+    desktop: bool,
+) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let database_client = mongodb::Client::with_uri_str(&uri).await.unwrap();
     let database = database_client.database(&format!(
@@ -141,7 +148,11 @@ async fn initial_task_environment(repository: Option<Value>, source_failure: Opt
     let mut key_bytes = [0_u8; 32];
     SystemRandom::new().fill(&mut key_bytes).unwrap();
     let encryption = AuthEncryptionKey::from_base64(&STANDARD.encode(key_bytes)).unwrap();
-    let version = CodexSandboxSpec::default().deployment.image.uri;
+    let version = if desktop {
+        super::desktop::image()
+    } else {
+        CodexSandboxSpec::default().deployment.image.uri
+    };
     database
         .run_command(crate::store::isolation::role(database.name()))
         .await
@@ -175,7 +186,7 @@ async fn initial_task_environment(repository: Option<Value>, source_failure: Opt
             .await
             .unwrap(),
     );
-    let harness = Harness::with_store_services(
+    let mut harness = Harness::with_store_services(
         store,
         Arc::new(EmptyAgentSkillResolver),
         1,
@@ -185,17 +196,25 @@ async fn initial_task_environment(repository: Option<Value>, source_failure: Opt
         ]),
     )
     .await;
+    let desktop_runtime = if desktop {
+        Some(super::desktop::configure(&mut harness).await)
+    } else {
+        None
+    };
     let connection = Arc::new(RepositoryConnection(std::sync::atomic::AtomicBool::new(
         false,
     )));
-    let service = router_with_connections(
+    let service = router_with_support(
         harness.store.clone(),
         harness.registry.clone(),
         &database,
         &database_client,
         "owner",
         true,
-        connection.clone(),
+        super::desktop::CreationSupport {
+            connections: connection.clone(),
+            adapter: desktop.then(|| harness.adapter.clone()),
+        },
     )
     .await;
     let (provider, provider_task) = identity_provider().await;
@@ -244,15 +263,34 @@ async fn initial_task_environment(repository: Option<Value>, source_failure: Opt
             DEPLOYMENT_ID,
             version,
             SandboxPolicy::default(),
-        ),
+        )
+        .with_home_policy(desktop.then(super::desktop::home_policy)),
     );
     let original = "  比较三个工具\n保留原文。  ";
     let mut input = json!({"name":"New task", "initial_message":original});
+    if desktop {
+        input["desktop"] = json!(true);
+    }
     if let Some(repository) = &repository {
         input["repository"] = repository.clone();
     }
-    let (status, receipt) = create(&service, &input, "default-environment-task").await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+    let public_server = if desktop {
+        super::desktop_native::serve(service.clone(), &input).await
+    } else {
+        None
+    };
+    let (creation_key, receipt) = if public_server.is_some() {
+        super::desktop_native::creation(&input).await
+    } else {
+        let key = if desktop {
+            "process-restart-task"
+        } else {
+            "default-environment-task"
+        };
+        let (status, receipt) = create(&service, &input, key).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+        (key.to_owned(), receipt)
+    };
     let operation_path = format!(
         "/api/v1/agent-lifecycle/{}",
         receipt["id"].as_str().unwrap()
@@ -419,8 +457,36 @@ async fn initial_task_environment(repository: Option<Value>, source_failure: Opt
         );
         assert_eq!(workspace["source"]["source_commit"], "a".repeat(40));
     }
-    let (_, replay) = create(&service, &input, "default-environment-task").await;
+    let (_, replay) = create(&service, &input, &creation_key).await;
     assert_eq!(replay["id"], receipt["id"]);
+    if desktop {
+        let restarted = router_for(&harness, &database, &database_client, "owner", true).await;
+        let (status, recovered) = create(&restarted, &input, &creation_key).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{recovered}");
+        assert_eq!(recovered["id"], receipt["id"]);
+        let mut changed = input.clone();
+        changed["desktop"] = json!(false);
+        let (status, _) = create(&restarted, &changed, &creation_key).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        desktop_runtime.as_ref().unwrap().verify_recovery();
+        super::desktop::verify_preflight(&harness, &agent_id).await;
+        if public_server.is_none() {
+            super::desktop_native::verify_process_recovery(
+                &database,
+                &input,
+                &receipt,
+                &harness.stored(&agent_id).await,
+            )
+            .await;
+            super::desktop::verify_existing_admission(&service, &harness, &agent_id).await;
+        }
+    }
+    if public_server.is_some() {
+        super::desktop_native::finish().await;
+    }
+    if let Some(server) = public_server {
+        server.abort();
+    }
     provider_task.abort();
     database.drop().await.unwrap();
 }

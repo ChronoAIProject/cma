@@ -42,6 +42,41 @@ before offering this capability against an older service. Task delivery and
 results remain observable through Agent detail and transcript; the client must
 never send a second, unrecorded message after receiving the Agent identity.
 
+Optional `desktop: true` on that same initial-task request prepares the Agent's
+browser before dispatching its original task. It requires `initial_message`.
+Omitted or false preserves the previous serialized request and admission identity.
+The immutable body and idempotency key retain the desktop choice through lost
+responses, reloads, connection recovery and server restart. Changing an accepted
+choice requires an explicit new intent. Replaying an admitted request returns its
+original operation even when current deployment capability has changed.
+
+`GET /api/v1/desktop-capability` is an authenticated, read-only capability check.
+Optional `workspace_id` or `sandbox_id` selects an existing owned context; they
+are mutually exclusive. The typed result reports `state` (`available`,
+`unsupported`, or `temporarily_unavailable`), a safe `reason`, `runtime_contract`,
+`min_memory_mib`, `min_cpu_millis`, and the available immutable `runtime_image`.
+Unknown query fields return `invalid_instance_query`; invalid context returns
+`invalid_request`, unauthorized access `permission_denied`, and an unavailable
+service `temporarily_unavailable`. No capability read creates resources.
+
+Creation rechecks support before retaining a new operation or private profiles.
+Unsupported desktop returns 422 `desktop_unsupported`; transient verification
+failure returns 503 `temporarily_unavailable`. Existing contexts must already be
+active, use the verified image and supply sufficient configured capacity. Desktop
+creation never restarts or replaces an incompatible Sandbox. After admission,
+transient preparation retries retain the original Agent, task and browser context.
+The `desktop_preparation` milestone describes preparation only; `ready` does not
+assert a live frame or task completion. Live requires an actual fresh browser frame.
+
+Deployments default desktop creation off. `CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE`
+must name the exact immutable `name@sha256:digest` proved with that deployment's
+runtime, isolation policy and host. The adapter must support browsers and durable
+homes. Configured capacity must be at least 1000 millicores and 2048 MiB. This
+configuration is an operator attestation, not automatic evidence that a different
+host or permission mode supports desktop creation. An unverified image remains
+unavailable. Persisted desktop requests and first-message intent require a
+ticket16-aware reader; disabling the UI does not make older strict readers safe.
+
 The served OpenAPI extension `x-cma-task-repository: true` advertises repository
 tasks. Their optional `{url, ref}` context is frozen with the task and request
 key. GitHub access uses the existing `api-github` connection and scoped runtime
@@ -1409,6 +1444,7 @@ pools and retained homes keep their admitted templates.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `GET /api/v1/desktop-capability` | - | workspace_id, sandbox_id | 200 DesktopCapabilityView |
 | `POST /api/v1/agents` | AgentLifecycleCreateRequest; key | - | 202 AgentLifecycleCreateReceipt |
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |

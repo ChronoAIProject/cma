@@ -4375,6 +4375,22 @@ choosing Files or Operation output takes precedence over the Browser default.
 
 An explicitly selected operation record keeps the Computer on Operation output, including after closing and reopening. The enabled Browser default applies only when no prior selection exists and the generic Computer opens Files. Browser observation and operation history remain independent sources; replay never substitutes a historical browser image.
 
+### Optional desktop during task creation (2026-11-03)
+
+Home places **Enable desktop** beneath the task text, using a native checkbox in
+a 44px minimum-height labelled row. It starts unchecked. Adjacent secondary text
+explains that preparation takes extra time and memory and that the browser is
+bound to this Agent. Capability checking and unavailable reasons remain visible;
+an unavailable option is disabled without preventing ordinary tasks. Selecting it
+does not create resources. The choice and exact task survive refresh together.
+After submission the checkbox is frozen with the submitted request. A new choice
+requires an explicit new task intent; recovery never changes the accepted choice.
+Desktop preparation is a separate reported milestone. Entering the conversation
+may precede its completion. Only a fresh decoded browser frame displays Live;
+preparation or observation never repeats the first task or restarts a Sandbox.
+
+| 2026-11-03 | Define default-off Home desktop selection, capability refusal, durable frozen recovery and truthful preparation for ticket 16. |
+
 ### Exclusive browser control (2026-11-03)
 
 When the public environment reports verified writable control and the current

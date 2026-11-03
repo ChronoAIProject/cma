@@ -8,6 +8,7 @@ import { useLifecycleIntent } from './lifecycleIntent';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
+import { DesktopOption } from './DesktopOption';
 import { useTaskDraft } from './taskDraft';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import '../ui/Input.css';
@@ -58,6 +59,7 @@ function TaskComposer({
   const draft = useTaskDraft(viewerId, workspaceId, sandboxId);
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<string>();
+  const [desktopAvailable, setDesktopAvailable] = useState(false);
   const [repositorySupported, setRepositorySupported] = useState(false);
   useEffect(() => {
     const abort = new AbortController();
@@ -118,24 +120,28 @@ function TaskComposer({
         onSubmit={(event) => {
           event.preventDefault();
           if (!canCreate || supported !== true || intent || lifecycle.pending) return;
-          const invalid = !draft.text.trim()
-            ? 'Describe a task before starting.'
-            : new TextEncoder().encode(draft.text).length > 262144
-              ? 'Your task exceeds the 262144-byte limit.'
-              : draft.repositoryUrl && !repositorySupported
-                ? 'Repository tasks are unavailable on this service. Clear the repository to start an empty workspace.'
-                : !validRepository(draft.repositoryUrl)
-                  ? 'Enter an HTTPS GitHub repository URL.'
-                  : draft.repositoryRef &&
-                      (!draft.repositoryUrl || !validRepositoryRef(draft.repositoryRef))
-                    ? 'Enter a valid repository ref with a repository URL.'
-                    : undefined;
+          const invalid =
+            draft.desktop && !desktopAvailable
+              ? 'Desktop is unavailable. Keep the task and clear the desktop option, or try again later.'
+              : !draft.text.trim()
+                ? 'Describe a task before starting.'
+                : new TextEncoder().encode(draft.text).length > 262144
+                  ? 'Your task exceeds the 262144-byte limit.'
+                  : draft.repositoryUrl && !repositorySupported
+                    ? 'Repository tasks are unavailable on this service. Clear the repository to start an empty workspace.'
+                    : !validRepository(draft.repositoryUrl)
+                      ? 'Enter an HTTPS GitHub repository URL.'
+                      : draft.repositoryRef &&
+                          (!draft.repositoryUrl || !validRepositoryRef(draft.repositoryRef))
+                        ? 'Enter a valid repository ref with a repository URL.'
+                        : undefined;
           setValidation(invalid);
           if (invalid) return;
           if (!draft.persist()) return;
           void lifecycle.submit({
             name: 'New task',
             initial_message: draft.text,
+            ...(draft.desktop ? { desktop: true } : {}),
             ...(!workspaceId && !sandboxId && draft.repositoryUrl
               ? {
                   repository: {
@@ -201,6 +207,15 @@ function TaskComposer({
               : 'Repository tasks are unavailable on this service.'}
           </p>
         )}
+        <DesktopOption
+          client={client}
+          workspaceId={workspaceId}
+          sandboxId={sandboxId}
+          enabled={intent ? intent.body.desktop === true : draft.desktop}
+          frozen={Boolean(intent)}
+          onChange={draft.changeDesktop}
+          onAvailable={setDesktopAvailable}
+        />
         <Button
           type="submit"
           variant="primary"

@@ -20,6 +20,7 @@ use cma_sdk::agents::AgentLifecycleCreateRequest;
 # async fn provision(client: Client) -> Result<(), Box<dyn std::error::Error>> {
 let key = IdempotencyKey::new(std::env::var("CMA_CREATE_KEY")?)?;
 let request = AgentLifecycleCreateRequest {
+    desktop: None,
     initial_message: Some("Compare three tools and cite your sources.".into()),
     workspace_id: None,
     sandbox_id: None,

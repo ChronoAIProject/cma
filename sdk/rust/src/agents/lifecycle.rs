@@ -17,6 +17,9 @@ pub struct AgentLifecycleCreateRequest {
     /// Exact initial task, up to 262144 UTF-8 bytes; omission retains setup behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_message: Option<String>,
+    /// Prepare the Agent browser before its first task; omission preserves existing behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop: Option<bool>,
     /// Existing owned Workspace; inherits its image, repository and Sandbox scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
