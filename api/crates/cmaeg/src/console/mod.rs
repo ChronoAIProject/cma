@@ -90,7 +90,7 @@ pub struct ConsoleDeps {
     /// redirects may point to.
     pub public_url: String,
     pub public_api_url: String,
-    /// `CMAEG_NYXID_BASE_URL`: the only origin console endpoints may use.
+    /// Retained NyxID origin, used when the console OAuth override is absent.
     pub nyxid_base_url: String,
     /// The time source of session lifetimes and token ages.
     pub clock: Arc<dyn Clock>,
@@ -174,7 +174,7 @@ impl Console {
             inner: Arc::new(Inner {
                 public_url: deps.public_url,
                 public_api_url: deps.public_api_url,
-                nyxid_base_url: deps.nyxid_base_url,
+                nyxid_base_url: deps.config.nyxid_public_url.unwrap_or(deps.nyxid_base_url),
                 client_id: deps.config.client_id.clone(),
                 http,
                 keys: deps.keys,
