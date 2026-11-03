@@ -77,6 +77,7 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
         | TurnInterrupted { .. }
         | ToolCallStarted { .. }
         | ToolCallUpdated { .. }
+        | ToolOutputReported { .. }
         | ApprovalResolved { .. }
         | OperationDeliveryChanged { .. }
         | Usage { .. }

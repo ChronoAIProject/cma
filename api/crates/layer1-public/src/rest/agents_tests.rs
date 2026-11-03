@@ -11,7 +11,9 @@ mod models;
 mod settings;
 mod shared_settings;
 mod skills;
-pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
+pub(crate) use conversation_fixtures::{
+    authorized_conversation_fixture, conversation_fixture, conversation_fixture_with_registry,
+};
 
 use async_trait::async_trait;
 use axum::{
