@@ -78,6 +78,11 @@ export const resourceDispatch: Record<string, Dispatch> = {
   }) => client.agents.approveAccessRequest(param('id'), param('request_id'), body, command),
   'POST /api/v1/agents/{id}/access-requests/{request_id}/deny': ({ client, param, command }) =>
     client.agents.denyAccessRequest(param('id'), param('request_id'), command),
+  'GET /api/v1/agents/{id}/suggestions': ({ client, param, query }) =>
+    client.agents.suggestions(param('id'), {
+      turn_sequence: Number(query.get('turn_sequence')),
+      answer_sequence: Number(query.get('answer_sequence')),
+    }),
   'GET /api/v1/agents/{id}/message-feedback': ({ client, param, query }) =>
     client.agents.messageFeedback(param('id'), {
       ...(query.has('after') ? { after: Number(query.get('after')) } : {}),

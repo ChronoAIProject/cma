@@ -110,6 +110,7 @@ mod schema;
 mod schema_mongo_integration_tests;
 pub mod settings;
 mod shared_child_capacity;
+mod suggestions;
 mod trigger_definitions;
 mod trigger_first_messages;
 mod warm_sandboxes;
