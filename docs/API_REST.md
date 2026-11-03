@@ -1352,6 +1352,30 @@ Directory creation uses `directory: true`. File operations do not require an
 | `POST /api/v1/agents/{id}/files` | WriteFileRequest | - | 200 FileMutationView |
 | `DELETE /api/v1/agents/{id}/files` | - | path*, recursive | 200 FileMutationView |
 
+`GET /api/v1/agents/{id}/environment` returns a read-only capability observation
+under current `view_details` authority. It contains `agent_id`, `policy_revision`,
+an opaque nullable `runtime_incarnation`, nullable `revalidate_at`, and the
+`files`, `operation_output`, `browser`, `replay`, and `control` features. Each
+feature has `state`, `reason`, `scope`, and `writable`. States are `available`,
+`unsupported`, `not_enabled`, `forbidden`, and `temporarily_unavailable`.
+The observation is not a retained grant; every operation still authorizes its
+caller. Responses use the existing private/no-store file-route policy.
+
+Files retain the existing `mounted_home` scope, including `/home/`; this is not
+an Agent-private directory. `writable` requires owner authority or an accepted
+current typed write link. Recorded output has `agent_turn_history` scope and
+requires `view_history`. Browser, replay and control currently report
+`unsupported`, `not_supported_by_contract`, `none`, and `false`. No runtime
+address, boot identifier, browser stream, replay resource or PTY is exposed.
+
+Agent event reads opt into recorded output with `tool_output=true`. A tool update
+may include `output: {text, truncated}`; `tool_output_reported` contains `call_id`
+and `output` without a status. Text is bounded to 16 KiB of valid UTF-8 per
+record, with explicit truncation. Absence means output was not reported. Legacy
+requests omit output and retain the event cursor through redacted output-only
+entries. See [Agent events v2](API_Agent_Events_V2.md) for negotiated snapshots
+and tails, and [AG-UI](API_AGUI.md) for the stream projection.
+
 ### Agent sharing links
 
 Only the Agent owner manages links and searches the recipient directory.
