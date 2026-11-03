@@ -23,6 +23,9 @@ pub(super) async fn invoke(state: &AccessState, capability: &str, rpc: Rpc) -> R
             return super::documents::invoke(state, capability, id, &call.name, call.arguments)
                 .await;
         }
+        if call.name == "describe_deliverable" {
+            return super::deliverables::invoke(state, capability, id, call.arguments).await;
+        }
         if call.name != TOOL {
             return rpc_error(id, -32602, "Unknown tool");
         }
@@ -116,6 +119,12 @@ pub(super) async fn invoke(state: &AccessState, capability: &str, rpc: Rpc) -> R
                     .as_array_mut()
                     .expect("static tool list")
                     .extend(super::documents::list());
+            }
+            if state.deliverables.is_some() {
+                tools["tools"]
+                    .as_array_mut()
+                    .expect("static tool list")
+                    .push(super::deliverables::tool());
             }
             result(id, tools)
         }
