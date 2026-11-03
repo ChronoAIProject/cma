@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useCmaClient } from '../api/context';
 import type { MessageVote } from '../api/client';
+import { pendingFeedback, retainFeedback } from './feedbackRecovery';
 
 interface FeedbackRow {
   readonly vote: MessageVote;
   readonly pending?: boolean;
   readonly error?: string;
   readonly retryVote?: MessageVote;
+  readonly saved?: boolean;
 }
 export interface MessageFeedbackControls {
   readonly rows: Readonly<Record<string, FeedbackRow>>;
@@ -55,10 +57,24 @@ export function useMessageFeedback(
     void client.readMessageFeedback!(agentId, { signal: request.signal })
       .then((items) => {
         if (request.signal.aborted || active.current !== scope) return;
+        const rows: Record<string, FeedbackRow> = Object.fromEntries(
+          items.map((item) => [item.message_id, { vote: item.vote }]),
+        );
+        for (const [messageId, requested] of Object.entries(pendingFeedback(agentId, viewerId!))) {
+          const vote = rows[messageId]?.vote ?? null;
+          if (vote === requested) retainFeedback(agentId, viewerId!, messageId, undefined);
+          else
+            rows[messageId] = {
+              vote,
+              retryVote: requested,
+              error:
+                'Your previous vote could not be confirmed. Retry it before changing your choice.',
+            };
+        }
         setState({
           scope,
           ready: true,
-          rows: Object.fromEntries(items.map((item) => [item.message_id, { vote: item.vote }])),
+          rows,
         });
       })
       .catch((cause: unknown) => {
@@ -71,7 +87,7 @@ export function useMessageFeedback(
         });
       });
     return () => request.abort();
-  }, [scope, supported, client, agentId, revision]);
+  }, [scope, supported, client, agentId, viewerId, revision]);
 
   return useMemo(() => {
     if (!supported) return undefined;
@@ -85,6 +101,7 @@ export function useMessageFeedback(
         const retained = current.rows[messageId];
         if (retained?.error && vote !== retained.retryVote) return;
         const request = new AbortController();
+        retainFeedback(agentId, viewerId!, messageId, vote);
         pending.current.set(messageId, request);
         setState((previous) => ({
           ...previous,
@@ -96,9 +113,10 @@ export function useMessageFeedback(
         void client.setMessageFeedback!(agentId, messageId, vote, { signal: request.signal })
           .then((result) => {
             if (request.signal.aborted || active.current !== scope) return;
+            retainFeedback(agentId, viewerId!, messageId, undefined);
             setState((previous) => ({
               ...previous,
-              rows: { ...previous.rows, [messageId]: { vote: result.vote } },
+              rows: { ...previous.rows, [messageId]: { vote: result.vote, saved: true } },
             }));
           })
           .catch((cause: unknown) => {
@@ -120,5 +138,5 @@ export function useMessageFeedback(
           });
       },
     };
-  }, [supported, state, scope, client, agentId]);
+  }, [supported, state, scope, client, agentId, viewerId]);
 }
