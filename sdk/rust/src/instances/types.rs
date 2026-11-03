@@ -203,6 +203,8 @@ pub struct Worktree {
 /// Compact Agent row included in Workspace hierarchy detail.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct HierarchyAgentSummary {
+    #[doc = "Authorized task outcome; absent on older servers."]
+    pub task_status: Option<AgentTaskStatus>,
     /// Canonical runtime metadata for this owned Agent.
     pub runtime_metadata: Option<crate::agents::AgentRuntimeMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -224,6 +226,15 @@ pub struct HierarchyAgentSummary {
     pub title: Option<String>,
     /// Last update timestamp.
     pub updated_at: String,
+}
+
+string_enum! {
+    #[doc = "Task outcome derived from durable turn evidence and admitted work."]
+    pub enum AgentTaskStatus {
+        NotStarted => "not_started", Completed => "completed", Working => "working",
+        WaitingApproval => "waiting_approval", Starting => "starting", Paused => "paused",
+        Stopped => "stopped", Failed => "failed", Unknown => "unknown"
+    }
 }
 
 /// Workspace detail with allocated Worktrees and Agents.
