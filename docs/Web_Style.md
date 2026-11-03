@@ -3864,6 +3864,18 @@ Hidden output does not render historical operations. Assistant text streaming do
 not rebuild operation groups or replace the visible output DOM.
 
 | 2026-11-03 | Bound operation output to 50 visible records, retain chronological paging, and isolate hidden history from unrelated conversation text rendering. |
+
+Environment read failures use **Environment capabilities are unavailable. Try
+again.** Keep protocol parser details out of the computer panel and retain its
+explicit retry action.
+
+| 2026-11-03 | Keep computer capability failures readable without exposing transport parser diagnostics. |
+
+The Files scope label occupies its own row above the flexible explorer. The
+explorer and its actions remain within the viewport in both the details column
+and compact overlay; inner content scrolls without extending the panel.
+
+| 2026-11-03 | Reserve the mounted-home scope row without overflowing the retained file explorer. |
 Answer feedback appears only below a recorded final Assistant answer in a
 successfully completed turn, identified by its durable turn and message sequence.
 Intermediate replies, active turns, errors, reasoning and tools retain no vote
