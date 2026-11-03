@@ -16,6 +16,7 @@ import type { MessageFeedbackControls } from './useMessageFeedback';
 import { Button } from '../ui/Button';
 import { workedFor } from './turnTiming';
 import { MessageMediaContext, type MessageMediaAccess } from './mediaSources';
+import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDeliveries';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
@@ -31,6 +32,7 @@ interface MessageStreamProps {
   readonly arrivalsEnabled?: boolean;
   readonly feedback?: MessageFeedbackControls;
   readonly media?: MessageMediaAccess;
+  readonly deliverables?: AnswerDeliveryAccess;
 }
 
 export function MessageStream({
@@ -47,7 +49,21 @@ export function MessageStream({
   arrivalsEnabled = true,
   feedback,
   media,
+  deliverables,
 }: MessageStreamProps) {
+  const {
+    agentId: deliveryAgent,
+    viewerId,
+    client: deliveryClient,
+    authority,
+  } = deliverables ?? {};
+  const deliveryAccess = useMemo(
+    () =>
+      deliveryAgent && viewerId && deliveryClient
+        ? { agentId: deliveryAgent, viewerId, client: deliveryClient, authority }
+        : undefined,
+    [deliveryAgent, viewerId, deliveryClient, authority],
+  );
   const [projectTimeline] = useState(createStreamTimeline);
   const { items, finalReply, continued, previousRole } = projectTimeline(conversation);
   const { agentId, files, workingDirectory } = media ?? {};
@@ -106,7 +122,7 @@ export function MessageStream({
   }, [conversation, optimisticMessages]);
 
   return (
-    <MessageMediaContext.Provider value={mediaAccess}>
+    <MessageResources media={mediaAccess} deliverables={deliveryAccess}>
       <div className="message-stream" aria-live="polite" ref={streamRef}>
         {items.length === 0 &&
         !optimisticMessages?.length &&
@@ -204,6 +220,22 @@ export function MessageStream({
         ) : null}
         <div ref={endRef} />
       </div>
-    </MessageMediaContext.Provider>
+    </MessageResources>
+  );
+}
+
+function MessageResources({
+  children,
+  media,
+  deliverables,
+}: {
+  readonly children: ReactNode;
+  readonly media?: MessageMediaAccess;
+  readonly deliverables?: AnswerDeliveryAccess;
+}) {
+  return (
+    <AnswerDeliveryContext.Provider value={deliverables}>
+      <MessageMediaContext.Provider value={media}>{children}</MessageMediaContext.Provider>
+    </AnswerDeliveryContext.Provider>
   );
 }

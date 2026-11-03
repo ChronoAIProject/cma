@@ -21,6 +21,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `workspaces()` | `list`, `read`, `create`, `delete` |
 | `worktrees()` | `list`, `read` |
 | `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `update_settings`, `skills`, `install_skill`, `access_requests`, `approve_access_request`, `deny_access_request`, `update_service_access` |
+| `agents()` answer deliveries | `describe_deliverable`, `answer_deliverables`, `read_answer_deliverable`, `download_answer_deliverable` |
 | `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
 | `triggers()` | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `list_revisions`, `list_placements`, `create_placement`, `retire_placement`, `embed`, `stats` |
 | `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |

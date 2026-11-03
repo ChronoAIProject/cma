@@ -1679,6 +1679,56 @@ current permission before creating its local file. Previously downloaded copies
 cannot be recalled. Sandbox state is persisted by the attached Agent Sandbox
 volume; CMA does not expose a Sandbox snapshot archive endpoint.
 
+### Answer deliverables
+
+| Operation | Body | Query | Response |
+|---|---|---|---|
+| `POST /api/v1/agents/{id}/deliverable-references` | Explicit resource selector | - | 200 DeliverableDescriptionView |
+| `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables` | - | - | 200 AnswerDeliverablesView |
+| `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}` | - | `verify` (default false) | 200 AnswerDeliverableReadingView |
+| `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download` | - | - | 200 opaque attachment; 409 changed bytes |
+
+Selectors are `{kind:"agent_artifact",id}`, `{kind:"document",id,revision}` or
+`{kind:"live_file",path}`. The descriptor validates the resource's own access and
+actual version, returning its Agent, selector, safe name, media type, exact byte
+count and lowercase SHA-256. It does not mutate, publish or grant sharing.
+Published artifacts and document sources retain their existing 1 MiB limits;
+live files retain the filesystem's 32 MiB limit and home-relative path rules.
+
+The marker is `<!--cma-deliverable:v1:<base64url-without-padding JSON reference>-->`.
+Only a standalone unindented marker outside code fences in the final recorded
+nonempty Assistant message of a completed turn is eligible. The server derives
+Agent, turn and `event:<sequence>` answer identity from that immutable log, rather
+than trusting an answer identity supplied in a marker. At most 32 distinct
+references survive stable deduplication; the same resource may be explicitly
+referenced in another answer but is never implicitly inherited. Marker payloads
+are at most 4096 encoded bytes. Ordinary file names and code spans are not parsed.
+
+Lists return `{agent_id,answer_id,turn_sequence,items}`. Single-item reads return
+the same identity fields with `item`. Each item has `{id,reference,status}`.
+Status is `ready`, `unchecked`, `changed`, `version_changed`, `missing`, `denied`,
+`not_ready`, `too_large` or `unavailable`. Lists use immutable metadata and current
+resource authorization. A live file is `unchecked` until download or explicit
+`verify=true` checks that selected file's bytes. The stored reference remains the
+answer-time evidence even after a file changes. A newer document source reports
+`version_changed` and downloads the original source revision when authorized.
+
+Each request requires current answer visibility and independent resource access.
+Document token links retain `X-CMA-Document-Share-Token` plus authentication.
+Reads/downloads use private,no-store, nosniff and no-referrer; downloads are always
+opaque attachment bytes with a percent-encoded safe filename and SHA-256 ETag.
+Clients must bound buffers, verify size/digest and recheck current authorization
+before saving. A narrow conversation share never publishes a private file or
+adds file/document permission. Previously downloaded bytes cannot be recalled.
+
+Answer verification targets one committed turn, scanning at most 128 events
+after the requested message and 512 events in that turn, with a 4 MiB/15 second
+projection bound. Exceeded budgets return 503 without treating the Agent as
+missing. Gaps or inconsistent boundaries fail closed. HTTP requests
+have a 30 second deadline. No list or per-card authorization rebuilds the full
+conversation, and listing does not download file bodies. See
+[Agent Manager](API_Agent_Manager.md#files-settings-and-access) for client usage.
+
 ### Sandboxes
 
 | Operation | Body / Key | Query | Response |

@@ -147,6 +147,16 @@
 - `git diff --check a426b87ee5852866850cab192b37d14f9f2087c6 HEAD` 与记录提交前的 `git diff --check` 通过。LocalAgentV2 head-404 已由 04 在原始 `60fc98ee5` 实测确认，保留为原始 fixture 缺陷；其他已记录原始 skill/Core/格式/508 行 service 限制未混入修正，不宣称全仓或生产环境绿色。
 - 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，没有清理共享 Cargo target，无推送、部署或生产操作。
 
+## Ticket 07 集成（2026-11-03）
+
+- 合并前集成工作区干净，HEAD 为 `d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8`。已读取完整 07 票证据、主要路径与共享 hunk 交接，并审阅实际 79 路径清单；候选包含该最新基线。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-07` 的 `06f884afcc08210a4ffae699df25f4956bdd2686`，merge commit 为 `2e37395cb94a7ec12d58171978dcfc02776d1fa0`。无冲突，初始合并树与候选完全一致。
+- 候选将交付样式插入既有 04 条目前；独立文档修正 `d6d154bc3c81e1541eb023cd4c6b622642db7524` 保留全部既有字节为前缀，将 07 原样追加。其他候选源码完全一致。09 finalAnswer/反馈、06 plan、02 elapsed、14 computer/文件 guard 与既有 browser 接口保留。
+- 合并态：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/AnswerDeliverables.test.tsx src/agent/MessageStream.performance.test.tsx` 通过，2 文件 / 11 tests；`npm --prefix web run typecheck`、`git diff --check d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8 HEAD` 及记录提交前的 `git diff --check` 通过。未重复广泛/native/Rust 检查。
+- 07 完成，08 可从记录提交启动，沿用独立资源种类、精确 answer/delivery/revision/digest、当前授权、metadata-only 列表与有界 body 下载；不把 live file 当不可变快照。
+- parent 的独立 integration-repair worker 继续处理本轮重复 `.agent-files-panel` CSS、filesystem/conversation 行数超限、environment shared JSON inventory、AppPublic/TaskHome/URL 断言及 task-status 查询成本；本 merger 不重复。07 后 filesystem 为 517 行（增加模块声明），此前 515；原始 508 行 Agent service、skill/Core/格式/LocalAgentV2 head-404 仍独立记录，不称全仓绿色。
+- 仅写集成 worktree；无原工作区或其他 worker 源码修改，无推送或部署。
+
 
 ## Ticket 13 worker delivery（2026-11-03）
 
