@@ -136,6 +136,13 @@ async fn artifact_publication_replays_across_replicas_and_revocation_preserves_r
     assert_ne!(last.items, first_page.items);
     assert_eq!(
         second
+            .metadata(&recipient.caller, Some(&recipient), Some("credential"), &agent.id, &metadata.id)
+            .await
+            .unwrap(),
+        metadata
+    );
+    assert_eq!(
+        second
             .read(
                 &recipient.caller,
                 Some(&recipient),
@@ -168,6 +175,14 @@ async fn artifact_publication_replays_across_replicas_and_revocation_preserves_r
             reopened.clone(),
             Arc::new(Authority),
         )),
+    );
+    assert!(reads
+        .metadata(&recipient.caller, Some(&recipient), Some("credential"), &agent.id, &metadata.id)
+        .await
+        .is_err());
+    assert_eq!(
+        reads.metadata(&owner.caller, None, None, &agent.id, &metadata.id).await.unwrap(),
+        metadata
     );
     assert!(reads
         .read(

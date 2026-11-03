@@ -17,6 +17,10 @@ use std::sync::Arc;
 #[path = "filesystem_runtime.rs"]
 mod runtime;
 
+#[cfg(test)]
+#[path = "native_deliverables.rs"]
+mod native_deliverables;
+
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let kind = name.strip_prefix("filesystem_")?;
     assert!([
