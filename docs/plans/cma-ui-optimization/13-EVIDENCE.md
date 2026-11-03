@@ -128,5 +128,56 @@ optional receipt without changing any message protocol.
   the shared set and metric callback. This worker does not duplicate editing.
 
 Original formatting/skill fixtures/508-line Agent service limits remain separate
-from the task-introduced AppCreation navigation test and Console503 issues owned
-by ticket 04. No unrelated broad failure is reclassified or repaired here.
+from the task-introduced AppCreation navigation test and Console503 issues fixed
+by incoming ticket 04. No unrelated broad failure is reclassified here.
+
+## Final integration checkpoint
+
+Commits `d0cff82a0` (production adapter/store/SDK/evidence) and `3a1aa9a46`
+(visibility and recovered-receipt metrics) follow the initial style commit
+`1455d4d06` and first red/green implementation `f958b0bae`. Integration
+`a426b87ee` was merged at `1770220fc`; the subsequent ticket-04 integration
+`d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8` was merged at `543ea035e`.
+Both conflicts were only the append point in Web Style: the complete incoming
+file was retained byte-for-byte as a prefix, followed by the unchanged ticket-13
+block. No integration/original/other-worker files were edited in place.
+
+After the final merge: 53 whole-conversation U tests passed (four files), as did
+Web/E2E typechecks, focused lint, eight public generation tests, four Mongo tests,
+the six-case ticket-13 HTTP corpus and seven selected TypeScript SDK tests. Both
+Rust SDK tests also passed: exact scoped GET plus the shared corpus (five typed
+HTTP cases and one invalid query wire shape). Detailed final
+logs use the `ticket13-after04-` prefix. The real model prompt, adapter, fixed
+cases and filtering were unchanged by integration; no paid sample rerun was
+performed. The preceding merged Chrome proof passed five tests and retained
+screenshots under `ticket13-proof/browser-merged`.
+
+Recovery metrics now retain only the existing pending journal key and scope,
+then confirm the matching accepted receipt after the group unmounts; they do not
+change send/retry behavior. Hidden-document exposure is excluded and becomes
+eligible on a real visibility change. Exact regression red/green artifacts:
+`ticket13-red-recovery-metric.log`, `ticket13-red-visibility.log`,
+`ticket13-green-metric-recovery.log` (24 passed, no unhandled errors).
+
+One incoming integration defect remains outside ticket 13: the shared public
+contract inventory lacks ticket 14's `GET /api/v1/agents/{id}/environment` entry
+and cases. The incoming integration declares 227 operations despite adding that
+route; ticket 13 adds its own entry and six cases, yielding a declared 228 versus
+actual 229 after merge. `ticket13-after04-inventory.log` records that precise
+failure. The checked REST documentation inventory passes after incoming
+`54a7414b6`; it is distinct from the still-missing shared contract coverage.
+Ticket 13's public operation and named error cases pass. This gap is reported to
+parent without expanding into ticket 14 or mislabelling it an original baseline.
+
+Task source files remain at or below 500 lines after incoming 04's extraction
+(`AgentSurface.tsx` 491, OpenAPI module 497). Owned preview/model servers are
+stopped, failed-run ticket-13 databases are removed, and the shared Mongo/VM are
+retained. Worktree and private build caches remain for parent cleanup; no push,
+PR or deployment was performed.
+
+Final Gitleaks scans of the ticket diff and external proof directory both pass
+without an allowlist. The first proof scan flagged five provider cache identifiers
+in the older v1 response metadata. Unneeded provider metadata was removed while
+preserving the exact assistant outputs, requests, timing and usage. Final logs:
+`ticket13-final-secrets.log`, `ticket13-proof-secrets.log`. No credential value was
+printed or committed.

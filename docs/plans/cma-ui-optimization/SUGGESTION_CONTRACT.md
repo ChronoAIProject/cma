@@ -23,8 +23,10 @@ persisted contextual sets through this contract, with a new source/version and s
 item IDs; its separately authorized generation and quality validation are not implemented
 by ticket 11. Invalid or stale sets must fail closed before rendering/sending.
 
-`AgentSurface.suggestedReplies` is the delivery seam: omitted uses the bounded
-template, `null` means unavailable/loading/no suggestions, and a supplied set must
+`AgentSurface.suggestedReplies` is the delivery seam: omitted reads the saved set
+when the client supports `readSuggestedReplies`; a legacy client without that
+method retains the bounded labelled template. `null` means unavailable/loading/no
+suggestions, and a supplied set must
 match the current viewer, Agent, turn and final answer. Sets contain one to three
 unique nonempty items with strictly increasing nonnegative integer ranks. Text is
 rendered and sent without trimming, including newlines and trailing spaces; empty
