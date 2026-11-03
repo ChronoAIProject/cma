@@ -4,6 +4,8 @@ Date: 2026-11-03. Branch: `codex/cma-ui-18`. Worktree:
 `/Users/liuyitian/code/cma-ui-worktrees/ticket-18`.
 Started from `d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8`; merged integration
 `a2965df09581de5fa0fa35af54b69db56cd83ab9` in `1dd75c6f4`.
+Subsequently merged ticket 08 and the latest integration
+`7cd701d0fe6c2496256a01eca59919ee8d899c82` in `1bff7b1b9` / `d4cc51f0a`.
 Implementation and shared-corpus verification source: `bb139fbf8a5dac25d467fefc0d135a1fc946dcba`.
 The original acceptance text and the user-approved U/A/R boundaries are unchanged.
 
@@ -59,6 +61,7 @@ Return Live shows 4, and the four recorded executions gain no extra command.
 | Gate | Final result and log |
 | --- | --- |
 | Replay, plan and memo/performance U | 3 files / 20 passed, including all 11 replay cases; `final-focused-web.log` |
+| Latest ticket 08 merge UI seams | 4 files / 15 passed: replay, Console deliverable preview, panel and memo/performance; `merge08-web.log` |
 | Merged Console/shared observation seam | 2 files / 34 passed; `merge-scope-fixed.log` |
 | Public v2 read suite | 26 passed, one native test deliberately ignored in this ordinary invocation; `merged-public.log`; native test separately run below |
 | Current environment and filesystem authority | 4 named tests passed; `final-core.log` |
@@ -67,9 +70,9 @@ Return Live shows 4, and the four recorded executions gain no extra command.
 | Shared Rust typed dispatch | 1 named test, six typed HTTP cases; `corpus-rust.log` |
 | Separate Markdown REST inventory | 1 named test passed; `rest-inventory.log` |
 | Standalone SDK tests, separate from corpus | TypeScript 103 passed (`sdk-typescript.log`); Rust 9 event tests plus 1 file test (`sdk-rust.log`) |
-| Web and E2E types | `merge-types.log`, `e2e-types.log` passed |
-| Built web bundle | `merged-build.log` passed, existing large-chunk advisory |
-| Targeted formatting/lint | `lint.log`, `format.log`, `final-format.log`, `final-rust-format.log` passed; API edition 2021, Rust SDK edition 2024 |
+| Web and E2E types | `merge08-types.log`, `e2e-types.log` passed |
+| Built web bundle | `merge08-build.log` passed, existing large-chunk advisory |
+| Targeted formatting/lint | `lint.log`, `format.log`, `final-format.log`, `final-rust-format.log`, `merge08-format.log` passed; API edition 2021, Rust SDK edition 2024 |
 | Ticket commit secret scan | No leaks found; `final-gitleaks.log` |
 
 The shared JSON inventory now explicitly identifies operation replay semantics on
@@ -97,9 +100,10 @@ filter executes all four named tests. Shared-corpus selectors are
 
 ## Native R proof
 
-Authoritative R artifacts are in `ticket18-proof/final-runtime/`, produced on the
-merged application source `1dd75c6f4`. Later changes add shared-corpus coverage and
-correct targeted Rust formatting; they do not change the web/native replay path.
+Authoritative R artifacts are in `ticket18-proof/merged08-runtime/`, produced on the
+merged application source `d4cc51f0a3e26161b7db44c0cff923c91b4f7cd7`, including
+ticket 08’s preview wrapper. The native, real-handler and Chrome proof was rerun
+after the merge; only completion documentation changes follow this proof.
 
 The image is the existing immutable ticket04+14 candidate:
 `sha256:b8fb789ea6e1e6a50f6faa4d34df90a49856823e8f28526cdc7ac211ebe907d4`.
@@ -118,22 +122,22 @@ Live 4 → previous 3 → keyboard 2 → reload same cursor 2 → End/Live 4 →
 It records zero non-GET API requests, and public head/pages remain unchanged.
 Only then are the proof completion signals released.
 
-- Native runner: 1 passed, no skips; `final-runtime/native.log`.
+- Native runner: 1 passed, no skips; `merged08-runtime/native.log`.
 - Actual public handler/native proof: 1 named test passed, no skips;
-  `final-runtime/public-native.log`.
-- Desktop/mobile Chrome: 1 passed; `final-runtime/browser.log`.
+  `merged08-runtime/public-native.log`.
+- Desktop/mobile Chrome: 1 passed; `merged08-runtime/browser.log`.
 - Physical execution count: **4 before / 4 after**; model calls after replay: **5**.
-  `final-runtime/native-operations.json.verified.json`.
+  `merged08-runtime/native-operations.json.verified.json`.
 - Screenshots show recorded command output and read-only history. They are UI
   screenshots of this proof, never claimed as recorded historical browser frames.
 
-| Artifact under `final-runtime` | SHA-256 |
+| Artifact under `merged08-runtime` | SHA-256 |
 | --- | --- |
-| `native-operations.json` | `f4c52ce2bd861a0f1d55c7a5fbf187283b1a06a3938d26af51f3dfd359bb7157` |
+| `native-operations.json` | `9ca9f9cef0e55d74b5324eef2981c0e024b73a006439753a5c3fd4b10f377b5f` |
 | `native-operations.json.verified.json` | `14aad7cd46502ade3f9d918327994f16d419e85fcf1b1ba31ff5216b50544d4f` |
-| `public-operations.json` | `2557188d9561d787a26d936eadb3e4c628ef548d47c52e4053374312be3f764e` |
-| `native-operation-2-desktop.png` | `b0e553a7d5b619d3a51573e60fd4774cd480a67a80b6a52824a29060967b88c7` |
-| `native-operation-3-mobile.png` | `80cc4b324a75a88fd89ecde4961ddd7d4342035c7ef6cc621d63609a27768116` |
+| `public-operations.json` | `2fb816d9e8e2fb3c25b1a2fa1e42ee397f602b11507410981469141a02e749de` |
+| `native-operation-2-desktop.png` | `98aaea329b4cdfbd90dd0072890d18f20b7c09daf0dd060dc6f590e355cc2ba1` |
+| `native-operation-3-mobile.png` | `0afb16f6efa2dc1a137f6eb4ada1c325b72db6883ce3bca350794d2c1d9dce6f` |
 
 PNG files are under `screenshots/operation-replay.check.ts--ee1ec-oad-without-extra-execution/`.
 This proves pinned native execution, durable record projection through the actual
@@ -149,7 +153,7 @@ not substituted for the clean final native/public/browser proof above.
 
 ## Integration and handoff boundaries
 
-The merge preserves 07 deliverables, 10 feedback, 12 editing, 13 saved/contextual
+The merge preserves 07 deliverables, 08 safe previews, 10 feedback, 12 editing, 13 saved/contextual
 suggestions, 06 plan links and 14 panel observation. The shared owner observation
 remains available even on clients without replay; optional replay navigation is
 gated independently. StreamEntry's existing memo comparisons are retained.
@@ -157,8 +161,8 @@ The integration Web Style content remains an exact prefix with the 18 appendix
 at the end. The parent Browser worker owns its independent private context and
 capabilities; ticket 18 does not depend on 15 or 17.
 
-Every ticket-owned source is ≤500 lines and test source ≤2000. Console and
-AgentSurface are 499; AgentFilesystem is 492 after moving pure environment helpers
+Every ticket-owned source is ≤500 lines and test source ≤2000. Console is 500 and
+AgentSurface is 499; AgentFilesystem is 492 after moving pure environment helpers
 to its existing model module. The full size gate still reports three files byte-
 identical to integration `a2965df09`: `agent_operation_service.rs` (508),
 `conversation.ts` (503), and `agents_tests/message_feedback.rs` (556; classified as
