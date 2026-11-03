@@ -146,7 +146,7 @@ export function AgentSidePanel({
           id="computer-page-files"
           role="tabpanel"
           aria-labelledby="computer-tab-files"
-          className="agent-computer__page"
+          className="agent-computer__page agent-computer__files"
           hidden={!filesOpen}
           inert={!filesOpen || undefined}
         >
@@ -226,7 +226,7 @@ export function AgentSidePanel({
                   ? 'Checking environment capabilities…'
                   : environment.state.transient
                     ? 'Environment capabilities are temporarily unavailable. Try again.'
-                    : environment.state.message}
+                    : 'Environment capabilities are unavailable. Try again.'}
             </p>
           )}
           {environment.state.status === 'error' ? (

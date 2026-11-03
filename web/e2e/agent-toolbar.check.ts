@@ -11,6 +11,18 @@ for (const width of [1600, 390]) {
       try {
         await page.setViewportSize({ width, height: 1000 });
         await fixture.route(page, baseURL!);
+        await page.route('**/api/v1/agents/agt_contract/environment', (route) =>
+          route.fulfill({
+            status: 404,
+            json: {
+              type: 'about:blank',
+              title: 'Not found',
+              status: 404,
+              code: 'not_found',
+              detail: 'Route unavailable',
+            },
+          }),
+        );
         await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
           route.fulfill({
             json: {
@@ -65,7 +77,8 @@ for (const width of [1600, 390]) {
         );
         await message.fill('Keep this message and conversation while browsing files.');
         const field = await message.elementHandle();
-        await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+        if (width === 390)
+          await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
         const files = page.getByRole('complementary', { name: 'Agent files', exact: true });
         await expect(files.getByRole('button', { name: 'README.md' })).toBeVisible();
         await expect(page.getByRole('dialog', { name: 'Files' })).toHaveCount(0);
@@ -101,7 +114,7 @@ for (const width of [1600, 390]) {
           '# Notes\n',
         );
         await page.screenshot({ path: info.outputPath(`toolbar-files-${width}-${theme}.png`) });
-        await files.getByRole('button', { name: 'Close files', exact: true }).click();
+        await page.getByRole('button', { name: 'Back to conversation', exact: true }).click();
         await expect(message).toHaveValue(
           'Keep this message and conversation while browsing files.',
         );
@@ -110,7 +123,7 @@ for (const width of [1600, 390]) {
         await expect(files.getByRole('textbox', { name: 'Contents of README.md' })).toHaveValue(
           '# Notes\n',
         );
-        await files.getByRole('button', { name: 'Close files', exact: true }).click();
+        await page.getByRole('button', { name: 'Back to conversation', exact: true }).click();
         expect(fixture.writes).toEqual([]);
         expect(fixture.boundary.writes).toEqual([]);
         expect(fixture.boundary.unexpected).toEqual([]);
