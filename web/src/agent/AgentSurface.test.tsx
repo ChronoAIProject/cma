@@ -87,7 +87,8 @@ it('places settings inside the composer box and preserves draft and busy-turn ap
     </CmaClientProvider>
   );
   const view = render(draw(true));
-  const chip = await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  fireEvent.click(await screen.findByRole('button', { name: /^Agent settings:/ }));
+  const chip = screen.getByRole('button', { name: /^Model and reasoning effort/ });
   expect(chip).toHaveTextContent('GPT-6 High');
   const form = screen.getByRole('form', { name: 'Message Agent' });
   // Settings sit inside the composer box, in the row of controls under the draft.
