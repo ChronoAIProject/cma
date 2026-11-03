@@ -442,7 +442,14 @@ Start with the operator-selected existing Agent. Record its native conversation,
 runtime/Pod/PVC identity, profile, settings, pending work and transcript boundary.
 The worker attempts at most two eligible migrations per reconciliation sweep.
 Active turns, pending approvals, queued owner commands, lifecycle work and
-unknown/active native goals defer maintenance. Paused Agents are not awakened
+active native goals defer maintenance. When API reattachment has no replayed goal
+snapshot, explicit transport maintenance may prove absence by reading the exact
+conversation's native SQLite thread/goal records through the existing fenced Pod
+exec transport. Both databases are opened read-only; any goal row, unknown schema,
+missing thread, symlink, unavailable probe or changed runtime identity defers.
+The proof is checked again after admission and before native reload. This fallback
+does not enable ordinary guidance refreshes or override an observed native goal.
+Paused Agents are not awakened
 for this operation; their normal recovery must reach a verified idle boundary.
 Provider-managed conversations without the CMA access binding are explicitly
 unsupported by this operation and require a separate binding endpoint audit.

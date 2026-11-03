@@ -174,7 +174,7 @@ async fn managed_context_null_goal_loads_exact_thread_and_settings_after_file_ac
 }
 
 #[tokio::test]
-async fn transport_confirmation_follows_exact_reload_and_settings_acknowledgements() {
+async fn transport_reattachment_confirmation_follows_exact_reload_and_settings_acknowledgements() {
     use crate::hosted::{HostedAccessToolBinding, HostedAccessToolSource};
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Source {
@@ -245,7 +245,7 @@ async fn transport_confirmation_follows_exact_reload_and_settings_acknowledgemen
         confirmed: AtomicUsize::new(0),
     });
     let unchanged_tool = serde_json::json!({"name":"owner_tool","type":"http","url":"https://owner.example/mcp","headers":[]});
-    let (context, _) = crate::hosted::managed_context::writer_tests::binding_with_tools(
+    let (context, files) = crate::hosted::managed_context::writer_tests::binding_with_tools(
         0,
         vec![old.acp_server(), unchanged_tool.clone()],
     );
@@ -303,17 +303,17 @@ async fn transport_confirmation_follows_exact_reload_and_settings_acknowledgemen
     )
     .await
     .unwrap();
-    opened
-        .bridge
-        .observe_context_goal(
-            "retained-session",
-            &serde_json::json!({"sessionUpdate":"session_info_update","_meta":{"goal":null}}),
-        )
-        .await;
-    let receipt = opened
+    assert!(opened
         .channel
         .input
         .managed_context_receipt(1)
+        .await
+        .is_none());
+    assert_eq!(files.goal_probes.load(Ordering::SeqCst), 0);
+    let receipt = opened
+        .channel
+        .input
+        .managed_transport_receipt(1)
         .await
         .unwrap();
     opened
@@ -333,10 +333,84 @@ async fn transport_confirmation_follows_exact_reload_and_settings_acknowledgemen
         .await
         .unwrap();
     assert_eq!(source.confirmed.load(Ordering::SeqCst), 1);
+    assert_eq!(files.goal_probes.load(Ordering::SeqCst), 2);
     assert_eq!(
         retained_context.tools()[0]["url"],
         "https://new.example/api/v1/agent-tools"
     );
     stop(opened).await;
     serving.await.unwrap();
+}
+
+#[tokio::test]
+async fn transport_readiness_requires_exact_stable_absence_and_retains_native_goal_veto() {
+    use std::sync::atomic::Ordering;
+    for fault in [0, 4, 5, 6, 7, 8, 9] {
+        let (client, mut server) = socket_pair().await;
+        send_ready(&mut server, "agent-1").await;
+        let serving = tokio::spawn(async move {
+            let init = receive_json(&mut server).await;
+            respond(&mut server, &init, serde_json::json!({})).await;
+            let open = receive_json(&mut server).await;
+            respond(
+                &mut server,
+                &open,
+                serde_json::json!({"sessionId":"retained-session"}),
+            )
+            .await;
+            while let Some(Ok(frame)) = server.next().await {
+                assert!(
+                    !matches!(frame, Message::Binary(_)),
+                    "readiness cannot close a thread"
+                );
+            }
+        });
+        let (binding, files) = crate::hosted::managed_context::writer_tests::binding(fault);
+        let mut config = settings(None, false);
+        config.context_refresh = Some(binding);
+        let (updates, _receiver) = tokio::sync::mpsc::channel(8);
+        let opened = Bridge::open(
+            client,
+            "agent-1",
+            "/workspace".into(),
+            config,
+            None,
+            updates,
+        )
+        .await
+        .unwrap();
+        assert!(opened
+            .channel
+            .input
+            .managed_context_receipt(1)
+            .await
+            .is_none());
+        assert_eq!(files.goal_probes.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            opened
+                .channel
+                .input
+                .managed_transport_receipt(1)
+                .await
+                .is_some(),
+            fault == 0
+        );
+        let probes = files.goal_probes.load(Ordering::SeqCst);
+        for goal in [
+            serde_json::json!({"status":"active"}),
+            serde_json::Value::Null,
+        ] {
+            opened.bridge.observe_context_goal("retained-session", &serde_json::json!({"sessionUpdate":"session_info_update","_meta":{"goal":goal}})).await;
+            assert!(opened
+                .channel
+                .input
+                .managed_transport_receipt(1)
+                .await
+                .is_none());
+            assert_eq!(files.goal_probes.load(Ordering::SeqCst), probes);
+        }
+        assert_eq!(files.writes.load(Ordering::SeqCst), 0);
+        stop(opened).await;
+        serving.await.unwrap();
+    }
 }
