@@ -137,6 +137,22 @@ if mode == "release"
     end
     raise "Gateway contract accepted duplicate #{path}"
   end
+  %w[api web].product([nil, 30]).each do |service, timeout|
+    candidate = GatewaySourceContract.expected
+    defaults = candidate["infra/#{service}/gcpbackendpolicy.yaml"][0]["spec"]["default"]
+    if timeout.nil?
+      defaults.delete("connectionDraining")
+    else
+      defaults["connectionDraining"]["drainingTimeoutSec"] = timeout
+    end
+    begin
+      GatewaySourceContract.validate(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted absent or shortened #{service} connection drain"
+  end
   %w[/livez /].each do |health|
     candidate = GatewaySourceContract.expected
     candidate["infra/api/healthcheckpolicy.yaml"][0]["spec"]["default"]["config"]["httpHealthCheck"]["requestPath"] = health

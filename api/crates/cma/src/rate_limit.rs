@@ -19,10 +19,8 @@
 //! clients share a `/64`, so rotating privacy addresses does not mint fresh
 //! budgets.
 //!
-//! Counters live in this process. That is exact while the deployment is pinned
-//! to one replica. Running N replicas makes the effective allowance up to N
-//! times larger, so scale-out must first choose a shared limiter if configured
-//! numbers must remain deployment-wide.
+//! Cheap pre-authentication guards protect each pod. Authenticated operation
+//! budgets are shared through MongoDB, so rolling overlap retains one allowance.
 
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
@@ -45,6 +43,7 @@ use axum::{
 use governor::{clock::Clock, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use layer1_public::{rest::HttpProblem, AuthenticatedSubject};
 
+mod shared;
 mod visitor;
 
 #[allow(unused_imports)] // Consumed by the Trigger route composition that injects this slice.
@@ -97,6 +96,10 @@ enum Budget {
 
 /// Independent admission, health, and operation budgets.
 pub(crate) struct RateLimiters {
+    shared: Option<(
+        Arc<crate::store::request_limits::MongoRequestLimits>,
+        RateLimitConfig,
+    )>,
     admission: KeyedLimiter,
     health: KeyedLimiter,
     default: KeyedLimiter,
@@ -113,15 +116,18 @@ impl RateLimiters {
     pub(crate) fn from_config(
         config: RateLimitConfig,
         trusted_proxies: TrustedProxyConfig,
+        shared: Arc<crate::store::request_limits::MongoRequestLimits>,
     ) -> Arc<Self> {
-        Arc::new(Self::from_quotas(
+        let mut limiters = Self::from_quotas(
             Quota::per_minute(config.admission_per_minute),
             Quota::per_minute(config.health_per_minute),
             Quota::per_minute(config.default_per_minute),
             Quota::per_minute(config.create_per_minute),
             Quota::per_minute(config.input_per_minute),
             trusted_proxies,
-        ))
+        );
+        limiters.shared = Some((shared, config));
+        Arc::new(limiters)
     }
 
     fn from_quotas(
@@ -133,6 +139,7 @@ impl RateLimiters {
         trusted_proxies: TrustedProxyConfig,
     ) -> Self {
         Self {
+            shared: None,
             admission: RateLimiter::keyed(admission),
             health: RateLimiter::keyed(health),
             default: RateLimiter::keyed(default),
@@ -250,11 +257,12 @@ pub(crate) async fn enforce(
         RequestTier::Input => Budget::Input,
         RequestTier::Health => unreachable!("health is admitted above"),
     };
-    match limiters.check(budget, &key) {
+    match limiters.check_operation(budget, &key).await {
         Ok(()) => next.run(request).await,
-        Err(retry_after_seconds) => {
+        Err(shared::Refusal::Limited(retry_after_seconds)) => {
             limited_response(&limiters, &request, retry_after_seconds, "operation", tier)
         }
+        Err(shared::Refusal::Unavailable) => shared::unavailable_response(),
     }
 }
 

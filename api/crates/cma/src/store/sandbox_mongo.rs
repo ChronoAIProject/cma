@@ -73,6 +73,8 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     RESOURCE_SHARES,
     RESOURCE_SHARE_COMMANDS,
     SANDBOX_EVENTS,
+    super::sandbox_usage::STATES,
+    super::sandbox_usage::EVENTS,
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
     WARM_SANDBOXES,
@@ -116,6 +118,8 @@ pub struct MongoSandboxStore {
     pub(super) resource_share_commands: Collection<Document>,
     pub(super) resource_shares: Collection<Document>,
     pub(super) sandbox_events: Collection<Document>,
+    pub(super) sandbox_usage: Collection<Document>,
+    pub(super) sandbox_usage_events: Collection<Document>,
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
     pub(super) sandbox_profiles: Collection<Document>,
@@ -201,6 +205,8 @@ impl MongoSandboxStore {
             resource_share_commands: majority_collection(&database, RESOURCE_SHARE_COMMANDS),
             resource_shares: majority_collection(&database, RESOURCE_SHARES),
             sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
+            sandbox_usage: majority_collection(&database, super::sandbox_usage::STATES),
+            sandbox_usage_events: majority_collection(&database, super::sandbox_usage::EVENTS),
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
             sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
@@ -223,6 +229,7 @@ impl MongoSandboxStore {
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
+        super::sandbox_usage::ensure_indexes(&store).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;

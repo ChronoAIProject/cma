@@ -19,7 +19,7 @@ impl Default for TurnConfig {
         Self {
             accept_budget: Duration::from_secs(20),
             turn_timeout: Duration::from_secs(600),
-            drain: Duration::from_secs(600),
+            drain: Duration::from_secs(660),
             busy_retry_max: Duration::from_secs(180),
         }
     }
@@ -27,7 +27,7 @@ impl Default for TurnConfig {
 impl TurnConfig {
     pub(super) fn from_env() -> Result<Self, ConfigError> {
         let seconds = env::var(CMAEG_DRAIN_SECONDS)
-            .unwrap_or_else(|_| "600".into())
+            .unwrap_or_else(|_| "660".into())
             .parse::<u64>()
             .ok()
             .filter(|value| {

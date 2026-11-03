@@ -93,6 +93,15 @@ impl SandboxStore for MongoSandboxStore {
         let expected = signed(expected_revision, "expected sandbox revision")
             .map_err(|_| SandboxStoreError::Conflict)?;
         let (origin_type, origin_launch_id, origin_operation_id) = sandbox_origin_fields(&sandbox)?;
+        // Resource attachments also change during provisioning and cleanup,
+        // before a status event. Persist those edges with their usage interval.
+        if layer2_core::sandbox_usage::Allocation::from_sandbox(&current)
+            != layer2_core::sandbox_usage::Allocation::from_sandbox(&sandbox)
+            || current.status != sandbox.status
+        {
+            return super::super::sandbox_usage::save::save(self, expected_revision, &sandbox)
+                .await;
+        }
         let result = self
             .sandboxes
             .update_one(
