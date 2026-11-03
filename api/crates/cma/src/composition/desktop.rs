@@ -4,15 +4,14 @@ use std::sync::Arc;
 pub(crate) fn router(
     reads: Arc<layer2_core::sandbox::AgentReadService>,
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
-    public_url: &str,
-    cors_origins: &[axum::http::HeaderValue],
+    config: &crate::config::Config,
 ) -> axum::Router {
-    let origin = reqwest::Url::parse(public_url)
+    let origin = reqwest::Url::parse(&config.public_url)
         .expect("configured public URL is valid")
         .origin()
         .ascii_serialization();
     let mut origins = vec![origin];
-    for value in cors_origins {
+    for value in &config.cors_origins {
         let origin = value
             .to_str()
             .expect("configured CORS origin is valid")
