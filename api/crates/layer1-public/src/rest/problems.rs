@@ -52,6 +52,7 @@ pub(crate) fn problem_response(status: StatusCode, body: serde_json::Value) -> R
 /// HTTP-level failures raised before a core operation begins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpProblem {
+    RequestBudgetUnavailable,
     RequestTooLarge,
     RateLimited { retry_after_seconds: u64 },
     NotFound,
@@ -81,6 +82,12 @@ impl IntoResponse for HttpProblem {
             return response;
         }
         let (status, slug, detail, code) = match self {
+            Self::RequestBudgetUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "request-budget-unavailable",
+                "Request capacity is temporarily unavailable.",
+                "request_budget_unavailable",
+            ),
             Self::RequestTooLarge => (
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "request-too-large",

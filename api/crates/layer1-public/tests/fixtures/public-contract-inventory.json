@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 239,
+  "openapi_operations": 245,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2292,7 +2292,12 @@
     "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/bindings/inspection.rs# Read-only mapping inspection uses binding management authority.",
-      "required_problems": ["not_authenticated", "forbidden", "binding_not_found", "invalid_binding"]
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding"
+      ]
     },
     "PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
       "classification": "openapi",
@@ -3386,6 +3391,75 @@
         "resource_forbidden",
         "resource_not_found"
       ]
+    },
+    "GET /api/v1/admin/usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "usage_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
+      }
+    },
+    "GET /api/v1/admin/usage/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "invalid_query",
+        "not_authenticated",
+        "usage_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
+      }
+    },
+    "GET /api/v1/usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "invalid_query",
+        "not_authenticated",
+        "usage_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
+      }
+    },
+    "GET /api/v1/usage/sandboxes/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "not_found",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage/sandboxes/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "invalid_query",
+        "not_authenticated",
+        "not_found",
+        "usage_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
+      }
     }
   }
 }

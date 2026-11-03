@@ -13,3 +13,5 @@ spec:
     name: cma-event-gateway
   default:
     timeoutSec: 660
+    connectionDraining:
+      drainingTimeoutSec: 660

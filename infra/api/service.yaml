@@ -18,6 +18,9 @@ spec:
 ---
 # Existing sealed ChannelPointers pin this exact Service DNS authority. Keep
 # their origin valid while the canonical workload and Service use the new name.
+# This alias serves cluster traffic only. Do not attach a standalone NEG: an
+# unused alias NEG can satisfy the shared Pod readiness gate without checking
+# the canonical public backend. Remove stale NEG annotations during migration.
 apiVersion: v1
 kind: Service
 metadata:

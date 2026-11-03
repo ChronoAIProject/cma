@@ -29,6 +29,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `agent_events_v2()` | `read_transport_eligibility`, `snapshot`, `events` with `consume_next` and `acknowledged_cursor` |
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
 | `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
+| `usage()` | `summary`, `sandboxes`, `sandbox`, `events`, `admin_summary`, `admin_sandboxes` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
 | Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a` |
 

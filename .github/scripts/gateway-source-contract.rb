@@ -118,7 +118,7 @@ module GatewaySourceContract
       service = name == "api" ? "cma-agent-manager" : "cma-web"
       values["infra/#{name}/gcpbackendpolicy.yaml"] = [object("GCPBackendPolicy", service, {
         "targetRef" => { "group" => "", "kind" => "Service", "name" => service },
-        "default" => { "timeoutSec" => 660 },
+        "default" => { "timeoutSec" => 660, "connectionDraining" => { "drainingTimeoutSec" => 660 } },
       })]
     end
     values
