@@ -410,12 +410,16 @@ impl AgentLogStore for InMemorySandboxStore {
         after: u64,
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-        bounded_events(
+        let rows = bounded_events(
             self.lock().agent_logs.get(agent_id),
             after,
             limit,
             |event| event.seq,
-        )
+        )?;
+        #[cfg(test)]
+        self.log_rows_read
+            .fetch_add(rows.len(), std::sync::atomic::Ordering::SeqCst);
+        Ok(rows)
     }
 }
 
