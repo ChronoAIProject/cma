@@ -30,6 +30,29 @@ fn run() -> RunRequest {
 }
 
 #[tokio::test]
+async fn agui_suggestion_retains_its_answer_condition_and_exact_text() {
+    let server = WireServer::new().await;
+    let body = json!({"threadId":"agt_one", "messages":[{"role":"user","content":"Add criteria.\nKeep limits."}],
+        "forwardedProps":{"answerContext":{"turn_sequence":2,"answer_sequence":4}}});
+    let request: RunRequest = serde_json::from_value(body.clone()).unwrap();
+    server.expect(expected(
+        "/api/v1/agui/run",
+        body,
+        "suggestion-key",
+        "id: 6\ndata: {\"type\":\"RUN_STARTED\",\"threadId\":\"agt_one\",\"runId\":\"6\"}\n\n"
+            .into(),
+    ));
+    let mut stream = server
+        .client
+        .agui()
+        .run_with_key(&request, "suggestion-key")
+        .await
+        .unwrap();
+    assert_eq!(stream.next().await.unwrap().unwrap().run_id, "6");
+    server.assert_drained();
+}
+
+#[tokio::test]
 async fn agui_key_is_an_explicit_header_and_never_replaces_the_turn_or_correlation() {
     let server = WireServer::new().await;
     let request = run();
