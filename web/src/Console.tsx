@@ -26,8 +26,8 @@ import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
 import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
-import { NotFoundView, UnavailableView, WelcomeView } from './ConsoleViews';
-import { TaskHome } from './create/TaskHome';
+import { NotFoundView, UnavailableView } from './ConsoleViews';
+import { ConsoleLanding } from './ConsoleLanding';
 import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
@@ -354,28 +354,16 @@ function ConsoleContent({
       )
     ) : route.kind === 'not_found' ? (
       <NotFoundView />
-    ) : (route.kind === 'home' || route.kind === 'agent_manager') && canCreateInScope ? (
-      <TaskHome
+    ) : (
+      <ConsoleLanding
         client={client}
-        viewerId={user.id}
-        canCreateSandbox={user.capabilities.includes('create_sandbox')}
+        user={user}
+        route={route}
+        canCreate={canCreateInScope}
         onCreated={(target) => {
           setRevision((value) => value + 1);
           onNavigate(target);
         }}
-      />
-    ) : (
-      <WelcomeView
-        heading={
-          route.kind === 'home' || route.kind === 'agent_manager'
-            ? 'Welcome to CMA'
-            : route.kind.replaceAll('_', ' ')
-        }
-        onNewAgent={
-          (route.kind === 'home' || route.kind === 'agent_manager') && canCreateInScope
-            ? newAgent
-            : undefined
-        }
       />
     );
 
