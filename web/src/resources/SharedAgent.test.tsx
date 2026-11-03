@@ -187,7 +187,7 @@ it('allows a writable shared Agent to change settings and checks current access 
   });
   test.show();
   const user = userEvent.setup();
-  await screen.findByRole('button', { name: 'Permission mode' });
+  await user.click(await screen.findByRole('button', { name: /^Agent settings:/ }));
   expect(screen.getByRole('note')).toHaveTextContent('View and write access');
   await user.click(screen.getByRole('button', { name: 'Permission mode' }));
   await user.click(screen.getByRole('menuitemradio', { name: 'Guarded' }));
