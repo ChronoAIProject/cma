@@ -87,7 +87,11 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
         )
         .route(
             "/api/v1/agents/{id}/messages/{message_id}/feedback",
-            put(super::message_feedback::set),
+            put(super::message_feedback::set).get(super::message_feedback_reasons::get),
+        )
+        .route(
+            "/api/v1/agents/{id}/messages/{message_id}/feedback/reasons",
+            put(super::message_feedback_reasons::set),
         )
         .route(
             "/api/v1/agents/{id}/skills",
