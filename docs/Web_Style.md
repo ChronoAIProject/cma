@@ -3815,3 +3815,33 @@ anchor and the single availability explanation; Overview describes the tools'
 purpose without repeating that explanation.
 
 | 2026-10-28 | Remove the redundant tool catalog heading and overview availability copy while retaining the Event tools section anchor and accessible catalog region. |
+
+### Task home and durable initial task (2026-11-03)
+
+Signed-in Home and ordinary New agent actions open a task composer. Use one
+20/28 heading, a labeled multiline field, a primary **Start task** action and
+editable Research, Spreadsheet, Document, Website and Code templates. Templates
+only replace the unsent draft. Preserve the existing anonymous sign-in surface.
+Use existing field, button, secondary text and status tokens; the task column is
+at most 48rem wide, with 24px inset and 16px gaps, reduced to 16px inset below
+600px. The textarea has a 160px minimum height; template and action hit areas
+are at least 44px. Contextual creation names its fixed Workspace or Sandbox.
+
+Freeze exact task text and creation context before sending. Retain a separate
+editable next draft, scoped to authenticated viewer, origin and creation context
+in tab session storage. Refresh restores it without submitting. Sign-out/account
+change clears task drafts and creation intents. Unavailable storage blocks a
+new submission with a visible explanation and leaves selectable task text.
+Whitespace-only input and text above 262144 UTF-8 bytes are visible errors.
+
+Show the retained task separately from the next draft. Receipt means accepted,
+not completed; its identity is an operation, never an Agent. Uncertain requests
+offer **Recover original task** with the original body and key. Accepted requests
+read public status; only a verified Agent identity opens the preparing conversation.
+Preparation, required connections, task delivery failure and uncertain recovery
+retain distinct states. A user initial task uses the durable first-message task
+purpose after environment preparation; it replaces the automatic readiness turn.
+Clients omitting a task retain setup behavior. Unsupported services show a clear
+unavailable explanation and never fall back to an unrecorded send.
+
+| 2026-11-03 | Define task-first Home and contextual creation, editable templates, exact durable initial-task admission, tab draft isolation and honest recovery states. |
