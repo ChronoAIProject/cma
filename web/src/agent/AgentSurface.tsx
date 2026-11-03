@@ -1,7 +1,6 @@
 import { SuggestedReplies } from './SuggestedReplies';
 import type { SuggestedReplySet } from './suggestions';
-import { useContextualSuggestions } from './useContextualSuggestions';
-import { useSuggestionOutcomes } from './suggestionMetrics';
+import { useAgentSuggestions } from './useAgentSuggestions';
 import { Presence } from '../ui/Presence';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
@@ -127,21 +126,16 @@ export function AgentSurface({
     controller.readSuggestionRequest,
   );
   const discardPrepared = connection.discardPrepared;
-  const suggestions = useContextualSuggestions(
-    state.status === 'ready' ? state.conversation : undefined,
-    viewerId ?? verified?.owner ?? '',
+  const editing = useAgentSuggestions({
+    conversation: state.status === 'ready' ? state.conversation : undefined,
+    viewerId: viewerId ?? verified?.owner ?? '',
     agentId,
-    !readOnly &&
-      verified !== undefined &&
-      !optimistic.messages.some((message) => message.state === 'accepted'),
-    suggestedReplies,
-  );
-  useSuggestionOutcomes(
-    state.status === 'ready' ? state.conversation : undefined,
-    viewerId ?? verified?.owner ?? '',
-    agentId,
-    !readOnly && verified ? controller.readSuggestionRequest?.() : null,
-  );
+    enabled: !readOnly && verified !== undefined,
+    acceptedInput: optimistic.messages.some((message) => message.state === 'accepted'),
+    provided: suggestedReplies,
+    controller,
+  });
+  const suggestions = editing.source;
   useLayoutEffect(() => {
     discardPrepared();
   }, [detailsOpen, discardPrepared]);
@@ -383,6 +377,7 @@ export function AgentSurface({
         >
           {suggestions && !readOnly && verified && !historyIncomplete ? (
             <SuggestedReplies
+              onEdit={editing.edit}
               key={suggestions.id}
               suggestions={suggestions}
               controller={controller}
@@ -425,6 +420,10 @@ export function AgentSurface({
       </div>
       <div className="agent-surface__input">
         <Composer
+          editorRef={editing.editorRef}
+          suggestionScope={
+            !readOnly && verified && !historyIncomplete ? suggestions?.id : undefined
+          }
           settings={
             readOnly ? undefined : (
               <SessionSettings
@@ -478,7 +477,7 @@ export function AgentSurface({
             connections.pending ||
             (controller.pending !== undefined && controller.pending !== 'send')
           }
-          onSend={submitMessage}
+          onSend={(content, accepted) => editing.send(submitMessage, content, accepted)}
           onStop={controller.interrupt}
         />
       </div>
