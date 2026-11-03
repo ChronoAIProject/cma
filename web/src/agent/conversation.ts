@@ -80,20 +80,27 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           id,
           runId: next.activeRunId,
           title: text(kind.title) ?? 'Tool call',
+          sequence: event.seq,
           kind: text(kind.kind),
           status: text(kind.status) ?? 'running',
         },
         true,
       );
     }
+    case 'tool_output_reported':
     case 'tool_call_updated': {
       const id = text(kind.call_id);
       const current = next.toolCalls.find((tool) => tool.id === id);
       if (id === undefined || current === undefined) return next;
+      const output = object(kind.output);
       return updateTool(next, {
         ...current,
         title: text(kind.title) ?? current.title,
         status: text(kind.status) ?? current.status,
+        output:
+          typeof output?.text === 'string' && typeof output.truncated === 'boolean'
+            ? { text: output.text, truncated: output.truncated }
+            : current.output,
       });
     }
     case 'approval_requested': {
@@ -185,6 +192,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       );
       return {
         ...finishTurn(next, runId, event.appendedAt),
+        turnOutcomes: { ...next.turnOutcomes, [runId ?? 'unattributed']: 'completed' },
         messages: next.messages.map((message) =>
           message === finalMessage &&
           message.role === 'assistant' &&
@@ -205,6 +213,11 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           number(kind.turn_sequence)?.toString() ?? next.activeRunId,
           event.appendedAt,
         ),
+        turnOutcomes: {
+          ...next.turnOutcomes,
+          [number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? 'unattributed']:
+            'interrupted',
+        },
         activeRunId: undefined,
         activeRunStartedAt: undefined,
         reasoning: [],
@@ -218,6 +231,11 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
             number(kind.turn_sequence)?.toString() ?? next.activeRunId,
             event.appendedAt,
           ),
+          turnOutcomes: {
+            ...next.turnOutcomes,
+            [number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? 'unattributed']:
+              'failed',
+          },
           activeRunId: undefined,
           activeRunStartedAt: undefined,
           reasoning: [],
@@ -425,8 +443,13 @@ function foldLive(
 ): ConversationState {
   if (event.threadId !== threadId) return state;
   const cursor = number(event.cursor);
+  if (event.type === 'STATE_DELTA' && cursor !== undefined && cursor <= state.cursor) return state;
   const next = cursor === undefined || cursor <= state.cursor ? state : { ...state, cursor };
   if (event.type.startsWith('TEXT_MESSAGE_')) return liveMessage(next, event);
+  if (event.type === 'CUSTOM' && event.name === 'cma.tool_output_reported') {
+    const value = object(event.value);
+    return liveTool(next, { ...event, toolCallId: value?.toolCallId, 'cma:output': value?.output });
+  }
   if (event.type.startsWith('TOOL_CALL_')) return liveTool(next, event);
   if (event.type.includes('REASONING') || event.type.startsWith('THINKING_')) {
     return liveReasoning(next, event);
@@ -442,15 +465,28 @@ function foldLive(
       .reduce((items, approval) => upsert(items, approval), next.approvals);
     return {
       ...(interrupts.length === 0 ? finishTurn(next, event.runId, event.timestamp) : next),
+      turnOutcomes:
+        interrupts.length === 0 && (outcome?.type === 'complete' || outcome?.type === 'interrupt')
+          ? {
+              ...next.turnOutcomes,
+              [event.runId]: outcome.type === 'complete' ? 'completed' : 'interrupted',
+            }
+          : next.turnOutcomes,
       approvals,
       reasoning: [],
-      activeRunId: undefined,
-      activeRunStartedAt: undefined,
+      activeRunId: interrupts.length === 0 ? undefined : event.runId,
+      activeRunStartedAt: interrupts.length === 0 ? undefined : next.activeRunStartedAt,
     };
   }
   if (event.type === 'RUN_ERROR') {
-    const finished = finishTurn(next, event.runId, event.timestamp);
-    if (['owner', 'operator', 'sandbox_retired', 'agent_deleted'].includes(text(event.code) ?? ''))
+    const cancelled = ['owner', 'operator', 'sandbox_retired', 'agent_deleted'].includes(
+      text(event.code) ?? '',
+    );
+    const finished: ConversationState = {
+      ...finishTurn(next, event.runId, event.timestamp),
+      turnOutcomes: { ...next.turnOutcomes, [event.runId]: cancelled ? 'interrupted' : 'failed' },
+    };
+    if (cancelled)
       return { ...finished, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] };
     return recover(
       { ...finished, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] },

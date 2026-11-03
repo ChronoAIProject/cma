@@ -78,6 +78,7 @@ async fn open(
         follow,
         message_bindings,
         live_timestamps: projection::live_timestamps(&headers),
+        tool_output: projection::tool_output(&headers),
         pending: VecDeque::new(),
         watching,
         held: None,
@@ -105,6 +106,7 @@ pub(super) struct Following {
     pub follow: bool,
     message_bindings: bool,
     pub live_timestamps: bool,
+    tool_output: bool,
     pub pending: VecDeque<Frame>,
     pub watching: Option<AgentLiveSubscription>,
     pub held: Option<AgentLiveFragment>,
@@ -128,7 +130,7 @@ impl Following {
         if cursor::incarnation(&window.header) != self.identity {
             return Err(Error::Incarnation);
         }
-        let items = projection::items(&window, &self.identity)?;
+        let items = projection::items(&window, &self.identity, self.tool_output)?;
         self.header = window.header;
         for item in items {
             if matches!(

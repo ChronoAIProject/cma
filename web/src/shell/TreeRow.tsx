@@ -29,6 +29,7 @@ interface TreeRowProps {
   readonly selected?: boolean;
   readonly expanded?: boolean;
   readonly dimmed?: boolean;
+  readonly disabled?: boolean;
   readonly reviving?: boolean;
   /**
    * `line` draws the label and its facts on one row and leaves the facts and
@@ -53,6 +54,7 @@ export function TreeRow({
   selected = false,
   expanded,
   dimmed = false,
+  disabled = false,
   reviving = false,
   layout = 'stacked',
   actions = [],
@@ -93,6 +95,7 @@ export function TreeRow({
       aria-level={level}
       aria-expanded={expanded}
       aria-selected={selected}
+      aria-disabled={disabled || undefined}
       data-node-id={nodeId}
       data-parent-id={parentId}
       data-dimmed={dimmed ? '' : undefined}
@@ -128,10 +131,16 @@ export function TreeRow({
       ) : (
         <a
           className="tree-row__label"
-          href={routePath(route)}
+          href={disabled ? undefined : routePath(route)}
+          role={disabled ? 'link' : undefined}
+          aria-disabled={disabled || undefined}
           tabIndex={-1}
           aria-current={selected ? 'page' : undefined}
           onClick={(event) => {
+            if (disabled) {
+              event.preventDefault();
+              return;
+            }
             if (
               event.button !== 0 ||
               event.metaKey ||

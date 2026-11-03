@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { ProtocolError, ValidationError, type AgentCreationCategory } from '../src/index.js';
+import {
+  ProtocolError,
+  ValidationError,
+  type AgentCreationCategory,
+  type AgentTaskStatus,
+} from '../src/index.js';
 import { agent, now, transport } from './resource-fixtures.js';
 
 describe('immutable Agent provenance', () => {
+  it('rejects an unsupported task filter before sending a list request', () => {
+    const test = transport();
+    test.answer({ items: [] });
+    expect(() =>
+      test.client.agents.provenanceInventory({ taskStatus: 'ready' as AgentTaskStatus }),
+    ).toThrow(ValidationError);
+  });
   it('selects aggregate explicit shares and keeps continuation filters', async () => {
     const test = transport();
     test.answer({ items: [], next: 'agt_scanned' });

@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { MessageAcceptance } from './controllerTypes';
 import type { ConversationState } from './conversation';
 import type { AgentV2Session } from './transport/client';
+import type { AgentController } from './controllerTypes';
 
 export interface OptimisticMessage {
   readonly id: string;
@@ -21,6 +22,7 @@ export function useOptimisticMessages(
   enabled: boolean,
   conversation: ConversationState | undefined,
   session: AgentV2Session | undefined,
+  readSuggestionRequest?: AgentController['readSuggestionRequest'],
 ) {
   const scope = useMemo(() => ({ identity, enabled }), [identity, enabled]);
   const active = useRef<object | undefined>(scope);
@@ -70,7 +72,7 @@ export function useOptimisticMessages(
               : { commandId: control.commandId, responseId: control.responseId },
         };
       }
-      return session?.journal.read();
+      return session?.journal.read() ?? readSuggestionRequest?.();
     } catch {
       return undefined;
     }
@@ -94,7 +96,7 @@ export function useOptimisticMessages(
               key: previous.key,
               content: previous.input,
               state: 'accepted' as const,
-              receipt: previous.receipt,
+              receipt: previous.receipt ?? undefined,
               source,
             },
           ]
@@ -190,7 +192,7 @@ export function useOptimisticMessages(
       const record =
         row.source === 'steer' ? steering : row.source === 'interrupt' ? interruption : input;
       if (row.key !== undefined && record?.key === row.key && record.state === 'accepted')
-        return { ...row, state: 'accepted', receipt: record.receipt };
+        return { ...row, state: 'accepted', receipt: record.receipt ?? undefined };
       // A pending control can disappear only after a definitive no-admission response.
       if (
         (row.source === 'steer' || row.source === 'interrupt') &&

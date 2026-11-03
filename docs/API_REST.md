@@ -23,9 +23,24 @@ not an id or a concurrency fence.
 optional GitHub repository, and inline Agent settings. The browser's Agent
 Manager proxy exposes this at `/api/agent-manager/v1/agents`. `Idempotency-Key`
 is required. A `202` receipt contains an **operation** ID; read
-`GET /api/v1/agent-lifecycle/{id}` until `status` is `succeeded` and then use its
-`agent_id` to open the Agent. A phase event marked `ready` does not complete the
-operation. Workspace/runtime readiness is reported only after Agent preparation.
+`GET /api/v1/agent-lifecycle/{id}` for its exact `agent_id`. Once that Agent and
+its owned parent hierarchy are readable, the client can open the preparing
+conversation. Continue observing provisioning there. A phase event marked
+`ready` does not complete the operation; operation success means preparation
+is ready, and does not mean the user's task completed.
+
+Optional `initial_message` admits the user's first task in the same durable
+request. Its exact text, including leading/trailing whitespace and newlines,
+participates in idempotency comparison and reaches the durable first-message
+queue with `purpose: task`. Input must contain non-whitespace text and at most
+262144 UTF-8 bytes. It replaces the automatic readiness turn after environment
+preparation; omission preserves the captured `purpose: setup` behavior for old
+clients and stored operations. Combining an initial task with `repository` is
+not supported in this slice. Invalid input is rejected before admission.
+Check the served `AgentLifecycleCreateRequest` schema for `initial_message`
+before offering this capability against an older service. Task delivery and
+results remain observable through Agent detail and transcript; the client must
+never send a second, unrecorded message after receiving the Agent identity.
 
 To add an Agent to an existing owned, ready Workspace, pass `workspace_id` to
 the same lifecycle endpoint. This path retains the Workspace and parent Sandbox;
@@ -648,6 +663,18 @@ to a setup preview. This is title provenance, not a semantic title generator.
 `runtime_metadata_changed` replay events carry the same atomic metadata snapshot.
 Shared conversation reads retain their existing metadata redaction.
 
+Admission of the first owner task persists a bounded 48-character preview in
+these existing metadata fields, with `description_source: prompt_preview` and
+`description_is_setup_preview: false`. An initial message contributes only with
+explicit `purpose: task`; automatic setup does not supply a task name. The preview
+does not wait for provider output or require another turn. Reconnect previews
+and unknown-source observations cannot replace it; a valid provider title can.
+Owner `owner_title` from revisioned preferences remains the display priority and
+supports repeated renames even when an automatic title was already saved. The
+separate legacy title setter retains its write-once compatibility behavior.
+Automatic title generation excludes a recorded setup/unknown first turn and
+uses the first subsequent task; names and sources remain durable across reads.
+
 
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
 Agent preserves readable history; deleting it records cleanup of its Worktree
@@ -808,14 +835,33 @@ Explicit channel binding and accepted-command history is available through the
 separate channel-usage routes below.
 The web provides authorized organization hierarchy navigation and owner share management.
 
+Task navigation adds `task_status` to personal Workspace Agent summaries and the
+authorized provenance inventory. It is separate from lifecycle `status` and is
+one of `not_started`, `completed`, `working`, `waiting_approval`, `starting`,
+`paused`, `stopped`, `failed`, or `unknown`. The projection reads the most recent
+durable turn boundary (or original creation), including failure, interruption
+and recorded gaps. Only explicit success with no pending work yields completed.
+When that completed turn is the recorded first message, `purpose=setup` yields
+`not_started`, `purpose=task` yields `completed`, and absent legacy purpose yields
+`unknown`. Matching uses the recorded turn sequence, never text or title. A later
+successful turn after setup yields `completed`; pending work still takes priority.
+The existing owner/share checks and disclosure fences apply to this field;
+clients never need to open each Agent's conversation to populate navigation.
+Older servers may omit it; clients must show unavailable task evidence rather
+than infer completion from ready. This is a read projection over existing
+records, with no new stored schema or backfill and no runtime side effects.
+The provenance inventory accepts `task_status` independently of lifecycle
+`status`; filtering follows authorization and preserves the bounded scan cursor,
+including continuation after an empty filtered page.
+
 `GET /api/v1/agents/provenance` lists safe creation summaries in stable Agent-ID
 order. Omit `organization` and `shared` for personal ownership; explicit organization scope
 requires current membership and selects organization-owned or shared Agents.
-Rows contain only `agent_id`, optional `title`, `status`, `created_at`,
-`updated_at`, and `creation_origin`. Private source/creator details and hierarchy
+Rows contain only `agent_id`, optional `title`, `status`, `task_status`, `created_at`,
+`updated_at`, `creation_origin`, and `channel_usage`. Private source/creator details and hierarchy
 IDs are omitted even for managers. The inventory includes retained Agents in
 all lifecycle states, including deleted Agents, unless `status` is supplied.
-Additional filters are `sandbox`, `workspace`, and `creation_origin`; parent
+Additional filters are `sandbox`, `workspace`, `creation_origin`, and `task_status`; parent
 filters require independent visibility of that parent. A narrow Agent grant
 cannot reveal the result of a parent filter.
 
@@ -831,7 +877,7 @@ successful page. Original membership deadlines remain binding through final chec
 
 `limit` defaults to 50 and accepts 1–200; `cursor` resumes after a consumed Agent
 ID. Without a category filter the server reads at most `limit + 1` candidates.
-With `creation_origin` it examines at most 201 candidates per request, so a
+With `creation_origin` or `task_status` it examines at most 201 candidates per request, so a
 successful page can be partial or empty and still have `next`. **Continue until
 `next` is absent, even when `items` is empty.** This cursor may identify a consumed
 authorized Agent excluded by the category filter. All candidates, filtered rows
@@ -1315,7 +1361,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/{id}/message-feedback` | - | after, limit | 200 MessageFeedbackPageView |
 | `PUT /api/v1/agents/{id}/messages/{message_id}/feedback` | SetMessageFeedbackRequest | - | 200 MessageFeedbackView |
-| `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
+| `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `task_status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
 | `PUT /api/v1/agents/{id}/service-access` | ReplaceAgentServiceAccess; key | - | 202 AgentAccessRequestView |
 | `POST /api/v1/agents/{id}/attachments` | Raw binary bytes; key | name* | 201 AgentAttachmentView |
@@ -1339,6 +1385,23 @@ Paths are relative to the runtime's persistent `/home/` directory. Reading
 requires current file-view authority; creating, editing and deleting require
 owner authority or an accepted, active typed `view_write` sharing link. Each
 operation rechecks access, and protected credential paths remain unavailable.
+The mounted home intentionally includes shared Workspace source and Worktree
+files; the Agent route is not a per-Agent filesystem grant. Public file operations
+exclude supervisor control roots `.cma` and `cma/.cma`, including every private
+Agent home and its instructions, credentials, sessions and retained state.
+Those roots are omitted from listings and refused for direct reads, downloads,
+writes, directory creation and deletion, including deletion of their ancestors.
+The runtime also protects its configured state and checkpoint roots if they lie
+within the mounted home. Descriptor-relative no-follow and single-link checks
+continue to reject symlink/hardlink aliases.
+
+Uploads live at `/home/attachments/{agent_id}/...`. A file route exposes only its
+authorized Agent's upload namespace, including to the Sandbox owner; listing
+`attachments` filters other Agents, and deleting that common root is refused.
+Authorized ordinary Sandbox files, hidden workspace files, versioned edits,
+downloads and typed shared writers retain their existing behavior. Trusted
+runtime settings/recovery operations still access the selected Agent's managed
+home through their separate internal contract; public file routes cannot do so.
 Reads, downloads and writes are bounded to 32 MiB. A write's `expected_sha256`
 protects an edit against intervening changes; omit it when creating a new file.
 Directory creation uses `directory: true`. File operations do not require an
@@ -1351,6 +1414,30 @@ Directory creation uses `directory: true`. File operations do not require an
 | `GET /api/v1/agents/{id}/files/download` | - | path* | 200 application/octet-stream |
 | `POST /api/v1/agents/{id}/files` | WriteFileRequest | - | 200 FileMutationView |
 | `DELETE /api/v1/agents/{id}/files` | - | path*, recursive | 200 FileMutationView |
+
+`GET /api/v1/agents/{id}/environment` returns a read-only capability observation
+under current `view_details` authority. It contains `agent_id`, `policy_revision`,
+an opaque nullable `runtime_incarnation`, nullable `revalidate_at`, and the
+`files`, `operation_output`, `browser`, `replay`, and `control` features. Each
+feature has `state`, `reason`, `scope`, and `writable`. States are `available`,
+`unsupported`, `not_enabled`, `forbidden`, and `temporarily_unavailable`.
+The observation is not a retained grant; every operation still authorizes its
+caller. Responses use the existing private/no-store file-route policy.
+
+Files retain the existing `mounted_home` scope, including `/home/`; this is not
+an Agent-private directory. `writable` requires owner authority or an accepted
+current typed write link. Recorded output has `agent_turn_history` scope and
+requires `view_history`. Browser, replay and control currently report
+`unsupported`, `not_supported_by_contract`, `none`, and `false`. No runtime
+address, boot identifier, browser stream, replay resource or PTY is exposed.
+
+Agent event reads opt into recorded output with `tool_output=true`. A tool update
+may include `output: {text, truncated}`; `tool_output_reported` contains `call_id`
+and `output` without a status. Text is bounded to 16 KiB of valid UTF-8 per
+record, with explicit truncation. Absence means output was not reported. Legacy
+requests omit output and retain the event cursor through redacted output-only
+entries. See [Agent events v2](API_Agent_Events_V2.md) for negotiated snapshots
+and tails, and [AG-UI](API_AGUI.md) for the stream projection.
 
 ### Agent sharing links
 

@@ -1,23 +1,34 @@
-/*
- * The Agent's settings inside the composer — `docs/Web_Style.md` §13.
- *
- * The settings render as loose pieces; each takes its own area in the
- * composer's control grid, so the permission chip can sit on the left and the
- * model chip on the right without one wrapper owning both.
- */
+.agent-settings__summary {
+  grid-area: settings;
+  justify-self: start;
+}
+
+.agent-settings__panel {
+  grid-area: settings-panel;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 8px;
+}
+
+.agent-settings__panel[hidden] {
+  display: none;
+}
 
 .agent-settings__permission {
   grid-area: permission;
 }
 
-.agent-settings__model,
-.agent-settings__loading {
+.agent-settings__model {
   grid-area: model;
   min-width: 0;
   max-width: 220px;
 }
 
 .agent-settings__loading {
+  grid-area: settings;
+  min-width: 0;
   margin: 0;
   padding: 0 8px;
   color: var(--dsw-alias-label-caption);
@@ -218,15 +229,10 @@
   transition: left var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
-/* Icons carry the permission chip on a narrow composer; its name stays its accessible name. */
 @container agent-conversation (max-width: 30rem) {
-  .agent-settings__permission .composer-chip__label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
+  .agent-settings__summary {
+    justify-content: flex-start;
+    width: 100%;
   }
 
   .agent-settings__model {

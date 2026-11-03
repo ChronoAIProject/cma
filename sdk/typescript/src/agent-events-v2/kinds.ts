@@ -3,10 +3,12 @@ import { firstMessageDelivery, agentRuntimeMetadata } from '../agents/types.js';
 import { agentStatus } from '../instances/types.js';
 import {
   array,
+  boolean,
   dictionary,
   enumeration,
   integer,
   nullable,
+  optional,
   positiveInteger,
   tagged,
   text,
@@ -43,7 +45,16 @@ export const v2AgentEventKind = tagged({
   turn_failed: kind('turn_failed', { turn_sequence: positiveInteger, failure }),
   turn_cancelled: kind('turn_cancelled', { turn_sequence: positiveInteger }),
   tool_started: kind('tool_started', { call_id: text, title: text, kind: text, status: text }),
-  tool_updated: kind('tool_updated', { call_id: text, status: text, title: nullable(text) }),
+  tool_updated: kind('tool_updated', {
+    call_id: text,
+    status: text,
+    title: nullable(text),
+    output: optional(strict({ text, truncated: boolean })),
+  }),
+  tool_output_reported: kind('tool_output_reported', {
+    call_id: text,
+    output: strict({ text, truncated: boolean }),
+  }),
   approval_requested: kind('approval_requested', {
     approval_id: text,
     action: nullable(text),

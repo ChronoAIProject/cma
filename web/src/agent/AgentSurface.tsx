@@ -1,3 +1,5 @@
+import { SuggestedReplies } from './SuggestedReplies';
+import { useSuggestedReplies, type SuggestedReplySet } from './suggestions';
 import { Presence } from '../ui/Presence';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
@@ -38,11 +40,14 @@ import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
+import { AgentHeaderProgress } from './AgentHeaderProgress';
+import { messageSubmission } from './messageSubmission';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
 
 interface AgentSurfaceProps {
+  readonly suggestedReplies?: SuggestedReplySet | null;
   readonly lifecycleClient?: CmaWebClient;
   readonly accessUncertain?: boolean;
   /** Current personal access was checked for this exact Agent before mounting. */
@@ -66,6 +71,7 @@ interface AgentSurfaceProps {
 }
 
 export function AgentSurface({
+  suggestedReplies,
   lifecycleClient,
   draft,
   agentId,
@@ -90,7 +96,7 @@ export function AgentSurface({
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
       ? { status: 'loading' }
       : controller.state;
-  useDocumentTitle(state.status === 'ready' ? agentDisplayTitle(state.detail) : undefined);
+  useDocumentTitle(state.status === 'ready' ? agentDisplayTitle(state.detail) : undefined, 'task');
   const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
   const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
@@ -107,6 +113,12 @@ export function AgentSurface({
     !readOnly && (state.status === 'ready' || (accessAuthorized && state.status !== 'error')),
   );
   const verified = connection.verified;
+  const suggestions = useSuggestedReplies(
+    state.status === 'ready' ? state.conversation : undefined,
+    viewerId ?? verified?.owner ?? '',
+    agentId,
+    suggestedReplies,
+  );
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
   const optimistic = useOptimisticMessages(
@@ -116,6 +128,7 @@ export function AgentSurface({
     state.status === 'ready' && state.v2?.owner === (viewerId ?? verified?.owner)
       ? state.v2
       : undefined,
+    controller.readSuggestionRequest,
   );
   const discardPrepared = connection.discardPrepared;
   useLayoutEffect(() => {
@@ -153,6 +166,19 @@ export function AgentSurface({
   const running = conversation.activeRunId !== undefined;
   const starting = controller.pending === 'send' && !running;
   const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
+  const submitMessage = messageSubmission({
+    controller,
+    optimistic,
+    connection,
+    connections,
+    agentId,
+    viewerId,
+    readOnly,
+    running,
+    steeringMode,
+    detailsOpen,
+    v2: state.v2,
+  });
   const approvalBusy =
     controller.pending === 'approval' ||
     historyIncomplete ||
@@ -184,6 +210,7 @@ export function AgentSurface({
     <section className="agent-surface">
       {connections.dialog}
       <OwnerAgentHeader
+        progress={<AgentHeaderProgress state={state} starting={starting} />}
         onTitleUpdated={controller.applyAgentTitle}
         detail={detail}
         availability={controller.resourceAvailability}
@@ -343,6 +370,23 @@ export function AgentSurface({
           approvalReadOnly={readOnly}
           onApproval={(id, decision) => void controller.approve(id, decision)}
         >
+          {suggestions && !readOnly && verified && !historyIncomplete ? (
+            <SuggestedReplies
+              key={suggestions.id}
+              suggestions={suggestions}
+              controller={controller}
+              disabled={
+                connections.pending ||
+                !controller.inputAvailability.allowed ||
+                controller.pending !== undefined ||
+                controller.pendingMessage !== undefined ||
+                controller.pendingControl === true
+              }
+              onSend={(text, accepted, refused) =>
+                submitMessage(text, accepted, suggestions.scope, refused)
+              }
+            />
+          ) : null}
           {controller.queuedInputs === undefined ? null : (
             <QueuedMessages
               items={messageQueue.items}
@@ -423,63 +467,7 @@ export function AgentSurface({
             connections.pending ||
             (controller.pending !== undefined && controller.pending !== 'send')
           }
-          onSend={(content, onAccepted) => {
-            if (readOnly || verified === undefined) return;
-            const message = optimistic.begin(
-              content,
-              running ? (steeringMode === 'queue' ? 'queue' : 'interrupt') : undefined,
-              controller.queuedInputs?.items.map((item) => item.commandId),
-            );
-            return new Promise<void>((resolve) => {
-              const settled = () => {
-                message.settled();
-                resolve();
-              };
-              const cancelled = () => {
-                message.cancelled();
-                resolve();
-              };
-              const send = () => {
-                const submit =
-                  running && steeringMode === 'interrupt'
-                    ? controller.interruptWithMessage
-                    : controller.send;
-                if (submit === undefined) {
-                  cancelled();
-                  return;
-                }
-                const args: Parameters<AgentController['send']> = [
-                  content,
-                  (receipt) => {
-                    if (message.accepted(receipt)) onAccepted();
-                    resolve();
-                  },
-                  message.observed,
-                  cancelled,
-                ];
-                const request =
-                  running && steeringMode === 'interrupt'
-                    ? submit(...args, message.ordinaryInput)
-                    : submit(...args);
-                void request.then(settled, settled);
-              };
-              if (
-                state.v2?.owner === (viewerId ?? verified.owner) &&
-                controller.resourceAvailability.state === 'live'
-              ) {
-                // Transport still rechecks identity before admission and acceptance.
-                send();
-              } else {
-                void connections.checkAndRun(
-                  { type: 'agent', id: agentId },
-                  viewerId ?? verified.owner,
-                  send,
-                  state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
-                  cancelled,
-                );
-              }
-            });
-          }}
+          onSend={submitMessage}
           onStop={controller.interrupt}
         />
       </div>

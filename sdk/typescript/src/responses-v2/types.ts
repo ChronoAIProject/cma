@@ -1,4 +1,5 @@
 import type { V2EventContext } from './event-context.js';
+import type { AnswerContext } from '../answer-context.js';
 export type { V2EventContext } from './event-context.js';
 import { v2QueuedCancellationCapability } from './queued-cancellation-types.js';
 import { ProtocolError } from '../errors.js';
@@ -33,6 +34,7 @@ export const v2ActivityItem = variant('mcp_call', {
     if (value !== null) throw new ProtocolError('Activity output must be absent');
     return null;
   },
+  'cma:output': optional(object({ text, truncated: boolean })),
   error: (value: unknown) => {
     if (value !== null) throw new ProtocolError('Activity error body must be absent');
     return null;
@@ -166,6 +168,7 @@ export const v2Capabilities = object({
 });
 export type V2Capabilities = Output<typeof v2Capabilities>;
 export interface V2ResponseInput {
+  readonly answer_context?: AnswerContext;
   readonly event_context?: V2EventContext;
   readonly input:
     | string

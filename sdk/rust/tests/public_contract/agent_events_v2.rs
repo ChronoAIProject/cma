@@ -13,6 +13,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
             api.snapshot(
                 c.param("agent_id"),
                 &SnapshotOptions {
+                    tool_output: false,
                     limit: c.number("limit")?,
                     page_cursor: c.q("page_cursor").map(AgentPageCursor::parse).transpose()?,
                 },
@@ -24,6 +25,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .events(
                     c.param("agent_id"),
                     &TailOptions {
+                        tool_output: false,
                         after_cursor: c.q("after_cursor").map(AgentCursor::parse).transpose()?,
                         last_event_id: c
                             .case

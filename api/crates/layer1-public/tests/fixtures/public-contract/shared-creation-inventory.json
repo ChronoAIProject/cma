@@ -18,6 +18,7 @@
         "body": {
           "items": [
             {
+              "task_status": "failed",
               "agent_id": "agt_shared_read",
               "title": "Agent agt_shared_read",
               "status": "ready",
@@ -104,6 +105,7 @@
         "body": {
           "items": [
             {
+              "task_status": "failed",
               "agent_id": "agt_shared_read",
               "title": "Agent agt_shared_read",
               "status": "ready",
@@ -141,6 +143,7 @@
         "body": {
           "items": [
             {
+              "task_status": "not_started",
               "agent_id": "agt_sibling",
               "title": "Agent agt_sibling",
               "status": "ready",
@@ -177,6 +180,7 @@
         "body": {
           "items": [
             {
+              "task_status": "stopped",
               "agent_id": "agt_shared_read",
               "title": "Agent agt_shared_read",
               "status": "deleted",

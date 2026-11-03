@@ -28,6 +28,7 @@ pub(super) struct CreateV2ResponseRequest {
     model: Option<String>,
     metadata: Option<BTreeMap<String, String>>,
     event_context: Option<super::event_context::EventContext>,
+    answer_context: Option<crate::conversation::AnswerContextRequest>,
     store: Option<bool>,
 }
 #[utoipa::path(post, path = "/api/v2/responses", tag = "responses v2", request_body = CreateV2ResponseRequest, params(("Idempotency-Key" = Option<String>, Header)), responses((status = 200, body = String, content_type = "text/event-stream"), (status = 422, body = Value)))]
