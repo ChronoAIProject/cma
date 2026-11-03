@@ -438,6 +438,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
             client
                 .agents()
                 .provenance_inventory(&AgentProvenanceInventoryOptions {
+                    task_status: c.tag("task_status")?,
                     shared: c.q("shared").as_deref() == Some("true"),
                     scope: AccessibleAgentListOptions {
                         organization: c.q("organization"),

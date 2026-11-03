@@ -124,7 +124,8 @@ it('keeps global New agent unscoped and existing-Sandbox creation in its row men
     ),
   );
   expect(onCreate).toHaveBeenLastCalledWith({ kind: 'new_agent' });
-  await actor.click(screen.getByRole('button', { name: 'Sandboxes' }));
+  await actor.click(screen.getByRole('button', { name: 'Settings' }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
   await actor.click(await screen.findByRole('button', { name: 'Options for Atlas' }));
   await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
   expect(onCreate).toHaveBeenLastCalledWith({ kind: 'new_agent', sandboxId: 'sbx_1' });
