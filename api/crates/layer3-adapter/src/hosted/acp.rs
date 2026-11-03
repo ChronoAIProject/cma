@@ -370,9 +370,7 @@ impl Bridge {
         prompt_id: Option<PromptIdentity>,
     ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
         if self.retired.load(Ordering::SeqCst) {
-            return Err(AdapterError::Unavailable(
-                "conversation link has retired".into(),
-            ));
+            return Err(retired_before_write(prompt));
         }
         let id = prompt_id.map_or_else(
             || {
@@ -395,7 +393,7 @@ impl Bridge {
             .lock()
             .await
             .insert(id.clone(), PendingCall { answer, prompt });
-        if let Err(error) = self.send(&frame).await {
+        if let Err(error) = self.send_frame(&frame, prompt).await {
             self.pending.lock().await.remove(&id);
             return Err(error);
         }
@@ -403,10 +401,12 @@ impl Bridge {
     }
 
     pub(super) async fn send(&self, frame: &serde_json::Value) -> crate::Result<()> {
+        self.send_frame(frame, false).await
+    }
+
+    async fn send_frame(&self, frame: &serde_json::Value, prompt: bool) -> crate::Result<()> {
         if self.retired.load(Ordering::SeqCst) {
-            return Err(AdapterError::Unavailable(
-                "conversation link has retired".into(),
-            ));
+            return Err(retired_before_write(prompt));
         }
         let body = serde_json::to_vec(frame)
             .map_err(|_| AdapterError::Rejected("ACP frame could not be encoded".into()))?;
@@ -440,6 +440,14 @@ impl Bridge {
         self.retired.store(true, Ordering::SeqCst);
         self.pending.lock().await.clear();
         self.blocked.lock().await.clear();
+    }
+}
+
+fn retired_before_write(prompt: bool) -> AdapterError {
+    if prompt {
+        AdapterError::PromptNotWritten("conversation link has retired".into())
+    } else {
+        AdapterError::Unavailable("conversation link has retired".into())
     }
 }
 
