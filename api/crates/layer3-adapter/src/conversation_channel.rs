@@ -128,6 +128,10 @@ impl ConversationInputSender {
                         | ConversationInput::Steer(_)
                 );
                 let refreshing = matches!(input, ConversationInput::RefreshContext { .. });
+                let prompt = matches!(
+                    input,
+                    ConversationInput::Prompt(_) | ConversationInput::RecoverablePrompt { .. }
+                );
                 let result = handler(input).await;
                 // These handlers reserve Unsupported for a definitive refusal
                 // before any runtime mutation; later failures are ambiguous.
@@ -136,6 +140,9 @@ impl ConversationInputSender {
                         && matches!(result, Err(AdapterError::OperationIdentityConflict(_)));
                 let failed = result.is_err() && !refused;
                 let outcome = match result {
+                    Err(error @ AdapterError::PromptNotWritten(_)) if prompt => {
+                        ConversationSendOutcome::PreWriteFailure(error)
+                    }
                     Err(error) if refused => ConversationSendOutcome::PreWriteFailure(error),
                     Ok(()) => ConversationSendOutcome::WriteConfirmed,
                     Err(error) => ConversationSendOutcome::Ambiguous(error),
