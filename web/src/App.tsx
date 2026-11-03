@@ -220,7 +220,19 @@ function AgentApp({
         onCreate={
           creation === undefined
             ? undefined
-            : (value) => setRequest({ owner: state.user.id, value })
+            : (value) => {
+                if (
+                  value.kind === 'new_agent' &&
+                  !('workspaceId' in value) &&
+                  !('sandboxId' in value)
+                ) {
+                  setRequest(undefined);
+                  router.navigate({ kind: 'home' });
+                  requestAnimationFrame(() =>
+                    document.querySelector<HTMLTextAreaElement>('.task-home textarea')?.focus(),
+                  );
+                } else setRequest({ owner: state.user.id, value });
+              }
         }
         onSignOut={() => {
           setRequest(undefined);
