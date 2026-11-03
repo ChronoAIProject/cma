@@ -3851,7 +3851,11 @@ Manual title, eligible runtime description and configured title keep their
 existing priority; an empty title reads **Untitled task**, never an internal ID.
 Tasks use **Ready to start**, **Completed**, **Working**, **Waiting for approval**,
 **Preparing**, **Paused**, **Stopped**, and **Failed**. Ready to start requires
-confirmed absence of turns. Completed requires a durable successful last turn
+confirmed absence of task turns. A completed first message explicitly recorded
+as setup, matched by turn sequence, still reads Ready to start. The same first
+turn with unknown legacy purpose reads Status unavailable; a later successful
+task turn reads Completed. Message text and title are never evidence of purpose.
+Completed requires a durable successful last task turn
 and no active, queued or admitted work. Missing evidence reads **Status
 unavailable**. Failure, interruption and parent lifecycle barriers take priority
 over an old success. These are task facts; resource lifecycle states are unchanged.
@@ -3870,3 +3874,5 @@ or act until access is checked again; denied access removes them. Stale rows omi
 the state dot and keep the last known state word alongside the refresh warning.
 
 | 2026-11-03 | Make task navigation the default, move Sandbox browsing under Settings, display authorized last-turn state with visible words, and preserve navigation position and lifecycle barriers. |
+
+| 2026-11-03 | Distinguish completed setup from completed tasks using recorded first-message purpose and turn identity; leave unknown legacy first-turn purpose unavailable. |

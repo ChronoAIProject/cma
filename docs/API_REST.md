@@ -814,6 +814,10 @@ one of `not_started`, `completed`, `working`, `waiting_approval`, `starting`,
 `paused`, `stopped`, `failed`, or `unknown`. The projection reads the most recent
 durable turn boundary (or original creation), including failure, interruption
 and recorded gaps. Only explicit success with no pending work yields completed.
+When that completed turn is the recorded first message, `purpose=setup` yields
+`not_started`, `purpose=task` yields `completed`, and absent legacy purpose yields
+`unknown`. Matching uses the recorded turn sequence, never text or title. A later
+successful turn after setup yields `completed`; pending work still takes priority.
 The existing owner/share checks and disclosure fences apply to this field;
 clients never need to open each Agent's conversation to populate navigation.
 Older servers may omit it; clients must show unavailable task evidence rather
