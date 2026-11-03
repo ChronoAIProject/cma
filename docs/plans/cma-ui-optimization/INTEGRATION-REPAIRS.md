@@ -137,7 +137,63 @@ ignore/skip annotation.
   27027, replica set `ticket11`; all mutation is in this test's PID/sequence-scoped
   database. The shared container and VM are not stopped or reconfigured.
 
-Environment corpus, Mongo fast path, latest integration merge and final affected
-checks remain in progress. Original skill fixtures, LocalAgentV2 head-404,
-formatter drift and unchanged 508-line `agent_operation_service.rs` are outside
-this batch. No pushes, PRs, deployments or shared fixture shutdowns are authorized.
+## Final integration verification and handoff
+
+The repair branch contains integration `f793a41518fa969af068d7913ff6310dee7e040b`,
+including 07 → 12 → 10 and the merger's composition inventory correction.
+Merge `def14528e` resolved one adjacent module declaration conflict by preserving
+both 07's `read_check` and the extracted `scope`. Merge `65bbccd34` brought in the
+latest composition checks and evidence without conflicts. No integration or
+active-worker source was written by this worker.
+
+Final affected Rust checks use Rust 1.96.1, `--offline --locked`, jobs=2,
+`RUST_MIN_STACK=33554432` and the private target described above:
+
+| Check / filter | Actual result | Log in `/tmp/cma-integration-repairs/` |
+| --- | --- | --- |
+| layer1-public `task_navigation` | 6 passed, including pending-work, completion, authority and shared navigation | `public-navigation.log` |
+| layer1-public `filesystem` | 5 passed; existing ticket-07 native runtime proof remains 1 ignored and is not counted as evidence here | `public-filesystem.log` |
+| layer2-core `sandbox::tests::filesystem` | 4 passed: environment scope, owner/cross-owner files, revoked full-home consent and typed link read/write authority | `core-filesystem.log` |
+| layer1-public `rest::openapi::` | 20 passed, including REST Markdown inventory and merged composition counts | `openapi-final.log` |
+| layer1-public exact shared JSON inventory | 1 failed: 234 actual / 230 registered; only the four ticket-07 delivery routes remain missing | `inventory-final.log` |
+
+The first Core filter used the source filename rather than its registered module
+and selected zero tests (`core-filter-miss.log`). It is excluded from evidence.
+`core-test-list.log` supplied the actual module name; the corrected run above
+contains all four named nonzero tests. SDK Rust likewise uses a separate private
+APFS-cloned/cleaned target `cargo-target-repairs-sdk` and retained cache cfg
+`cma_ui_ticket10`; `sdk-clean.log` and compilation paths identify its source.
+
+The copy scanner received one further focused red/green guard: event-handler
+error sentences must still be scanned while `className` is excluded. The example
+fails before that narrower rule (1 failed / 32 passed) and then passes all 33
+copy tests (`copy-scanner-red.log`, `copy-scanner-green.log`). No rule excluding
+other JSX attributes remains. This final test-only adjustment passes Prettier;
+the prior full Web run is supplemented by this focused verification.
+
+The query-probe database and the failed-red fixture database
+`cma_804_shared_provenance_corrupt_5560_0` were dropped after verifying the unique
+fixture marker (`mongo-cleanup.json`). The green Mongo test drops its own
+PID/sequence database. This worker started no persistent service; the shared
+Mongo container/VM stays running. The worktree and private build/evidence paths
+remain for parent cleanup.
+
+Remaining failures are explicitly separated:
+
+- **New, outside owned repair source:** ticket 07 omitted its four delivery
+  operations from shared JSON inventory/corpus/SDK dispatch. The global inventory
+  is still red. Its routes and focused contract remain present; no expected-count
+  or coverage bypass hides this omission.
+- **New, outside owned repair source:** ticket 10's `agents_tests/message_feedback.rs`
+  grew from 484 lines at `d19c225bd` to 556; the unchanged 500-line filename-based
+  gate reports it. No test rename or gate exception is introduced here.
+- **Original and untouched:** public/Core skill fixtures, LocalAgentV2 head-404,
+  and formatter drift remain the earlier tickets' documented limitations, not
+  newly rerun failures. The original 508-line `agent_operation_service.rs` is
+  byte-identical to `c9e2d7b91` (SHA-256
+  `fdf19898a69c9f918a872372a2b99762d2c1fc4d40dbb1d77925f5ccad81ccdc`).
+
+The owned repair work is complete; this does not declare the whole repository,
+native runtime, all 19 tickets or the final standards/spec review complete. No
+push, deployment, PR, original-workspace mutation or shared-service shutdown
+occurred.

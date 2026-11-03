@@ -1,5 +1,10 @@
 # 07：在回答下方展示可验证的成果并下载
 
+集成修复交接：本票列出的八项旧 Web 断言已由
+[INTEGRATION-REPAIRS](../INTEGRATION-REPAIRS.md) 修复，合并态完整 suite 通过。
+另有独立新缺项：四条已公开的 delivery 操作尚未进入共享 JSON inventory/corpus
+及其 typed SDK dispatch；修复分支保留全部路由，未用调整计数掩盖缺项。
+
 **What to build:** 用户看到本次回答实际交付的文件或持久文档，直接下载，且不会把别的任务或未发布文件当作本次成果。
 
 **Blocked by:** None（使用现有会话和资源入口）。
