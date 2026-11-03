@@ -1,4 +1,4 @@
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
 test('LOCAL composer settings and message feedback remain usable across screen sizes and reload', async ({
@@ -130,7 +130,12 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   expect(boundary.errors).toEqual([]);
 });
 
-async function capture(page: Page, info: TestInfo, state: string) {
+async function capture(
+  page: Page,
+  info: TestInfo,
+  state: string,
+  surface: Locator = page.getByRole('dialog'),
+) {
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
@@ -138,7 +143,7 @@ async function capture(page: Page, info: TestInfo, state: string) {
     );
     await expect
       .poll(() =>
-        page.getByRole('dialog').evaluate((dialog) => {
+        surface.evaluate((dialog) => {
           const bounds = dialog.getBoundingClientRect();
           return (
             bounds.left >= 0 &&
@@ -156,7 +161,7 @@ async function capture(page: Page, info: TestInfo, state: string) {
   }
 }
 for (const target of ['new', 'contextual'] as const) {
-  test(`LOCAL ${target} Sandbox creation uses only repository context and recovers the same command after reload`, async ({
+  test(`LOCAL ${target} task creation preserves repository or inherited context and recovers the same command after reload`, async ({
     page,
     baseURL,
   }, info) => {
@@ -208,28 +213,47 @@ for (const target of ['new', 'contextual'] as const) {
       }
     };
     await open();
-    const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
-    await expect(dialog.getByLabel('GitHub repository (optional)')).toBeVisible();
+    const dialog =
+      target === 'new'
+        ? page.locator('.task-home')
+        : page.getByRole('dialog', { name: 'New task', exact: true });
+    await expect(dialog.getByLabel('Your task')).toBeVisible();
     await expect(dialog.getByRole('radiogroup')).toHaveCount(0);
     await expect(dialog.getByText('Where it works', { exact: true })).toHaveCount(0);
-    expect(await dialog.locator('input').count()).toBe(1);
-    await dialog.getByLabel('GitHub repository (optional)').fill('https://github.com/org/research');
-    await capture(page, info, `${target}-creation`);
-    await dialog.getByRole('button', { name: 'Create agent', exact: true }).click();
+    await dialog
+      .getByLabel('Your task')
+      .fill('  Inspect the selected source\nKeep this exact task.  ');
+    if (target === 'new') {
+      await dialog.getByLabel('GitHub repository').fill('https://github.com/org/research');
+      await dialog.getByLabel('Repository ref').fill('proof/fixed');
+    } else {
+      await expect(dialog.getByLabel('GitHub repository')).toHaveCount(0);
+      await expect(dialog.getByText(/Repository context is inherited/)).toBeVisible();
+    }
+    await capture(page, info, `${target}-creation`, dialog);
+    await dialog.getByRole('button', { name: 'Start task', exact: true }).click();
     await expect(
-      dialog.getByRole('button', { name: 'Recover creation', exact: true }),
+      dialog.getByRole('button', { name: 'Recover original task', exact: true }),
     ).toBeEnabled();
     await page.setViewportSize({ width: 1440, height: 900 });
     await open();
-    await dialog.getByRole('button', { name: 'Recover creation', exact: true }).click();
-    await expect(dialog.getByRole('button', { name: 'Open agent', exact: true })).toBeDisabled();
+    await expect(dialog.getByLabel('Your task')).toHaveValue(
+      '  Inspect the selected source\nKeep this exact task.  ',
+    );
+    await dialog.getByRole('button', { name: 'Recover original task', exact: true }).click();
+    await expect(
+      dialog.getByText('Task accepted. Preparing your Agent.', { exact: true }),
+    ).toBeVisible();
+    await expect(page).not.toHaveURL(/\/agents\/agt_contract$/);
     expect(writes).toHaveLength(2);
     expect(writes[1]).toEqual(writes[0]);
     expect(writes[0]?.key).toBeTruthy();
     expect(writes[0]?.body).toEqual({
-      name: 'research',
-      repository: { url: 'https://github.com/org/research' },
-      ...(target === 'new' ? {} : { sandbox_id: 'sbx_route' }),
+      name: 'New task',
+      initial_message: '  Inspect the selected source\nKeep this exact task.  ',
+      ...(target === 'new'
+        ? { repository: { url: 'https://github.com/org/research', ref: 'proof/fixed' } }
+        : { sandbox_id: 'sbx_route' }),
     });
     ready = true;
     await expect(page).toHaveURL(/\/agents\/agt_contract$/);
