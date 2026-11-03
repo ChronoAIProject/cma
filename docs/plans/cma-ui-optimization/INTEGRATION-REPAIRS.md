@@ -86,7 +86,7 @@ control facts. Only the live link renewal deadline is captured symbolically.
   preflight, 240 unrepresentable wire-shape and 27 browser-owned cases**
   (`environment-sdk-rust-green.log`, `sdk-rust-all.log`). SDK TypeScript typecheck
   passes. Neither SDK bypasses the typed method with a raw HTTP call.
-- The merged **global** inventory remains separately blocked by ticket 07's four
+- At the 07/12/10 merge, the **global** inventory remains separately blocked by ticket 07's four
   unregistered delivery operations. Before this repair it actually ran **1 failed
   test**, with **234 actual / 229 listed** (`inventory-merged-red.log`). This repair
   adds the environment entry and raises the exact listed count to **230**; it does
@@ -139,23 +139,29 @@ ignore/skip annotation.
 
 ## Final integration verification and handoff
 
-The repair branch contains integration `f793a41518fa969af068d7913ff6310dee7e040b`,
-including 07 → 12 → 10 and the merger's composition inventory correction.
+The repair branch contains integration `a2965df09581de5fa0fa35af54b69db56cd83ab9`,
+including 07 → 12 → 10 → 13 and the merger's composition inventory correction.
 Merge `def14528e` resolved one adjacent module declaration conflict by preserving
 both 07's `read_check` and the extracted `scope`. Merge `65bbccd34` brought in the
-latest composition checks and evidence without conflicts. No integration or
-active-worker source was written by this worker.
+first batch's latest composition checks and evidence without conflicts. Merge
+`0cf5ce754` preserves ticket 13 at `83ea396a4d49535cbc1484034b34f2b3202b3bb2`,
+and `afae935e3` includes its final integration evidence. Ticket 13's literal human
+quality signoff remains unchecked and is not this repair batch's blocker. No
+integration or active-worker source was written by this worker.
 
 Final affected Rust checks use Rust 1.96.1, `--offline --locked`, jobs=2,
 `RUST_MIN_STACK=33554432` and the private target described above:
 
 | Check / filter | Actual result | Log in `/tmp/cma-integration-repairs/` |
 | --- | --- | --- |
-| layer1-public `task_navigation` | 6 passed, including pending-work, completion, authority and shared navigation | `public-navigation.log` |
-| layer1-public `filesystem` | 5 passed; existing ticket-07 native runtime proof remains 1 ignored and is not counted as evidence here | `public-filesystem.log` |
-| layer2-core `sandbox::tests::filesystem` | 4 passed: environment scope, owner/cross-owner files, revoked full-home consent and typed link read/write authority | `core-filesystem.log` |
-| layer1-public `rest::openapi::` | 20 passed, including REST Markdown inventory and merged composition counts | `openapi-final.log` |
-| layer1-public exact shared JSON inventory | 1 failed: 234 actual / 230 registered; only the four ticket-07 delivery routes remain missing | `inventory-final.log` |
+| layer1-public `task_navigation` | 6 passed after 13, including pending-work, completion, authority and shared navigation | `navigation-after13.log` |
+| layer1-public `filesystem` | 5 passed after 13; existing ticket-07 native runtime proof remains 1 ignored and is not counted as evidence here | `filesystem-after13.log` |
+| layer2-core `sandbox::tests::filesystem` | 4 passed before 13: environment scope, owner/cross-owner files, revoked full-home consent and typed link read/write authority; the repaired scope module is unchanged by 13 | `core-filesystem.log` |
+| layer1-public `rest::openapi::` | 20 passed after 13, including REST Markdown inventory and merged composition counts | `openapi-after13.log` |
+| layer1-public environment shared corpus | 1 passed / 10 cases after 13 | `environment-after13.log` |
+| layer1-public suggestions shared corpus | 1 passed / 6 cases after 13 | `suggestions-after13.log` |
+| cma public hierarchy/shared-inventory status regression | 1 passed after 13; 1,606 filtered, no zero-test claim | `status-after13.log` |
+| layer1-public exact shared JSON inventory | 1 failed after final `a2965df09` merge: 235 actual / 231 registered; only the four ticket-07 delivery routes remain missing | `inventory-final-tip.log` |
 
 The first Core filter used the source filename rather than its registered module
 and selected zero tests (`core-filter-miss.log`). It is excluded from evidence.
@@ -169,7 +175,30 @@ error sentences must still be scanned while `className` is excluded. The example
 fails before that narrower rule (1 failed / 32 passed) and then passes all 33
 copy tests (`copy-scanner-red.log`, `copy-scanner-green.log`). No rule excluding
 other JSX attributes remains. This final test-only adjustment passes Prettier;
-the prior full Web run is supplemented by this focused verification.
+the prior full Web run is supplemented by this focused verification and the
+complete post-13 Web run below.
+
+After the final requested ticket-13 merge, the complete Web suite passes
+**330 files / 2,974 tests** (`web-after13.log`). Both shared SDK corpora retain
+the environment and all six incoming suggestion cases: TypeScript **2,753 tests**
+pass (`sdk-ts-after13.log`); Rust **1 test / 2,307 typed HTTP, 173 typed preflight,
+241 unrepresentable wire-shape, 27 browser-owned cases** passes
+(`sdk-rust-after13.log`). The inventory contains 231 actual registered OpenAPI
+entries, including both environment and suggestions; `f450bfab5` reconciles their
+parallel count additions without claiming the four absent delivery entries.
+Post-13 Web and SDK TypeScript typechecks, Web lint and the unchanged CSS gate
+also pass (`typecheck-after13.log`, `sdk-ts-typecheck-after13.log`,
+`lint-after13.log`, `css-after13.log`). `file-size-after13.log` still reports only
+the two separately classified files below. No new checks are suppressed.
+
+The remaining missing shared operations are:
+
+```text
+POST /api/v1/agents/{id}/deliverable-references
+GET /api/v1/agents/{id}/answers/{answer_id}/deliverables
+GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}
+GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download
+```
 
 The query-probe database and the failed-red fixture database
 `cma_804_shared_provenance_corrupt_5560_0` were dropped after verifying the unique
@@ -197,3 +226,40 @@ The owned repair work is complete; this does not declare the whole repository,
 native runtime, all 19 tickets or the final standards/spec review complete. No
 push, deployment, PR, original-workspace mutation or shared-service shutdown
 occurred.
+
+## Repair manifest
+
+29 paths differ from integration `a2965df09581de5fa0fa35af54b69db56cd83ab9`.
+Incoming feature changes are excluded from this repair-only manifest.
+
+```text
+api/crates/cma/src/store/agent_task_status.rs
+api/crates/cma/src/store/sandbox_mongo_integration_tests/resource_access_tests/shared_inventory_tests.rs
+api/crates/cma/src/store/sandbox_mongo_integration_tests/resource_access_tests/shared_inventory_tests/task_status.rs
+api/crates/layer1-public/src/rest/public_contract_tests/filesystem_cases.rs
+api/crates/layer1-public/src/rest/public_contract_tests/inventory.rs
+api/crates/layer1-public/tests/fixtures/public-contract-inventory.json
+api/crates/layer1-public/tests/fixtures/public-contract/agent-environment.json
+api/crates/layer2-core/src/sandbox/agent_filesystem.rs
+api/crates/layer2-core/src/sandbox/agent_filesystem/scope.rs
+docs/plans/cma-ui-optimization/10-EVIDENCE.md
+docs/plans/cma-ui-optimization/14-FILE-SCOPE.md
+docs/plans/cma-ui-optimization/INTEGRATION-REPAIRS.md
+docs/plans/cma-ui-optimization/issues/01-task-navigation.md
+docs/plans/cma-ui-optimization/issues/03-task-home.md
+docs/plans/cma-ui-optimization/issues/07-answer-deliverables.md
+docs/plans/cma-ui-optimization/issues/14-computer-files-activity.md
+sdk/rust/src/agent_environment.rs
+sdk/rust/tests/public_contract/resources.rs
+sdk/typescript/tests/public-contract/resources.ts
+web/src/AppPublic.test.tsx
+web/src/agent/conversation.ts
+web/src/agent/conversationValues.ts
+web/src/agent/environment/AgentComputer.css
+web/src/agent/files/AgentFiles.css
+web/src/agent/files/FileExplorerFrame.tsx
+web/src/agent/liveReasoning.ts
+web/src/api/rest.test.ts
+web/src/create/TaskHome.tsx
+web/src/vocabulary/publicCopy.test.ts
+```
