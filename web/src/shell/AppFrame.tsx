@@ -47,6 +47,7 @@ interface AppFrameProps {
   /** Whether the details column is asked for. */
   readonly detailsOpen: boolean;
   readonly compactDetailsOverlay?: boolean;
+  readonly compactDetailsInline?: boolean;
   readonly onDetailsClose?: () => void;
   /**
    * Whether the owner has asked for the sidebar to be closed.
@@ -72,6 +73,7 @@ export function AppFrame({
   details,
   detailsOpen,
   compactDetailsOverlay = false,
+  compactDetailsInline = false,
   onDetailsClose,
   overlay,
   sidebarCollapsed = false,
@@ -220,7 +222,9 @@ export function AppFrame({
   const onDetailsDrag = useCallback((to: number) => {
     setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
   }, []);
-  const detailsOverlay = detailsOpen && columns.details === 0 && compactDetailsOverlay;
+  const detailsInline = detailsOpen && columns.details === 0 && compactDetailsInline;
+  const detailsOverlay =
+    detailsOpen && columns.details === 0 && compactDetailsOverlay && !detailsInline;
   usePlateFocus(
     detailsRef,
     onDetailsClose ?? (() => {}),
@@ -233,9 +237,8 @@ export function AppFrame({
       className="frame"
       data-dragging={dragging ? '' : undefined}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
-      data-details-overlay={
-        detailsOpen && columns.details === 0 && compactDetailsOverlay ? '' : undefined
-      }
+      data-details-overlay={detailsOverlay ? '' : undefined}
+      data-details-inline={detailsInline ? '' : undefined}
       data-sidebar-overlay={sidebarOverlay ? '' : undefined}
       data-phone={phone ? '' : undefined}
       style={{

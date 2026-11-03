@@ -22,6 +22,7 @@ import { agentSkillsClient } from './rest/agentSkills';
 import { messageFeedbackClient } from './rest/messageFeedback';
 import { agentFilesClient } from './rest/agentFiles';
 import { documentsClient } from './rest/documents';
+import { computerClient } from './rest/computer';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -52,6 +53,7 @@ async function createdDetail<Value>(
 
 /** One public SDK transport, with explicit wire-to-view conversion at the boundary. */
 export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions): CmaWebClient {
+  const computer = computerClient(sdk);
   const pinnedSandboxProfile = async (reference: ProfileReference, options?: ReadOptions) => {
     const profile = await sdk.sandboxProfiles.readRevision(
       reference.id,
@@ -71,11 +73,11 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     deliverables: sdk.agents,
     documents: documentsClient(),
     browser: sdk.agentBrowser,
-    browserControl: sdk.agentBrowserControl,
+    browserControl: computer.browserControl,
     taskExperience: sdk.taskExperience,
     files: {
       ...agentFilesClient(),
-      environment: (id, options) => sdk.agentFiles.environment(id, options),
+      environment: computer.environment,
     },
     updateSandboxRuntime: async (id, targetVersion, options) => {
       const result = await sdk.sandboxes.updateRuntime(
