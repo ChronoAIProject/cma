@@ -17,17 +17,28 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let context = match self.connection_context(&agent).await {
             Ok(context) => context,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         let target = match live_target(&agent) {
             Ok(target) => target,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         let fence = claimed_fence(&agent, &self.config.holder)?;
         if let Err(failure) = super::startup::validated_open_request(&agent, &context) {
-            return self.handle_failure(agent, failure, now).await;
+            return self
+                .handle_failure(agent, failure, now + started.elapsed())
+                .await;
         }
         // The initial open has already negotiated this exact conversation. Keep
         // that unpublished stream instead of opening it again. Settings replay
@@ -41,21 +52,25 @@ impl AgentWorker {
             Ok(Some(attachment)) => attachment,
             Ok(None) => match self.reattach(&agent, &context, &target).await {
                 Ok(attachment) => attachment,
-                Err(failure) => return self.handle_failure(agent, failure, now).await,
+                Err(failure) => {
+                    return self
+                        .handle_failure(agent, failure, now + started.elapsed())
+                        .await
+                }
             },
             Err(error) => {
                 return self
-                    .handle_failure(agent, registry_failure(error), now)
+                    .handle_failure(agent, registry_failure(error), now + started.elapsed())
                     .await;
             }
         };
         if let Err(error) = self.dependencies.registry.publish_and_activate(&attachment) {
             self.dependencies.registry.rollback(&attachment);
             return self
-                .handle_failure(agent, registry_failure(error), now)
+                .handle_failure(agent, registry_failure(error), now + started.elapsed())
                 .await;
         }
-        self.finish_connection_publication(agent, &attachment, now)
+        self.finish_connection_publication(agent, &attachment, now + started.elapsed())
             .await
     }
 
