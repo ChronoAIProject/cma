@@ -55,7 +55,7 @@ export function SharedAgent({
 }: Props) {
   const agentId = detail.id;
   const title = agentDisplayTitle(detail);
-  useDocumentTitle(title);
+  useDocumentTitle(title, 'task');
   const read = useMemo(
     () => async (signal: AbortSignal) => {
       try {

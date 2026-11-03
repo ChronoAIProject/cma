@@ -60,6 +60,7 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
   const composer = page.getByRole('form', { name: 'Message Agent' });
+  await composer.getByRole('button', { name: /^Agent settings:/ }).click();
   await expect(composer.getByRole('button', { name: /^Model and reasoning effort/ })).toHaveText(
     'GPT-6 High',
   );
@@ -360,6 +361,7 @@ test('LOCAL composer settings apply only after a confirmed runtime response and 
   });
   await page.goto('/agents/agt_contract');
   const details = page.getByRole('form', { name: 'Message Agent' });
+  await details.getByRole('button', { name: /^Agent settings:/ }).click();
   const chip = details.getByRole('button', { name: /^Model and reasoning effort/ });
   await expect(chip).toHaveText('GPT-6 High');
   await chip.click();
@@ -463,6 +465,7 @@ test('LOCAL composer and Details use model and skill catalogs in responsive cont
   const details = page.getByRole('complementary', { name: 'Agent details' });
   const composer = page.getByRole('form', { name: 'Message Agent' });
   await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveCount(0);
+  await composer.getByRole('button', { name: /^Agent settings:/ }).click();
   const chip = composer.getByRole('button', { name: /^Model and reasoning effort/ });
   await expect(chip).toHaveText('GPT-6 High');
   await chip.click();
