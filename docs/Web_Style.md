@@ -4243,3 +4243,23 @@ Operations adds an independently capability-gated Usage tab with all-owner total
 owner filtering and retained Sandbox rows. CPU core-hours, RAM GiB-hours, disk
 GiB-hours, uptime and tracking coverage use explicit units. Partial histories and
 failed reads are stated; unavailable values never become zero.
+
+### 2026-11-03 — Operations usage controls
+
+Operations Usage uses the existing Picker for User (including All users) and
+Sandbox status (including All statuses), plus the existing Input for a Sandbox
+ID search. Apply filters combines these choices and resets pagination. User
+choices remain available when the filtered result is empty. Retained usage for
+an unavailable user remains selectable with an explicit unavailable-name label
+and its identifier.
+
+Sortable table headers use the existing compact ghost Button, with an upward or
+downward arrow for the active direction and `aria-sort` on the column header.
+Clicking the active header toggles ascending/descending order; choosing a new
+column starts ascending. Numeric quantities sort by their unrounded values and
+timestamps by time, across the complete result set before pagination. Changing
+the sort returns to page one. Loading or incomplete inventories do not appear
+as complete sortable results; failed refreshes retain the last successful rows
+with an alert. Existing table dimensions, scrolling and tokens remain unchanged.
+
+| 2026-11-03 | Add User/status/Sandbox ID filters and accessible ascending/descending column sorting to Operations Usage using the existing form, Picker, Button and Table primitives. |
