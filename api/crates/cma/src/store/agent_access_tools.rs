@@ -80,6 +80,22 @@ impl MongoAgentAccessToolSource {
     }
 
     async fn run(&self, operation: Operation<'_>) -> layer3_adapter::Result<Outcome> {
+        // Retained replay writes the same Agent while native tool setup is
+        // pending. Join the recorder's local queue before opening a snapshot,
+        // otherwise its steady progress can abort every confirmation attempt.
+        // This is scheduling only: all lineage, lease and capability checks
+        // remain in the transaction, including cross-replica write fences.
+        let agent = match &operation {
+            Operation::Resolve(_, request, _) => Some(AgentId(request.options.slot.0.clone())),
+            Operation::Confirm(binding, _) | Operation::Transport(binding, ..) => {
+                Some(AgentId(binding.scope().1 .0.clone()))
+            }
+            Operation::Authenticate(_) | Operation::Setup(_) => None,
+        };
+        let _writer = match agent {
+            Some(id) => Some(self.store.agent_writes.lock(&id).await),
+            None => None,
+        };
         let jitter = uuid::Uuid::new_v4().as_u128() as u64;
         for attempt in 0..TRANSACTION_ATTEMPTS {
             // Only known-aborted transactions reach another attempt. Give a
