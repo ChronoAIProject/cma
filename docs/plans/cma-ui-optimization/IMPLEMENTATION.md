@@ -134,3 +134,12 @@
 - `git diff --check ef5e20c1f51b57833f115a61da55e57a70a4fe2a HEAD` 与记录提交前的 `git diff --check` 通过。未重复 worker 已有的私有 target 非零 Rust/file-boundary/managed-settings 或广泛/native 检查，本次没有 Rust 运行；新增 durable 输出记录仍要求兼容 reader，具体证据边界和限制见票文档。
 - 04 继续负责本轮 Home/创建集成修复；Console 随本票面板接线由 506 行增至 524 行，行数超限亦继续交由 04。已修复的七项披露断言及这些待修复项均不是原始基线缺陷；原始 skill contract/Core fixture、格式及 508 行 Agent service 问题独立保留。
 - 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。
+
+## Ticket 10 worker 交付（2026-11-03）
+
+- 独立 worktree `/Users/liuyitian/code/cma-ui-worktrees/ticket-10`、分支 `codex/cma-ui-10`，从 `7739c431f` 开始；`262a2c6fc` 合入最新集成 `a426b87ee`。样式先于 UI，合并冲突保留集成全文为原样前缀，仅追加本票规则。由独立 merger 合入集成；无推送、部署或 PR，保留本 worktree。
+- 六项多选、500 Unicode 码点可选说明；原因独立版本条件写入与公开回读，精确重试、失联回执恢复、旧客户端 up/null 原子清理及墓碑防 ABA。复用 09 最终回答身份、投票恢复和 `feedbackRecovery`，本页草稿按 viewer/Agent/answer 隔离；关闭、失败、重新编辑及账号/权限改变均有用户边界验证，不产生发送或训练操作。
+- 首条指定 red → green 为 `message_feedback_delayed_reasons_after_up_never_restore_down_or_reasons`，实际 1 failed → 1 passed。合并态 A/投影 12、Core 2、Mongo 4 个命名测试通过；真实 handler 新原因 26 + 旧 vote 18 案例通过；Mongo 使用共享 ticket11 容器的独立 UUID 数据库，48 轮 up/null 竞态与 12 路重试通过，数据库已清理，共享 VM/容器保留。
+- 合并态相关 Web 115 文件/950 tests 通过（含 14 的七项折叠回归）；最终聚焦 44 tests 通过。1440/390px Chrome 各通过，截图已检查；TypeScript SDK 2740 tests、Rust SDK 全部 2732 个分类契约通过；类型、lint、构建和 48 个 SDK 文档示例通过。[完整验收矩阵、日志、复跑命令及 51 路径 manifest](10-EVIDENCE.md)。
+- 上游门禁单独交接：14 的 `.agent-files-panel` 双文件声明导致 CSS gate 失败，已在纯 `a426b87ee` 快照独立复现；14 的新增 environment route 缺少全局 contract inventory/corpus 登记，合并态实际 230、登记 229。10 两个路由及所有新旧反馈契约通过；不通过删路由、改计数或 skip 隐藏缺口。04 的首页/Console 与原始格式/技能 fixture/508 行 service 未修改，不声明全仓绿色。
+- 本票触及源文件均 ≤500 行，测试 ≤2000 行；OpenAPI 组合函数因合并后的行数边界抽出，主文件 494 行。无原工作区、集成工作区或其他 worker 源码编辑；只关闭本票本地服务，保留共享 Mongo 和 worktree。

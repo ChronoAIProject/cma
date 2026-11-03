@@ -109,7 +109,12 @@ export function useFeedbackReasons(
       update(message, (row) => ({
         ...row,
         busy: undefined,
-        error: cause instanceof Error ? cause.message : 'Reasons could not be confirmed.',
+        error:
+          cause instanceof FeedbackReasonsError && cause.status === 409
+            ? cause.message
+            : row.busy === 'read'
+              ? 'Reasons could not be loaded. Reload feedback.'
+              : 'Reasons could not be confirmed. Retry the same reasons.',
         conflict: cause instanceof FeedbackReasonsError && cause.status === 409,
       }));
     }
@@ -158,7 +163,10 @@ export function useFeedbackReasons(
               : undefined,
           }));
         })
-        .catch((cause) => fail(message, request, cause));
+        .catch((cause) => fail(message, request, cause))
+        .finally(() => {
+          if (requests.current.get(message) === request) requests.current.delete(message);
+        });
     }
     return {
       ...current,
@@ -220,7 +228,10 @@ export function useFeedbackReasons(
               saved: true,
             }));
           })
-          .catch((cause) => fail(message, request, cause));
+          .catch((cause) => fail(message, request, cause))
+          .finally(() => {
+            if (requests.current.get(message) === request) requests.current.delete(message);
+          });
       },
     };
   }, [agent, viewer, client, supported, state, scope]);
