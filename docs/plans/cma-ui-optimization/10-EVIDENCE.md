@@ -2,7 +2,7 @@
 
 日期：2026-11-03。状态：本票验收完成；全仓门禁的上游例外单独列出。
 
-工作区 `/Users/liuyitian/code/cma-ui-worktrees/ticket-10`，分支 `codex/cma-ui-10`。初始基线 `7739c431f`，包含 01/02/03/06/09/11；合并最新集成 `a426b87ee5852866850cab192b37d14f9f2087c6` 的提交为 `262a2c6fc`，同时保留 14。样式冲突通过保留完整集成文档为原样前缀、追加本票 33 行解决。原工作区、集成工作区及其他 worker 源码未编辑；没有推送、部署、PR 或 worktree 删除。
+工作区 `/Users/liuyitian/code/cma-ui-worktrees/ticket-10`，分支 `codex/cma-ui-10`。初始基线 `7739c431f`，包含 01/02/03/06/09/11；`262a2c6fc` 先合入 14 所在集成，最终 `e5f5e952b` 合入最新集成 `d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8`，同时保留 04/05/14。样式冲突通过保留完整集成文档为原样前缀、追加本票 33 行解决；OpenAPI 复用 04 抽出的 composition，保留其 repository 扩展并增加反馈契约。原工作区、集成工作区及其他 worker 源码未编辑；没有推送、部署、PR 或 worktree 删除。
 
 ## 验收矩阵
 
@@ -33,18 +33,19 @@ U 使用正常 REST client 与浏览器网络 fixture；A 使用真实 Axum hand
 
 | 验证 | 结果 | 日志 |
 | --- | --- | --- |
-| 合并态反馈 A + OpenAPI 投影 | 11 个真实认证路由测试 + 1 个公开 schema 投影测试通过 | `/tmp/cma-ticket10-merged-api.log` |
+| 最终 d19c225bd 合并态反馈 A + OpenAPI 投影 | 11 个真实认证路由测试 + 1 个公开 schema 投影测试通过 | `/tmp/cma-ticket10-final-integration-api.log` |
 | 合并态 Core | 2 个命名测试通过 | `/tmp/cma-ticket10-merged-core.log` |
-| 合并态真实 Mongo | 4 个命名测试通过；up/null 各 24 轮竞态，12 路精确重试，重开、旧格式与 ABA | `/tmp/cma-ticket10-merged-mongo.log` |
-| 新原因实际 handler 契约 | 1 个测试，26 个案例通过 | `/tmp/cma-ticket10-merged-reasons-contract.log` |
-| 旧 vote 实际 handler 契约 | 1 个测试，18 个案例通过 | `/tmp/cma-ticket10-merged-vote-contract.log` |
-| 合并态相关 Web | 115 文件、950 tests 通过，含 14 的七项折叠回归 | `/tmp/cma-ticket10-merged-web.log` |
-| 最终聚焦 Web/性能 | 7 文件、44 tests 通过，含新增冲突回读与最终请求清理 | `/tmp/cma-ticket10-handoff-web-final.log` |
-| 合并态 Chrome | 1440/390px 各 1 项通过 | `/tmp/cma-ticket10-handoff-browser.log` |
+| 最终合并态真实 Mongo | 4 个命名测试通过；up/null 各 24 轮竞态，12 路精确重试，重开、旧格式与 ABA | `/tmp/cma-ticket10-final-integration-mongo.log` |
+| 最终合并态新原因实际 handler 契约 | 1 个测试，26 个案例通过 | `/tmp/cma-ticket10-final-integration-reasons-contract.log` |
+| 最终合并态旧 vote 实际 handler 契约 | 1 个测试，18 个案例通过 | `/tmp/cma-ticket10-final-integration-vote-contract.log` |
+| 14 合并态相关 Web | 115 文件、950 tests 通过，含 14 的七项折叠回归 | `/tmp/cma-ticket10-merged-web.log` |
+| 最终合并态聚焦 Web/性能 | 7 文件、44 tests 通过，含新增冲突回读与最终请求清理 | `/tmp/cma-ticket10-final-integration-focused-web.log` |
+| 最终合并态 Chrome | 1440/390px 各 1 项通过，截图已检查 | `/tmp/cma-ticket10-final-integration-browser.log` |
 | TypeScript SDK | 2 文件、2740 tests 通过 | `/tmp/cma-ticket10-merged-ts-sdk.log` |
 | Rust SDK 全部共享契约 | 1 个测试通过；2292 typed HTTP、173 preflight、240 typed-shape、27 browser-owned 契约 | `/tmp/cma-ticket10-merged-rust-sdk.log` |
-| Web 类型、e2e 类型、lint、build | 通过；build 保留既有大 chunk 提示 | `/tmp/cma-ticket10-handoff-{typecheck,e2e-types,lint}.log`、`/tmp/cma-ticket10-merged-build.log` |
+| Web 类型、e2e 类型、lint、build | 最终合并态类型/lint 通过；14 合并态 build 通过，保留既有大 chunk 提示 | `/tmp/cma-ticket10-final-integration-{typecheck,e2e-types,lint}.log`、`/tmp/cma-ticket10-merged-build.log` |
 | SDK 构建和文档 | TypeScript 构建通过，48 示例/11 文档通过 | `/tmp/cma-ticket10-merged-sdk-{build,docs}.log` |
+| 最终合并态 REST 文档 inventory | 1 个非零命名测试通过；独立于下述共享 JSON inventory 门禁 | `/tmp/cma-ticket10-final-integration-doc-inventory.log` |
 
 浏览器图像在 `/tmp/cma-ticket10-evidence/`：`before-{1440,390}.png` 为初始 09 界面；`default/helpful/expanded/saving/failed/saved/removed-{1440,390}.png` 为本票状态。最终桌面含 14 的电脑侧栏；手机面板在正常布局内，输入区保持可用。真实浏览器 fixture 明确声明了 14 新增的 files/tree 和 environment 读取，不把这些样例当作 runtime 能力证明。
 
@@ -63,16 +64,16 @@ npm --prefix web test -- --configLoader=runner --no-cache --maxWorkers=2 src/age
 
 SDK：在 `sdk/typescript` 使用 `../../web/node_modules/.bin/vitest run --configLoader=runner --no-cache --maxWorkers=2 tests/message-feedback.test.ts tests/public-contract.test.ts`；Rust 使用 `cargo +1.96.1 test --locked --manifest-path sdk/rust/Cargo.toml --test public_contract -- --nocapture`。依赖只在本 worktree 的 SDK node_modules 补齐软链接，未安装或改写原工作区依赖。
 
-浏览器：在 `web` 以隔离 Vite cache `/tmp/cma-ticket10-vite-cache` 启动本地 4610 端口，再设置 `CMA_FEEDBACK_PREVIEW_URL=http://127.0.0.1:4610` 和 `CMA_E2E_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'`，运行 `node_modules/.bin/playwright test --config=e2e/feedback-reasons.config.ts`。本票服务交付时关闭；共享 `colima-cma-ui-proof` VM 与 `cma-ticket11-mongo` 容器保持运行。每次 Mongo 测试用 UUID 独立数据库并在成功后删除。
+浏览器：在 `web` 以隔离 Vite cache `/tmp/cma-ticket10-vite-cache` 启动本地 4610 端口，再设置 `CMA_FEEDBACK_PREVIEW_URL=http://127.0.0.1:4610` 和 `CMA_E2E_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'`，运行 `node_modules/.bin/playwright test --config=e2e/feedback-reasons.config.ts`。本票 Vite PID 26476 已关闭，4610 无监听；共享 `colima-cma-ui-proof` VM 与 `cma-ticket11-mongo` 容器保持运行。每次 Mongo 测试用 UUID 独立数据库并在成功后删除；最终查询 `cma_ticket10_` 前缀数据库为 `[]`。
 
 ## 明确的上游门禁与边界
 
-- 初始基线上的全量 Web：319 文件/2905 tests 通过，6 文件/17 tests 失败，日志 `/tmp/cma-ticket10-web-all.log`。其中 ActiveThinking 4、MessageIdentity 1、SharedAgent 2 为用户指定 14 的折叠回归，合并 14 后的 950 项相关验证已全部通过。AppCreation 3、AppPublic 6 与 TaskHome 文案扫描 1 的详细名称保留在日志；这些首页/旧导航断言和 14 文件隔离分析不由本票修改，未提交 skip 或把全量称为绿色。
-- 合并态 CSS gate 失败：`.agent-files-panel` 同时在 `AgentComputer.css` 和 `AgentFiles.css` 声明，两个文件均来自 14。本票初始 CSS gate 通过；通过 `git archive a426b87ee` 的独立临时源码快照运行同一脚本，复现完全相同错误，见 `/tmp/cma-ticket10-upstream-css.log`。合并态日志 `/tmp/cma-ticket10-merged-css.log`。
-- 全局 contract inventory 在合并后报告实际 230、登记 229，见 `/tmp/cma-ticket10-merged-inventory.log`。14 新增 `GET /api/v1/agents/{id}/environment`（`agent_filesystem::environment::read`）未进入上游 inventory/共享 corpus；`a426b87ee` 的 inventory 仍为 227。10 的两个新增操作登记完整，合并前 229-operation gate 通过，新/旧反馈 44 个真实 handler 案例在合并后仍通过。未通过改数字、删路由或放宽 gate 掩盖缺失；此项交回 14/集成补齐，不宣称重跑了上游完整二进制。
-- 原始格式、skill-error public contract/Core fixture、508 行 Agent service，以及 04 的 Console/导航和首页浏览器修复未改。只格式化本票变更 Rust/TS/CSS；本票触及源文件均不超过 500 行、测试不超过 2000 行，OpenAPI 组合函数抽出后主文件 494 行。没有运行覆盖全仓的格式重写。
+- 初始基线上的全量 Web：319 文件/2905 tests 通过，6 文件/17 tests 失败，日志 `/tmp/cma-ticket10-web-all.log`。其中 ActiveThinking 4、MessageIdentity 1、SharedAgent 2 为用户指定 14 的折叠回归，合并 14 后的 950 项相关验证已全部通过。合入最新 04 后，AppCreation/Console 与本票反馈共 9 文件/57 tests 通过；AppPublic 的 6 项旧首页断言仍失败，见 `/tmp/cma-ticket10-final-integration-web.log`。TaskHome 文案扫描此前 1 项失败，未纳入本次聚焦重跑；这些首页/旧导航断言和 14 文件隔离分析不由本票修改，未提交 skip 或把全量称为绿色。
+- 合并态 CSS gate 失败：`.agent-files-panel` 同时在 `AgentComputer.css` 和 `AgentFiles.css` 声明，两个文件均来自 14。本票初始 CSS gate 通过；通过 `git archive a426b87ee` 的独立临时源码快照运行同一脚本，复现完全相同错误，见 `/tmp/cma-ticket10-upstream-css.log`。最终合并态再次复现，日志 `/tmp/cma-ticket10-final-integration-css.log`。
+- 全局共享 contract inventory 在最终合并后报告实际 230、登记 229，见 `/tmp/cma-ticket10-final-integration-inventory.log`。14 新增 `GET /api/v1/agents/{id}/environment`（`agent_filesystem::environment::read`）未进入上游 JSON inventory/共享 corpus；`d19c225bd` 的 JSON inventory 仍为 227。最新集成修正的是 `docs/API_REST.md` 的文档 inventory，这是独立检查，不能替代共享契约登记。10 的两个新增操作登记完整，合并前 229-operation gate 通过，新/旧反馈 44 个真实 handler 案例在合并后仍通过。未通过改数字、删路由或放宽 gate 掩盖缺失；此项交回 14/集成补齐，不宣称重跑了上游完整二进制。
+- 原始格式、skill-error public contract/Core fixture、508 行 Agent service 未改。04 的 Console/导航和首页浏览器修复仅随集成合入，本票没有追加修正。只格式化本票变更 Rust/TS/CSS；本票触及源文件均不超过 500 行、测试不超过 2000 行，OpenAPI 主文件 496 行。没有运行覆盖全仓的格式重写。
 
-## Changed manifest（相对合入的 a426b87ee，不含上游文件）
+## Changed manifest（相对合入的 d19c225bd，不含上游文件）
 
 共 51 路径；包含本验收文档和 tracker 更新。独立 merger 应以本票分支为输入，保留集成样式前缀与 OpenAPI 组合函数的行为等价性。
 
