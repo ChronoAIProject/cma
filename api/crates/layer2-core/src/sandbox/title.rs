@@ -166,6 +166,21 @@ pub struct AgentTitleTranscript {
 }
 
 impl AgentTitleTranscript {
+    pub fn from_agent_log(agent: &super::Agent, logs: &[super::AgentLogEntry]) -> Option<Self> {
+        let first = agent.conversation.first_message.as_ref();
+        if first.is_none_or(|message| message.purpose == Some(super::FirstMessagePurpose::Task)) {
+            return Self::from_complete_log(logs);
+        }
+        let setup_turn = first?.turn_sequence?;
+        let start = logs.iter().position(|entry| {
+            matches!(
+                entry.kind,
+                super::AgentLogKind::TurnStarted { turn_sequence, .. } if turn_sequence > setup_turn
+            )
+        })?;
+        Self::from_complete_log(&logs[start..])
+    }
+
     /// Fold a complete, gap-free agent log into the exact first completed turn.
     ///
     /// Durable adapters call this only after proving log sequence integrity.

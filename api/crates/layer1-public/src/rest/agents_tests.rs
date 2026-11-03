@@ -11,6 +11,7 @@ mod models;
 mod settings;
 mod shared_settings;
 mod skills;
+mod task_titles;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 
 use async_trait::async_trait;
