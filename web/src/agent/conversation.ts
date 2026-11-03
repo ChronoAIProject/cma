@@ -170,7 +170,30 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         agentStatus: text(kind.to) as AgentStatus | undefined,
         agentStatusAt: event.appendedAt,
       };
-    case 'turn_completed':
+    case 'turn_completed': {
+      const runId = number(kind.turn_sequence)?.toString() ?? next.activeRunId;
+      const finalMessage = next.messages.reduce<ConversationState['messages'][number] | undefined>(
+        (latest, message) =>
+          message.runId === runId &&
+          !message.liveOnly &&
+          message.sequence !== undefined &&
+          (latest === undefined || message.sequence > latest.sequence!)
+            ? message
+            : latest,
+        undefined,
+      );
+      return {
+        ...finishTurn(next, runId, event.appendedAt),
+        messages: next.messages.map((message) =>
+          message === finalMessage && message.role === 'assistant' && message.content.trim() !== ''
+            ? { ...message, finalAnswer: true }
+            : message,
+        ),
+        activeRunId: undefined,
+        activeRunStartedAt: undefined,
+        reasoning: [],
+      };
+    }
     case 'turn_interrupted':
       return {
         ...finishTurn(
