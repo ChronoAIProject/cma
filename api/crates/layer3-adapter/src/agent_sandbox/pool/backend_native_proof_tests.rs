@@ -44,6 +44,7 @@ impl HostedControlTransport for StatusTransport {
             agent_attachment_upload: false,
             agent_skill_install: true,
             agent_model_catalog: true,
+            agent_browser: false,
             sandbox_id: request.sandbox_id,
             generation: request.generation,
             home_identity: request.home_identity,

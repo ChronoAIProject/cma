@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import { useCmaClient } from '../api/context';
 import { SharedAgentDetails } from '../resources/SharedAgentDetails';
@@ -14,6 +14,7 @@ import { OperationOutput } from './environment/OperationOutput';
 import './environment/AgentComputer.css';
 import { FeatureAvailability, useAgentEnvironment } from './environment/availability';
 import { useComputerObservation, type AgentComputerObservation } from './environment/observation';
+import { BrowserPanel, EnableBrowser } from './environment/BrowserPanel';
 
 export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
 
@@ -52,6 +53,16 @@ export function AgentSidePanel({
   const computerOpen = panel !== undefined && panel !== 'details';
   const environment = useAgentEnvironment(client.files, agentId, computerOpen);
   const features = environment.state.status === 'ready' ? environment.state.value : undefined;
+  const selection = useMemo(() => ({ chosen: false }), [client, agentId]);
+  useEffect(() => {
+    if (!computerOpen || !features || selection.chosen) return;
+    selection.chosen = true;
+    if (features.browser.state === 'available' && panel === 'files') onSelect?.('browser');
+  }, [computerOpen, features, selection, panel, onSelect]);
+  const select = (tab: AgentPanel) => {
+    selection.chosen = true;
+    onSelect?.(tab);
+  };
   const observed = useComputerObservation(shared ? observation : undefined);
   const operations = shared ? observed : conversation;
   const [visited, setVisited] = useState(false);
@@ -124,7 +135,7 @@ export function AgentSidePanel({
               aria-controls={`computer-page-${tab}`}
               aria-selected={panel === tab}
               tabIndex={panel === tab ? 0 : -1}
-              onClick={() => onSelect?.(tab)}
+              onClick={() => select(tab)}
               onKeyDown={(event) => {
                 if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
                 event.preventDefault();
@@ -134,7 +145,7 @@ export function AgentSidePanel({
                     : event.key === 'End'
                       ? 2
                       : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
-                onSelect?.(tabs[next]);
+                select(tabs[next]);
                 document.getElementById(`computer-tab-${tabs[next]}`)?.focus();
               }}
             >
@@ -231,7 +242,19 @@ export function AgentSidePanel({
           className="agent-computer__page agent-computer__output"
           hidden={panel !== 'browser'}
         >
-          {features ? (
+          {features?.browser.state === 'available' &&
+          features.runtime_incarnation &&
+          client.browser &&
+          (!shared || authorized?.capabilities.includes('view_history') === true) ? (
+            <BrowserPanel
+              key={`${agentId}:${features.runtime_incarnation}`}
+              client={client.browser}
+              agentId={agentId}
+              incarnation={features.runtime_incarnation}
+              active={panel === 'browser'}
+              onReload={environment.reload}
+            />
+          ) : features ? (
             <FeatureAvailability name="Browser" feature={features.browser} />
           ) : (
             <p role="status">
@@ -244,6 +267,18 @@ export function AgentSidePanel({
                     : 'Environment capabilities are unavailable. Try again.'}
             </p>
           )}
+          {!shared &&
+          features?.browser.state === 'not_enabled' &&
+          features.runtime_incarnation &&
+          client.browser ? (
+            <EnableBrowser
+              key={`${agentId}:${features.runtime_incarnation}`}
+              client={client.browser}
+              agentId={agentId}
+              incarnation={features.runtime_incarnation}
+              onEnabled={environment.reload}
+            />
+          ) : null}
           {environment.state.status === 'error' ? (
             <Button size="sm" onClick={environment.reload}>
               Check environment again

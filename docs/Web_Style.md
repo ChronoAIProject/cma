@@ -4132,3 +4132,22 @@ make the Sandbox workspace an Agent-private filesystem. File-operation errors
 retain the existing draft and retry behavior.
 
 | 2026-11-03 | Distinguish authorized shared Sandbox files from protected runtime state and Agent-scoped uploads in the computer panel. |
+
+### Agent browser observation (2026-11-03)
+
+An explicitly enabled Agent browser selects Browser on the first Computer opening,
+unless the user has selected another tab. The panel remains observation only. Use
+the existing tabs, caption typography, secondary text and semantic state tokens.
+Show the bounded real image at its 16:9 aspect ratio with contained scaling; never
+draw a replacement browser, an illustrative page, or a command field.
+
+The image caption contains the sanitized location and actual capture time. **Live**
+requires a decoded frame captured within three seconds; duplicates never renew its
+age and lower sequences never replace it. A failed read or expired frame changes
+the caption to **Last frame · Reconnecting…**. Loading, not enabled, unsupported,
+paused, forbidden and disconnected remain distinct. Owner-only **Enable browser**
+is an explicit command, with visible pending and failure states. Closing or hiding
+observation releases it without navigating, reopening a task or resetting its page.
+Agent, account, runtime or permission changes remove the old image immediately.
+
+| 2026-11-03 | Define bounded real browser observation, fresh decoded Live state, explicit enablement and scoped withdrawal for ticket 15. |

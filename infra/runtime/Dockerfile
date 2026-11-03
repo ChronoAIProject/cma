@@ -157,6 +157,9 @@ RUN apt-get update \
         bash \
         bubblewrap \
         ca-certificates \
+        chromium=156.0.8078.79-1~deb13u1 \
+        chromium-common=156.0.8078.79-1~deb13u1 \
+        chromium-sandbox=156.0.8078.79-1~deb13u1 \
         curl \
         build-essential \
         git \
@@ -313,6 +316,7 @@ RUN set -eux; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bin/cma-browser
 
 # Native SandboxTemplates use this same image as a non-root init container:
 # --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
