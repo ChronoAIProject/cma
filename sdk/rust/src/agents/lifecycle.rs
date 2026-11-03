@@ -2,9 +2,9 @@
 
 use super::Agents;
 use crate::{
+    IdempotencyKey, Result,
     profiles::{PermissionLevel, ProfileReference, ThinkingEffort},
     resources::identity,
-    IdempotencyKey, Result,
 };
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};

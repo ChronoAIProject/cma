@@ -1,9 +1,9 @@
 //! Agent REST commands and durable read projections, without live subscriptions.
 
 use crate::{
+    Client, EventOptions, IdempotencyKey, PageOptions, ResourcePage, Result,
     instances::AgentStatus,
     resources::{identity, positive},
-    Client, EventOptions, IdempotencyKey, PageOptions, ResourcePage, Result,
 };
 use reqwest::{Method, StatusCode};
 

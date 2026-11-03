@@ -1444,6 +1444,7 @@ pools and retained homes keep their admitted templates.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `GET /api/v1/desktop-capability` | - | workspace_id, sandbox_id | 200 DesktopCapabilityView |
 | `POST /api/v1/agents` | AgentLifecycleCreateRequest; key | - | 202 AgentLifecycleCreateReceipt |
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
