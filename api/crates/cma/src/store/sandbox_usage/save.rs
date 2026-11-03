@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::store::sandbox_mongo::{
-    commit_transaction, is_transient, start_transaction, unsigned, CommitOutcome,
+    commit_transaction, is_duplicate_key, is_transient, start_transaction, unsigned, CommitOutcome,
     TRANSACTION_ATTEMPTS,
 };
 
@@ -133,5 +133,9 @@ pub(in crate::store) async fn record_saved(
 }
 
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
-    SandboxStoreError::Unavailable(error.to_string())
+    if is_duplicate_key(&error) {
+        SandboxStoreError::Duplicate
+    } else {
+        SandboxStoreError::Unavailable(error.to_string())
+    }
 }

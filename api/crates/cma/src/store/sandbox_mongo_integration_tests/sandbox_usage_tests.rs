@@ -421,3 +421,31 @@ async fn sandbox_usage_checkpoint_and_multi_event_phase_preserve_watermarks() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_usage_duplicate_metadata_save_preserves_store_error_and_ledger() {
+    let (client, name, store, mut parent) = fixture("usage_duplicate").await;
+    let before = store.usage(&parent.id).await.unwrap().unwrap();
+    let mut other = sandbox("usage-other");
+    other.name = "occupied-name".into();
+    store.create_sandbox(other.clone()).await.unwrap();
+    parent.name = other.name;
+    parent.revision += 1;
+    parent.updated_at = MINUTE.into();
+    assert_eq!(
+        store.save_sandbox(1, parent.clone()).await,
+        Err(SandboxStoreError::Duplicate)
+    );
+    assert_eq!(store.usage(&parent.id).await.unwrap().unwrap(), before);
+    assert_eq!(
+        store
+            .get_sandbox(&parent.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .revision,
+        1
+    );
+    client.database(&name).drop().await.unwrap();
+}
