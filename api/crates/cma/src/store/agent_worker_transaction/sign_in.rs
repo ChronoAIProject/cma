@@ -52,9 +52,11 @@ pub(super) async fn apply(
             "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)?,
             "$inc": { "runtime_writer_claim_fence": 1_i64 },
         },
-    ).session(session).await.map_err(ApplyError::Driver)?;
+    ).session(&mut *session).await.map_err(ApplyError::Driver)?;
     if written.matched_count != 1 {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
+    crate::store::sandbox_usage::save::record_saved(store, session, &next, sandbox.revision)
+        .await?;
     Ok(Some(next))
 }

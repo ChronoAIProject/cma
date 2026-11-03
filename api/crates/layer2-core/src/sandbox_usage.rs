@@ -254,7 +254,7 @@ pub fn observe(
     let kind = if status == "retired" {
         UsageEventKind::Terminated
     } else if previous.allocation.running && !allocation.running {
-        if status == "paused" {
+        if matches!(status.as_str(), "pausing" | "paused") {
             UsageEventKind::Paused
         } else {
             UsageEventKind::Terminated
