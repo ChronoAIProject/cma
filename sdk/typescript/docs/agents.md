@@ -559,6 +559,11 @@ returns `file_runtime_unsupported` until it is updated while idle.
 
 ### Answer deliverables
 
+When a fresh metadata read makes a download unavailable, `DeliverableUnavailable`
+preserves its typed `status` (for example, `denied` or `changed`) without releasing
+bytes. It extends `ProtocolError`; ordinary HTTP failures remain `ApiError` with
+their resource-specific problem codes.
+
 `agents.answerDeliverables(agentId, 'event:5', options)` reads structured results
 belonging to that completed final answer. Request it only for visible answers
 containing explicit delivery markers. The response preserves Agent, turn and
