@@ -1,11 +1,14 @@
 import { Children, createContext, useContext, type ReactNode } from 'react';
 import { Skeleton } from './Skeleton';
+import { Button } from './Button';
 import './Table.css';
 
 /** One column's header. `end` aligns a count or the actions to the right edge. */
 export interface TableColumn {
   readonly header: string;
   readonly align?: 'end';
+  readonly sort?: 'ascending' | 'descending';
+  readonly onSort?: () => void;
 }
 
 const SpanContext = createContext(1);
@@ -62,8 +65,25 @@ export function Table({
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column.header} scope="col" data-align={column.align}>
-                {column.header}
+              <th key={column.header} scope="col" data-align={column.align} aria-sort={column.sort}>
+                {column.onSort ? (
+                  <Button
+                    size="sm"
+                    onClick={column.onSort}
+                    aria-label={`Sort by ${column.header} ${column.sort === 'ascending' ? 'descending' : 'ascending'}`}
+                  >
+                    {column.header}
+                    <span aria-hidden="true">
+                      {column.sort === 'ascending'
+                        ? ' ↑'
+                        : column.sort === 'descending'
+                          ? ' ↓'
+                          : ''}
+                    </span>
+                  </Button>
+                ) : (
+                  column.header
+                )}
               </th>
             ))}
             {actions === undefined ? null : (
