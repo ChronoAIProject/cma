@@ -2,7 +2,11 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import type { SuggestedReplySet } from './suggestions';
 import type { AgentController } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
-import { confirmSuggestionSend, useSuggestionExposure } from './suggestionMetrics';
+import {
+  confirmSuggestionSend,
+  rememberSuggestionRequest,
+  useSuggestionExposure,
+} from './suggestionMetrics';
 import './SuggestedReplies.css';
 
 export function SuggestedReplies({
@@ -108,6 +112,21 @@ export function SuggestedReplies({
             ).then(() => {
               if (!active.current) return;
               const input = controller.readSuggestionRequest?.();
+              if (
+                input?.input === item.text &&
+                input.answerContext?.answer_sequence === suggestions.scope.answer_sequence &&
+                input.answerContext?.turn_sequence === suggestions.scope.turn_sequence
+              ) {
+                if (input.state === 'pending')
+                  rememberSuggestionRequest(suggestions, item.id, 'original', input.key);
+                else
+                  confirmSuggestionSend(
+                    suggestions,
+                    item.id,
+                    'original',
+                    input.receipt ?? undefined,
+                  );
+              }
               setRequestKey(input?.key);
               setState((current) =>
                 current === 'accepted' || current === 'expired' || current === 'failed'

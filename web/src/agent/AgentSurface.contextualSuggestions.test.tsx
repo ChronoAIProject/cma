@@ -109,6 +109,7 @@ it('never reopens answer A when its saved suggestions arrive after another messa
 });
 
 it('shows a saved generated result after a pending read, reopens it, and recovers its exact conditional send', async () => {
+  const events = vi.spyOn(window, 'dispatchEvent');
   const read = vi
     .fn()
     .mockResolvedValueOnce({ status: 'pending', set: null })
@@ -145,6 +146,14 @@ it('shows a saved generated result after a pending read, reopens it, and recover
     new Headers(original.headers).get('Idempotency-Key'),
   );
   expect(composer).toHaveValue('Keep my existing notes.');
+  expect(
+    events.mock.calls.some(
+      ([event]) =>
+        event instanceof CustomEvent &&
+        event.type === 'cma:suggestion-metric' &&
+        event.detail.kind === 'send_confirmed',
+    ),
+  ).toBe(true);
 });
 
 it.each(['empty', 'failed', 'unavailable', 'expired'])(
@@ -174,24 +183,37 @@ it.each(['account', 'permission'])('ignores a late result after %s changes', asy
 });
 
 it('counts visible exposure and confirmed send separately from the bound task outcome', async () => {
+  const metricSet = {
+    ...saved,
+    set: { ...saved.set, id: 'metric-set', items: [{ ...saved.set.items[0]!, id: 'metric-item' }] },
+  };
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
   const metrics: unknown[] = [];
+  let intersect: (() => void) | undefined;
   const listener = (event: Event) => metrics.push((event as CustomEvent).detail);
   window.addEventListener('cma:suggestion-metric', listener);
   vi.stubGlobal(
     'IntersectionObserver',
     class {
-      constructor(private readonly callback: (entries: unknown[]) => void) {}
-      observe() {
-        this.callback([{ isIntersecting: true, intersectionRatio: 1 }]);
+      constructor(callback: (entries: unknown[]) => void) {
+        intersect = () => callback([{ isIntersecting: true, intersectionRatio: 1 }]);
       }
+      observe() {}
       disconnect() {}
     },
   );
   try {
-    const { fixture } = await setup(async () => saved);
+    const { fixture } = await setup(async () => metricSet);
     const button = await screen.findByRole('button', { name: saved.set.items[0]!.text });
+    await waitFor(() => expect(intersect).toBeDefined());
+    await act(async () => {
+      intersect!();
+      expect(metrics).toEqual([]);
+      visibility.mockReturnValue('visible');
+      fireEvent(document, new Event('visibilitychange'));
+    });
     await waitFor(() =>
-      expect(metrics).toEqual([expect.objectContaining({ kind: 'exposure', setId: 'saved-a' })]),
+      expect(metrics).toEqual([expect.objectContaining({ kind: 'exposure', setId: 'metric-set' })]),
     );
     fireEvent.click(button);
     await waitFor(() =>
