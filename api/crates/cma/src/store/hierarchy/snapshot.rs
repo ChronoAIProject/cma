@@ -137,8 +137,16 @@ async fn read_in_snapshot(
                 read_agent,
             )
             .await?;
+            let mut task_statuses = std::collections::HashMap::new();
+            for agent in &agents {
+                task_statuses.insert(
+                    agent.id.clone(),
+                    super::super::agent_task_status::read(store, agent, session).await?,
+                );
+            }
             Ok(Reading::Workspace(Some(Box::new(
                 WorkspaceHierarchyRecord {
+                    task_statuses,
                     workspace,
                     worktrees,
                     agents,
