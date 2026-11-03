@@ -150,7 +150,9 @@ export function AgentSidePanel({
           hidden={!filesOpen}
           inert={!filesOpen || undefined}
         >
-          <p className="agent-computer__scope">Files in the authorized mounted home (/home).</p>
+          <p className="agent-computer__scope">
+            Authorized Sandbox files (/home); private runtime state excluded.
+          </p>
           {features && features.files.state !== 'available' ? (
             <FeatureAvailability name="Files" feature={features.files} />
           ) : null}
