@@ -23,8 +23,10 @@ persisted contextual sets through this contract, with a new source/version and s
 item IDs; its separately authorized generation and quality validation are not implemented
 by ticket 11. Invalid or stale sets must fail closed before rendering/sending.
 
-`AgentSurface.suggestedReplies` is the delivery seam: omitted uses the bounded
-template, `null` means unavailable/loading/no suggestions, and a supplied set must
+`AgentSurface.suggestedReplies` is the delivery seam: omitted reads the saved set
+when the client supports `readSuggestedReplies`; a legacy client without that
+method retains the bounded labelled template. `null` means unavailable/loading/no
+suggestions, and a supplied set must
 match the current viewer, Agent, turn and final answer. Sets contain one to three
 unique nonempty items with strictly increasing nonnegative integer ranks. Text is
 rendered and sent without trimming, including newlines and trailing spaces; empty
@@ -55,3 +57,55 @@ The suggestions UI is a separate component inserted in AgentSurface's existing
 MessageStream children after the answer/artifacts. It does not change StreamEntry or
 the timeline projector. The Web Style rule was committed before UI implementation
 as `078b9bafe`.
+# Ticket 13 metric handoff (2026-11-03)
+
+Ticket 13 owns `web/src/agent/suggestionMetrics.ts`. It emits the local browser
+`cma:suggestion-metric` CustomEvent with distinct `exposure`, `send_confirmed`,
+and `task_outcome` kinds. Exposure requires a current enabled set at least half
+visible in a visible document. Confirmation requires the existing command/run
+receipt; task outcomes require that receipt's actual durable turn outcome.
+No raw message text, credentials, or inferred task success is emitted. Dedupe
+and pending correlation are bounded to 100 entries / 30 minutes in this tab.
+This is instrumentation, not an analytics collection service or durable funnel.
+
+The merged `useSuggestionEditing` calls `confirmSuggestionSend(set, itemId, 'edited', receipt)` only
+after normal-send admission, including recovered admission. Original sends use
+`'original'`. `messageSubmission` now forwards its existing optional
+`MessageAcceptance` to the accepted callback; no wire format changes. Ticket 13
+does not implement another append/replace/undo/cancel or edited recovery path.
+`useAgentSuggestions` composes persisted-set reads with ticket 12's editor and
+keeps `useSuggestionOutcomes` mounted after the suggestion group disappears.
+
+For an uncertain edited request, the merged editor retains the existing journal key with
+`rememberSuggestionRequest(set, itemId, 'edited', requestKey)`. This records no
+confirmation event. The surface's metric observer confirms it only when that
+same retained request exposes an accepted receipt; it never retries or changes
+the request. Original recovery uses this same bounded tab-local correlation.
+
+Metric denominators: one exposure per viewer/Agent/set within the tab's dedupe
+window; confirmations are deduped by that scope, item and admitted command/run.
+Original versus edited share the confirmed-send denominator. Task completion
+rates use only receipt-correlated resolved outcomes; pending/unobserved outcomes
+remain unknown. Failed generation and mere clicks contribute no exposure or
+confirmation. These events have no remote collector and do not claim durable
+cross-tab or cross-reload analytics.
+
+## Ticket 12 editing handoff
+
+`AgentSurface` passes the validated set into `useSuggestionEditing`; the existing
+`SuggestedReplies` component exposes an optional `onEdit(text)` action. The real
+`ComposerSuggestionEditor` opens the standard conflict dialog or fills an empty
+composer, retains attachments and provides replacement undo. Cancel and dismissal
+return focus to the composer. No generated-set fetch, generation worker, new set
+identity, analytics or message transport is introduced here.
+
+The composer submits through `messageSubmission` and the existing selected
+controller. While the edited set is still eligible, this is the existing normal
+send with its existing answer condition. Acceptance retires the group; editing
+alone does not. An expired source or an explicit scoped refusal detaches that
+association and keeps the manual draft. Only a subsequent deliberate send can
+submit it as ordinary input, with current authority; there is no automatic
+unconditional retry. Uncertain requests keep their original body, condition and
+key. Changed text remains separate until recovery and then uses the normal fresh
+intent path. Ticket 13 can continue supplying its persisted sets at the unchanged
+`AgentSurface.suggestedReplies` boundary; it need not implement another editor.

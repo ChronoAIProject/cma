@@ -65,6 +65,7 @@ mod queued_cancellations_tests;
 mod queued_inputs;
 #[cfg(test)]
 mod queued_inputs_tests;
+mod suggestions;
 use events::{append_sandbox_event, bounded_events};
 #[cfg(test)]
 mod launch_command_tests;
@@ -399,6 +400,7 @@ impl AgentLogStore for InMemorySandboxStore {
             kind,
         };
         log.push(event.clone());
+        suggestions::enqueue(&mut state, agent_id);
         Ok(event)
     }
 
@@ -408,12 +410,16 @@ impl AgentLogStore for InMemorySandboxStore {
         after: u64,
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-        bounded_events(
+        let rows = bounded_events(
             self.lock().agent_logs.get(agent_id),
             after,
             limit,
             |event| event.seq,
-        )
+        )?;
+        #[cfg(test)]
+        self.log_rows_read
+            .fetch_add(rows.len(), std::sync::atomic::Ordering::SeqCst);
+        Ok(rows)
     }
 }
 

@@ -314,7 +314,7 @@ async fn remove(
     }))
 }
 
-fn download_name(path: &str, sha256: &str) -> String {
+pub(super) fn download_name(path: &str, sha256: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or("download");
     let encoded: String = name
         .bytes()
@@ -340,7 +340,7 @@ fn credential(resource: &Option<AuthenticatedResourceCaller>) -> Option<&str> {
         .map(DelegatedCredential::value)
 }
 
-struct FileProblem(AgentFileError);
+pub(super) struct FileProblem(AgentFileError);
 impl From<AgentFileError> for FileProblem {
     fn from(error: AgentFileError) -> Self {
         Self(error)

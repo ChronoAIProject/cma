@@ -275,12 +275,26 @@ it('offers visible read recovery and restores the saved choice before allowing e
 
 it('announces confirmed helpful, changed and removed votes without accepting a second in-flight choice', async () => {
   let complete!: () => void;
-  vi.stubGlobal('fetch', async (_path: string, options?: RequestInit) => {
+  let saved: MessageVote = null;
+  vi.stubGlobal('fetch', async (path: string, options?: RequestInit) => {
+    if (options?.method !== 'PUT' && path.endsWith('/feedback'))
+      return Response.json({
+        viewer_id: 'owner',
+        agent_id: 'agent',
+        message_id: 'event:5',
+        vote: saved,
+        version: 1,
+        reasons: [],
+        comment: '',
+        updated_at: null,
+        request_id: null,
+      });
     if (options?.method !== 'PUT') return Response.json({ items: [], next: null });
     const { vote } = JSON.parse(String(options.body)) as { vote: MessageVote };
     await new Promise<void>((resolve) => {
       complete = resolve;
     });
+    saved = vote;
     return Response.json({ message_id: 'event:5', vote });
   });
   render(draw());
@@ -291,11 +305,13 @@ it('announces confirmed helpful, changed and removed votes without accepting a s
     ['Needs improvement', false, 'Vote removed'],
   ] as const) {
     await userEvent.click(answer().getByRole('button', { name: label }));
-    expect(answer().getByRole('status')).toHaveTextContent('Saving vote');
+    expect(answer().getByRole('status', { name: 'Vote status' })).toHaveTextContent('Saving vote');
     expect(answer().getByRole('button', { name: 'Helpful' })).toBeDisabled();
     expect(answer().getByRole('button', { name: 'Needs improvement' })).toBeDisabled();
     complete();
-    await waitFor(() => expect(answer().getByRole('status')).toHaveTextContent(status));
+    await waitFor(() =>
+      expect(answer().getByRole('status', { name: 'Vote status' })).toHaveTextContent(status),
+    );
     expect(answer().getByRole('button', { name: label })).toHaveAttribute(
       'aria-pressed',
       String(selected),
