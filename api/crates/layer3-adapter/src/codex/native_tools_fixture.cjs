@@ -21,6 +21,7 @@ function processRpc(program, args, options) {
     } else if (pending.has(frame.id)) pending.get(frame.id)(frame);
   });
   return {
+    pid: child.pid,
     async call(method, params) {
       const id = ++serial;
       let timer;

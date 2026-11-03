@@ -111,7 +111,12 @@ impl MongoAgentAccessToolSource {
         let previous = self.current_record(&scope, session).await?;
         let authority = previous.as_ref().map_or(0, |record| record.authority);
         let capability = self.capability_at(&scope, authority)?;
-        let origin = self.authority(authority)?.0;
+        let transport_origin = previous
+            .as_ref()
+            .and_then(|record| record.transport_origin.clone());
+        let origin = transport_origin
+            .as_deref()
+            .unwrap_or(self.authority(authority)?.0);
         let conversation = previous.and_then(|record| record.conversation);
         require_conversation(&snapshot, conversation.as_deref(), false)?;
         let mut binding = HostedAccessToolBinding::new(
@@ -143,6 +148,7 @@ impl MongoAgentAccessToolSource {
         self.save(
             &OpenRecord {
                 authority,
+                transport_origin,
                 scope,
                 request: request.clone(),
                 fence,
@@ -173,7 +179,7 @@ impl MongoAgentAccessToolSource {
             .await?
             .ok_or(Error::Refused)?;
         let capability = self.capability_at(&scope, record.authority)?;
-        let origin = self.authority(record.authority)?.0;
+        let origin = self.transport_origin(&record)?;
         validation::request(&snapshot, &record.request, fence)?;
         let mut expected = HostedAccessToolBinding::new(
             origin,
