@@ -74,8 +74,8 @@ test('immutable runtime binary fences browser identity and survives production n
     const request = { t: 'browser', sandbox_id: 'browser-proof', runtime_generation: 1,
       boot_id: status.boot_id, agent_id: 'browser-agent', operation: 'status' };
     assert.equal((await control(request)).observation.state, 'not_enabled');
-    assert.equal((await control({ ...request, boot_id: 'stale-boot' })).t, 'error');
-    assert.equal((await control({ ...request, operation: 'enable' })).t, 'error');
+    assert.equal((await control({ ...request, boot_id: 'stale-boot' })).t, 'failure');
+    assert.equal((await control({ ...request, operation: 'enable' })).t, 'failure');
     const workspace = await control({ t: 'prepare_workspace', operation_id: 'workspace:wks_browser:prepare:v1',
       workspace_id: 'wks_browser', name: 'browser-project', source: { type: 'init' }, clone_depth: 50,
       request_sha256: digest('chrono.workspace.prepare.v2', number(50), field('wks_browser'), field('browser-project'), Buffer.from([2])) });

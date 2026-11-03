@@ -7,7 +7,7 @@ use reqwest::{Method, StatusCode};
 use serde::Deserialize;
 
 #[doc = "One bounded captured image, never an input or execution channel."]
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct BrowserFrame {
     #[doc = "Monotonic sequence within the browser context."]
     pub sequence: u64,
@@ -23,8 +23,20 @@ pub struct BrowserFrame {
     pub data: String,
 }
 
+impl std::fmt::Debug for BrowserFrame {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BrowserFrame")
+            .field("sequence", &self.sequence)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("encoded_bytes", &self.data.len())
+            .finish_non_exhaustive()
+    }
+}
+
 #[doc = "A current observation scoped to an Agent, runtime and browser context."]
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct BrowserObservation {
     #[doc = "Requested Agent identity."]
     pub agent_id: String,
@@ -32,7 +44,7 @@ pub struct BrowserObservation {
     pub runtime_incarnation: String,
     #[doc = "Opaque browser context, absent before enablement."]
     pub context_id: Option<String>,
-    #[doc = "not_enabled, unsupported, loading, live, paused or disconnected."]
+    #[doc = "not_enabled, unsupported, loading, ready, live, paused or disconnected."]
     pub state: String,
     #[doc = "Sanitized location without addresses or credentials."]
     pub location: String,
