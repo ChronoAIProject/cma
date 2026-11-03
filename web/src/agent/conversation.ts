@@ -87,6 +87,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         true,
       );
     }
+    case 'tool_output_reported':
     case 'tool_call_updated': {
       const id = text(kind.call_id);
       const current = next.toolCalls.find((tool) => tool.id === id);
@@ -406,6 +407,10 @@ function foldLive(
   const cursor = number(event.cursor);
   const next = cursor === undefined || cursor <= state.cursor ? state : { ...state, cursor };
   if (event.type.startsWith('TEXT_MESSAGE_')) return liveMessage(next, event);
+  if (event.type === 'CUSTOM' && event.name === 'cma.tool_output_reported') {
+    const value = object(event.value);
+    return liveTool(next, { ...event, toolCallId: value?.toolCallId, 'cma:output': value?.output });
+  }
   if (event.type.startsWith('TOOL_CALL_')) return liveTool(next, event);
   if (event.type.includes('REASONING') || event.type.startsWith('THINKING_')) {
     return liveReasoning(next, event);

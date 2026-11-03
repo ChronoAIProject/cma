@@ -9,6 +9,7 @@ import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
 import { useAgentDraft } from './agent/draft';
 import { AgentSidePanel, type AgentPanel } from './agent/AgentSidePanel';
+import { AgentComputerObservation } from './agent/environment/observation';
 import { useAgentController } from './agent/controller';
 import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
@@ -92,6 +93,10 @@ function ConsoleContent({
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const computerObservation = useMemo(
+    () => new AgentComputerObservation(),
+    [client, user.id, selectedAgent],
+  );
   const ownerViews = useOwnerViews();
   const scopeClient = user.visitor ? undefined : client.resourceViews;
   const {
@@ -235,9 +240,10 @@ function ConsoleContent({
         key={shared.id}
         client={client.resourceViews}
         web={client}
+        computerObservation={computerObservation}
         detail={shared}
         onAccessChanged={agentAccess.reload}
-        filesOpen={panel === 'files'}
+        filesOpen={panel !== undefined && panel !== 'details'}
         onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
@@ -272,7 +278,7 @@ function ConsoleContent({
         viewPosition={viewPosition}
         accessUncertain={accessUncertain}
         accessAuthorized={agentAccess.personalReady && !accessUncertain}
-        filesOpen={panel === 'files'}
+        filesOpen={panel !== undefined && panel !== 'details'}
         onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
@@ -385,6 +391,7 @@ function ConsoleContent({
         panel !== undefined
       }
       compactDetailsOverlay
+      onDetailsClose={() => setPanel(undefined)}
       details={
         route.kind === 'agent' && !accessUncertain && (personalAgentId || shared) ? (
           <AgentSidePanel
@@ -395,6 +402,7 @@ function ConsoleContent({
             panel={panel}
             onSelect={setPanel}
             conversation={ready?.conversation}
+            observation={computerObservation}
             onClose={() => setPanel(undefined)}
             onAccessChanged={agentAccess.reload}
             publicationScope={artifactPublicationScope}
