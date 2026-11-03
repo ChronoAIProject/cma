@@ -3815,3 +3815,22 @@ anchor and the single availability explanation; Overview describes the tools'
 purpose without repeating that explanation.
 
 | 2026-10-28 | Remove the redundant tool catalog heading and overview availability copy while retaining the Event tools section anchor and accessible catalog region. |
+
+Answer feedback appears only below a recorded final Assistant answer in a
+successfully completed turn, identified by its durable turn and message sequence.
+Intermediate replies, active turns, errors, reasoning and tools retain no vote
+entry. Shared and read-only readers retain Copy content without voting controls.
+Use **Helpful** and **Needs improvement** for the existing like/dislike keys.
+Clicking the selected key removes the vote; clicking the other changes it.
+Keep the last confirmed selection while saving, disable both keys for that
+answer, and announce Saving vote, Vote recorded or Vote removed in a polite
+status. A failed or uncertain save retains its exact requested vote and offers
+**Retry vote** before another choice can be submitted. A failed initial read
+offers **Retry feedback**. Changing the viewer or Agent hides old state immediately.
+Reuse the footer's 28px keys, 4px gaps, 12/18 caption text, filled selected glyphs,
+business-primary ink, fast opacity transition and reduced-motion rules. Reveal
+actions on hover or keyboard focus; selected votes and saving/error/success
+statuses remain visible. At widths up to 30rem or on coarse pointers, keep all
+actions visible with at least 44px targets. Negative-reason details are separate.
+
+| 2026-11-03 | Restrict owner feedback to completed final answers; specify confirmed toggle/undo, exact retry, read recovery, permission isolation and accessible desktop/mobile status controls for ticket 09. |

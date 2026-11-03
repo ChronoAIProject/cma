@@ -178,8 +178,17 @@ order. Clients should serialize changes to a particular message. Retrying an
 uncertain old request after a newer selection can replace that selection.
 
 Use `event:<sequence>` from `GET /api/v1/agents/{id}/transcript` message records
-or durable Agent event sequences. Only committed owner/assistant message events
-accept votes; lifecycle, tool, turn, draft and optimistic IDs are rejected. Votes
+or durable Agent event sequences. New writes require a nonempty Assistant answer
+with the greatest message sequence in a successfully completed turn. Message
+array order and equal content do not establish identity. Active, interrupted,
+failed and output-gap turns, intermediate replies, owner messages, lifecycle,
+tool, draft and optimistic IDs are rejected with 404. Regenerated answers retain
+their separate message/turn identities. Reads retain all historical saved votes,
+including votes on formerly eligible messages; tightening write eligibility does
+not delete those records. The up/down/null request and response shapes are unchanged.
+Clients keep the last confirmed choice while a save is pending, serialize writes,
+and verify or retry an uncertain original value before allowing a different choice.
+Votes
 persist across refreshes and API restarts in Agent Manager's independent
 `agent_message_feedback` collection. Its schema and unique owner/Agent/sequence
 index initialize additively at startup. Isolated database deployments must add
