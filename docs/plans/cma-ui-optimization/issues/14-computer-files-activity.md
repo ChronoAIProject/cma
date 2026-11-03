@@ -56,6 +56,12 @@ preserved mounted-home contract.
   `AgentComputerObservation`, scoped by client, subject and Agent; no extra event
   stream is opened. Ticket09 `finalAnswer` and run-scoped recovery, and existing
   plan turn scope, are preserved.
+- Shared output also requires the panel's current successful `view_history`
+  observation. Expiry withdraws existing output while renewal is pending;
+  timeout/failed renewal keeps it hidden and offers a scoped retry. Explicit
+  denial and a refreshed environment `operation_output: forbidden` hide already
+  recorded output as well as late updates. Valid background leases retain output
+  until their deadline. This gate does not reset a still-readable file draft.
 - `GET /api/v1/agents/{id}/environment` is the public capability seam for 15/18:
   Agent identity, policy revision, opaque runtime incarnation, revalidation
   deadline, and feature `{state, reason, scope, writable}` for files, operation
@@ -105,11 +111,15 @@ layout passes at both desktop and mobile sizes.
 | Public `computer_environment_public_route_preserves_file_scope_and_denies_foreign_readers` | 1 passed; owner/viewer scope and write capability through the real router, foreign 404 |
 | Native capture → core → public AGUI/Responses | 1 explicitly enabled ignored test passed with the actual Linux capture |
 | Rust SDK event/files/Responses suites | 25 passed, including typed recorded output and all activity replay cursors |
-| TypeScript SDK | 67 files / 3,560 tests passed after integration merge |
-| Focused web | 12 files / 116 tests passed; lifecycle, files/presence, attachments, shared permissions/drafts, final-answer identity, plans and conversation/message performance |
+| TypeScript SDK | 67 files / 3,560 tests passed at merge `b4e445225`; SDK typecheck also passed after `9a900786a` |
+| Focused web before 03/06 merge | 12 files / 116 tests passed; lifecycle, files/presence, attachments, shared permissions/drafts, final-answer identity, plans and conversation/message performance |
+| Focused web after 03/06 merge | 13 files / 126 passed, 3 failed: two existing SharedAgent tool-article assertions and one MessageIdentity tool-article assertion now encounter ticket06's collapsed completed-process disclosure. These failures are not counted as passing evidence or changed by this ticket |
+| Final scoped U checks | 4 passed: expired/pending/failed renewal and recovery with existing output; revoked history plus late callback; write-revocation draft preservation; unknown-call output does not invent a status. New expiry test first failed with `scoped-proof` still in the DOM, then passed after the authority gate |
 | Chrome computer | 6 passed; native recorded output and reload, capability reasons, statusless/truncated/missing output, 10,000 turns, mobile focus, desktop drafts/scroll |
 | Chrome existing toolbar | 5 passed; 1600px/390px × light/dark, retained files, resize bounds, rename and system prompt continuity |
-| Types/build | Web, e2e and SDK TypeScript checks passed; private `cargo check --locked -p layer1-public -p layer4-runtime` passed; production web build passed |
+| Scoped Chrome refresh | 1 passed: output visible before environment renewal, absent after `operation_output: forbidden`, browser denial remains distinct; no writes |
+| Types/build | Web, e2e and SDK TypeScript checks passed after the scope fix; private `cargo check --locked -p layer1-public -p layer4-runtime` passed after `9a900786a`; production web build passed at `b4e445225` |
+| Formatting/lint | Changed UI/e2e Prettier and ESLint passed; changed Rust files passed rustfmt with `skip_children=true`, avoiding unrelated baseline modules; `git diff --check` passed |
 
 Rust uses pinned 1.96.1, `CARGO_BUILD_JOBS=2`, and the private APFS-cloned target
 `/Users/liuyitian/code/cma-ui-worktrees/ticket14-proof/cargo-target`. Workspace
@@ -118,8 +128,11 @@ cleaned there. Initial filename-based filters matched zero tests and are **not**
 accepted evidence; the corrected module filters above ran the named tests.
 The shared target and other workers' builds were not cleaned or stopped.
 
-The final focused web command uses `--configLoader=runner --no-cache
---maxWorkers=2` with the twelve test files listed in the table's coverage groups.
+The focused web commands use `--configLoader=runner --no-cache --maxWorkers=2`.
+Final scope evidence is in `ticket14-proof/scope-red.log`, `scope-green.log`, and
+`scope-final.log`; the last command ran four named tests and intentionally
+excluded 23 unrelated SharedAgent tests. The full post-merge result is separately
+reported above, including its three failures.
 Early Vite/Vitest runs used generated dependency caches through the prepared
 `web/node_modules` link into the original checkout. Final checks use a private
 APFS dependency clone at `ticket14-proof/web-deps-TnKt07/node_modules`; original
