@@ -128,7 +128,21 @@ export const worktree = object({
   agent_id: optional(text),
 });
 export type Worktree = Output<typeof worktree>;
+export const agentTaskStatus = enumeration(
+  'not_started',
+  'completed',
+  'working',
+  'waiting_approval',
+  'starting',
+  'paused',
+  'stopped',
+  'failed',
+  'unknown',
+);
+export type AgentTaskStatus = Output<typeof agentTaskStatus>;
+
 export const hierarchyAgentSummary = object({
+  task_status: optional(agentTaskStatus),
   owner_title: optional(text),
   runtime_metadata: optional(
     object({
