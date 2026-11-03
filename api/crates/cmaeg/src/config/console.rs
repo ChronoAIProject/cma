@@ -11,6 +11,7 @@ use cmaeg_core::channel::Secret;
 use std::{env, time::Duration};
 
 pub const CMAEG_CONSOLE_ENABLED: &str = "CMAEG_CONSOLE_ENABLED";
+pub const CMAEG_CONSOLE_NYXID_PUBLIC_URL: &str = "CMAEG_CONSOLE_NYXID_PUBLIC_URL";
 pub const CMAEG_CONSOLE_CLIENT_ID: &str = "CMAEG_CONSOLE_CLIENT_ID";
 pub const CMAEG_CONSOLE_CLIENT_SECRET: &str = "CMAEG_CONSOLE_CLIENT_SECRET";
 pub const CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE: &str = "CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE";
@@ -53,6 +54,9 @@ pub struct ConsoleConfig {
     /// Off, no `/console` route exists and nothing console-related is
     /// allocated.
     pub enabled: bool,
+    /// OAuth discovery and endpoint origin; defaults to the retained NyxID base.
+    /// This does not change the shared authenticator or its issuer.
+    pub nyxid_public_url: Option<String>,
     /// Empty leaves the console disabled with a 503 page.
     pub client_id: String,
     /// Absent leaves the console disabled with a 503 page.
@@ -138,6 +142,7 @@ impl Default for ConsoleConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            nyxid_public_url: None,
             client_id: String::new(),
             client_secret: None,
             login_rate_per_minute: narrow(LOGIN_RATE.0),
@@ -163,6 +168,12 @@ impl ConsoleConfig {
         let session_ttl = session_ttl(lookup(CMAEG_CONSOLE_SESSION_TTL_MS)?.as_deref())?;
         let config = Self {
             enabled: enabled(lookup(CMAEG_CONSOLE_ENABLED)?.as_deref())?,
+            nyxid_public_url: lookup(CMAEG_CONSOLE_NYXID_PUBLIC_URL)?
+                .map(|value| {
+                    super::validate_origin(CMAEG_CONSOLE_NYXID_PUBLIC_URL, &value)
+                        .map_err(|_| invalid(format!("{CMAEG_CONSOLE_NYXID_PUBLIC_URL} must be a public origin without credentials or a path")))
+                })
+                .transpose()?,
             client_id: client_id(lookup(CMAEG_CONSOLE_CLIENT_ID)?.as_deref())?,
             client_secret: client_secret(lookup(CMAEG_CONSOLE_CLIENT_SECRET)?)?,
             login_rate_per_minute: login_rate(

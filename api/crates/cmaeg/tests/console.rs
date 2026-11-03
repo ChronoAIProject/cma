@@ -15,6 +15,8 @@ mod hygiene;
 mod memory;
 #[path = "console/memory_routing.rs"]
 mod memory_routing;
+#[path = "console/nyxid_origin.rs"]
+mod nyxid_origin;
 #[path = "console/observations.rs"]
 mod observations;
 #[path = "console/owner.rs"]
