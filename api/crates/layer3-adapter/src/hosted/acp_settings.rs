@@ -246,7 +246,11 @@ fn legacy_instruction_resume_failed(error: &AdapterError) -> bool {
 #[async_trait::async_trait]
 impl crate::ConversationSettingsSupport for Bridge {
     async fn managed_context_receipt(&self, sequence: u64) -> Option<String> {
-        self.context_readiness_receipt(sequence).await
+        self.context_readiness_receipt(sequence, false).await
+    }
+
+    async fn managed_transport_receipt(&self, sequence: u64) -> Option<String> {
+        self.context_readiness_receipt(sequence, true).await
     }
 
     async fn system_prompt_supported(&self) -> bool {

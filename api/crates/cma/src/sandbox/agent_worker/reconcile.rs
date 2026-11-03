@@ -23,6 +23,7 @@ impl AgentWorker {
         let mut context_current = 0_u64;
         let mut context_deferred = 0_u64;
         let mut context_checks = 0_u64;
+        let mut transport_attempts = 0_u64;
         loop {
             let page = self
                 .dependencies
@@ -41,7 +42,14 @@ impl AgentWorker {
                     // Skip completed maintenance without rereading the entire Agent.
                     // Pending refreshes still reread and fence all mutable authority.
                     if self.config.managed_documents_enabled {
-                        if candidate.managed_guidance_revision >= MANAGED_GUIDANCE_REVISION {
+                        let migration = self
+                            .config
+                            .access_transport_migration
+                            .as_ref()
+                            .filter(|migration| migration.includes(candidate.agent_id.as_str()));
+                        let desired_revision = migration
+                            .map_or(MANAGED_GUIDANCE_REVISION, |migration| migration.revision);
+                        if candidate.managed_guidance_revision >= desired_revision {
                             context_current += 1;
                             continue;
                         }
@@ -53,22 +61,30 @@ impl AgentWorker {
                             context_deferred += 1;
                             continue;
                         }
+                        if migration.is_some() && transport_attempts >= 2 {
+                            context_deferred += 1;
+                            continue;
+                        }
                         context_checks += 1;
-                        if let Err(error) = self
+                        let result = self
                             .dependencies
                             .operations
-                            .refresh_managed_context(
+                            .refresh_managed_context_at_origin(
                                 &candidate.agent_id,
-                                MANAGED_GUIDANCE_REVISION,
+                                desired_revision,
                                 crate::agent_lifecycle::guidance::managed_v3(),
                                 &[
                                     crate::agent_lifecycle::guidance::managed_v3().into(),
                                     crate::agent_lifecycle::guidance::managed_v2().into(),
                                     crate::agent_lifecycle::guidance::GITHUB_API_V1.into(),
                                 ],
+                                migration.map(|migration| migration.origin.as_str()),
                             )
-                            .await
-                        {
+                            .await;
+                        if migration.is_some() && !matches!(&result, Ok(false)) {
+                            transport_attempts += 1;
+                        }
+                        if let Err(error) = result {
                             tracing::debug!(agent_id=%candidate.agent_id, error=%error, "managed context refresh deferred");
                         }
                     }
@@ -93,6 +109,7 @@ impl AgentWorker {
                     context_current,
                     context_deferred,
                     context_checks,
+                    transport_attempts,
                     scheduled,
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     "Agent connection reconciliation completed"

@@ -42,6 +42,7 @@ pub(crate) struct AgentWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
+    pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub holder: String,
     pub deployment_id: String,
@@ -56,6 +57,7 @@ impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
             managed_documents_enabled: false,
+            access_transport_migration: None,
             holder: holder.into(),
             deployment_id: deployment_id.into(),
             lease_duration: DEFAULT_LEASE,
@@ -64,6 +66,14 @@ impl AgentWorkerConfig {
             sign_in_timeout: DEFAULT_SIGN_IN_TIMEOUT,
             parent_readiness: None,
         }
+    }
+
+    pub(crate) fn with_access_transport_migration(
+        mut self,
+        value: Option<crate::config::AgentAccessMigration>,
+    ) -> Self {
+        self.access_transport_migration = value;
+        self
     }
 
     pub(crate) fn with_managed_documents(mut self, enabled: bool) -> Self {

@@ -419,3 +419,66 @@ unchanged. Pin the event cursor before the test so a historical reply cannot pas
 acceptance. Confirm no command is replayed after a possibly successful execution.
 A command that definitively expired before dispatch is a failed request, not proof
 of agent recovery. Rollback after canonical enrollment must keep both readers.
+
+
+## Explicit migration of retained Agent tool endpoints
+
+Compatibility readers preserve installed URLs until a durable idle maintenance
+operation changes them. `CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION` enables that
+operation for an explicit batch. It is empty by default and requires managed
+document context. The JSON contains `revision`, `origin` and `agents`; the origin
+must equal `CHRONO_SERVER_PUBLIC_URL`, revision must be at least 2 and greater
+than the context revision already applied, and agents contains exact Agent IDs
+or the sole entry `"*"`. A future domain change needs a larger revision.
+
+Deploy this reader version on every API worker with migration admission disabled
+before enabling the batch. It adds optional persisted transport and maintenance
+intent fields; an older API binary cannot read records once they are populated.
+Wait for all older workers to drain naturally. Rollback after migration begins
+uses this compatible binary with new admission disabled, and retains both
+signing origins. Do not roll back to a binary that lacks these readers.
+
+Start with the operator-selected existing Agent. Record its native conversation,
+runtime/Pod/PVC identity, profile, settings, pending work and transcript boundary.
+The worker attempts at most two eligible migrations per reconciliation sweep.
+Active turns, pending approvals, queued owner commands, lifecycle work and
+active native goals defer maintenance. When API reattachment has no replayed goal
+snapshot, explicit transport maintenance may prove absence by reading the exact
+conversation's native SQLite thread/goal records through the existing fenced Pod
+exec transport. Both databases are opened read-only; any goal row, unknown schema,
+missing thread, symlink, unavailable probe or changed runtime identity defers.
+The proof is checked again after admission and before native reload. This fallback
+does not enable ordinary guidance refreshes or override an observed native goal.
+Paused Agents are not awakened
+for this operation; their normal recovery must reach a verified idle boundary.
+Provider-managed conversations without the CMA access binding are explicitly
+unsupported by this operation and require a separate binding endpoint audit.
+
+The existing maintenance admission persists the exact service origin and fences
+new execution. The adapter resolves the original capability, closes only the idle
+native conversation subscription, and loads that same persisted conversation
+with the canonical access endpoint. All other tool descriptors, selected model,
+reasoning effort, permission, working directory and owner guidance are retained.
+It acknowledges the installed transport only after reload and settings requests
+succeed. A lost acknowledgement remains a pending operation and is replayed on
+the same conversation before another message can execute. The process, Sandbox,
+home and credential are not replaced.
+
+Accept the canary only after observing a tool request reach the canonical host,
+a successful reply in the original conversation, unchanged retained runtime/home
+identity and preserved earlier history. Then expand the explicit ID list, or use
+`["*"]` after reviewing inventory. Keep a per-Agent pending reason for busy,
+paused or unsupported cases. Do not count a skipped or failed operation as migrated.
+
+The transport change preserves the signing namespace used to issue the original
+credential. Keeping that namespace in `CHRONO_AGENT_ACCESS_RETAINED_ORIGINS` is an
+identity-validation requirement; it does not generate network traffic to the old
+host after its installed transports have migrated. Removing a signing namespace
+requires a separate audit of historical enrollment readers and credential
+revocation, and is not necessary to stop use of the old domain.
+
+Only retire the old direct API routes after all managed endpoint dependencies,
+provider binding proxies, paused recovery paths, webhooks and retained external
+clients have been accounted for. Migrating the managed Agents cannot rewrite
+URLs stored in somebody else's SDK client. Browser navigation redirects remain
+independent of this endpoint migration.
