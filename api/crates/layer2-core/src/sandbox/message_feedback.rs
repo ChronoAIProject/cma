@@ -9,6 +9,9 @@ use crate::{AgentId, Caller, SubjectId};
 
 use super::{AgentReadError, AgentReadService};
 
+mod reasons;
+pub use reasons::{FeedbackDetails, FeedbackReason, FeedbackReasonError, FeedbackReasonRequest};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageVote {
@@ -32,6 +35,21 @@ pub struct MessageFeedbackPage {
 /// Implementations must not alter Agent state, logs, commands or runtime work.
 #[async_trait]
 pub trait MessageFeedbackStore: Send + Sync {
+    async fn get(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+    ) -> Result<FeedbackDetails, AgentReadError>;
+
+    async fn set_reasons(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+        request: &FeedbackReasonRequest,
+    ) -> Result<FeedbackDetails, FeedbackReasonError>;
+
     async fn list(
         &self,
         owner: &SubjectId,
@@ -60,6 +78,33 @@ pub struct MessageFeedbackService {
 impl MessageFeedbackService {
     pub fn new(reads: Arc<AgentReadService>, store: Arc<dyn MessageFeedbackStore>) -> Arc<Self> {
         Arc::new(Self { reads, store })
+    }
+
+    pub async fn get(
+        &self,
+        caller: &Caller,
+        agent: &AgentId,
+        sequence: u64,
+    ) -> Result<FeedbackDetails, AgentReadError> {
+        self.reads
+            .require_owned_final_answer(caller, agent, sequence)
+            .await?;
+        self.store.get(&caller.subject, agent, sequence).await
+    }
+
+    pub async fn set_reasons(
+        &self,
+        caller: &Caller,
+        agent: &AgentId,
+        sequence: u64,
+        request: &FeedbackReasonRequest,
+    ) -> Result<FeedbackDetails, FeedbackReasonError> {
+        self.reads
+            .require_owned_final_answer(caller, agent, sequence)
+            .await?;
+        self.store
+            .set_reasons(&caller.subject, agent, sequence, request)
+            .await
     }
 
     pub async fn list(

@@ -4167,3 +4167,110 @@ the existing wrapping monospace fact value for hashes. Empty workspaces omit
 this band. Preparation failures remain in the existing provisioning surface.
 
 | 2026-11-03 | Place repository provenance in the existing Agent Details fact band. |
+
+### Answer deliverables (2026-11-03)
+
+Only a completed turn's final recorded Agent answer may show its explicitly
+referenced deliverables. The public answer query verifies structured references
+against the resource's own authority. Ordinary file names, code spans, directory
+contents and another answer's resources never create cards. The machine reference
+marker is hidden from rendered prose; quoted examples remain ordinary text.
+Streaming answers also hide an unfinished standalone protocol marker once its
+reserved prefix is present. Streaming and intermediate messages never show cards.
+
+Place a semantic list named **Answer deliverables** immediately after the answer
+body and before its existing duration, usage and footer. Use a vertical stack with
+8px gaps and 12px top margin. Each row has 12px padding, a 1px border-l2 edge,
+radius 8, the layer-1 ground, a wrapping 14/20 medium name and 12/18 caption
+metadata. A 16px existing file glyph is decorative. Metadata names **Published
+artifact**, **Live file** or **Document revision N**, followed by the reported
+media type and actual byte count; an absent count says **Size unknown**. Document
+identity never becomes a file path, and a live file is never called a snapshot.
+
+Use the existing compact outline Button for **Download <name>** and compact ghost
+Button for **Retry <name>**. On screens below 30rem, controls have a 44px minimum
+height and wrap below the name rather than widening the reading axis. A pending
+download disables only that row. Errors remain in the row in caption ink with a
+polite status; they never replace the answer, draft or another card. Distinguish
+**File changed since this answer**, **File deleted**, **Document has a newer
+revision; download keeps this revision**, **Not ready**, **Access unavailable**,
+**Exceeds the resource limit**, and **Download failed; retry**. Changed live bytes
+cannot be downloaded as the old result. Document revision changes retain the
+original revision download if current document permission still allows it.
+
+An answer with no structured references renders no loading box or empty space.
+Known references reserve compact loading rows while their public read is pending.
+Only visible answers with explicit reference markers request delivery metadata.
+Immutable resources use authorized metadata reads. A live-file row initially says
+**Verify on download** beside its answer-time size; listing cards never downloads
+all referenced files. Download verifies that row's actual bytes, and Retry checks
+only the selected resource. Narrow conversation shares remain distinct from the
+existing explicitly accepted full-home file grants.
+Late metadata keeps stable resource keys and the existing conversation scroll
+anchor; there is no focus transfer or scroll-to-result. Reads and downloads abort
+on Agent, viewer, client or authorization changes, and late results are discarded.
+Downloads use opaque bytes, verify bounded size and SHA-256 before saving, and
+recheck current access after buffering. They never render executable content or
+publish a private file. Ticket 08 owns preview; the card has no preview action here.
+
+| 2026-11-03 | Add answer-scoped verified deliverable rows, independent download/retry states, explicit live-file versus immutable-version semantics, and mobile controls while preserving reading position and the existing answer footer. |
+
+### Edit suggested follow-ups (2026-11-03)
+
+Each suggested reply pairs its existing full-text send button with an **Edit before
+sending** button, named with its one-based suggestion position for assistive
+technology. Reuse the suggestion region's 8px gaps, 44px minimum targets, layer-1
+ground, border-l1, radius 8 and standard focus ring. Actions wrap within the
+available width on desktop and narrow screens.
+
+Editing fills the real composer with the complete text and focuses it without
+sending. Existing text opens the standard Modal, **Keep your draft?**, explaining
+that attachments remain. Its explicit actions are **Cancel**, **Replace text** and
+**Append to draft**. Escape and dismiss act as Cancel. Closing returns focus to the
+composer; appending separates the existing text and full suggestion with a newline.
+Replacing offers **Undo replacement** in a polite composer status row using the
+existing notice typography and quiet Button. Undo restores the replaced text;
+all attachments remain. Later manual edits or submission retire this undo action.
+
+Editing never acknowledges a send or rewrites a retained request. Failed sends
+keep the edited draft; uncertain sends retain the original request for recovery.
+Confirmed receipts cannot clear later input. An expired source removes only the
+suggestion association; the text remains an ordinary draft and its next send
+requires normal current authority. Account and Agent changes cannot transfer an
+edit, dialog or undo into another conversation. Settings stay compact and the
+existing header progress/completion slot is unchanged.
+
+| 2026-11-03 | Specify suggestion edit actions, explicit draft conflict choices, attachment retention, replacement undo, composer focus and ordinary send recovery for ticket 12. |
+
+### Negative feedback reasons (2026-11-03)
+
+Choosing **Needs improvement** immediately saves the vote and opens an inline,
+non-modal **Reasons for improvement** panel below that answer's existing footer.
+Keep the answer and composer usable. Reasons save independently, only after a
+confirmed down vote and a current feedback read. The selected vote key still
+removes the vote; **Edit reasons** reopens the panel without changing the vote.
+
+Offer six native multi-select checkboxes: **Inaccurate content**, **Did not answer
+the question**, **Steps do not work**, **Incomplete answer**, **Unclear wording**,
+and **Other**. **Additional details (optional)** uses a full-width textarea with
+a visible Unicode code-point counter, **0 / 500**. Do not truncate text or use
+UTF-16 maxlength. Over 500 shows an associated error and disables save.
+
+Use **Save reasons**, **Close**, **Retry reasons**, and **Reload feedback** actions.
+Announce **Saving reasons…**, **Reasons saved**, and actionable failures politely.
+Close only collapses; preserve drafts by viewer, Agent and canonical answer in
+page memory, including navigation back. Failed/uncertain saves retain the exact
+request for retry, independently of vote recovery. A version conflict keeps the
+draft and requires a fresh read before a new save. Remove/up atomically clears
+saved reasons; switching back down starts empty. Account or authority changes
+clear prior drafts and hide their controls immediately. Never imply training or
+send input as a feedback side effect.
+
+Use the existing surface/background, border, business-primary and secondary-text
+tokens, 1px border, 8px radius, 12px padding and gap, and 12/18 caption text. Stack
+checkbox labels and textarea in normal flow; controls wrap with an 8px gap.
+Textarea minimum height is 80px, vertically resizable, border-box, with inherited
+font. Below 30rem, all buttons and checkbox labels have at least 44px hit targets.
+Focus uses existing controls' outlines; no animation or overlay is added.
+
+| 2026-11-03 | Add independent, version-bound negative reasons with six choices, a 500-code-point optional note, retained scoped drafts, exact recovery and an accessible inline mobile panel for ticket 10. |

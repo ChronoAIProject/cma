@@ -34,6 +34,10 @@ const OPERATIONS: &[(&str, &[&str])] = &[
     ("/api/v1/agents/{id}/message-feedback", &["get"]),
     (
         "/api/v1/agents/{id}/messages/{message_id}/feedback",
+        &["get", "put"],
+    ),
+    (
+        "/api/v1/agents/{id}/messages/{message_id}/feedback/reasons",
         &["put"],
     ),
     ("/api/v1/agents/{id}/attachments", &["post"]),
@@ -46,6 +50,19 @@ const OPERATIONS: &[(&str, &[&str])] = &[
     ("/api/v1/agents/{id}/files/content", &["get"]),
     ("/api/v1/agents/{id}/files/download", &["get"]),
     ("/api/v1/agents/{id}/artifacts", &["get"]),
+    ("/api/v1/agents/{id}/deliverable-references", &["post"]),
+    (
+        "/api/v1/agents/{id}/answers/{answer_id}/deliverables",
+        &["get"],
+    ),
+    (
+        "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+        &["get"],
+    ),
+    (
+        "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+        &["get"],
+    ),
     ("/api/v1/agents/{id}/artifacts/{artifact_id}", &["get"]),
     (
         "/api/v1/agents/{id}/artifacts/{artifact_id}/download",

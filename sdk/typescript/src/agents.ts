@@ -9,6 +9,11 @@ import {
   type MessageVote,
 } from './agents/message-feedback.js';
 import {
+  feedbackDetails,
+  setFeedbackReasons,
+  type FeedbackReasonRequest,
+} from './agents/feedback-reasons.js';
+import {
   readAgentSettings,
   changeAgentSettings,
   type UpdateAgentSettingsRequest,
@@ -82,6 +87,16 @@ import {
   downloadAgentArtifact,
   type PublishAgentArtifactRequest,
 } from './agents/artifacts.js';
+import {
+  listAnswerDeliverables,
+  readAnswerDeliverable,
+  downloadAnswerDeliverable,
+  describeDeliverable,
+  type AnswerDeliverable,
+  type DeliverableReadOptions,
+  type DeliverableResource,
+} from './agents/deliverables.js';
+import type { DocumentAccessOptions } from './documents.js';
 
 export interface AgentListOptions extends PageOptions {
   readonly sandbox?: string;
@@ -109,6 +124,18 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  feedbackDetails(id: string, messageId: string, options: OperationOptions = {}) {
+    return feedbackDetails(this.config, id, messageId, options);
+  }
+  setFeedbackReasons(
+    id: string,
+    messageId: string,
+    body: FeedbackReasonRequest,
+    options: OperationOptions = {},
+  ) {
+    return setFeedbackReasons(this.config, id, messageId, body, options);
+  }
 
   /** Read saved owner votes; use next as after until pagination completes. */
   messageFeedback(id: string, options: EventOptions = {}) {
@@ -219,6 +246,33 @@ export class Agents {
   /** Download selected artifact bytes with current authorization; does not execute or render them. */
   downloadArtifact(id: string, artifactId: string, options: OperationOptions = {}) {
     return downloadAgentArtifact(this.config, id, artifactId, options);
+  }
+
+  answerDeliverables(id: string, answerId: string, options: DocumentAccessOptions = {}) {
+    return listAnswerDeliverables(this.config, id, answerId, options);
+  }
+  describeDeliverable(
+    id: string,
+    selected: DeliverableResource,
+    options: DocumentAccessOptions = {},
+  ) {
+    return describeDeliverable(this.config, id, selected, options);
+  }
+  readAnswerDeliverable(
+    id: string,
+    answerId: string,
+    deliveryId: string,
+    options: DeliverableReadOptions = {},
+  ) {
+    return readAnswerDeliverable(this.config, id, answerId, deliveryId, options);
+  }
+  downloadAnswerDeliverable(
+    id: string,
+    answerId: string,
+    expected: AnswerDeliverable,
+    options: DocumentAccessOptions = {},
+  ) {
+    return downloadAnswerDeliverable(this.config, id, answerId, expected, options);
   }
 
   /** Safe creation inventory. Omit organization and shared for personal scope. */
