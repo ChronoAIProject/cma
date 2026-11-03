@@ -10,6 +10,8 @@ pub struct ManagementConfig {
     pub public_url: String,
     /// Canonical externally reachable API base, optionally with a path prefix.
     pub public_api_url: String,
+    /// Retained exact API bases accepted during domain migration.
+    pub public_api_aliases: Vec<String>,
     /// Disable only while old replicas still lack the canonical browser routes.
     pub advertise_public_api_url: bool,
     pub master_keys: Arc<MasterKeyRing>,
@@ -25,6 +27,9 @@ impl ManagementConfig {
         let public_api_url = env::var(CMAEG_PUBLIC_API_URL)
             .map(|value| validate_public_api_url(&value))
             .unwrap_or_else(|_| Ok(public_url.clone()))?;
+        let public_api_aliases = super::origins::parse_public_api_aliases(
+            &env::var(CMAEG_PUBLIC_API_ALIASES).unwrap_or_default(),
+        )?;
         let advertisement = env::var(CMAEG_ADVERTISE_PUBLIC_API_URL);
         let advertise_public_api_url = parse_api_advertisement(match &advertisement {
             Ok(value) => Some(value.as_str()),
@@ -63,6 +68,7 @@ impl ManagementConfig {
         Ok(Self {
             public_url,
             public_api_url,
+            public_api_aliases,
             advertise_public_api_url,
             master_keys: Arc::new(master_keys),
             cma_base_url,

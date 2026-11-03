@@ -15,6 +15,7 @@ pub mod bearer;
 mod bearer_authorization;
 mod binding;
 mod bots;
+mod browser_origins;
 mod cookie_authorization;
 pub mod deferred_commands;
 pub mod entitlements;
@@ -105,6 +106,7 @@ pub struct AuthState {
     pub(super) mode: AuthMode,
     /// Browser-facing NyxID origin used for registration handoffs.
     pub(super) nyxid_public_url: String,
+    browser_origins: Vec<String>,
     pub(super) http: reqwest::Client,
     pub(super) metadata: RwLock<Option<ProviderMetadata>>,
     cookie_verifications: cookie_authorization::VerificationFlights,
@@ -156,6 +158,12 @@ impl AuthState {
             }
             (AuthMode::Trusted { .. }, _) => String::new(),
         };
+        let browser_origins = match &mode {
+            AuthMode::Provider { public_url, .. } => {
+                vec![public_url.trim_end_matches('/').to_owned()]
+            }
+            AuthMode::Trusted { .. } => vec![],
+        };
         Arc::new(Self {
             bot_father_username: None,
             bindings: None,
@@ -164,6 +172,7 @@ impl AuthState {
             identity_proxy: None,
             mode,
             nyxid_public_url,
+            browser_origins,
             records,
             store,
             http: reqwest::Client::builder()

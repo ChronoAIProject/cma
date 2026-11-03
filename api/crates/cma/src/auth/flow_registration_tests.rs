@@ -185,6 +185,8 @@ async fn trusted_login_restores_a_valid_relative_target() {
             return_to: Some("/marketplace".into()),
             screen: None,
         }),
+        OriginalUri("/auth/login".parse().unwrap()),
+        HeaderMap::new(),
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);

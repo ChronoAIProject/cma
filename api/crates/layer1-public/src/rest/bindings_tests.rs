@@ -172,7 +172,15 @@ fn route_service(
     }
     match (endpoint, alias) {
         (Some(endpoint), Some(alias)) => {
-            super::binding_router_with_native_tools_alias(service, endpoint, alias)
+            super::binding_router_with_native_tools_aliases_and_preparation(
+                service,
+                endpoint,
+                &[
+                    alias.into(),
+                    "https://new-bot.example/event-gateway/mcp".into(),
+                ],
+                false,
+            )
         }
         (Some(endpoint), None) => super::binding_router_with_native_tools(service, endpoint),
         (None, _) => Ok(binding_router(service)),
@@ -372,12 +380,21 @@ async fn native_tools_accept_only_the_configured_destination_and_retain_it_on_re
 async fn native_tools_alias_keeps_binding_identity_across_both_advertisement_phases() {
     let legacy = "https://gateway.example/mcp";
     let canonical = "https://bot.example/event-gateway/mcp";
-    for first_url in [legacy, canonical] {
+    for first_url in [
+        legacy,
+        canonical,
+        "https://new-bot.example/event-gateway/mcp",
+    ] {
         let (app, store) = app_with_tools_alias(Some(legacy), Some(canonical)).unwrap();
         let path = "/api/v1/cmaeg/bindings/domain-binding";
         let mut input = body();
         let mut retained = None;
-        for advertised in [first_url, canonical, legacy] {
+        for advertised in [
+            first_url,
+            canonical,
+            legacy,
+            "https://new-bot.example/event-gateway/mcp",
+        ] {
             input["tools"]["native_mcp_url"] = json!(advertised);
             let response = app
                 .clone()

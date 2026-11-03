@@ -129,18 +129,7 @@ impl AuthState {
         subject: &str,
         review_revision: u64,
     ) -> Result<ActorGrant, BotError> {
-        let AuthMode::Provider { public_url, .. } = &self.mode else {
-            return Err(BotError::Forbidden);
-        };
-        let origin = reqwest::Url::parse(public_url)
-            .map_err(|_| BotError::Forbidden)?
-            .origin()
-            .ascii_serialization();
-        if headers
-            .get(header::ORIGIN)
-            .and_then(|value| value.to_str().ok())
-            != Some(origin.as_str())
-        {
+        if !self.permits_browser_origin(headers) {
             return Err(BotError::Forbidden);
         }
         for _ in 0..4 {

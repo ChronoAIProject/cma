@@ -212,6 +212,31 @@ if mode == "release"
     end
     raise "Gateway contract accepted incompatible service routing: #{mutation}"
   end
+  {
+    "infra/api/httproute.yaml" => %w[cma-web-nyxid cma-nyxid-http-redirect],
+    "infra/cmaeg/httproute.yaml" => %w[cma-event-gateway-public-nyxid],
+  }.each do |path, names|
+    names.each do |name|
+      %w[removed wrong-listener wildcard-host wrong-backend].each do |mutation|
+        candidate = GatewaySourceContract.expected
+        routes = candidate.fetch(path)
+        route = routes.find { |value| value.dig("metadata", "name") == name }
+        case mutation
+        when "removed" then routes.delete(route)
+        when "wrong-listener" then route["spec"]["parentRefs"] = GatewaySourceContract.parent("https")
+        when "wildcard-host" then route["spec"]["hostnames"] = ["*.nyxid.ai"]
+        when "wrong-backend" then route["spec"]["rules"][0]["backendRefs"] = GatewaySourceContract.backend("cma-web")
+        end
+        begin
+          GatewaySourceContract.validate(candidate)
+        rescue StandardError
+          tests += 1
+          next
+        end
+        raise "Gateway contract accepted unsafe Nyxid route: #{name}: #{mutation}"
+      end
+    end
+  end
   config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
   GatewaySourceContract.validate_provider_origin(config)
   %w[http://example-host-03.example-namespace.svc https://example-host-01.example-namespace.svc http://example-host-01.example-namespace.svc:8080 missing duplicate].each do |origin|

@@ -23,7 +23,7 @@ use crate::AuthenticatedCaller;
 #[derive(Clone)]
 struct DesktopState {
     service: Arc<DesktopService>,
-    origin: String,
+    origins: Vec<String>,
 }
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
@@ -33,10 +33,16 @@ pub(super) struct DesktopDescriptor {
 }
 
 pub fn desktop_router(service: Arc<DesktopService>, origin: String) -> Router {
+    desktop_router_with_origins(service, vec![origin])
+}
+
+/// Deployment-owned exact browser origins, including retained domain aliases.
+/// Never derive this allowlist from Host, Forwarded or the incoming Origin.
+pub fn desktop_router_with_origins(service: Arc<DesktopService>, origins: Vec<String>) -> Router {
     Router::new()
         .route("/api/v1/agents/{id}/desktop", get(describe))
         .route("/api/v1/agents/{id}/desktop/ws", get(websocket))
-        .with_state(DesktopState { service, origin })
+        .with_state(DesktopState { service, origins })
 }
 
 #[utoipa::path(get, path = "/api/v1/agents/{id}/desktop", tag = "agents",
@@ -60,11 +66,13 @@ async fn describe(
     }
 }
 
-fn permitted_origin(headers: &HeaderMap, origin: &str) -> bool {
+fn permitted_origin(headers: &HeaderMap, origins: &[String]) -> bool {
     match headers.get(header::ORIGIN) {
         Some(value) => {
             headers.get_all(header::ORIGIN).iter().count() == 1
-                && value.to_str().ok() == Some(origin)
+                && origins
+                    .iter()
+                    .any(|origin| value.to_str().ok() == Some(origin.as_str()))
         }
         None => !headers.contains_key(header::COOKIE),
     }
@@ -86,7 +94,7 @@ async fn websocket(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if !permitted_origin(&headers, &state.origin) {
+    if !permitted_origin(&headers, &state.origins) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let id = AgentId(id);
@@ -160,17 +168,29 @@ mod tests {
     use super::*;
     #[test]
     fn desktop_cookie_stream_requires_one_exact_origin() {
+        let origins = vec![
+            "https://cma.example".into(),
+            "https://legacy.example".into(),
+        ];
         let mut headers = HeaderMap::new();
-        assert!(permitted_origin(&headers, "https://cma.example"));
+        assert!(permitted_origin(&headers, &origins));
         headers.insert(header::COOKIE, "session=fixture".parse().unwrap());
-        assert!(!permitted_origin(&headers, "https://cma.example"));
+        assert!(!permitted_origin(&headers, &origins));
         headers.insert(header::ORIGIN, "https://foreign.example".parse().unwrap());
-        assert!(!permitted_origin(&headers, "https://cma.example"));
+        assert!(!permitted_origin(&headers, &origins));
         headers.insert(header::ORIGIN, "null".parse().unwrap());
-        assert!(!permitted_origin(&headers, "https://cma.example"));
+        assert!(!permitted_origin(&headers, &origins));
         headers.insert(header::ORIGIN, "https://cma.example".parse().unwrap());
-        assert!(permitted_origin(&headers, "https://cma.example"));
-        headers.append(header::ORIGIN, "https://cma.example".parse().unwrap());
-        assert!(!permitted_origin(&headers, "https://cma.example"));
+        assert!(permitted_origin(&headers, &origins));
+        headers.insert(header::ORIGIN, "https://legacy.example".parse().unwrap());
+        assert!(permitted_origin(&headers, &origins));
+        headers.insert(
+            header::ORIGIN,
+            "https://cma.example.evil.test".parse().unwrap(),
+        );
+        assert!(!permitted_origin(&headers, &origins));
+        headers.insert(header::ORIGIN, "https://cma.example".parse().unwrap());
+        headers.append(header::ORIGIN, "https://legacy.example".parse().unwrap());
+        assert!(!permitted_origin(&headers, &origins));
     }
 }

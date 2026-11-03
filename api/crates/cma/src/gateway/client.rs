@@ -10,6 +10,7 @@ pub(super) struct GatewayClient {
     base: Url,
     public: Url,
     public_api: Url,
+    public_api_aliases: Vec<Url>,
     issuer: String,
 }
 impl GatewayClient {
@@ -20,13 +21,24 @@ impl GatewayClient {
             public: Url::parse(&config.public_url).map_err(|_| "invalid gateway public origin")?,
             public_api: Url::parse(&config.public_api_url)
                 .map_err(|_| "invalid gateway public API base")?,
+            public_api_aliases: config
+                .public_api_aliases
+                .iter()
+                .map(|base| {
+                    Url::parse(base).map_err(|_| "invalid gateway public API alias".to_owned())
+                })
+                .collect::<Result<_, _>>()?,
             issuer,
         })
     }
     pub(super) fn valid_callback(&self, channel: &str, value: &str) -> bool {
-        [&self.public_api, &self.public].into_iter().any(|base| {
-            endpoint(base, "callbacks", Some(channel), None).is_ok_and(|url| value == url.as_str())
-        })
+        [&self.public_api, &self.public]
+            .into_iter()
+            .chain(self.public_api_aliases.iter())
+            .any(|base| {
+                endpoint(base, "callbacks", Some(channel), None)
+                    .is_ok_and(|url| value == url.as_str())
+            })
     }
 
     fn url(&self, collection: &str, id: Option<&str>) -> Result<Url, BotError> {
@@ -331,12 +343,15 @@ impl GatewayClient {
             }
             (source.key_id, source.route_ids)
         };
-        let allowed = [&self.public_api, &self.public].into_iter().any(|base| {
-            endpoint(base, "callbacks", Some(&channel.channel_id), None)
-                .is_ok_and(|url| channel.endpoints.nyxid_callback_url == url.as_str())
-                && endpoint(base, "channels", Some(&channel.channel_id), Some("events"))
-                    .is_ok_and(|url| channel.endpoints.custom_event_url == url.as_str())
-        });
+        let allowed = [&self.public_api, &self.public]
+            .into_iter()
+            .chain(self.public_api_aliases.iter())
+            .any(|base| {
+                endpoint(base, "callbacks", Some(&channel.channel_id), None)
+                    .is_ok_and(|url| channel.endpoints.nyxid_callback_url == url.as_str())
+                    && endpoint(base, "channels", Some(&channel.channel_id), Some("events"))
+                        .is_ok_and(|url| channel.endpoints.custom_event_url == url.as_str())
+            });
         if !allowed {
             return Err(BotError::Unavailable);
         }
