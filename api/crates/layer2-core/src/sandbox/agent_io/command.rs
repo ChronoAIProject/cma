@@ -66,6 +66,8 @@ impl AgentCommand {
     }
 
     pub fn canonical(&self) -> Result<Self, AgentOperationError> {
+        super::AnswerContext::from_command(self)
+            .map_err(|_| invalid("answer context is invalid"))?;
         Ok(match self {
             Self::Message {
                 input,
