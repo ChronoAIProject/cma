@@ -37,11 +37,13 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 call_id: "tool-contract".into(),
                 status: "running".into(),
                 title: Some("Inspect configuration".into()),
+                output: None,
             },
             AgentLogKind::ToolCallUpdated {
                 call_id: "tool-contract".into(),
                 status: "completed".into(),
                 title: None,
+                output: None,
             },
             AgentLogKind::ApprovalRequested {
                 approval_id: "approval-contract".into(),
