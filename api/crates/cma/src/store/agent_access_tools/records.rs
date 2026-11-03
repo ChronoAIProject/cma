@@ -10,6 +10,9 @@ pub(super) struct Scope {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct OpenRecord {
+    /// Derived from the stored capability hash, never trusted from persisted data.
+    #[serde(skip)]
+    pub authority: usize,
     pub scope: Scope,
     pub request: AgentOpenRequest,
     pub fence: u64,
@@ -17,15 +20,52 @@ pub(super) struct OpenRecord {
 }
 
 impl MongoAgentAccessToolSource {
+    pub(super) async fn current_record(
+        &self,
+        scope: &Scope,
+        session: &mut ClientSession,
+    ) -> Result<Option<OpenRecord>> {
+        let mut cursor = self
+            .store
+            .agent_access_tools
+            .find(doc! {"_id": {"$in": self.record_ids(scope)?}})
+            .limit(2)
+            .session(&mut *session)
+            .await?;
+        let record = cursor
+            .next(&mut *session)
+            .await
+            .transpose()?
+            .as_ref()
+            .map(|document| self.read(document))
+            .transpose()?;
+        // Never guess which endpoint was installed if two namespaces claim one incarnation.
+        if cursor.next(&mut *session).await.transpose()?.is_some() {
+            return Err(Error::Refused);
+        }
+        Ok(record)
+    }
+
     pub(super) fn capability(&self, scope: &Scope) -> Result<String> {
         derive_capability(&self.signing_key, scope)
     }
 
+    pub(super) fn capability_at(&self, scope: &Scope, authority: usize) -> Result<String> {
+        if authority == 0 {
+            self.capability(scope)
+        } else {
+            derive_capability(self.authority(authority)?.1, scope)
+        }
+    }
+
     pub(super) fn read(&self, document: &Document) -> Result<OpenRecord> {
-        let record: OpenRecord = read_record(document).map_err(|_| Error::Refused)?;
-        let capability = self.capability(&record.scope)?;
-        if document.get_str("_id").ok() != Some(hash(&capability).as_str())
-            || document.get_str("agent_id").ok() != Some(record.scope.creation.agent_id.as_str())
+        let mut record: OpenRecord = read_record(document).map_err(|_| Error::Refused)?;
+        record.authority = self
+            .record_ids(&record.scope)?
+            .iter()
+            .position(|id| document.get_str("_id").ok() == Some(id.as_str()))
+            .ok_or(Error::Refused)?;
+        if document.get_str("agent_id").ok() != Some(record.scope.creation.agent_id.as_str())
             || !record.request.has_valid_sha256()
             || record.request.options.slot.0 != record.scope.creation.agent_id.as_str()
             || record.fence == 0
@@ -44,7 +84,7 @@ impl MongoAgentAccessToolSource {
         record: &OpenRecord,
         session: &mut ClientSession,
     ) -> Result<()> {
-        let id = hash(&self.capability(&record.scope)?);
+        let id = hash(&self.capability_at(&record.scope, record.authority)?);
         let document = doc! {
             "_id": &id,
             "agent_id": record.scope.creation.agent_id.as_str(),
