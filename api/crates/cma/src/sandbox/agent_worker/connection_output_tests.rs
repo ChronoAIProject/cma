@@ -11,6 +11,7 @@ struct Recorder {
     release: Notify,
     blocked: bool,
     refuse: bool,
+    writer: Option<Arc<tokio::sync::Mutex<()>>>,
 }
 
 #[async_trait::async_trait]
@@ -25,6 +26,10 @@ impl AgentUpdateRecorder for Recorder {
     ) -> Result<AgentUpdateOutcome, AgentConversationError> {
         assert_eq!(generation, 7);
         self.entered.notify_one();
+        let _writer = match &self.writer {
+            Some(writer) => Some(writer.lock().await),
+            None => None,
+        };
         if self.blocked {
             self.release.notified().await;
         }
@@ -40,6 +45,41 @@ impl AgentUpdateRecorder for Recorder {
             turn_closed: false,
         })
     }
+}
+
+#[tokio::test]
+async fn reconnect_keeps_confirmation_running_while_recorder_waits_for_its_writer() {
+    let writer = Arc::new(tokio::sync::Mutex::new(()));
+    let recorder = Recorder {
+        writer: Some(writer.clone()),
+        ..Recorder::default()
+    };
+    let (send, mut receiver) = mpsc::channel(1);
+    let (ack, mut acknowledged) = mpsc::channel(1);
+    let opening = async {
+        let held = writer.lock().await;
+        send.send(output(1, "original", ack)).await.unwrap();
+        recorder.entered.notified().await;
+        drop(held);
+        Ok("original")
+    };
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        drain(
+            opening,
+            &mut receiver,
+            &recorder,
+            &AgentId("agt_replay".into()),
+            7,
+            "original",
+        ),
+    )
+    .await
+    .expect("confirmation must progress while output waits for its transaction")
+    .unwrap();
+    assert_eq!(result, "original");
+    assert_eq!(*recorder.committed.lock().unwrap(), vec![1]);
+    assert_eq!(acknowledged.recv().await.unwrap().cursor, 1);
 }
 
 fn output(
