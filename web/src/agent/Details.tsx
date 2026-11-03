@@ -58,6 +58,33 @@ export function AgentDetails({
         )}
       </header>
       <div className="agent-details__scroll">
+        {detail.workspace.source?.type === 'repository_snapshot' ? (
+          <section className="agent-details__band" aria-label="Repository context">
+            <h2>Repository context</h2>
+            <dl>
+              <div className="agent-details__fact">
+                <dt>Repository</dt>
+                <dd>{detail.workspace.source.url}</dd>
+              </div>
+              <div className="agent-details__fact">
+                <dt>Requested ref</dt>
+                <dd>{detail.workspace.source.reference ?? 'Default branch'}</dd>
+              </div>
+              <div className="agent-details__fact">
+                <dt>Source commit</dt>
+                <dd>
+                  <code>{detail.workspace.source.source_commit ?? 'Not prepared yet'}</code>
+                </dd>
+              </div>
+              <div className="agent-details__fact">
+                <dt>Checkout commit</dt>
+                <dd>
+                  <code>{detail.workspace.resolvedCommit ?? 'Not prepared yet'}</code>
+                </dd>
+              </div>
+            </dl>
+          </section>
+        ) : null}
         <AgentFiles key={`files:${detail.id}`} agentId={detail.id} active={open} />
         <AgentShareLinks key={`sharing:${detail.id}`} agentId={detail.id} active={open} />
         <DetailsServiceAccess detail={detail} onOpenSandbox={onOpenSandbox} />

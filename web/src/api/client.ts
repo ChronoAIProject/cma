@@ -189,6 +189,7 @@ export interface CmaWebClient {
   readonly resourceViews?: ResourceViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
     options: CommandOptions,
