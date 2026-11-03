@@ -321,3 +321,12 @@
 - 合并态日志留在 `api/target/integration-quality-*.log`、`sdk/rust/target/integration-quality-*.log`。`git diff --check 9bc2f04e883c6619e65ad7f424994f333c385055 HEAD`、worktree/cached diff checks 通过。没有重新运行 full Web、全 SDK、native、Chrome、Mongo 或 production proof。
 - 已读取外部 `concurrent-worktree-additions.json` 与 `check-preservation.mjs`，以 `GIT_OPTIONAL_LOCKS=0` 无输出文件参数运行只读 preservation check。原工作区 branch/HEAD、46 个原始文件 hashes 保持不变；当前精确文件集包含单独登记的 `docs/CMAEG_GitHub_Source_Tech_Design.md`，该并发文档 hash 保持 `7cf6ae4c7ca8d76c8993df7efbbcc68c4a8ecbfc09454771c5069254d7d8d0b7`，无未知新增文件，未纳入本任务或改写它。19 tickets / 149 原始 AC 文本逐字核对不变；13 仍 in-progress、一个 literal human-quality AC 未勾选。
 - 16/17 仍在独立分支工作，未合并。原始 full-format、skill/Core fixtures、508-line service、LocalAgentV2 head-404 限制仍独立记录。仅写 integration source/ledger/private build artifacts，无原工作区或其他 worker 源码写入，无 push、PR、部署或共享运行环境操作；保留 worktree 供 parent cleanup。
+
+## Ticket 15 E2E types repair 集成（2026-11-03）
+
+- 合并前 integration 干净，分支 `codex/cma-ui-optimization`、HEAD `40b627b899f742ac7178a18622dd002fcb531254`，保留 parent 的 16/17 in-progress tracker 更新。已审阅 `E2E-TYPES-REPAIR.md` 和实际 diff；外部 `evidence/e2e-types-repair/manifest.json`、`files.sha256` 的两路径、source 字节数/SHA-256/git blob 以及 26 log/artifact hashes 全部核实。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-e2e-types` 的 `f4c4b510b8f9b47eb671d6f6c4d5721ef02da14b`，merge commit 为 `c431f8466439c2e9191cbd9679daf4cfc436162a`。无冲突，合并树与候选完全一致，无额外源码修正。仅修改 browser-live-chain 的显式 runtime evidence assertions/类型收窄和相同 newest-receipt 查找；compiler/lib gate、原行为断言和 runtime feature 均未改。
+- 合并态在 `web/` 执行 `npm run e2e:typecheck`、`npm run typecheck`、`./node_modules/.bin/eslint e2e/browser-live-chain.check.ts --max-warnings=0`，全部 exit 0。`git diff --check 40b627b899f742ac7178a18622dd002fcb531254 HEAD`、worktree/cached diff checks 通过。无新依赖安装、native/Chrome/VM/Mongo、全 suite 或广泛 gate 重跑，也不将类型检查当作新的 native pass。
+- Web Style 和 19 ticket 原始 AC 内容未改（保留全部 149 条）；13 的 literal human quality signoff 仍 pending。16/17 feature 分支未合并，VM slot 和其 native 工作完全未触碰。
+- 原工作区只读 preservation check 在 `2026-11-03T08:59:41.496Z` 返回 1：branch/HEAD 与 46 个原始文件 hashes 全部保持一致，19 ticket AC 检查也通过；但相对现有外部登记表发现 25 个额外 changed/untracked 路径，且已登记的 `docs/CMAEG_GitHub_Source_Tech_Design.md` hash 已变化。此为本次观察到的并发文件集漂移，已通知 parent；没有将失败称作完整 preservation pass，没有改写登记表、原文件或并发文档，没有把它们纳入本任务。
+- 仅写 integration 的 merge/ledger；无 original/其他 worker source 写入，无 push、PR、部署、服务或 VM 操作。保留 worktree 供 parent cleanup；原有 baseline 限制不在本次修复范围。
