@@ -69,6 +69,11 @@ pub struct AgentProfileContent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceLocation {
+    RepositorySnapshot {
+        url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+    },
     /// Clone a Git repository.
     GitRepository {
         /// Repository URL.

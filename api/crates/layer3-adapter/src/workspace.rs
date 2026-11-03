@@ -11,6 +11,11 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkspaceSource {
+    RepositorySnapshot {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+    },
     Clone {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,6 +72,11 @@ impl WorkspaceRequest {
         field(&mut digest, &self.workspace_id);
         field(&mut digest, &self.name);
         match &self.source {
+            WorkspaceSource::RepositorySnapshot { url, reference } => {
+                digest.update([3]);
+                field(&mut digest, url);
+                optional_field(&mut digest, reference.as_deref());
+            }
             WorkspaceSource::Clone { url, reference } => {
                 digest.update([1]);
                 field(&mut digest, url);
@@ -92,6 +102,8 @@ pub struct WorkspaceReceipt {
     pub name: String,
     pub path: String,
     pub resolved_commit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_commit: Option<String>,
 }
 
 /// Run workspace-profile setup commands in its main checkout.

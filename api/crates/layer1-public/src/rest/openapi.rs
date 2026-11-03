@@ -488,6 +488,10 @@ use super::trigger_openapi_shapes::*;
 struct ApiDoc;
 pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = ApiDoc::openapi();
+    document
+        .extensions
+        .get_or_insert_with(Default::default)
+        .insert("x-cma-task-repository".into(), serde_json::json!(true));
     document.merge(super::documents::document());
     document.merge(crate::responses::document());
     document.merge(crate::agui::document());
