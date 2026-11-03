@@ -119,7 +119,18 @@ layout passes at both desktop and mobile sizes.
 | Chrome existing toolbar | 5 passed; 1600px/390px × light/dark, retained files, resize bounds, rename and system prompt continuity |
 | Scoped Chrome refresh | 1 passed: output visible before environment renewal, absent after `operation_output: forbidden`, browser denial remains distinct; no writes |
 | Types/build | Web, e2e and SDK TypeScript checks passed after the scope fix; private `cargo check --locked -p layer1-public -p layer4-runtime` passed after `9a900786a`; production web build passed at `b4e445225` |
-| Formatting/lint | Changed UI/e2e Prettier and ESLint passed; changed Rust files passed rustfmt with `skip_children=true`, avoiding unrelated baseline modules; `git diff --check` passed |
+| Formatting/lint | Changed UI/e2e Prettier and ESLint passed; changed Rust files passed rustfmt with `skip_children=true`, avoiding unrelated baseline modules; `git diff --check` passed; Gitleaks scanned eight implementation/proof commits with no leaks |
+
+Final integration merge `dba184683` includes `424b1534e` (03, 06, 09 and 11).
+The style append conflict retains both tickets' rules. On that merged tree the
+four scoped U tests, the Chrome environment-withdrawal check, all three TypeScript
+typechecks, private public/runtime cargo check, and the named durable-output
+public test passed. The latter actually ran **one test** (`414 filtered out`),
+using the private target, rather than accepting a zero-test artifact. Evidence:
+`scope-merged.log`, `scope-chrome-merged.log`, `public-output-merged.log`,
+`public-check-merged.log`, and `final-gitleaks.log` under `ticket14-proof`.
+No broad suite was repeated solely for this evidence update. The three earlier
+post-06 assertions remain a reported integration gap, not a claimed green suite.
 
 Rust uses pinned 1.96.1, `CARGO_BUILD_JOBS=2`, and the private APFS-cloned target
 `/Users/liuyitian/code/cma-ui-worktrees/ticket14-proof/cargo-target`. Workspace
