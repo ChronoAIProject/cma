@@ -72,7 +72,7 @@ impl MongoAgentAccessToolSource {
             .current_record(&scope, session)
             .await?
             .ok_or(Error::Refused)?;
-        validation::request(&snapshot, &record.request, fence)?;
+        validation::retained_request(&snapshot, &record.request, fence)?;
         if record.scope != scope
             || record.fence != fence
             || record.request.request_sha256 != request_hash
