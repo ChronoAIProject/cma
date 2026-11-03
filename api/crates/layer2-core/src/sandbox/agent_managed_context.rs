@@ -97,8 +97,12 @@ impl AgentOperationService {
                 .resolve(&target)
                 .await
                 .map_err(|error| AgentOperationError::RuntimeUnavailable(error.to_string()))?;
-            let Some(readiness_receipt) = connection.input.managed_context_receipt(sequence).await
-            else {
+            let receipt = if service_origin.is_some() {
+                connection.input.managed_transport_receipt(sequence).await
+            } else {
+                connection.input.managed_context_receipt(sequence).await
+            };
+            let Some(readiness_receipt) = receipt else {
                 return Ok(false);
             };
             let intent = AgentOperationIntent::RefreshContext {

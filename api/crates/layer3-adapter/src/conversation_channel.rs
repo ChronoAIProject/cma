@@ -38,6 +38,9 @@ pub trait ConversationSettingsSupport: Send + Sync {
     async fn managed_context_receipt(&self, _sequence: u64) -> Option<String> {
         None
     }
+    async fn managed_transport_receipt(&self, sequence: u64) -> Option<String> {
+        self.managed_context_receipt(sequence).await
+    }
 }
 
 /// What is known about one attempt to hand input to the runtime link.
@@ -167,6 +170,13 @@ impl ConversationInputSender {
         self.settings_support
             .as_ref()?
             .managed_context_receipt(sequence)
+            .await
+    }
+
+    pub async fn managed_transport_receipt(&self, sequence: u64) -> Option<String> {
+        self.settings_support
+            .as_ref()?
+            .managed_transport_receipt(sequence)
             .await
     }
 
