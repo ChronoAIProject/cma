@@ -200,7 +200,9 @@ impl CommandEvidence {
                         | RuntimeLost
                 ) | (
                     RecoveryRequired,
-                    WriteConfirmed | ExecutionObserved | RuntimeLost
+                    // Explicit, proof-checked operator recovery can establish
+                    // that a legacy ambiguous prompt never reached the writer.
+                    WriteConfirmed | ExecutionObserved | PreWriteFailed | RuntimeLost
                 ) | (WriteConfirmed, ExecutionObserved)
             )
         {
