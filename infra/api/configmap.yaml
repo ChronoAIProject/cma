@@ -80,11 +80,61 @@ data:
   # Browser auth callbacks and host-only cookies use the app origin; the
   # Gateway routes API/auth/discovery paths directly to this control plane.
   CHRONO_SERVER_PUBLIC_URL: "https://cma.nyxid.ai"
-  # Existing runtime tool credentials and conversation bindings retain this authority.
-  # Keep its /api/v1/agent-tools route serving directly while those Agents exist.
-  CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION: ""
-  # Explicit provider binding relay; disabled until compatible readers have drained.
-  CHRONO_PROVIDER_TOOL_RELAY: ""
+  # Production canonical endpoint migration, revision 2, for the reviewed cohort.
+  # Admission remains idle-only and preserves each original conversation and key.
+  CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION: |-
+    {
+      "revision": 2,
+      "origin": "https://cma.nyxid.ai",
+      "agents": [
+        "agt_0a51a71d6472407ba348d95667b398d7",
+        "agt_11ff774135ef4cae8c616c217970679f",
+        "agt_25cc51b830394cb9bec4c903b4ebf44f",
+        "agt_2c794569d3da4637a268b7d5b6715b86",
+        "agt_2eab281da9514c30b5f9e8ebc2a6dc22",
+        "agt_2ebe77cd820846029e2d2d2b4e4ec382",
+        "agt_31ec2a5057bb48229687f0f2c909bfeb",
+        "agt_3b309a2ff542453986c0c0751bb2ac02",
+        "agt_49a4fceab4a14b4ea43a61cfaf4092a0",
+        "agt_4a1b83d7d96b42239f53bce21f70ad2a",
+        "agt_4ebc258f15c44fa5809f475b74ec4621",
+        "agt_58169ac362804179ab66dc31e3c0aba9",
+        "agt_5d5ca5d23cda4adfbcee159ce8bc3fa7",
+        "agt_6a07684f2abc401d8658ac52abb4702c",
+        "agt_7d85da52a2864950a029ec4358a41ab2",
+        "agt_88faf0ed40dc473d81953bf269659a80",
+        "agt_8b84e9bd01764311822bdae7c57255e3",
+        "agt_90c5559ba2f44d3e87541a80c849b37b",
+        "agt_90e02debb7a64ec88e06cc1ad46f871c",
+        "agt_948864dfe0884562994c1683fc42dab2",
+        "agt_a22c107abf1d42188fc5b6367952e40d",
+        "agt_a343480ecaf44847a12cda06d1c9d279",
+        "agt_aa59f8bf671d416eb4ff22a66e7c6054",
+        "agt_c1e6ff80871c494c84f2ae7129f501c9",
+        "agt_c64f64774bfa4fc39c2cce83fa9b2344",
+        "agt_d7c5c21ce89144cc8d310a0ed0b67122",
+        "agt_f1f123e65941453f9302d3b1d2c71548"
+      ]
+    }
+  # Preserve the enabled relay across ordinary ConfigMap deployments.
+  # Readers supporting provider_tool_relays must be serving before activation.
+  CHRONO_PROVIDER_TOOL_RELAY: |-
+    {
+      "bindings": [
+        "bnd_214077f7250c4fb3988a846b2abf4ef9",
+        "bnd_378dcd9c84b94ee28fe8fc6144406280",
+        "bnd_4d903b4a1f164fe7b9718b176227bb69",
+        "bnd_77fe02e529054f0086ce5d50a63bfe47",
+        "bnd_8bb7a632a28a44488f0cc00b5c1315ec",
+        "bnd_9b809bd2011f43a1b448f57b294355b7",
+        "bnd_bec6a57b32554c6eaa3532820d53e39e",
+        "bnd_d064c508e2b0445c94e96dd62dae527e",
+        "bnd_f77188cb5dbe4c28afeb93ac0aaca29c"
+      ],
+      "from_endpoint": "https://bot-gateway.chrono-ai.fun/mcp",
+      "upstream": "https://cma.nyxid.ai/event-gateway/mcp"
+    }
+  # Historical signing authority validates retained keys without contacting this host.
   CHRONO_AGENT_ACCESS_RETAINED_ORIGINS: "https://bot.chrono-ai.fun"
   # Agent Manager resolves selected immutable versions through the separate
   # Image Manager service using the caller's delegated NyxID credential.
