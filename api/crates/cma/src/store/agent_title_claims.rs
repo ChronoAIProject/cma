@@ -188,7 +188,7 @@ async fn title_transcript(
     )
     .await
     .map_err(map_transaction_log)?;
-    Ok(AgentTitleTranscript::from_complete_log(&logs))
+    Ok(AgentTitleTranscript::from_agent_log(agent, &logs))
 }
 
 async fn reconcile_claim(
@@ -229,7 +229,7 @@ async fn reconcile_claim(
     )
     .await
     .map_err(map_reconciliation_log)?;
-    Ok(AgentTitleTranscript::from_complete_log(&logs).is_some())
+    Ok(AgentTitleTranscript::from_agent_log(&agent, &logs).is_some())
 }
 
 fn current_agent_filter(agent: &Agent) -> Document {
