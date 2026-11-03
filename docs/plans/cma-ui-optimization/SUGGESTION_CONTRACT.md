@@ -74,6 +74,12 @@ does not implement append/replace/undo/cancel or edited recovery. Literal edited
 UI wiring and its runtime evidence belong to 12. `useSuggestionOutcomes` remains
 on AgentSurface after the suggestion group disappears.
 
+For an uncertain edited request, 12 may retain the existing journal key with
+`rememberSuggestionRequest(set, itemId, 'edited', requestKey)`. This records no
+confirmation event. The surface's metric observer confirms it only when that
+same retained request exposes an accepted receipt; it never retries or changes
+the request. Original recovery uses this same bounded tab-local correlation.
+
 Metric denominators: one exposure per viewer/Agent/set within the tab's dedupe
 window; confirmations are deduped by that scope, item and admitted command/run.
 Original versus edited share the confirmed-send denominator. Task completion
