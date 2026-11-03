@@ -92,6 +92,7 @@ impl GoldenApp {
             Arc::new(RecordClient::new(&cma.base_url, "cma-service").unwrap()),
             Arc::new(CreatorAuthenticator::new(&identity.base).unwrap()),
             ManagementConfig {
+                console_public_url: None,
                 master_keys: keys.clone(),
                 public_url: PUBLIC_URL.into(),
                 public_api_url: PUBLIC_URL.into(),
