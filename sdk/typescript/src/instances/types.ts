@@ -95,6 +95,11 @@ export const sandboxDetail = object({
 export type SandboxDetail = Output<typeof sandboxDetail>;
 
 export const workspaceSource = tagged({
+  repository_snapshot: variant('repository_snapshot', {
+    url: text,
+    reference: optional(text),
+    source_commit: optional(text),
+  }),
   git_repository: variant('git_repository', { url: text, reference: optional(text) }),
   empty: variant('empty', {}),
 });

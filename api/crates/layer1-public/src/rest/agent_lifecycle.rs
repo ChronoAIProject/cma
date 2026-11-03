@@ -22,7 +22,7 @@ pub struct AgentLifecycleCreateRequest {
     pub name: String,
     /// Exact initial task, at most 262144 UTF-8 bytes and not whitespace-only.
     /// Replaces the readiness prompt after preparation; omission retains setup.
-    /// Cannot be combined with repository in this version.
+    /// Repository tasks prepare an immutable source checkout in a new Sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_message: Option<String>,
     /// Add an Agent to this owned, ready Workspace using its existing Sandbox.
