@@ -68,7 +68,9 @@ impl ReliableOutput {
 }
 
 impl Bridge {
-    pub(super) async fn output_progress(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+    pub(in crate::hosted) async fn output_progress(
+        &self,
+    ) -> Option<tokio::sync::watch::Receiver<u64>> {
         let state = self.output.as_ref()?.lock().await;
         state.session.as_ref()?;
         Some(state.durable_progress.subscribe())
