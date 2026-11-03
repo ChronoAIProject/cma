@@ -4179,3 +4179,38 @@ recheck current access after buffering. They never render executable content or
 publish a private file. Ticket 08 owns preview; the card has no preview action here.
 
 | 2026-11-03 | Add answer-scoped verified deliverable rows, independent download/retry states, explicit live-file versus immutable-version semantics, and mobile controls while preserving reading position and the existing answer footer. |
+
+### Optional repository task context (2026-11-03)
+
+Home places an optional **GitHub repository** URL field and **Repository ref**
+field below the task textarea, using the existing labeled Input controls and
+16px form gap. The fields stack at every width. Clearing repository context
+preserves the task text. An omitted ref means the repository's default branch;
+an entered ref is a request, never a verified commit. Existing Workspace or
+Sandbox creation names its inherited context and offers no repository override.
+Services that do not advertise repository-task support show its unavailability.
+
+Draft repository options share the task's viewer, tab, origin and context scope.
+Submission freezes the exact task, URL and ref in the existing creation intent.
+Show retained repository options separately from the editable next draft, with
+**Requested ref** and **Checkout commit** labels. Only publicly recorded runtime
+facts may fill the commit label; until then say **Not prepared yet**. Source
+archive checkouts name both the upstream source commit and actual local checkout
+commit, without implying imported Git history. Long URLs and hashes wrap.
+
+Required connections use the existing connection dialog and explicit
+**Continue original task** action. Dismissing the dialog or returning from OAuth
+does not submit a task. Connection recovery retains the original body and key.
+Repository access, missing ref, preparation and task execution failures keep
+their distinct explanations. Failed preparation never implies task execution;
+editing a failed intent uses **Start another task**, while uncertain requests
+use **Recover original task**. Existing files are never replaced by an option.
+
+| 2026-11-03 | Define optional repository/ref task context, immutable checkout facts, inherited-context restrictions and identity-preserving connection recovery for ticket 04. |
+
+Agent Details shows repository provenance in its existing band and fact-list
+styles: repository URL, requested ref, source commit and checkout commit. Use
+the existing wrapping monospace fact value for hashes. Empty workspaces omit
+this band. Preparation failures remain in the existing provisioning surface.
+
+| 2026-11-03 | Place repository provenance in the existing Agent Details fact band. |

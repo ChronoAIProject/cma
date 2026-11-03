@@ -6,6 +6,44 @@ use serde_json::json;
 use wire::{WireServer, json as response};
 
 #[tokio::test]
+async fn repository_task_reads_source_and_actual_checkout_as_distinct_public_facts() {
+    let server = WireServer::new().await;
+    let corpus: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../api/crates/layer1-public/tests/fixtures/public-contract/agents.json"
+    ))
+    .unwrap();
+    let mut detail = corpus["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == "agent-read")
+        .unwrap()["response"]["body"]
+        .clone();
+    detail["workspace"]["resolved_commit"] = json!("b".repeat(40));
+    detail["workspace"]["source"] = json!({"type":"repository_snapshot", "url":"https://github.com/example/project", "reference":"proof/fixed", "source_commit":"a".repeat(40)});
+    server.expect(response(
+        "GET",
+        "/api/v1/agents/agt_contract",
+        None,
+        200,
+        detail,
+        true,
+    ));
+    let agent = server.client.agents().read("agt_contract").await.unwrap();
+    assert_eq!(agent.workspace.resolved_commit, Some("b".repeat(40)));
+    assert_eq!(
+        agent.workspace.source,
+        Some(cma_sdk::instances::WorkspaceSource::RepositorySnapshot {
+            url: "https://github.com/example/project".into(),
+            reference: Some("proof/fixed".into()),
+            source_commit: Some("a".repeat(40)),
+        })
+    );
+    server.assert_drained();
+    let _ = (&server.anonymous, &server.base_url);
+}
+
+#[tokio::test]
 async fn lifecycle_replays_exact_task_bytes_and_keeps_legacy_omission() {
     let server = WireServer::new().await;
     let key = IdempotencyKey::new("original-task-key").unwrap();
