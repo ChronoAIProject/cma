@@ -425,7 +425,8 @@ of agent recovery. Rollback after canonical enrollment must keep both readers.
 
 Compatibility readers preserve installed URLs until a durable idle maintenance
 operation changes them. `CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION` enables that
-operation for an explicit batch. It is empty by default and requires managed
+operation for an explicit batch. The application default is disabled; the
+production manifest selects the reviewed cohort below. It requires managed
 document context. The JSON contains `revision`, `origin` and `agents`; the origin
 must equal `CHRONO_SERVER_PUBLIC_URL`, revision must be at least 2 and greater
 than the context revision already applied, and agents contains exact Agent IDs
