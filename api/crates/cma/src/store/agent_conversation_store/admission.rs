@@ -124,10 +124,20 @@ pub(super) async fn validate_and_fence(
             },
             update,
         )
-        .session(session)
+        .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?;
     if locked.matched_count == 1 {
+        crate::store::sandbox_usage::save::record_saved(store, session, &parent, expected_revision)
+            .await
+            .map_err(|error| match error {
+                crate::store::sandbox_events::TransactionEventError::Domain(error) => {
+                    ApplyError::Domain(error)
+                }
+                crate::store::sandbox_events::TransactionEventError::Driver(error) => {
+                    ApplyError::Driver(error)
+                }
+            })?;
         Ok(())
     } else {
         Err(ApplyError::Domain(SandboxStoreError::Conflict))

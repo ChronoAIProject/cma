@@ -98,6 +98,9 @@ async fn apply(
         if result.matched_count != 1 {
             return Err(AgentAccessError::Conflict.into());
         }
+        crate::store::sandbox_usage::save::record_saved(store, session, &sandbox, current.revision)
+            .await
+            .map_err(event_error)?;
         append_in_transaction(store, session, &current.id, at.clone(), event)
             .await
             .map_err(event_error)?;

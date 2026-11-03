@@ -267,6 +267,13 @@ async fn apply_publication(
     if advanced.matched_count != 1 {
         return Err(PublishError::Domain(SandboxStoreError::Conflict));
     }
+    crate::store::sandbox_usage::save::record_saved(
+        store,
+        session,
+        &mutation.sandbox,
+        current.revision,
+    )
+    .await?;
     let event = append_in_transaction(
         store,
         session,
