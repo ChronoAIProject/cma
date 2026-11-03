@@ -157,6 +157,19 @@ remain green. Four layers, CMA and Rust SDK all-target Clippy, SDK docs/build/li
 and the named OpenAPI/Markdown operation inventory pass. Post-merge validation
 is recorded separately with its exact revision in the external handoff.
 
+The combined source merges final integration
+`3aff828c1eec7e0ddb07969a0b5977955f1ec810`, including16 feature626679227. Only
+append-only Web Style conflicted: the complete16 prefix is retained before17's
+appendix. Combined Web338files/3018tests, TS SDK3754tests, Rust SDK209tests,
+four real-handler corpus dispatchers (37control/36browser/10environment/13desktop),
+two named authority regressions and OpenAPI inventory pass. Web/SDK types, full
+E2E types, lint, build, package consumer, CSS904classes and computed styles pass.
+Combined four-layer/CMA and Rust SDK all-target Clippy pass with warnings denied.
+The SDK retains only its previously documented opt-in skips. The runtime and
+adapter production source is unchanged from the tested immutable candidate;
+16 adds only its separate desktop-chain proof driver in Layer4. No new VM job
+was started after release. This distinction is explicit in the final manifest.
+
 No gates or tests were disabled and no new ignores were introduced. The size
 gate retains only the original byte-identical508-line agent_operation_service;
 its SHA is in `known-baseline-limits.json`. Original unrelated format/skill/Core
