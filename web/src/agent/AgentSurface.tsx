@@ -90,7 +90,7 @@ export function AgentSurface({
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
       ? { status: 'loading' }
       : controller.state;
-  useDocumentTitle(state.status === 'ready' ? agentDisplayTitle(state.detail) : undefined);
+  useDocumentTitle(state.status === 'ready' ? agentDisplayTitle(state.detail) : undefined, 'task');
   const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
   const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;

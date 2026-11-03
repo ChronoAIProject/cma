@@ -3906,3 +3906,21 @@ Clients omitting a task retain setup behavior. Unsupported services show a clear
 unavailable explanation and never fall back to an unrecorded send.
 
 | 2026-11-03 | Define task-first Home and contextual creation, editable templates, exact durable initial-task admission, tab draft isolation and honest recovery states. |
+
+### Durable task names (2026-11-03)
+
+Task navigation, conversation headings and the active browser tab use the same
+name: owner override, valid provider title, first real task preview, configured
+name, then **Untitled task**. Automatic setup previews never supply a task name.
+Preserve legacy descriptions with unknown provenance as bounded fallback text;
+do not infer purpose from wording. Automatic labels are single-line and bounded
+to 64 Unicode characters, with task previews limited to 48. Keep full owner
+names within the existing rename limit and existing truncation/hover treatment.
+
+On an Agent page the browser title is **<task name> · CMA**. Loading, denied and
+non-Agent pages retain **ChronoAI Managed Agent (CMA)**. Hidden retained services
+cannot change the active tab title. Rename and delayed provider metadata update
+only presentation: preserve the mounted conversation, composer, draft and focus.
+Reload and navigation restore names from authorized persisted resource metadata.
+
+| 2026-11-03 | Unify persisted real-task and owner names across navigation, conversation and browser tabs, with bounded fallback and setup exclusion. |
