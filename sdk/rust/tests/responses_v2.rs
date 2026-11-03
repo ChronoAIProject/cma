@@ -15,6 +15,27 @@ use serde_json::{Value, json};
 use wire::WireServer;
 
 #[tokio::test]
+async fn suggestion_sends_exact_text_and_answer_scope_with_the_retained_key() {
+    let server = WireServer::new().await;
+    let body = json!({"conversation":"agt_fixture", "input":"Add criteria.\nKeep limits.", "stream":true,
+        "answer_context":{"turn_sequence":2,"answer_sequence":4}});
+    let request: CreateResponseRequest = serde_json::from_value(body.clone()).unwrap();
+    let mut reply = expected("/api/v2/responses", Some(body), fixture::wire(&events()));
+    reply
+        .headers
+        .insert("idempotency-key".into(), "suggestion-original".into());
+    server.expect(reply);
+    let stream = server
+        .client
+        .responses_v2()
+        .create(&request, Some("suggestion-original"))
+        .await
+        .unwrap();
+    assert_eq!(stream.receipt().command_id, "cmd_contract");
+    server.assert_drained();
+}
+
+#[tokio::test]
 async fn both_aliases_retain_the_receipt_and_key_before_split_utf8_events() {
     let server = WireServer::new().await;
     let request = CreateResponseRequest::new("agt_fixture", "Hello");
