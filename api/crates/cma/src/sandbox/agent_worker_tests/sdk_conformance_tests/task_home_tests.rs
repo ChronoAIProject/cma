@@ -153,14 +153,27 @@ async fn router_with_support(
         store.clone(),
         Arc::new(PersonalAuthority),
     )));
-    let lifecycle = InlineAgentLifecycle::new(
-        SandboxService::new(
-            store.clone(),
-            profiles.clone(),
-            SandboxPolicy::default(),
-            support.connections,
+    let sandboxes = SandboxService::new(
+        store.clone(),
+        profiles.clone(),
+        SandboxPolicy::default(),
+        support.connections,
+    );
+    let workspaces = WorkspaceService::new(store.clone(), profiles.clone());
+    let hierarchy = layer1_public::rest::HierarchyState::new(
+        sandboxes.clone(),
+        workspaces.clone(),
+        layer2_core::sandbox::HierarchyReadService::new(store.clone()).with_resource_access(
+            Arc::new(ResourceAccessService::new(
+                store.clone(),
+                Arc::new(PersonalAuthority),
+            )),
         ),
-        WorkspaceService::new(store.clone(), profiles.clone()),
+        Arc::new(UnusedCompatibilityLedger),
+    );
+    let lifecycle = InlineAgentLifecycle::new(
+        sandboxes,
+        workspaces,
         services.agents(),
         profiles,
         ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
@@ -190,7 +203,8 @@ async fn router_with_support(
     let mut routes = services
         .with_lifecycle(lifecycle.clone())
         .with_lifecycle_operations(lifecycle)
-        .router(Arc::new(UnusedCompatibilityLedger));
+        .router(Arc::new(UnusedCompatibilityLedger))
+        .merge(layer1_public::rest::hierarchy_router(hierarchy));
     if let Some(adapter) = support.adapter {
         routes = routes.merge(layer1_public::rest::agent_filesystem_router(
             layer2_core::sandbox::agent_filesystem::AgentFileService::new(

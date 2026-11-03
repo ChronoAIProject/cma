@@ -15,6 +15,7 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
   await boundary.route(page, baseURL!);
   const writes: { body: unknown; key: string | undefined; receipt: unknown }[] = [];
   const observations: BrowserObservation[] = [];
+  const lifecycleEvents: unknown[] = [];
   let submittedAt = 0;
   await page.route('**/auth/session', (route) =>
     route.fulfill({
@@ -48,6 +49,8 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
         url: publicServer.origin + path + url.search,
         headers: { ...outgoing.headers(), authorization: 'Bearer local-sdk-conformance' },
       });
+      if (path.startsWith('/api/v1/agent-lifecycle/') && response.ok())
+        lifecycleEvents.push(await response.json());
       if (path === '/api/v1/agents' && outgoing.method() === 'POST') {
         expect(response.status()).toBe(202);
         const receipt = await response.json();
@@ -149,6 +152,7 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
     frameSha256: createHash('sha256').update(imageBytes).digest('hex'),
     frameBytes: imageBytes.length,
     observations: observations.length,
+    lifecycleEvents,
     startupFixture:
       'Local IdP, optional application startup projections and external provider/home allocation; real Mongo, lifecycle, workers, native runtime, ACP, browser, public handlers and SDK.',
   };
