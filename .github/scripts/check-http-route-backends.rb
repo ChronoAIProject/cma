@@ -33,17 +33,14 @@ end
 https_routes = routes.select do |route|
   route.dig("spec", "parentRefs").any? { |parent| parent["sectionName"] != "http" }
 end
-expected_names = %w[cma-agent-manager cma-web cma-web-nyxid]
+expected_names = %w[cma-web-nyxid]
 actual_names = https_routes.map { |route| route.dig("metadata", "name") }.sort
 abort("unexpected competing HTTPS routes: #{actual_names.inspect}") unless actual_names == expected_names
 
-api = ownership(route!(routes, "cma-agent-manager", "bot-api.chrono-ai.fun"))
-web = ownership(route!(routes, "cma-web", "bot.chrono-ai.fun"))
 nyxid_web = ownership(route!(routes, "cma-web-nyxid", "cma.nyxid.ai", "https-nyxid"))
 
 api_backend = [{ "group" => "", "kind" => "Service", "name" => "cma-agent-manager", "port" => 80, "weight" => 1 }]
 web_backend = [{ "group" => "", "kind" => "Service", "name" => "cma-web", "port" => 80, "weight" => 1 }]
-expected_api = { ["PathPrefix", "/"] => api_backend }
 expected_web = {
   # The cookie-authenticated portal bridge retains its full path at Agent Manager.
   ["PathPrefix", "/api/event-gateway"] => api_backend,
@@ -56,7 +53,6 @@ expected_web = {
   ["PathPrefix", "/"] => web_backend,
 }
 
-expected_api.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
 expected_web.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
 {
   "/api/image-manager" => ["cma-image-manager", "/"],
@@ -68,8 +64,6 @@ expected_web.transform_values! { |backend| { "backends" => backend, "filters" =>
   }
 end
 
-abort("unexpected API route ownership: #{api.inspect}") unless api == expected_api
-abort("unexpected app route ownership: #{web.inspect}") unless web == expected_web
 abort("unexpected Nyxid app route ownership: #{nyxid_web.inspect}") unless nyxid_web == expected_web
 
 puts "HTTPRoute backend ownership is exact"

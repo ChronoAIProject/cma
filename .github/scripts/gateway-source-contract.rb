@@ -14,7 +14,9 @@ module GatewaySourceContract
 
   def self.object(kind, name, spec)
     labels = { "app.kubernetes.io/part-of" => "cma" }
-    labels["app.kubernetes.io/name"] = name unless name == "cma-http-redirect"
+    unless name == "cma-nyxid-http-redirect"
+      labels["app.kubernetes.io/name"] = name == "cma-web-nyxid" ? "cma-web" : name
+    end
     {
       "apiVersion" => kind == "HTTPRoute" ? "gateway.networking.k8s.io/v1" : "networking.gke.io/v1",
       "kind" => kind, "metadata" => { "name" => name, "namespace" => "chrono-bot", "labels" => labels },
@@ -64,23 +66,11 @@ module GatewaySourceContract
     value
   end
 
-  def self.nyxid_route(route, name, listener = "https-nyxid")
-    value = Marshal.load(Marshal.dump(route))
-    value["metadata"]["name"] = name
-    value["spec"]["hostnames"] = ["cma.nyxid.ai"]
-    value["spec"]["parentRefs"] = parent(listener)
-    value
-  end
-
   def self.expected
     all = [path("PathPrefix", "/")]
     routes = [
-      object("HTTPRoute", "cma-agent-manager", {
-        "parentRefs" => parent("https"), "hostnames" => ["bot-api.chrono-ai.fun"],
-        "rules" => [{ "matches" => all, "backendRefs" => backend("cma-agent-manager") }],
-      }),
-      object("HTTPRoute", "cma-web", {
-        "parentRefs" => parent("https"), "hostnames" => ["bot.chrono-ai.fun"],
+      object("HTTPRoute", "cma-web-nyxid", {
+        "parentRefs" => parent("https-nyxid"), "hostnames" => ["cma.nyxid.ai"],
         "rules" => [
           { "matches" => [path("PathPrefix", "/api/event-gateway")], "backendRefs" => backend("cma-agent-manager") },
           service_route("image-manager", "cma-image-manager", "/"),
@@ -90,13 +80,11 @@ module GatewaySourceContract
           { "matches" => all, "backendRefs" => backend("cma-web") },
         ],
       }),
-      object("HTTPRoute", "cma-http-redirect", {
-        "parentRefs" => parent("http"), "hostnames" => %w[bot.chrono-ai.fun bot-api.chrono-ai.fun],
+      object("HTTPRoute", "cma-nyxid-http-redirect", {
+        "parentRefs" => parent("http"), "hostnames" => ["cma.nyxid.ai"],
         "rules" => [{ "matches" => all, "filters" => [{ "type" => "RequestRedirect", "requestRedirect" => { "scheme" => "https", "statusCode" => 301 } }] }],
       }),
     ]
-    routes << nyxid_route(routes[1], "cma-web-nyxid")
-    routes << nyxid_route(routes[2], "cma-nyxid-http-redirect", "http")
     health = object("HealthCheckPolicy", "cma-agent-manager", {
       "targetRef" => { "group" => "", "kind" => "Service", "name" => "cma-agent-manager" },
       "default" => { "config" => { "type" => "HTTP", "httpHealthCheck" => { "port" => 8080, "requestPath" => "/ready" } } },
@@ -111,8 +99,8 @@ module GatewaySourceContract
         "parentRefs" => parent("http"), "hostnames" => ["bot-gateway.chrono-ai.fun"],
         "rules" => [{ "matches" => all, "filters" => [{ "type" => "RequestRedirect", "requestRedirect" => { "scheme" => "https", "statusCode" => 301 } }] }],
       }),
-      gateway_route("cma-event-gateway-public", {
-        "parentRefs" => parent("https"), "hostnames" => ["bot.chrono-ai.fun"],
+      gateway_route("cma-event-gateway-public-nyxid", {
+        "parentRefs" => parent("https-nyxid"), "hostnames" => ["cma.nyxid.ai"],
         "rules" => [
           gateway_public_route("PathPrefix", "v1", "/v1"),
           gateway_public_route("PathPrefix", "mcp", "/mcp"),
@@ -122,8 +110,6 @@ module GatewaySourceContract
         ],
       }),
     ]
-    gateway_routes = values.fetch("infra/cmaeg/httproute.yaml")
-    gateway_routes << nyxid_route(gateway_routes[2], "cma-event-gateway-public-nyxid")
     values["infra/api/service.yaml"] = [service("cma-agent-manager", "cma-agent-manager"), service("cma-api", "cma-agent-manager")]
     values["infra/cmaeg/service.yaml"] = [service("cma-event-gateway", "cma-event-gateway"), service("cmaeg", "cma-event-gateway")]
     %w[api web].each do |name|
