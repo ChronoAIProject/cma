@@ -14,7 +14,9 @@ export function SuggestedReplies({
   controller,
   disabled,
   onSend,
+  onEdit,
 }: {
+  readonly onEdit?: (text: string) => void;
   readonly suggestions: SuggestedReplySet;
   readonly controller: AgentController;
   readonly disabled: boolean;
@@ -78,66 +80,76 @@ export function SuggestedReplies({
           {status}
         </span>
       )}
-      {suggestions.items.map((item) => (
-        <button
-          type="button"
-          key={item.id}
-          disabled={
-            disabled ||
-            (scopedRequest && retained.state === 'pending') ||
-            (effectiveState !== 'ready' && effectiveState !== 'failed')
-          }
-          onClick={() => {
-            if (
-              (locked.current && effectiveState !== 'failed') ||
+      {suggestions.items.map((item, index) => (
+        <div className="suggested-replies__item" key={item.id}>
+          <button
+            type="button"
+            disabled={
               disabled ||
-              (scopedRequest && retained.state === 'pending')
-            )
-              return;
-            locked.current = true;
-            setState('sending');
-            void Promise.resolve(
-              onSend(
-                item.text,
-                (receipt) => {
-                  confirmSuggestionSend(suggestions, item.id, 'original', receipt);
-                  if (active.current) setState('accepted');
-                },
-                (reason) => {
-                  if (!active.current) return;
-                  locked.current = false;
-                  setState(reason === undefined ? 'failed' : 'expired');
-                },
-              ),
-            ).then(() => {
-              if (!active.current) return;
-              const input = controller.readSuggestionRequest?.();
+              (scopedRequest && retained.state === 'pending') ||
+              (effectiveState !== 'ready' && effectiveState !== 'failed')
+            }
+            onClick={() => {
               if (
-                input?.input === item.text &&
-                input.answerContext?.answer_sequence === suggestions.scope.answer_sequence &&
-                input.answerContext?.turn_sequence === suggestions.scope.turn_sequence
-              ) {
-                if (input.state === 'pending')
-                  rememberSuggestionRequest(suggestions, item.id, 'original', input.key);
-                else
-                  confirmSuggestionSend(
-                    suggestions,
-                    item.id,
-                    'original',
-                    input.receipt ?? undefined,
-                  );
-              }
-              setRequestKey(input?.key);
-              setState((current) =>
-                current === 'accepted' || current === 'expired' || current === 'failed'
-                  ? current
-                  : 'unconfirmed',
-              );
-            });
-          }}
-        >
-          {item.text}
-        </button>
+                (locked.current && effectiveState !== 'failed') ||
+                disabled ||
+                (scopedRequest && retained.state === 'pending')
+              )
+                return;
+              locked.current = true;
+              setState('sending');
+              void Promise.resolve(
+                onSend(
+                  item.text,
+                  (receipt) => {
+                    confirmSuggestionSend(suggestions, item.id, 'original', receipt);
+                    if (active.current) setState('accepted');
+                  },
+                  (reason) => {
+                    if (!active.current) return;
+                    locked.current = false;
+                    setState(reason === undefined ? 'failed' : 'expired');
+                  },
+                ),
+              ).then(() => {
+                if (!active.current) return;
+                const input = controller.readSuggestionRequest?.();
+                if (
+                  input?.input === item.text &&
+                  input.answerContext?.answer_sequence === suggestions.scope.answer_sequence &&
+                  input.answerContext?.turn_sequence === suggestions.scope.turn_sequence
+                ) {
+                  if (input.state === 'pending')
+                    rememberSuggestionRequest(suggestions, item.id, 'original', input.key);
+                  else
+                    confirmSuggestionSend(
+                      suggestions,
+                      item.id,
+                      'original',
+                      input.receipt ?? undefined,
+                    );
+                }
+                setRequestKey(input?.key);
+                setState((current) =>
+                  current === 'accepted' || current === 'expired' || current === 'failed'
+                    ? current
+                    : 'unconfirmed',
+                );
+              });
+            }}
+          >
+            {item.text}
+          </button>
+          {onEdit && (
+            <button
+              type="button"
+              aria-label={`Edit suggestion ${index + 1} before sending`}
+              onClick={() => onEdit(item.text)}
+            >
+              Edit before sending
+            </button>
+          )}
+        </div>
       ))}
     </section>
   );

@@ -9,6 +9,11 @@ import {
   type MessageVote,
 } from './agents/message-feedback.js';
 import {
+  feedbackDetails,
+  setFeedbackReasons,
+  type FeedbackReasonRequest,
+} from './agents/feedback-reasons.js';
+import {
   readAgentSettings,
   changeAgentSettings,
   type UpdateAgentSettingsRequest,
@@ -127,6 +132,18 @@ export class Agents {
     options: OperationOptions = {},
   ) {
     return readSuggestions(this.config, id, scope, options);
+  }
+
+  feedbackDetails(id: string, messageId: string, options: OperationOptions = {}) {
+    return feedbackDetails(this.config, id, messageId, options);
+  }
+  setFeedbackReasons(
+    id: string,
+    messageId: string,
+    body: FeedbackReasonRequest,
+    options: OperationOptions = {},
+  ) {
+    return setFeedbackReasons(this.config, id, messageId, body, options);
   }
 
   /** Read saved owner votes; use next as after until pagination completes. */

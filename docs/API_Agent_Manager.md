@@ -221,6 +221,45 @@ index initialize additively at startup. Isolated database deployments must add
 this collection to the generated Agent Manager role before upgrading; explicit
 shared-schema deployments require no new database credential.
 
+Negative reasons are a separate conditional metadata operation. After confirming
+`down`, read `GET /api/v1/agents/{id}/messages/{message_id}/feedback` to obtain
+`{ viewer_id, agent_id, message_id, vote, version, reasons, comment, updated_at,
+request_id }`. This owner-only read uses the same canonical completed final
+answer eligibility as vote writes. The list and vote PUT shapes stay unchanged.
+
+`PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons` accepts
+`{ expected_version, request_id, reasons, comment }`. `reasons` contains zero to
+six distinct values: `inaccurate`, `unanswered`, `unusable_steps`, `incomplete`,
+`unclear`, `other`. `comment` defaults to an empty string and permits at most 500
+Unicode code points, with no trimming or normalization. `request_id` is 1–128
+ASCII letters, digits, `_`, `.`, `:`, or `-`. Invalid selections, identities and
+overlong comments are refused with 422. Unknown fields/enums are invalid JSON.
+
+Only the current `down` version can accept reasons. A successful write advances
+the version and returns the full saved view, including the authenticated owner
+and update timestamp. Retry an uncertain request with its identical body and
+request ID; an exact retry returns the same durable version and timestamp.
+Reusing the most recent request ID for different content or presenting a stale
+version returns 409 `feedback_version_conflict`. Reread before deciding whether
+to retry or author a new version; a delayed reason write never sets a vote.
+
+Every vote transition advances the durable version and atomically clears reasons,
+comment and the reason receipt, including old clients' up/null PUTs. Repeating
+the same vote preserves the version and any saved down reasons. Removing a vote
+retains a tombstone, excluded from the legacy non-null list, so down→up/null→down
+cannot reuse an old version. Concurrent writers use a version-and-vote compare
+and swap in one majority-durable record; no runtime, send or training operation
+is involved.
+
+Existing schema-v1 vote-only records read with version 0, empty reasons/comment,
+and null update/request metadata. They migrate lazily on their next transition
+or reason save; no collection, bulk rewrite or additional index is needed.
+Deploy compatible readers and writers together: pre-reason binaries with strict
+record decoding cannot read extended rows/tombstones and must not share writes
+or be restored against upgraded records. Public old clients remain supported;
+an application rollback must retain this storage reader and clearing/version
+semantics. Do not delete tombstones or reset versions during rollback.
+
 ### Direct owner service access
 
 Direct NyxID owner access tokens can approve requests and replace service scope

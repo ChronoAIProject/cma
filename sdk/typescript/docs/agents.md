@@ -541,6 +541,19 @@ nonempty Assistant message with the greatest durable sequence in a successfully
 completed turn. Other targets return 404; historical votes remain readable, and
 the up/down/null request and response shapes remain unchanged.
 
+`agents.feedbackDetails(agentId, 'event:42')` reads `FeedbackDetails`, including
+authenticated viewer/Agent/answer identities, `version`, saved `reasons`,
+`comment`, `updated_at`, and the last reason `request_id`. After confirming down,
+call `agents.setFeedbackReasons(agentId, 'event:42', { expected_version,
+request_id, reasons, comment })`. Use the read version and a new stable ASCII
+request ID (1–128 letters/digits or `_.:-`). Reasons are a unique subset of
+`inaccurate`, `unanswered`, `unusable_steps`, `incomplete`, `unclear`, `other`.
+An empty comment is optional detail; the maximum is 500 Unicode code points.
+After an uncertain reply, retry the identical body or reread its receipt. An
+exact retry returns the same version; stale/reused requests return 409
+`feedback_version_conflict`. Up/null clears saved details atomically, including
+for old clients. These calls never send input or train a model.
+
 ### Agent session share links
 
 `client.resourceAccess.createAgentShareLink(agentId, { audience, mode, token }, options)`
