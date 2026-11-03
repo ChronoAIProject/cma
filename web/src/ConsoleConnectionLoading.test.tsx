@@ -34,6 +34,7 @@ it.each(['personal', 'refused'] as const)(
     });
     const client = agentClient({ resourceViews: sdk, readAgent: detail });
     const parent = vi.spyOn(client, 'readSandbox');
+    document.title = 'Previous private task · CMA';
     const view = render(
       <CmaClientProvider client={client}>
         <Console
@@ -50,6 +51,7 @@ it.each(['personal', 'refused'] as const)(
       </CmaClientProvider>,
     );
     await waitFor(() => expect(sdk.agents.readAccessible).toHaveBeenCalledOnce());
+    expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
     expect(check).not.toHaveBeenCalled();
     expect(detail).not.toHaveBeenCalled();
     expect(parent).not.toHaveBeenCalledWith(WIRE_AGENT.sandbox.id, expect.anything());
@@ -67,6 +69,7 @@ it.each(['personal', 'refused'] as const)(
       expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
     } else {
       expect(screen.getByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
+      expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
       expect(check).not.toHaveBeenCalled();
       expect(detail).not.toHaveBeenCalled();
       expect(parent).not.toHaveBeenCalledWith(WIRE_AGENT.sandbox.id, expect.anything());
