@@ -4214,3 +4214,30 @@ recheck current access after buffering. They never render executable content or
 publish a private file. Ticket 08 owns preview; the card has no preview action here.
 
 | 2026-11-03 | Add answer-scoped verified deliverable rows, independent download/retry states, explicit live-file versus immutable-version semantics, and mobile controls while preserving reading position and the existing answer footer. |
+
+### Edit suggested follow-ups (2026-11-03)
+
+Each suggested reply pairs its existing full-text send button with an **Edit before
+sending** button, named with its one-based suggestion position for assistive
+technology. Reuse the suggestion region's 8px gaps, 44px minimum targets, layer-1
+ground, border-l1, radius 8 and standard focus ring. Actions wrap within the
+available width on desktop and narrow screens.
+
+Editing fills the real composer with the complete text and focuses it without
+sending. Existing text opens the standard Modal, **Keep your draft?**, explaining
+that attachments remain. Its explicit actions are **Cancel**, **Replace text** and
+**Append to draft**. Escape and dismiss act as Cancel. Closing returns focus to the
+composer; appending separates the existing text and full suggestion with a newline.
+Replacing offers **Undo replacement** in a polite composer status row using the
+existing notice typography and quiet Button. Undo restores the replaced text;
+all attachments remain. Later manual edits or submission retire this undo action.
+
+Editing never acknowledges a send or rewrites a retained request. Failed sends
+keep the edited draft; uncertain sends retain the original request for recovery.
+Confirmed receipts cannot clear later input. An expired source removes only the
+suggestion association; the text remains an ordinary draft and its next send
+requires normal current authority. Account and Agent changes cannot transfer an
+edit, dialog or undo into another conversation. Settings stay compact and the
+existing header progress/completion slot is unchanged.
+
+| 2026-11-03 | Specify suggestion edit actions, explicit draft conflict choices, attachment retention, replacement undo, composer focus and ordinary send recovery for ticket 12. |

@@ -9,6 +9,8 @@ use crate::rest::agents_tests::{
 
 struct SuggestionRuntime;
 
+mod suggestion_edit;
+
 #[async_trait::async_trait]
 impl layer2_core::sandbox::AgentRuntimeRegistry for SuggestionRuntime {
     async fn resolve(
