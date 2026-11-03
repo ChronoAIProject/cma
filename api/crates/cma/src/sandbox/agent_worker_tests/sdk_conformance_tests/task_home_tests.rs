@@ -147,7 +147,7 @@ async fn router_with_support(
         profiles.clone(),
         registry,
         Arc::new(UnavailableSandboxResources),
-        RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+        RuntimeCapabilities::new([RuntimeCapability::Conversation, RuntimeCapability::Usage]),
     )
     .with_resource_access(Arc::new(ResourceAccessService::new(
         store.clone(),

@@ -96,6 +96,9 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
   await expect(page).toHaveURL(/\/agents\/agt_/, { timeout: 90000 });
   const agentVisibleAt = Date.now();
   const agentId = new URL(page.url()).pathname.split('/').at(-1)!;
+  await expect(
+    page.getByRole('heading', { name: 'Agent unavailable', exact: true }),
+  ).not.toBeVisible();
   const open = page.getByRole('button', { name: 'Show Agent computer', exact: true });
   if (await open.isVisible()) await open.click();
   await page.getByRole('tab', { name: 'Browser', exact: true }).click();
@@ -128,8 +131,18 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
       true,
     );
-    await page.screenshot({ path: info.outputPath(`native-desktop-${width}.png`) });
+    await expect
+      .poll(async () => {
+        const bounds = await image.boundingBox();
+        return bounds !== null && bounds.x >= 0 && bounds.x + bounds.width <= width;
+      })
+      .toBe(true);
+    await page.screenshot({
+      path: info.outputPath(`native-desktop-${width}.png`),
+      animations: 'disabled',
+    });
   }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.reload();
   const reopen = page.getByRole('button', { name: 'Show Agent computer', exact: true });
   if (await reopen.isVisible()) await reopen.click();
