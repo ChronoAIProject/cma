@@ -4,6 +4,41 @@ use crate::{AdapterError, RuntimeHandle};
 
 #[async_trait::async_trait]
 impl crate::BrowserAdapter for HostedAdapter {
+    async fn browser_control(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::BrowserControlRequest,
+    ) -> crate::Result<crate::BrowserControlReceipt> {
+        let state = self.known_state(handle).await?;
+        validate_identity(
+            &state,
+            &request.sandbox_id,
+            request.runtime_generation,
+            &request.boot_id,
+        )?;
+        if !request.valid() {
+            return Err(AdapterError::Rejected("browser_control_invalid".into()));
+        }
+        let status = self.inspect_runtime_status(handle).await?;
+        if !status.agent_browser {
+            return Err(AdapterError::Unsupported(
+                "browser control is unavailable".into(),
+            ));
+        }
+        if status.boot_id != request.boot_id || !status.credential_ready || status.restore_pending {
+            return Err(AdapterError::Rejected(
+                "browser runtime identity changed".into(),
+            ));
+        }
+        match self
+            .exchange(handle, RequestFrame::BrowserControl(request.clone()))
+            .await?
+        {
+            ResponseFrame::BrowserControl(receipt) => Ok(receipt),
+            _ => unreachable!("exchange verifies response operation"),
+        }
+    }
+
     async fn browser(
         &self,
         handle: &RuntimeHandle,

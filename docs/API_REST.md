@@ -1472,6 +1472,8 @@ Directory creation uses `directory: true`. File operations do not require an
 | `GET /api/v1/agents/{id}/browser` | - | runtime_incarnation*, observer, context_id | 200 BrowserView |
 | `PUT /api/v1/agents/{id}/browser` | BrowserEnablement | - | 200 BrowserView |
 | `DELETE /api/v1/agents/{id}/browser` | - | runtime_incarnation*, observer* | 200 BrowserView |
+| `GET /api/v1/agents/{id}/browser/control` | - | runtime_incarnation*, context_id*, client_id*, operation_id | 200 ControlView |
+| `POST /api/v1/agents/{id}/browser/control` | ControlChange | - | 200 ControlView |
 | `GET /api/v1/agents/{id}/files/tree` | - | path | 200 FileListView |
 | `GET /api/v1/agents/{id}/files/content` | - | path*, max_bytes | 200 FileReadView |
 | `GET /api/v1/agents/{id}/files/download` | - | path* | 200 application/octet-stream |
@@ -1497,9 +1499,47 @@ and `agent_turn_history` scope, with `available`, `operation_records_only` and
 `writable: false`; missing authority reports `forbidden`. Replay reuses bounded
 Agent events v2 snapshots with `Prefer: cma-tool-output`, durable turn sequences
 and opaque cursors. It is a pure history query without execution or recovery;
-it contains no historical browser frames. Control still reports `unsupported`,
-`not_supported_by_contract`, `none`, and `false`. No runtime address, boot
-identifier or PTY is exposed.
+it contains no historical browser frames. Control reports `available`,
+`exclusive_browser_control`, `agent_browser` and `writable: true` only for a
+current owner with an enabled browser and verified runtime arbitration.
+Unsupported, not enabled, forbidden and unknown states remain explicit. No
+runtime address, boot identifier or PTY is exposed.
+
+Browser control uses `GET /api/v1/agents/{id}/browser/control` for current
+status/audit or a selected receipt and `POST` on the same route for mutations.
+Both pin `runtime_incarnation`, `context_id` and `client_id`. GET optionally
+selects an original `operation_id`. POST adds `command` (`acquire`, `input`,
+`renew`, `return`), UUID `operation_id`, `expected_revision`, and `lease_token`
+except for acquisition. Input additionally contains `{kind:"click",x,y}` within
+1280×720, `{kind:"text",text}` up to 1024 UTF-16 units, or a supported editing
+key without modifiers. Arbitrary scripts, shortcuts and desktop commands are
+not part of this vocabulary. POST bodies are bounded to 16 KiB.
+
+Mutations and selected receipt reads require current owner `manage_sharing`
+authority and an independent private UUID in `X-CMA-Browser-Client`; Core binds
+that key to the current account/credential. Public client/operation identifiers
+do not grant lease recovery. Plain status/audit reads require `view_history` and
+never return a token. Successful receipts include `state` (`agent`, `user`,
+`unknown`), current `revision`, optional holder/expiry/token, original
+`operation_id` and `operation_revision`, fixed `lease_duration_ms:15000`, and at
+most 128 metadata-only audit entries with an explicit truncation boundary.
+Neither audit nor URLs contain entered text, client keys or lease tokens.
+
+User and native Agent operations share one runtime queue. A successful acquire
+fences native input/navigation; return preserves the page and context and admits
+native input again. Only explicit renewal extends the monotonic 15-second lease.
+Lost responses require querying the original operation or retrying the identical
+request, including revision, key and token. Reusing an operation for different
+content, expired tokens, competing clients and old incarnations fail closed.
+Revoked/offline clients cannot renew; Agent resumption occurs after the last
+lease expires and in-flight input settles. Browser restart replaces the context.
+
+Typed errors include `invalid_browser_control` (400), owner/access errors
+(401/403/404), `browser_control_unsupported`, `browser_control_not_ready` and
+`browser_control_conflict` (409), and `browser_control_unknown` (503). An unknown
+outcome authorizes no further input. Audit and receipts are volatile per browser
+context, not archival replay. Reader floors and rollback constraints are in
+`docs/plans/cma-ui-optimization/17-CONTROL-CONTRACT.md`.
 
 Browser enablement is explicit and owner-only (`manage_sharing` authority):
 `PUT /api/v1/agents/{id}/browser` accepts
