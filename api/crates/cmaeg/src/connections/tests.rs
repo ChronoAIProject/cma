@@ -104,6 +104,9 @@ impl Fixture {
         Store::new(self.records(), self.keys.clone())
     }
     pub(super) fn service(&self) -> ConnectionService {
+        self.service_with_console_origin(None)
+    }
+    fn service_with_console_origin(&self, console_public_url: Option<String>) -> ConnectionService {
         let providers = Arc::new(
             ProviderClient::new(
                 ProviderRegistry::parse("[]").unwrap(),
@@ -118,6 +121,7 @@ impl Fixture {
             Arc::new(self.records()),
             Arc::new(CreatorAuthenticator::new(&self.base).unwrap()),
             ManagementConfig {
+                console_public_url,
                 public_url: "https://gateway.example".into(),
                 public_api_url: "https://gateway.example".into(),
                 public_api_aliases: vec![],
@@ -1770,15 +1774,20 @@ async fn external_native_bot_capability_is_omitted_until_writes_enabled() {
 
 #[tokio::test]
 async fn public_discovery_uses_canonical_namespace_and_console_redirect_keeps_fixed_authority() {
-    public_discovery(false).await;
-    public_discovery(true).await;
+    public_discovery(false, None).await;
+    public_discovery(true, None).await;
+    public_discovery(true, Some("https://cma.nyxid.ai")).await;
 }
 
-async fn public_discovery(advertise: bool) {
+async fn public_discovery(advertise: bool, console_origin: Option<&str>) {
     use axum::http::header;
     use utoipa::OpenApi;
     let fixture = Fixture::new().await;
-    let mut service = fixture.service();
+    let mut service = fixture.service_with_console_origin(console_origin.map(str::to_owned));
+    let expected_console = console_origin.unwrap_or("https://gateway.example");
+    assert_eq!(service.management.console_public_url, expected_console);
+    assert_eq!(service.management.public_url, "https://gateway.example");
+    assert!(Arc::ptr_eq(&service.management.master_keys, &fixture.keys));
     service.management.public_api_url = "https://bot.example/event-gateway".into();
     service.management.advertise_public_api_url = advertise;
     let advertised = if advertise {
@@ -1841,15 +1850,17 @@ async fn public_discovery(advertise: bool) {
         assert!(html.contains("href=\"https://gateway.example/console\""));
     }
     let protocol_destination = format!("{advertised}/docs#protocol");
+    let console_destination = format!("{expected_console}/console");
+    let channel_destination = format!("{console_destination}/channels/record-123");
     for (path, destination) in [
         ("/docs/protocol", protocol_destination.as_str()),
         (
             "/event-gateway/legacy-console",
-            "https://gateway.example/console",
+            console_destination.as_str(),
         ),
         (
             "/event-gateway/legacy-console/channels/record-123?return_to=https://foreign.example",
-            "https://gateway.example/console/channels/record-123",
+            channel_destination.as_str(),
         ),
     ] {
         let response = client.get(format!("{base}{path}")).send().await.unwrap();

@@ -124,6 +124,10 @@ module GatewaySourceContract
     ]
     gateway_routes = values.fetch("infra/cmaeg/httproute.yaml")
     gateway_routes << nyxid_route(gateway_routes[2], "cma-event-gateway-public-nyxid")
+    gateway_routes.last.fetch("spec").fetch("rules") << {
+      "matches" => [path("PathPrefix", "/console")],
+      "backendRefs" => backend("cma-event-gateway"),
+    }
     values["infra/api/service.yaml"] = [service("cma-agent-manager", "cma-agent-manager"), service("cma-api", "cma-agent-manager")]
     values["infra/cmaeg/service.yaml"] = [service("cma-event-gateway", "cma-event-gateway"), service("cmaeg", "cma-event-gateway")]
     %w[api web].each do |name|
