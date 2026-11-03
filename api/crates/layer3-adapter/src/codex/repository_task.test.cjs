@@ -201,6 +201,7 @@ test('candidate runtime pins repository ref and native first task reads that che
       env: { PATH: process.env.PATH, CODEX_HOME: agentHome, CODEX_PATH: process.env.CMA_CODEX_TEST_BINARY } });
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
     const conversation = await bridge.call('session/new', { cwd, mcpServers: [] });
+    await bridge.call('session/set_mode', { sessionId: conversation.sessionId, modeId: 'agent-full-access' });
     await bridge.call('session/prompt', { sessionId: conversation.sessionId, prompt: [{ type: 'text', text: task }] });
     if (boundaryError) throw boundaryError;
     assert.equal(readFileSync(join(cwd, 'first-task.txt'), 'utf8'), 'TASK_EXECUTED_04');
