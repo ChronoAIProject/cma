@@ -155,6 +155,12 @@ impl WorkspaceWorker {
             Err(failure) => return self.handle_failure(workspace, failure, now).await,
         };
         let source = match &workspace.source {
+            WorkspaceSource::RepositorySnapshot { url, reference, .. } => {
+                RuntimeWorkspaceSource::RepositorySnapshot {
+                    url: url.clone(),
+                    reference: reference.clone(),
+                }
+            }
             WorkspaceSource::GitRepository { url, reference } => RuntimeWorkspaceSource::Clone {
                 url: url.clone(),
                 reference: reference.clone(),
@@ -180,6 +186,10 @@ impl WorkspaceWorker {
         {
             Ok(receipt) if valid_prepare_receipt(&request, &receipt, &workspace.path) => {
                 let mut next = workspace;
+                if let WorkspaceSource::RepositorySnapshot { source_commit, .. } = &mut next.source
+                {
+                    *source_commit = receipt.source_commit;
+                }
                 if next
                     .record_resolved_commit(receipt.resolved_commit)
                     .is_err()
