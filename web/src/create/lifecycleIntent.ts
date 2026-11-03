@@ -36,6 +36,8 @@ function load(
       !/^[a-zA-Z0-9-]{1,200}$/.test(intent.key) ||
       typeof intent.body?.name !== 'string' ||
       !intent.body.name ||
+      (intent.body.initial_message !== undefined &&
+        typeof intent.body.initial_message !== 'string') ||
       intent.body.workspace_id !== workspaceId ||
       intent.body.sandbox_id !== sandboxId ||
       (intent.agentId !== undefined && (typeof intent.agentId !== 'string' || !intent.agentId)) ||

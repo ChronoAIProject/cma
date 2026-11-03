@@ -16,6 +16,38 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
+it('keeps a damaged retained task unavailable without crashing or sending a replacement', async () => {
+  sessionStorage.setItem(
+    `cma:agent-creation:${JSON.stringify([location.origin, 'owner'])}`,
+    JSON.stringify({
+      version: 1,
+      intent: {
+        key: 'retained-task',
+        body: {
+          name: 'New task',
+          initial_message: { damaged: true },
+        },
+      },
+    }),
+  );
+  const transport = vi.fn<typeof fetch>();
+  render(
+    <TaskHome
+      client={taskClient(transport)}
+      viewerId="owner"
+      canCreateSandbox
+      onCreated={() => {}}
+    />,
+  );
+  expect(await screen.findByText(/The saved Agent request could not be read/)).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Your task'), {
+    target: { value: 'Keep the next draft' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  expect(transport).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Your task')).toHaveValue('Keep the next draft');
+});
+
 it('keeps authenticated task text copyable and sends nothing when session storage is unavailable', async () => {
   const storage = sessionStorage;
   vi.stubGlobal('sessionStorage', {
@@ -290,7 +322,7 @@ it('explains that an older service cannot start tasks without silently creating 
   vi.stubGlobal('fetch', transport);
   const client = createRestWebClient(createClient({ fetch: transport }));
   render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={() => {}} />);
-  await screen.findByText('Task creation is unavailable on this service. Your draft is saved.');
+  await screen.findByText('Task creation is unavailable on this service.');
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
   expect(writes).toEqual([]);
 });
