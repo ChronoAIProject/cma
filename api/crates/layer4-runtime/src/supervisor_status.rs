@@ -60,6 +60,7 @@ impl Supervisor {
             ));
         }
         let status = RuntimeStatus {
+            agent_browser: true,
             agent_filesystem: crate::agent_attachment::supported(&self.config),
             agent_attachment_upload: crate::agent_attachment::supported(&self.config),
             agent_skill_install: true,

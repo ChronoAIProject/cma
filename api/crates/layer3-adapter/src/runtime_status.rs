@@ -31,6 +31,8 @@ impl RuntimeStatusRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeStatus {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_browser: bool,
     /// Runtime supports descriptor-confined management of the complete persistent home.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_filesystem: bool,
