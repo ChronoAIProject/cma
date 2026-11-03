@@ -1,15 +1,46 @@
 use std::collections::BTreeMap;
 
-use layer2_core::sandbox::message_feedback::{MessageFeedback, MessageFeedbackStore, MessageVote};
+use layer2_core::sandbox::message_feedback::{
+    FeedbackDetails, FeedbackReasonError, FeedbackReasonRequest, MessageFeedback,
+    MessageFeedbackStore, MessageVote,
+};
 use layer2_core::sandbox::AgentReadError;
 
 use super::*;
 
 type FeedbackKey = (SubjectId, AgentId, u64);
 #[derive(Default)]
-pub(in crate::rest) struct FeedbackMemory(Mutex<BTreeMap<FeedbackKey, MessageVote>>);
+pub(in crate::rest) struct FeedbackMemory(Mutex<BTreeMap<FeedbackKey, FeedbackDetails>>);
 #[async_trait]
 impl MessageFeedbackStore for FeedbackMemory {
+    async fn get(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+    ) -> Result<FeedbackDetails, AgentReadError> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .get(&(owner.clone(), agent.clone(), sequence))
+            .cloned()
+            .unwrap_or_default())
+    }
+    async fn set_reasons(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+        request: &FeedbackReasonRequest,
+    ) -> Result<FeedbackDetails, FeedbackReasonError> {
+        let mut rows = self.0.lock().unwrap();
+        let current = rows
+            .entry((owner.clone(), agent.clone(), sequence))
+            .or_default();
+        *current = current.with_reasons(request)?;
+        Ok(current.clone())
+    }
     async fn list(
         &self,
         owner: &SubjectId,
@@ -23,11 +54,17 @@ impl MessageFeedbackStore for FeedbackMemory {
             .lock()
             .unwrap()
             .iter()
-            .filter(|((o, a, seq), _)| o == owner && a == agent && *seq > after && *seq <= through)
+            .filter(|((subject, agent_id, sequence), state)| {
+                subject == owner
+                    && agent_id == agent
+                    && *sequence > after
+                    && *sequence <= through
+                    && state.vote.is_some()
+            })
             .take(usize::from(limit))
-            .map(|((_, _, seq), vote)| MessageFeedback {
-                sequence: *seq,
-                vote: *vote,
+            .map(|((_, _, sequence), state)| MessageFeedback {
+                sequence: *sequence,
+                vote: state.vote.unwrap(),
             })
             .collect())
     }
@@ -40,11 +77,8 @@ impl MessageFeedbackStore for FeedbackMemory {
     ) -> Result<(), AgentReadError> {
         let mut rows = self.0.lock().unwrap();
         let key = (owner.clone(), agent.clone(), sequence);
-        if let Some(vote) = vote {
-            rows.insert(key, vote);
-        } else {
-            rows.remove(&key);
-        }
+        let current = rows.entry(key).or_default();
+        *current = current.with_vote(vote)?;
         Ok(())
     }
 }
@@ -91,6 +125,44 @@ pub(in crate::rest) async fn feedback_fixture() -> (Fixture, Arc<FeedbackMemory>
 const LIST: &str = "/api/v1/agents/agt_feedback/message-feedback";
 const EARLIER_ANSWER: &str = "/api/v1/agents/agt_feedback/messages/event:5/feedback";
 const AGENT_MESSAGE: &str = "/api/v1/agents/agt_feedback/messages/event:9/feedback";
+
+#[path = "message_feedback_reasons.rs"]
+mod reasons;
+
+#[tokio::test]
+async fn message_feedback_delayed_reasons_after_up_never_restore_down_or_reasons() {
+    let (fixture, feedback, _) = feedback_fixture().await;
+    for vote in ["down", "up"] {
+        let (status, _) = json_response(
+            &fixture.router,
+            request(
+                Method::PUT,
+                AGENT_MESSAGE,
+                OWNER,
+                None,
+                Some(json!({"vote": vote})),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let (status, body) = json_response(
+        &fixture.router,
+        request(Method::PUT, &format!("{AGENT_MESSAGE}/reasons"), OWNER, None,
+            Some(json!({"expected_version": 1, "request_id": "delayed-reasons", "reasons": ["inaccurate"], "comment": "Old draft"}))),
+    ).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let reopened = agent_router(fixture.state.clone().with_message_feedback(feedback));
+    let (status, body) = json_response(
+        &reopened,
+        request(Method::GET, AGENT_MESSAGE, OWNER, None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["vote"], "up");
+    assert_eq!(body["reasons"], json!([]));
+    assert_eq!(body["comment"], "");
+}
 
 #[tokio::test]
 async fn message_feedback_accepts_only_the_completed_final_answer_and_reopens_without_new_turns() {

@@ -116,6 +116,11 @@ export type {
   MessageFeedback,
   MessageFeedbackPage,
 } from './agents/message-feedback.js';
+export type {
+  FeedbackReason,
+  FeedbackReasonRequest,
+  FeedbackDetails,
+} from './agents/feedback-reasons.js';
 
 export * from './documents.js';
 

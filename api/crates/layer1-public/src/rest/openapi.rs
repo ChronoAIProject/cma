@@ -153,8 +153,6 @@ use super::trigger_openapi_shapes::*;
         super::agent_models::list,
         super::agent_skills::read,
         super::agent_skills::install,
-        super::message_feedback::list,
-        super::message_feedback::set,
         super::agent_preferences::read,
         super::agent_preferences::update,
         super::agent_settings::read,
@@ -489,6 +487,7 @@ struct ApiDoc;
 pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = ApiDoc::openapi();
     document.merge(super::documents::document());
+    document.merge(super::message_feedback::document());
     document.merge(crate::responses::document());
     document.merge(crate::agui::document());
     document.merge(crate::agent_v2::document());
