@@ -20,10 +20,14 @@ struct Binding {
     path: String,
     cwd: String,
     tools: Vec<serde_json::Value>,
-    installed_transport: std::sync::RwLock<Option<super::HostedAccessToolBinding>>,
+    installed_transport: std::sync::RwLock<Option<transport::ToolTransport>>,
     access: Option<(
         Arc<dyn super::HostedAccessToolSource>,
         super::HostedAccessToolBinding,
+    )>,
+    provider: Option<(
+        Arc<dyn super::HostedProviderToolSource>,
+        super::HostedProviderToolBinding,
     )>,
 }
 impl std::fmt::Debug for HostedContextRefresh {
@@ -67,6 +71,7 @@ impl HostedContextRefresh {
             tools,
             installed_transport: std::sync::RwLock::new(None),
             access: None,
+            provider: None,
         })))
     }
 
@@ -82,6 +87,17 @@ impl HostedContextRefresh {
     }
     pub(super) fn cwd(&self) -> &str {
         &self.0.cwd
+    }
+
+    pub(super) fn with_provider(
+        mut self,
+        source: Arc<dyn super::HostedProviderToolSource>,
+        binding: super::HostedProviderToolBinding,
+    ) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("new context binding is uniquely owned")
+            .provider = Some((source, binding));
+        self
     }
     pub(super) fn tools(&self) -> Vec<serde_json::Value> {
         self.tools_for_transport(None)
