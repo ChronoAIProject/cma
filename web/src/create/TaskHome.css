@@ -1,0 +1,55 @@
+.task-home {
+  width: 100%;
+  max-width: 48rem;
+  margin: auto;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.task-home h1 {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+
+.task-home form {
+  display: grid;
+  gap: 16px;
+}
+
+.task-home textarea {
+  min-height: 160px;
+  width: 100%;
+  resize: vertical;
+}
+
+.task-home .task-home__field {
+  height: auto;
+  padding: 12px;
+}
+
+.task-home textarea:focus-visible {
+  outline: none;
+}
+
+.task-home pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-home button {
+  min-height: 44px;
+}
+
+.task-home__templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+@media (max-width: 600px) {
+  .task-home {
+    padding: 16px;
+  }
+}
