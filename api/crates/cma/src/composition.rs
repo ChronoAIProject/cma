@@ -108,11 +108,13 @@ impl ControlPlaneComposition {
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
         let access_tools = credentials::agent_access_tools(config, &stores)?;
+        let (provider_tools, provider_tool_routes) = credentials::provider_tools(config, &stores)?;
         let adapters = adapter::production_adapter(
             config,
             stores.sandbox_model.clone(),
             subscriptions.clone(),
             access_tools.clone(),
+            provider_tools,
         )
         .await?;
         let adapter = adapters.owned;
@@ -464,6 +466,7 @@ impl ControlPlaneComposition {
         let provenance_backfill =
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
         let usage = crate::usage_billing::UsageWorkers::new(&stores, config)?;
+        let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -471,7 +474,7 @@ impl ControlPlaneComposition {
             recorder,
             limits,
             stores,
-            agent_access.tool_routes.merge(service_portal::router(
+            tool_routes.merge(service_portal::router(
                 auth.clone(),
                 config.gateway.as_ref(),
             )?),

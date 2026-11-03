@@ -515,3 +515,6 @@ async fn owner_authentication_precedes_a_fresh_session() {
     server.await.expect("ACP fixture completes");
     stop(opened).await;
 }
+
+#[path = "acp_provider_refresh_tests.rs"]
+mod provider_refresh_tests;

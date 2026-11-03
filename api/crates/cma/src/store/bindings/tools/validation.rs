@@ -8,14 +8,14 @@ use layer3_adapter::ToolProxyRequest;
 #[serde(deny_unknown_fields)]
 pub(super) struct Scope {
     pub agent_id: layer2_core::AgentId,
-    agent_created_at: String,
-    creation_fingerprint: String,
-    binding_id: String,
-    binding_generation: u64,
-    conversation_id: String,
+    pub(super) agent_created_at: String,
+    pub(super) creation_fingerprint: String,
+    pub(super) binding_id: String,
+    pub(super) binding_generation: u64,
+    pub(super) conversation_id: String,
     pub runtime: RuntimeBinding,
-    request_sha256: String,
-    endpoint: String,
+    pub(super) request_sha256: String,
+    pub(super) endpoint: String,
 }
 
 impl Scope {
@@ -32,6 +32,38 @@ pub(super) fn validate(
     request: &AgentOpenRequest,
     fence: u64,
 ) -> layer3_adapter::Result<(Scope, ToolProxyRequest)> {
+    let (mut scope, proxy) = identity(snapshot, binding, conversation, runtime)?;
+    let lineage = &snapshot.resource.lineage;
+    let agent = lineage.agent.as_ref().ok_or_else(refused)?;
+    let tree = lineage.worktree.as_ref().ok_or_else(refused)?;
+    let expected = AgentOpenRequest::new(
+        format!("agent:{}:open:v1", agent.id),
+        crate::sandbox::runtime_options(agent, &lineage.sandbox, tree),
+        request.resume_conversation.clone(),
+    );
+    if request.options.slot.0 != agent.id.as_str()
+        || !request.has_valid_sha256()
+        || request != &expected
+        || request
+            .resume_conversation
+            .as_deref()
+            .is_some_and(|id| agent.conversation.conversation_id.as_deref() != Some(id))
+        || !valid_fence(agent, fence)
+    {
+        return Err(refused());
+    }
+    scope.request_sha256 = request.request_sha256.clone();
+    Ok((scope, proxy))
+}
+
+/// Current immutable provider lineage, independent of mutable display settings
+/// and the worker lease which is released after successful installation.
+pub(super) fn identity(
+    snapshot: &AgentProvenanceSnapshot,
+    binding: &ProviderBinding,
+    conversation: &BindingConversation,
+    runtime: &RuntimeHandle,
+) -> layer3_adapter::Result<(Scope, ToolProxyRequest)> {
     let creation = snapshot
         .creation_provenance(&conversation.agent_id)
         .map_err(unavailable)?;
@@ -44,11 +76,6 @@ pub(super) fn validate(
     let process = sandbox.runtime.as_ref().ok_or_else(refused)?;
     let endpoint = binding.tool_endpoint.as_ref().ok_or_else(refused)?;
     let credential = sandbox.credential.current.as_ref().ok_or_else(refused)?;
-    let expected = AgentOpenRequest::new(
-        format!("agent:{}:open:v1", agent.id),
-        crate::sandbox::runtime_options(agent, sandbox, tree),
-        request.resume_conversation.clone(),
-    );
     // Recompute the immutable admission identity, including profile pins. The
     // current display title and later conversation input are not creation data.
     let admission = layer2_core::sandbox::store::AgentAdmission {
@@ -87,7 +114,6 @@ pub(super) fn validate(
         || agent.owner != binding.owner
         || sandbox.owner != binding.owner
         || conversation.agent_id != agent.id
-        || request.options.slot.0 != agent.id.as_str()
         || conversation.sandbox_id != binding.sandbox_id
         || sandbox.id != binding.sandbox_id
         || conversation.workspace_id != binding.workspace_id
@@ -107,13 +133,6 @@ pub(super) fn validate(
         || process
             .provision_generation
             .is_none_or(|generation| generation == 0)
-        || !request.has_valid_sha256()
-        || request != &expected
-        || request
-            .resume_conversation
-            .as_deref()
-            .is_some_and(|id| agent.conversation.conversation_id.as_deref() != Some(id))
-        || !valid_fence(agent, fence)
         || agent.requested_stop_reason.is_some()
         || !agent.status.is_live()
     {
@@ -127,7 +146,7 @@ pub(super) fn validate(
         binding_generation: binding.generation,
         conversation_id: conversation.conversation_id.clone(),
         runtime: process.clone(),
-        request_sha256: request.request_sha256.clone(),
+        request_sha256: String::new(),
         endpoint: endpoint.clone(),
     };
     let proxy = ToolProxyRequest {
