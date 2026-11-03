@@ -65,7 +65,7 @@ for (const width of [1600, 390]) {
         );
         await message.fill('Keep this message and conversation while browsing files.');
         const field = await message.elementHandle();
-        await page.getByRole('button', { name: 'Show files', exact: true }).click();
+        await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
         const files = page.getByRole('complementary', { name: 'Agent files', exact: true });
         await expect(files.getByRole('button', { name: 'README.md' })).toBeVisible();
         await expect(page.getByRole('dialog', { name: 'Files' })).toHaveCount(0);
@@ -106,7 +106,7 @@ for (const width of [1600, 390]) {
           'Keep this message and conversation while browsing files.',
         );
         expect(await message.evaluate((node, original) => node === original, field)).toBe(true);
-        await page.getByRole('button', { name: 'Show files', exact: true }).click();
+        await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
         await expect(files.getByRole('textbox', { name: 'Contents of README.md' })).toHaveValue(
           '# Notes\n',
         );

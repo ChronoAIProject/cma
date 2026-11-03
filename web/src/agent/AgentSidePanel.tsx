@@ -12,6 +12,8 @@ import './files/AgentFiles.css';
 import type { ConversationState } from './model';
 import { OperationOutput } from './environment/OperationOutput';
 import './environment/AgentComputer.css';
+import { FeatureAvailability, useAgentEnvironment } from './environment/availability';
+import { useComputerObservation, type AgentComputerObservation } from './environment/observation';
 
 export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
 
@@ -29,6 +31,7 @@ export function AgentSidePanel({
   publicationScope,
   conversation,
   onSelect,
+  observation,
 }: {
   readonly agentId: string;
   readonly shared: boolean;
@@ -42,22 +45,36 @@ export function AgentSidePanel({
   readonly publicationScope: ArtifactPublicationScope;
   readonly conversation?: ConversationState;
   readonly onSelect?: (panel: AgentPanel) => void;
+  readonly observation?: AgentComputerObservation;
 }) {
   const client = useCmaClient();
   const filesOpen = panel === 'files';
   const computerOpen = panel !== undefined && panel !== 'details';
+  const environment = useAgentEnvironment(client.files, agentId, computerOpen);
+  const features = environment.state.status === 'ready' ? environment.state.value : undefined;
+  const observed = useComputerObservation(shared ? observation : undefined);
+  const operations = shared ? observed : conversation;
   const [visited, setVisited] = useState(false);
   if (filesOpen && !visited) setVisited(true);
   // Shared file access is independently renewed and never inferred from a visible toolbar.
-  const access = useAgentAccess(client.resourceViews, shared && visited ? agentId : undefined);
+  const access = useAgentAccess(
+    client.resourceViews,
+    shared && (visited || computerOpen) ? agentId : undefined,
+  );
   const authorized = access.state.status === 'ready' ? access.state.value.access : undefined;
   const reloadAccess = access.reload;
   const accessChanged = useCallback(() => {
     reloadAccess();
     onAccessChanged();
   }, [reloadAccess, onAccessChanged]);
-  const mayRead = !shared || authorized?.capabilities.includes('view_files') === true;
-  const mayWrite = !shared || authorized?.capabilities.includes('operate_agent') === true;
+  const mayRead =
+    (!shared || authorized?.capabilities.includes('view_files') === true) &&
+    features?.files.state !== 'forbidden';
+  const mayWrite = features
+    ? features.files.writable
+    : client.files?.environment && environment.state.status === 'loading'
+      ? false
+      : !shared || authorized?.capabilities.includes('operate_agent') === true;
   return (
     <>
       <div
@@ -133,6 +150,10 @@ export function AgentSidePanel({
           hidden={!filesOpen}
           inert={!filesOpen || undefined}
         >
+          <p className="agent-computer__scope">Files in the authorized mounted home (/home).</p>
+          {features && features.files.state !== 'available' ? (
+            <FeatureAvailability name="Files" feature={features.files} />
+          ) : null}
           {visited && mayRead && client.files ? (
             <FileExplorer
               key={`${agentId}:${shared}`}
@@ -176,7 +197,17 @@ export function AgentSidePanel({
           className="agent-computer__page agent-computer__output"
           hidden={panel !== 'activity'}
         >
-          <OperationOutput conversation={conversation} />
+          {shared && authorized && !authorized.capabilities.includes('view_history') ? (
+            <p role="status">Operation output access is not permitted.</p>
+          ) : features?.operation_output.state === 'forbidden' ? (
+            <FeatureAvailability name="Operation output" feature={features.operation_output} />
+          ) : (
+            <OperationOutput
+              toolCalls={operations?.toolCalls}
+              activeRunId={operations?.activeRunId}
+              active={panel === 'activity'}
+            />
+          )}
         </div>
         <div
           id="computer-page-browser"
@@ -185,7 +216,24 @@ export function AgentSidePanel({
           className="agent-computer__page agent-computer__output"
           hidden={panel !== 'browser'}
         >
-          <p>Browser observation is unsupported by this environment contract.</p>
+          {features ? (
+            <FeatureAvailability name="Browser" feature={features.browser} />
+          ) : (
+            <p role="status">
+              {!client.files?.environment || environment.state.status === 'ready'
+                ? 'Environment capabilities not reported.'
+                : environment.state.status === 'loading'
+                  ? 'Checking environment capabilities…'
+                  : environment.state.transient
+                    ? 'Environment capabilities are temporarily unavailable. Try again.'
+                    : environment.state.message}
+            </p>
+          )}
+          {environment.state.status === 'error' ? (
+            <Button size="sm" onClick={environment.reload}>
+              Check environment again
+            </Button>
+          ) : null}
         </div>
       </aside>
     </>
