@@ -155,8 +155,6 @@ use super::trigger_openapi_shapes::*;
         super::agent_models::list,
         super::agent_skills::read,
         super::agent_skills::install,
-        super::message_feedback::list,
-        super::message_feedback::set,
         super::agent_preferences::read,
         super::agent_preferences::update,
         super::agent_settings::read,

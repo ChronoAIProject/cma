@@ -8,6 +8,7 @@ import {
   IconDislikeFill16,
 } from '../ui/icons';
 import type { MessageFeedbackControls } from './useMessageFeedback';
+import { FeedbackReasons } from './FeedbackReasons';
 
 const singaporeTime = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'Asia/Singapore',
@@ -127,12 +128,12 @@ export function MessageFooter({
           </span>
         ) : null}
         {row?.pending ? (
-          <span className="message-footer__status" role="status">
+          <span className="message-footer__status" role="status" aria-label="Vote status">
             Saving vote…
           </span>
         ) : null}
         {row?.saved ? (
-          <span className="message-footer__status" role="status">
+          <span className="message-footer__status" role="status" aria-label="Vote status">
             {vote === null ? 'Vote removed' : 'Vote recorded'}
           </span>
         ) : null}
@@ -158,6 +159,7 @@ export function MessageFooter({
           </Button>
         </div>
       ) : null}
+      {voting ? <FeedbackReasons id={id} feedback={feedback} /> : null}
     </footer>
   );
 }

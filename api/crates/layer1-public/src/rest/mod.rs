@@ -20,6 +20,10 @@ pub use agent_access_requests::agent_access_requests_router;
 #[cfg(test)]
 mod agent_access_requests_tests;
 mod agent_artifacts;
+mod answer_deliverables;
+#[cfg(test)]
+mod answer_deliverables_tests;
+pub use answer_deliverables::answer_deliverables_router;
 mod agent_attachments;
 pub use agent_attachments::agent_attachments_router;
 mod agent_filesystem;
@@ -37,6 +41,7 @@ mod agent_preferences;
 mod agent_settings;
 mod agent_skills;
 mod message_feedback;
+mod message_feedback_reasons;
 pub use agent_channel_usage::agent_channel_usage_router;
 pub use agent_skills::AgentSkillRuntimeSupport;
 #[cfg(test)]
