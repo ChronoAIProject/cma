@@ -173,6 +173,7 @@ async fn scenario_with_runtime_boot(
     let kind = name.strip_prefix("filesystem_")?;
     assert!([
         "owner",
+        "policy_off",
         "viewer",
         "writer",
         "revoked",
@@ -279,7 +280,15 @@ async fn scenario_with_runtime_boot(
         }
     }
     let caller = context(subject);
-    let service = AgentFileService::new(access, adapter);
+    let service = AgentFileService::new(access, adapter).with_task_experience(Arc::new(
+        if kind == "policy_off" {
+            Default::default()
+        } else {
+            serde_json::from_value(serde_json::json!({"mode":"all","accounts":[],
+                "capabilities":["desktop_enable","browser_takeover"]}))
+            .unwrap()
+        },
+    ));
     let mut router = super::super::agent_filesystem_router(service);
     if kind != "anonymous" {
         router = router.layer(Extension(caller.clone())).layer(Extension(

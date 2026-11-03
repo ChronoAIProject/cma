@@ -57,7 +57,7 @@ function fixture() {
   };
 }
 
-function panel(client: AgentBrowserControlClient, accountId = 'owner-a') {
+function panel(client: AgentBrowserControlClient, accountId = 'owner-a', admissionAllowed = true) {
   return (
     <BrowserControl
       client={client}
@@ -66,6 +66,7 @@ function panel(client: AgentBrowserControlClient, accountId = 'owner-a') {
       incarnation="current"
       contextId={context}
       active
+      admissionAllowed={admissionAllowed}
     >
       <img alt="Agent browser page" src="data:image/jpeg;base64,/9j/" />
     </BrowserControl>
@@ -75,6 +76,26 @@ function panel(client: AgentBrowserControlClient, accountId = 'owner-a') {
 afterEach(() => {
   sessionStorage.clear();
   vi.restoreAllMocks();
+});
+
+it('stops new input on policy closure while keeping mounted control and explicit return', async () => {
+  const runtime = fixture();
+  const view = render(panel(runtime.client));
+  fireEvent.click(await screen.findByRole('button', { name: 'Take control' }));
+  await screen.findByText('You are controlling');
+  view.rerender(panel(runtime.client, 'owner-a', false));
+  expect(screen.getByText('You are controlling')).toBeInTheDocument();
+  expect(screen.getByLabelText('Text to type in browser')).toBeDisabled();
+  fireEvent.keyDown(screen.getByRole('application'), { key: 'X' });
+  expect(runtime.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Return to Agent' }));
+  await screen.findByText('Agent is controlling');
+  expect(
+    runtime.requests
+      .filter((request) => request.method === 'POST')
+      .map((request) => request.value.command),
+  ).toEqual(['acquire', 'return']);
+  expect(screen.getByRole('button', { name: 'Take control' })).toBeDisabled();
 });
 
 it('keeps the acquisition action unavailable while its current-state read is settling', async () => {
@@ -121,24 +142,27 @@ it('drains keyboard input queued while a status read is in flight', async () => 
   );
 });
 
-it('recovers the exact lost operation after reload without replaying text or adopting the old client lease', async () => {
-  const runtime = fixture();
-  const original = render(panel(runtime.client));
-  runtime.drop();
-  fireEvent.click(await screen.findByRole('button', { name: 'Take control' }));
-  await screen.findByText('Control state unknown');
-  const acquisition = runtime.requests.find((request) => request.method === 'POST')!.value;
-  original.unmount();
-  render(panel(runtime.client));
-  await waitFor(() => {
-    expect(runtime.requests.at(-1)?.method).toBe('GET');
-    expect(runtime.requests.at(-1)?.value.operation_id).toBe(acquisition.operation_id);
-  });
-  expect(await screen.findByText('Another client is controlling')).toBeInTheDocument();
-  fireEvent.keyDown(screen.getByRole('application'), { key: 'X' });
-  expect(runtime.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
-  expect(JSON.stringify(sessionStorage)).not.toContain(token);
-});
+it.each([true, false])(
+  'recovers the lost operation without replaying text or adopting the old lease when admission is %s',
+  async (enabled) => {
+    const runtime = fixture();
+    const original = render(panel(runtime.client));
+    runtime.drop();
+    fireEvent.click(await screen.findByRole('button', { name: 'Take control' }));
+    await screen.findByText('Control state unknown');
+    const acquisition = runtime.requests.find((request) => request.method === 'POST')!.value;
+    original.unmount();
+    render(panel(runtime.client, 'owner-a', enabled));
+    await waitFor(() => {
+      expect(runtime.requests.at(-1)?.method).toBe('GET');
+      expect(runtime.requests.at(-1)?.value.operation_id).toBe(acquisition.operation_id);
+    });
+    expect(await screen.findByText('Another client is controlling')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('application'), { key: 'X' });
+    expect(runtime.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+    expect(JSON.stringify(sessionStorage)).not.toContain(token);
+  },
+);
 
 it('stops input offline and verifies current state on reconnect before accepting more input', async () => {
   const runtime = fixture();

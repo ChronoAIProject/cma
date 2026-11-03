@@ -23,6 +23,7 @@ function sameSet(left: SuggestedReplySet | undefined, right: SuggestedReplySet |
 export function useSuggestionEditing(
   suggestions: SuggestedReplySet | undefined,
   controller: AgentController,
+  admissionAllowed: boolean,
 ) {
   const editorRef = useRef<ComposerSuggestionEditorHandle>(null);
   const [edited, setEdited] = useState<{ set: SuggestedReplySet; itemId: string }>();
@@ -45,6 +46,19 @@ export function useSuggestionEditing(
   if (edited && !sameSet(edited.set, source)) setEdited(undefined);
   return {
     source,
+    admissionAllowed,
+    inputAvailability(value: AgentController['inputAvailability']) {
+      return edited &&
+        sameSet(edited.set, source) &&
+        !admissionAllowed &&
+        retained?.state !== 'pending'
+        ? {
+            ...value,
+            allowed: false,
+            notice: 'Suggested follow-ups are unavailable. Your draft is kept.',
+          }
+        : value;
+    },
     editorRef,
     edit(text: string) {
       const item = source?.items.find((candidate) => candidate.text === text);
@@ -56,6 +70,17 @@ export function useSuggestionEditing(
     send(submit: ReturnType<typeof messageSubmission>, content: string, accepted: () => void) {
       const selection = sameSet(source, edited?.set) ? edited : undefined;
       const scope = selection?.set.scope;
+      if (
+        selection &&
+        !admissionAllowed &&
+        !(
+          retained?.state === 'pending' &&
+          retained.input === content &&
+          retained.answerContext?.answer_sequence === scope?.answer_sequence &&
+          retained.answerContext?.turn_sequence === scope?.turn_sequence
+        )
+      )
+        return Promise.resolve();
       const request = submit(
         content,
         (receipt) => {

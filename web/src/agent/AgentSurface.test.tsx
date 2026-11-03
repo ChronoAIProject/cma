@@ -10,6 +10,86 @@ import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
 
+it.each(['active', 'delivery', 'previous'] as const)(
+  'opens model discovery from %s evidence before initial Agent success without remounting the composer',
+  async (evidence) => {
+    const models = vi.fn(async () => [
+      { id: 'corrective-model', label: 'Corrective model', available: true },
+    ]);
+    const client = agentClient({
+      readAgentModels: models,
+      readAgentSettings: async () => ({
+        model: 'saved-model',
+        reasoning_effort: 'high',
+        permission_mode: 'autonomous',
+      }),
+      updateAgentSettings: vi.fn(),
+    });
+    const starting = {
+      ...AGENT_DETAIL,
+      status: 'starting' as const,
+      readyAt: undefined,
+      sandbox: { ...AGENT_DETAIL.sandbox, status: 'installing' as const },
+    };
+    const draw = (credentialDelivered: boolean) => {
+      const detail =
+        credentialDelivered && evidence === 'previous'
+          ? { ...starting, status: 'failed' as const, readyAt: AGENT_DETAIL.readyAt }
+          : starting;
+      const sandboxEvents =
+        credentialDelivered && evidence === 'delivery'
+          ? [
+              {
+                sandboxId: starting.sandbox.id,
+                seq: 1,
+                appendedAt: '2026-11-03T00:00:00Z',
+                kind: { type: 'work_step_completed', step: { kind: 'deliver_initial_credential' } },
+              },
+            ]
+          : [];
+      return (
+        <CmaClientProvider client={client}>
+          <AgentSurface
+            agentId="agt_1"
+            controller={controller(
+              {
+                status: 'ready',
+                detail,
+                workspace: workspaceFixture(),
+                conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+                sandboxEvents,
+              },
+              undefined,
+              {
+                progressObservation: {
+                  stale: false,
+                  sandbox: {
+                    ...sandboxFixture(),
+                    id: starting.sandbox.id,
+                    status: credentialDelivered && evidence === 'active' ? 'active' : 'installing',
+                  },
+                },
+              },
+            )}
+            detailsOpen={false}
+            onDetailsOpenChange={vi.fn()}
+            onNavigate={vi.fn()}
+          />
+        </CmaClientProvider>
+      );
+    };
+    const view = render(draw(false));
+    await screen.findByRole('button', { name: /^Agent settings:/ });
+    expect(models).not.toHaveBeenCalled();
+    const editor = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(editor, { target: { value: 'Keep the next message' } });
+    view.rerender(draw(true));
+    await waitFor(() => expect(models).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(editor);
+    expect(editor).toHaveValue('Keep the next message');
+  },
+);
+
 it('links the compact header only to the current turn plan and preserves the draft in a new turn', () => {
   let conversation = conversationFromTranscript({ agentId: 'agt_1', throughSeq: 0, turns: [] });
   const append = (seq: number, kind: Record<string, unknown>) => {

@@ -73,10 +73,26 @@ impl From<AdapterError> for AgentFileError {
 pub struct AgentFileService {
     access: Arc<ResourceAccessService>,
     adapter: Arc<dyn SandboxAdapter>,
+    task_experience: Arc<super::task_experience::TaskExperiencePolicy>,
 }
 impl AgentFileService {
     pub fn new(access: Arc<ResourceAccessService>, adapter: Arc<dyn SandboxAdapter>) -> Arc<Self> {
-        Arc::new(Self { access, adapter })
+        Arc::new(Self {
+            access,
+            adapter,
+            task_experience: Default::default(),
+        })
+    }
+
+    pub fn with_task_experience(
+        self: Arc<Self>,
+        policy: Arc<super::task_experience::TaskExperiencePolicy>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            access: self.access.clone(),
+            adapter: self.adapter.clone(),
+            task_experience: policy,
+        })
     }
 
     pub async fn list(
