@@ -78,10 +78,20 @@ impl AgentReadService {
                         _ => {}
                     }
                 }
-                let (turn_sequence, end, completed_at) =
-                    terminal.ok_or(AgentReadError::NotFound)?;
-                if turn_sequence == 0 || turn_sequence >= sequence || end - turn_sequence > 512 {
+                let (turn_sequence, end, completed_at) = terminal.ok_or_else(|| {
+                    if agent.conversation.last_seq > sequence.saturating_add(128) {
+                        AgentReadError::Unavailable("answer exceeds the forward read bound".into())
+                    } else {
+                        AgentReadError::NotFound
+                    }
+                })?;
+                if turn_sequence == 0 || turn_sequence >= sequence {
                     return Err(AgentReadError::NotFound);
+                }
+                if end - turn_sequence > 512 {
+                    return Err(AgentReadError::Unavailable(
+                        "answer exceeds the turn read bound".into(),
+                    ));
                 }
                 let start = self
                     .answer_entry(&agent, turn_sequence, &mut budget)
@@ -196,9 +206,9 @@ impl AgentReadService {
         let size = serde_json::to_vec(&entry)
             .map_err(|_| corrupt("invalid answer log"))?
             .len();
-        *budget = budget
-            .checked_sub(size)
-            .ok_or_else(|| corrupt("answer exceeds the read byte bound"))?;
+        *budget = budget.checked_sub(size).ok_or_else(|| {
+            AgentReadError::Unavailable("answer exceeds the read byte bound".into())
+        })?;
         Ok(entry)
     }
 }
