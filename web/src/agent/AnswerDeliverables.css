@@ -40,6 +40,28 @@
   font-weight: 500;
 }
 
+.answer-deliveries__name[aria-pressed] {
+  cursor: pointer;
+  text-align: left;
+  min-height: 44px;
+  color: inherit;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.answer-deliveries__name[aria-pressed='true'] {
+  color: var(--dsw-alias-state-business-primary);
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.answer-deliveries__name:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .answer-deliveries__metadata,
 .answer-deliveries__status,
 .answer-deliveries__pending {

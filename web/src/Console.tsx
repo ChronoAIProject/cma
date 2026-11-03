@@ -17,7 +17,7 @@ import { LegacyProfileNotice } from './profile/LegacyProfileNotice';
 import type { AppRoute } from './routing/routes';
 import { routePath } from './routing/routes';
 import { useViewArrival } from './ui/arrivalMotion';
-import { AppFrame } from './shell/AppFrame';
+import { DeliverablePreviewFrame as AppFrame } from './agent/DeliverablePreviewFrame';
 import { Sidebar } from './shell/Sidebar';
 import { ManagerNavigation } from './shell/ManagerNavigation';
 import { useNavigation } from './shell/navigation';
@@ -369,6 +369,8 @@ function ConsoleContent({
 
   return (
     <AppFrame
+      previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
+      onPreviewOpen={() => setPanel(undefined)}
       phoneTitle="Agent Manager"
       detailsOpen={
         !accessUncertain &&
