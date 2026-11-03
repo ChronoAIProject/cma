@@ -95,7 +95,10 @@ function ConsoleContent({
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
   const computerObservation = useMemo(
-    () => new AgentComputerObservation({ client, subject: user.id, agentId: selectedAgent }),
+    () =>
+      new AgentComputerObservation({ client, subject: user.id, agentId: selectedAgent }, () =>
+        setPanel('activity'),
+      ),
     [client, user.id, selectedAgent],
   );
   const ownerViews = useOwnerViews();
@@ -254,6 +257,7 @@ function ConsoleContent({
       </section>
     ) : route.kind === 'agent' ? (
       <AgentSurface
+        computerObservation={computerObservation}
         key={route.agentId}
         user={user}
         lifecycleClient={client}

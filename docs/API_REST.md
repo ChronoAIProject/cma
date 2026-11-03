@@ -1453,9 +1453,13 @@ caller. Responses use the existing private/no-store file-route policy.
 Files retain the existing `mounted_home` scope, including `/home/`; this is not
 an Agent-private directory. `writable` requires owner authority or an accepted
 current typed write link. Recorded output has `agent_turn_history` scope and
-requires `view_history`. Browser, replay and control currently report
+requires `view_history`. Operation record replay uses the same authority and
+`agent_turn_history` scope, with `available`, `operation_records_only` and
+`writable: false`; missing `view_history` reports `forbidden`. Browser and control report
 `unsupported`, `not_supported_by_contract`, `none`, and `false`. No runtime
-address, boot identifier, browser stream, replay resource or PTY is exposed.
+address, boot identifier, browser stream or PTY is exposed. Replay reuses bounded
+Agent events v2 snapshots with `Prefer: cma-tool-output`, durable turn sequences
+and opaque cursors. It is a pure history query, without execution or recovery.
 
 Agent event reads opt into recorded output with `tool_output=true`. A tool update
 may include `output: {text, truncated}`; `tool_output_reported` contains `call_id`

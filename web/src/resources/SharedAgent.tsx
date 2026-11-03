@@ -398,6 +398,7 @@ export function SharedAgent({
       <div className="agent-surface__conversation">
         {conversation === undefined ? null : (
           <MessageStream
+            onReplay={web?.operationReplay ? computerObservation?.selectReplay : undefined}
             media={
               web.files && can('view_files')
                 ? {
