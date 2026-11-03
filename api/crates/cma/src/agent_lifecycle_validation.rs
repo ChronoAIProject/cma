@@ -22,6 +22,21 @@ pub(super) fn validate_request(
             "name must contain 1-80 non-control bytes".into(),
         ));
     }
+    if let Some(message) = &request.initial_message {
+        if message.trim().is_empty()
+            || message.len() > layer2_core::sandbox::MAX_FIRST_MESSAGE_BYTES
+        {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "initial_message must contain non-whitespace text and at most 262144 UTF-8 bytes"
+                    .into(),
+            ));
+        }
+        if request.repository.is_some() {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "initial_message with repository is not supported".into(),
+            ));
+        }
+    }
     if request.workspace_id.is_some() && request.sandbox_id.is_some() {
         return Err(AgentLifecycleProvisioningError::Invalid(
             "choose either sandbox_id or workspace_id".into(),
@@ -213,12 +228,25 @@ pub(super) fn setup_message(request: &AgentLifecycleCreateRequest) -> String {
 }
 
 pub(super) fn admitted_first_message(input: &crate::store::LifecycleInput) -> Option<String> {
+    if let Some(message) = &input.request.initial_message {
+        return Some(message.clone());
+    }
     (input.behavior == LifecycleBehavior::PromptRepository).then(|| {
         input
             .setup_message
             .clone()
             .unwrap_or_else(|| first_message(&input.request))
     })
+}
+
+pub(super) fn first_message_purpose(
+    request: &AgentLifecycleCreateRequest,
+) -> layer2_core::sandbox::FirstMessagePurpose {
+    if request.initial_message.is_some() {
+        layer2_core::sandbox::FirstMessagePurpose::Task
+    } else {
+        layer2_core::sandbox::FirstMessagePurpose::Setup
+    }
 }
 
 // Freeze these bytes for operations admitted before setup messages were captured.
