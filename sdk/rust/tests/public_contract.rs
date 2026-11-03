@@ -53,6 +53,7 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
     } else if op.contains("/cmaeg/bindings") {
         bindings::dispatch(c).await
     } else if op == "GET /api/v2/ui/transport"
+        || op == "GET /api/v2/ui/task-experience"
         || op == "GET /api/v2/agents/{agent_id}/events"
         || op == "GET /api/v2/agents/{agent_id}/events/snapshot"
         || op == "GET /api/v2/agents/{agent_id}/events/head"

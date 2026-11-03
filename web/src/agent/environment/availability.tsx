@@ -7,16 +7,18 @@ export function useAgentEnvironment(
   client: AgentFilesClient | undefined,
   agentId: string,
   active: boolean,
+  subject?: string,
 ) {
+  const scope = useMemo(() => ({ client, agentId, subject }), [client, agentId, subject]);
   const read = useMemo(
     () =>
-      !active || !client?.environment
+      !active || !scope.client?.environment
         ? undefined
         : async (signal: AbortSignal) => {
             try {
-              const value = await client.environment!(agentId, { signal });
+              const value = await scope.client!.environment!(scope.agentId, { signal });
               signal.throwIfAborted();
-              if (value.agent_id !== agentId)
+              if (value.agent_id !== scope.agentId)
                 throw new Error('Agent environment identity changed.');
               return { value, revalidateAt: value.revalidate_at };
             } catch (error) {
@@ -24,7 +26,7 @@ export function useAgentEnvironment(
               throw error;
             }
           },
-    [client, agentId, active],
+    [scope, active],
   );
   return useAuthorizedRead(read);
 }

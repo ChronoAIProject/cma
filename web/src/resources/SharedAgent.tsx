@@ -24,6 +24,7 @@ import { routePath, type AppRoute } from '../routing/routes';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { Alert } from '../ui/Alert';
 import { SessionSettings } from '../agent/SessionSettings';
+import { agentInitialized } from '../agent/modelReadiness';
 import type { UploadAttachment } from '../agent/attachments';
 import type { ApprovalDecision } from '../agent/controller';
 import { agentDisplayTitle } from '../agent/presentation';
@@ -433,6 +434,7 @@ export function SharedAgent({
                 <SessionSettings
                   agentId={agentId}
                   active
+                  runtimeReady={agentInitialized(status, detail.ready_at)}
                   busy={busy || status !== 'ready'}
                   authorizeUpdate={authorizeSettings}
                 />

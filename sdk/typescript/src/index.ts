@@ -1,6 +1,11 @@
 /** Typed, repository-only client for CMA's public resource APIs. */
 
 export { Cma, createClient } from './client.js';
+export type {
+  TaskExperience,
+  TaskExperienceCapabilities,
+  TaskExperienceClient,
+} from './task-experience.js';
 export { answerContext, type AnswerContext } from './answer-context.js';
 export * from './resource-access.js';
 export * from './agent-files.js';
