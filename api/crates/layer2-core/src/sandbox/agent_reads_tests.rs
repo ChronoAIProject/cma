@@ -2,6 +2,8 @@
 mod command_admission_tests;
 #[path = "agent_reads_tests/conversation_gap_tests.rs"]
 mod conversation_gap_tests;
+#[path = "agent_reads_tests/message_feedback_tests.rs"]
+mod message_feedback_tests;
 #[path = "agent_reads_tests/resource_access_tests.rs"]
 mod resource_access_tests;
 #[path = "agent_reads_tests/unpublished_identity_tests.rs"]

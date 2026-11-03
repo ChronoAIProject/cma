@@ -51,7 +51,8 @@ export function MessageFooter({
     const timer = setTimeout(() => setCopy(undefined), 2500);
     return () => clearTimeout(timer);
   }, [copy]);
-  const row = canVote ? feedback?.rows[id] : undefined;
+  const voting = canVote && committed && feedback !== undefined;
+  const row = voting ? feedback.rows[id] : undefined;
   const vote = row?.vote ?? null;
   const unavailable = !committed
     ? 'Available when this message is recorded.'
@@ -65,7 +66,14 @@ export function MessageFooter({
             ? 'Retry this vote to confirm its outcome before changing it.'
             : undefined;
   return (
-    <footer className="message-footer" data-voted={vote ?? undefined}>
+    <footer
+      className="message-footer"
+      data-voted={vote ?? undefined}
+      data-feedback-status={
+        Boolean(copy || row?.pending || row?.saved || row?.error || (voting && feedback.error)) ||
+        undefined
+      }
+    >
       <div className="message-footer__row">
         <MessageTimestamp at={at} />
         <div className="message-footer__actions" role="group" aria-label="Message actions">
@@ -87,24 +95,27 @@ export function MessageFooter({
               })();
             }}
           />
-          {canVote ? (
+          {voting ? (
             <>
               <Button
                 size="sm"
                 icon={vote === 'up' ? <IconLikeFill16 /> : <IconLikeOutline16 />}
-                aria-label="Upvote message"
+                aria-label="Helpful"
                 aria-pressed={vote === 'up'}
                 disabled={unavailable !== undefined}
-                title={unavailable ?? (vote === 'up' ? 'Remove upvote' : 'Upvote message')}
+                title={unavailable ?? (vote === 'up' ? 'Remove helpful vote' : 'Helpful')}
                 onClick={() => feedback?.setVote(id, vote === 'up' ? null : 'up')}
               />
               <Button
                 size="sm"
                 icon={vote === 'down' ? <IconDislikeFill16 /> : <IconDislikeOutline16 />}
-                aria-label="Downvote message"
+                aria-label="Needs improvement"
                 aria-pressed={vote === 'down'}
                 disabled={unavailable !== undefined}
-                title={unavailable ?? (vote === 'down' ? 'Remove downvote' : 'Downvote message')}
+                title={
+                  unavailable ??
+                  (vote === 'down' ? 'Remove needs improvement vote' : 'Needs improvement')
+                }
                 onClick={() => feedback?.setVote(id, vote === 'down' ? null : 'down')}
               />
             </>
@@ -120,6 +131,11 @@ export function MessageFooter({
             Saving vote…
           </span>
         ) : null}
+        {row?.saved ? (
+          <span className="message-footer__status" role="status">
+            {vote === null ? 'Vote removed' : 'Vote recorded'}
+          </span>
+        ) : null}
       </div>
       {copy === 'failed' ? (
         <span className="message-footer__status" role="status">
@@ -131,6 +147,14 @@ export function MessageFooter({
           <span>{row.error}</span>
           <Button size="sm" onClick={() => feedback?.setVote(id, row.retryVote ?? null)}>
             Retry vote
+          </Button>
+        </div>
+      ) : null}
+      {voting && feedback.error ? (
+        <div className="message-footer__error" role="status">
+          <span>{feedback.error}</span>
+          <Button size="sm" onClick={feedback.reload}>
+            Retry feedback
           </Button>
         </div>
       ) : null}
