@@ -8,7 +8,7 @@ data:
   CMA_IM_MONGODB_DATABASE: "chrono-bot"
   CMA_IM_MONGODB_AUTHORITY_MODE: "shared-schema"
   CMA_IM_NYXID_ISSUER: "https://nyx-api.chrono-ai.fun"
-  CMA_IM_WEB_ORIGIN: "https://bot.chrono-ai.fun"
+  CMA_IM_WEB_ORIGIN: "https://cma.nyxid.ai"
   CMA_IM_COOKIE_KEY_FILE: "/var/run/cma-image-manager/cookie-key"
   # Image Manager owns the build workflow. Cloud Build executes the Docker
   # steps with this same workload identity; there is no second build account.

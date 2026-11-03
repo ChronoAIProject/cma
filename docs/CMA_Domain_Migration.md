@@ -110,7 +110,7 @@ host-only transaction cookies and Origin checks still belong to the old host.
 | File / setting | Current | Target / action |
 |---|---|---|
 | `infra/api/configmap.yaml`: `CHRONO_SERVER_PUBLIC_URL` | `https://bot.chrono-ai.fun` | `https://cma.nyxid.ai`; affects OAuth callbacks, generated public links, discovery, runtime tool URLs and signed proxy JWT audience |
-| Same: `CHRONO_SERVER_CORS_ORIGIN` | `https://bot.chrono-ai.fun` | `https://cma.nyxid.ai`; coordinate with browser cutover |
+| Same: `CHRONO_SERVER_CORS_ORIGIN` | `https://bot.chrono-ai.fun` | Retain old origin and add `https://cma.nyxid.ai`; exact browser Origin checks use both |
 | `infra/image-manager/configmap.yaml`: `CMA_IM_WEB_ORIGIN` | `https://bot.chrono-ai.fun` | `https://cma.nyxid.ai` before activating or rolling Image Manager |
 | `infra/web/configmap.yaml`: `CHRONO_API_BASE_URL`, `CHRONO_PUBLIC_ORIGIN` | Old API / web hosts | Target `https://cma.nyxid.ai` for both; these are currently unused metadata, not build/runtime inputs in the checked-in frontend |
 | NyxID CMA OAuth client | `c0cd33d2-27ba-4b8d-b38e-562364fadb72` | Read current registration; add new `/auth/callback` and `/connection-return` URIs, preserving existing entries |
@@ -132,11 +132,13 @@ origin checks do not prove Cloudflare behavior.
 
 Read current NyxID registrations rather than replacing them from a template.
 Keep client/service IDs, secrets, scopes and resource ownership. The new origin
-also changes `CHRONO_SERVER_PUBLIC_URL`-derived proxy JWT audience. The current
-verifier accepts one audience: an uncoordinated catalog/ConfigMap rollout will
-reject requests. Before a seamless rolling cutover, implement and test exact
-old/new audience compatibility, or explicitly schedule and bound the proxy
-traffic cutover with the NyxID owner. Never relax issuer/service checks.
+previously changed the `CHRONO_SERVER_PUBLIC_URL`-derived proxy JWT audience.
+The migration now provides `CHRONO_NYXID_PROXY_AUDIENCE` and pins it to
+`https://bot.chrono-ai.fun`, independently of the browser public URL. Existing
+NyxID connections retain their signed audience; issuer, service and signature
+checks remain strict. A signed regression rejects the new browser origin as an
+audience when the retained service audience is explicitly configured. Changing
+NyxID service audiences is a separate coordinated migration.
 
 Publish the application-origin changes in a separate reviewed change against
 the current production source and images. Stage NyxID callback registrations
@@ -197,8 +199,9 @@ that baseline rather than treating it as a newly introduced routing failure.
 
 There will be **three** supported bases after migration: the new canonical base,
 the old prefixed `bot.chrono-ai.fun/event-gateway` base, and the original
-`bot-gateway.chrono-ai.fun` base. Current code accepts only two. Keeping the
-HTTPRoutes alone is insufficient. Required implementation before advertisement:
+`bot-gateway.chrono-ai.fun` base. The migration adds bounded exact-base lists
+`CHRONO_CMAEG_PUBLIC_API_ALIASES` and `CMAEG_PUBLIC_API_ALIASES`. Keeping the
+HTTPRoutes alone is insufficient. The compatibility implementation covers:
 
 - `api/crates/cma/src/gateway/client.rs`: accept the old prefixed callback and
   custom-event pair alongside the two configured bases, including retained
@@ -207,8 +210,8 @@ HTTPRoutes alone is insufficient. Required implementation before advertisement:
   three exact Telegram webhook addresses for activation and retirement. Otherwise
   an existing integration can be refused or its webhook left installed.
 - `api/crates/cmaeg/src/http/connection_browser.rs`: preserve old prefixed setup
-  links and tabs, strict Origin checks and host-only capability cookies. Current
-  prefixed forms accept only the configured canonical origin. Do not redirect
+  links and tabs, strict Origin checks and host-only capability cookies. Forms
+  accept only configured origins for their exact path prefix. Do not redirect
   consumed one-use links or broaden Origin checks to every `*.nyxid.ai` host.
 - Audit retained runtime/MCP endpoint validation and signed callback audiences;
   preserve exact old identities. Do not rewrite ChannelPointers or credentials.
@@ -217,9 +220,12 @@ HTTPRoutes alone is insufficient. Required implementation before advertisement:
   rejection and rollback with already-issued new links.
 
 Deploy compatibility readers across Agent Manager and Gateway first, with old
-advertisement. Verify all old and draining Pods have exited before enabling new
-advertisement. Then update both canonical-base settings with the supported
-mixed-version sequence, validate, and update NyxID catalog/public docs. Existing
+advertisement and `https://cma.nyxid.ai/event-gateway` in both alias lists.
+Pin the retained proxy audience before changing CMA's browser origin. Verify
+all old and draining Pods have exited before enabling new advertisement. Then
+change both canonical bases to `https://cma.nyxid.ai/event-gateway` and both alias
+lists to `https://bot.chrono-ai.fun/event-gateway`, using the same verified
+compatible images. Validate before updating the NyxID catalog. Existing
 webhooks do not need forced re-registration to adopt the new UI domain. Phase 2
 can keep the Gateway's old canonical base while this separate work is completed.
 
@@ -359,6 +365,24 @@ duplicate origins before declaring recovery.
 
 Public probes also found Cloudflare returning 301 from old-domain **API** and
 `/auth/login` requests to the new hostname at 15:04 SGT. The CMA HTTPRoutes do not
-contain that HTTPS redirect. The Cloudflare owner must remove the blanket rule;
-keep old API, auth callbacks, webhook and setup-capability traffic direct. Browser
-page redirects need a separate reviewed allowlist after canonical login works.
+contain that HTTPS redirect. The owner subsequently prioritized full new-domain
+functionality; restoring old-client behavior is not a prerequisite for that
+work. Retained Kubernetes routes continue to serve directly at the origin, but
+public old-domain client compatibility cannot be claimed while Cloudflare sends
+protocol traffic through a cross-host 301. The Cloudflare owner should preserve
+direct API, callback, webhook and setup traffic; browser page redirects need a
+separate reviewed allowlist after canonical login works.
+
+### Compatibility delivery scope
+
+Only API, Gateway and web control-plane images and exact domain configuration
+keys change. Preserve every runtime image pin, feature flag, native Sandbox and
+Claim, runtime Pod UID, home PVC and active Agent. Capture a fresh inventory
+before each rollout and compare after readiness and drain. Never apply whole
+checked-in ConfigMaps or Deployments over live production configuration.
+
+Canonical login entry redirects before issuing the host-only transaction cookie;
+callbacks themselves remain direct. An OAuth attempt begun immediately before
+the canonical cutover can require a fresh login because its original callback
+URI belongs to the previous configuration. Persisted Agent conversations and
+Sandbox resources are unaffected by this browser transaction retry.

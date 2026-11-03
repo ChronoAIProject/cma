@@ -22,44 +22,59 @@ pub(crate) fn router(service: ConnectionService) -> Router {
         .route("/connect", get(page))
         .route("/connect/submit", post(submit))
         .with_state(service.clone());
-    let url =
-        reqwest::Url::parse(&service.management.public_api_url).expect("validated public API base");
-    let prefix = url.path().trim_end_matches('/');
-    if prefix.is_empty() {
-        routes
-    } else {
-        routes.clone().nest(prefix, routes)
+    let mut router = routes.clone();
+    let prefixes = service
+        .management
+        .public_api_bases()
+        .map(|base| {
+            reqwest::Url::parse(base)
+                .expect("validated public API base")
+                .path()
+                .trim_end_matches('/')
+                .to_owned()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    for prefix in prefixes {
+        if !prefix.is_empty() {
+            router = router.nest(&prefix, routes.clone());
+        }
     }
+    router
 }
 
 struct BrowserRoute {
-    origin: String,
-    alternate_origin: Option<String>,
+    origins: Vec<String>,
     page: String,
     submit: String,
 }
 impl BrowserRoute {
     fn for_uri(service: &ConnectionService, uri: &axum::http::Uri) -> Self {
-        let url = reqwest::Url::parse(&service.management.public_api_url)
-            .expect("validated public API base");
-        let prefix = url.path().trim_end_matches('/');
-        let canonical = !prefix.is_empty() && uri.path().starts_with(&format!("{prefix}/connect"));
-        let alternate_origin = prefix
-            .is_empty()
-            .then(|| url.origin().ascii_serialization());
-        let prefix = if canonical { prefix } else { "" };
+        let urls = service
+            .management
+            .public_api_bases()
+            .map(|base| reqwest::Url::parse(base).expect("validated public API base"))
+            .collect::<Vec<_>>();
+        let prefix = urls
+            .iter()
+            .map(|url| url.path().trim_end_matches('/'))
+            .filter(|prefix| {
+                uri.path() == format!("{prefix}/connect")
+                    || uri.path().starts_with(&format!("{prefix}/connect/"))
+            })
+            .max_by_key(|prefix| prefix.len())
+            .unwrap_or("");
         Self {
-            origin: if canonical {
-                url.origin().ascii_serialization()
-            } else {
-                service.management.public_url.clone()
-            },
-            alternate_origin,
+            origins: urls
+                .iter()
+                .filter(|url| url.path().trim_end_matches('/') == prefix)
+                .map(|url| url.origin().ascii_serialization())
+                .collect(),
             page: format!("{prefix}/connect"),
             submit: format!("{prefix}/connect/submit"),
         }
     }
 }
+
 async fn start(
     State(service): State<ConnectionService>,
     Path(token): Path<String>,
@@ -140,8 +155,10 @@ async fn submit(
         let mut origins = headers.get_all(header::ORIGIN).iter();
         let origin = origins.next().and_then(|v| v.to_str().ok());
         if origin.is_none()
-            || (origin != Some(route.origin.as_str())
-                && origin != route.alternate_origin.as_deref())
+            || !route
+                .origins
+                .iter()
+                .any(|allowed| origin == Some(allowed.as_str()))
             || origins.next().is_some()
         {
             return Err(Error::NotFound);

@@ -10,4 +10,4 @@ data:
   # Origin of the CMA control plane API. Consumed by web/ at build time.
   CHRONO_API_BASE_URL: "https://bot-api.chrono-ai.fun"
   # Origin permitted to embed the terminal surface.
-  CHRONO_PUBLIC_ORIGIN: "https://bot.chrono-ai.fun"
+  CHRONO_PUBLIC_ORIGIN: "https://cma.nyxid.ai"
