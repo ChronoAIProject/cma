@@ -1,12 +1,105 @@
-# Ticket 15 evidence — in progress
+# Ticket 15 evidence — complete
 
 Recorded 2026-11-03. Branch `codex/cma-ui-15`, isolated worktree
 `/Users/liuyitian/code/cma-ui-worktrees/ticket-15`. The latest merged integration
-at this checkpoint is `7cd701d0fe6c2496256a01eca59919ee8d899c82` (including
-04/07/08/10/12/13/14), merged in `ed371149e817261cf74a32ad3a79f25e856c834a`.
-Original acceptance wording is unchanged. Linux browser
-acceptance and its live resource budget remain pending; this is not a completed
-handoff to 16/17.
+is `cf6774fd87dd39be8325e01984165efba12c7e87`, merged in `e091dd678`.
+This retains 04/07/08/10/12/13/14/18 and all public-contract repairs.
+Original acceptance wording is unchanged. The complete native/runtime/public/Web
+chain and stable full-runtime Linux resource measurements pass. Feature/proof
+chain source is pinned at `f495ff6b2`; `da83bbdc0` then corrects only Core
+capability precedence for a paused provider with no browser adapter. The merged
+10-case environment corpus caught this mismatch and now passes unchanged;
+36 browser and 44 deliverable cases also pass after that correction.
+Final source/artifact hashes are in the external `ticket15-proof/manifest.json`.
+
+## Final end-to-end evidence
+
+`ticket15-proof/native-chain-final/` holds the exact OCI config, reusable bounded
+runner, native/public/Web logs, real JPEGs, result JSON and screenshots. The run
+executes the own immutable candidate below, with native test transport archived
+from `42f52fe43b60775d7efbd023ec5ccec2595e0b60`. Actual public and Web test sources
+include the final `f495ff6b2` driver corrections.
+
+The path actually exercised is:
+
+1. Layer 4 HTTP installs credentials, prepares Workspace/Worktree/Agent home,
+   launches pinned Codex/ACP, and accepts real conversation WebSocket calls.
+2. Explicit owner PUT enables this Agent's browser. Two native Agent execution
+   tools run `cma-browser navigate` against local pages A and B. Four controlled
+   model responses produce two completed tools and actual HTTP page requests.
+3. The supervisor and mediator produce bounded Chromium frames. A private file
+   RPC forwards exact runtime control requests/receipts across the proof's
+   network-none boundary to the real Core service and public router. It replaces
+   only private runtime transport; it supplies no fixture frames or navigation.
+4. Actual public browser/environment handlers, Core authorization, typed SDK and
+   Web consume those responses. Authentication/store and unrelated conversation
+   startup data are controlled fixtures. This is not production IdP, Mongo,
+   hosted network transport or GKE deployment evidence.
+
+The native process exits successfully. The named Rust public-chain test passes
+**1/1**, and actual Chrome Web check passes **1/1 in 11.8s** (13.4s runner).
+Final result: 15 forwarded runtime requests, 7 Web reads, 2 releases, foreign
+read **404**, viewer enable **403**, stale incarnation **409**. Disconnect removes
+Live; reconnect and close/reopen preserve page B and its context. Closing stops
+polling and retains the conversation draft. Desktop, 390px and 320px screenshots
+were inspected. The final check waits for the decoded image to lie inside the
+viewport after resizing; earlier premature mobile screenshots are superseded.
+
+| Page | Sequence | Actual JPEG SHA-256 | Bytes |
+| --- | ---: | --- | ---: |
+| A | 3 | `07bc02032033907f80f7c8508b0cfdcaa0982673709472c920f2de2d3035b423` | 7474 |
+| B | 4 | `552820cbefb70fa3451cc729d8de0b3c093b40be38986b48646ca8fc66108c5d` | 7405 |
+
+Both bind Agent `agt_shared_read`, context
+`7756d0b5-decc-417c-a602-c3beb56ec785`, actual boot
+`457ee74ecfe94add87fe46ba750addd1`, and public incarnation
+`92eb64103ca089c1ce09332b6bf0209bda155f0f7de65ec947e4820dadcfa56d`.
+Their hashes match the independent full-runtime HTTP native proof. Native
+activity is established by actual tools and page requests, not screenshots alone.
+
+## Primary full-runtime resource budget
+
+The parent executed unmodified committed `22d8f876` native HTTP test under the
+same verified gVisor and exact candidate binary: **1/1 passes in 27.3s**.
+Artifacts: `runtime-proof/runsc-probe/http-evidence/`, `native-http-run.log`,
+`http-bundle/config.json`. It proves two successful native helpers, one expected
+pre-enable failure, six controlled model calls, two actual page requests, live
+frames and reconnect. JSON `state: loading` is the initial enable acknowledgement;
+the test separately requires each observed frame's state to be Live.
+
+The host cgroup is mounted read-only at `/host-cgroup`. CPU uses cumulative
+`cpu.stat usage_usec` over monotonic time, rejecting changed cgroup identity or
+backwards counters. Memory samples charged `memory.current`. This scope includes
+the Rust runtime, native Agent, browser and proof processes; it excludes public
+API/Web and unrelated VM processes.
+
+| Mode | Seconds | Leases | Captures | CPU % of one core | Peak charged bytes | Observation JSON B/s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Normal | 5.246 | 1 | 4 | 20.35 | 968544256 | 9741.88 |
+| Hidden | 5.063 | 0 | 0 | 16.13 | 965300224 | 0 |
+| Closed | 5.051 | 0 | 0 | 15.28 | 952246272 | 0 |
+| Multiple | 5.368 | 4 | 5 | 19.78 | 933285888 | 38089.01 |
+
+These are approximately five-second measurements on two small local pages,
+not sustained-load guarantees, browser-only working memory or full HTTP/TLS
+wire accounting. Hidden/closed stop capture/delivery while Agent/browser work
+may continue. Lower sampled values in later phases do not establish that more
+observers reduce cost. The VM has 2 vCPUs and 4 GiB RAM. OCI requests 2 GiB memory,
+512 PIDs and one CPU; the earlier host sampler observed memory/PID limits but
+`cpu.max='max 100000'`, so an enforced one-core CPU cap is **not claimed**.
+
+The smaller mediator/CLI-only run remains at `runsc-probe/cgroup-budget.json`:
+normal 12.87% / 518.50 MiB, hidden 5.75% / 505.11 MiB, closed 4.98% / 500.80 MiB,
+four observers 7.94% / 490.17 MiB, whole charged peak 539.16 MiB, peak 99 PIDs.
+Its 100ms host samples avoid process-RSS double counting. This is supplemental
+evidence with a smaller boundary, not the primary full-runtime cost.
+
+Application limits: explicit default-off enablement; at most one enabled Agent
+browser per Sandbox, 16 expiring observer leases, one shared frame, 1280×720 JPEG
+quality 45, ≤262144 decoded bytes/frame, ≥1000ms between capture attempts,
+≤16 delivered frames per rolling second, bounded CDP/control buffers/deadlines.
+The limits also bound payloads on complex pages; measured small-page bandwidth
+is not a universal maximum.
 
 ## Immutable Linux candidate
 
@@ -71,13 +164,12 @@ navigations and real runtime HTTP frames, preserves context on release/reconnect
 and measures four short resource windows. It reads stable cgroup v2 `cpu.stat`
 and `memory.current` (optionally `CMA_CGROUP_DIRECTORY`), rejects backwards
 cumulative CPU and changing cgroup identity, and labels full-container scope.
-Those live/resource branches are **not yet validated** under a compatible Linux
-policy. The authorized public service and Web part of the complete R chain
-remains a separate outstanding requirement.
+The live/resource branch now passes in the parent's pinned gVisor HTTP run above;
+the completed public/Web chain is recorded in the first section.
 
 No production runtime source or dependency changed between binary source
-`8be729357` and merged `ed371149e`; only the three browser test/harness files
-changed under the runtime crate. The candidate therefore contains the current
+`8be729357` and final feature source `da83bbdc0`; only browser test/harness files
+and 18's native replay test changed in Layers 3/4. The candidate contains the current
 15 runtime implementation, while its external tests have separately pinned
 committed provenance.
 
@@ -90,11 +182,18 @@ its sandbox and exits. The live navigation test in this exact image fails with
 `unsupported`, zero frames and zero observers (`linux-final-native-blocked.log`).
 No `--no-sandbox` flag or weakened browser isolation is used or accepted.
 
-This establishes a limitation of the available Docker/runc policy. It does
-**not** establish that actual production gVisor is unsupported. The parent is
-independently probing an official standalone runsc OCI route; ticket15 does not
-duplicate that probe. A successful compatible route must still run the complete
-native navigation, public authorization, Web and resource-budget chain.
+This establishes a limitation of Docker/runc policy. Official runsc
+**release-20261102.0**, aarch64/systrap, now passes mediator and full-runtime
+native tests. Official archive SHA-256:
+`909c95f245a46000d3bb0d5285f07dde23597056e7c3a4aab758b218e95bdab0`.
+The parent verified the official checksum and actual version; commands,
+configuration and downloads are retained in `runtime-proof/runsc-probe/README.md`.
+The proof uses uid/gid10001, empty capability sets, noNewPrivileges, read-only
+root, private writable tmpfs and no external network. No Chrome `--no-sandbox`,
+privileged container, Docker restart or policy weakening is used. This proves
+this pinned gVisor configuration, **not** the actual production GKE runtime.
+Docker/runc refusal remains truthful. The earlier `--no-sandbox` primitive probe
+is excluded from acceptance.
 
 ## Preserved native development evidence and corrected accounting
 
@@ -125,8 +224,8 @@ measurement. The rejected earlier artifact is retained as
 RSS sums sampled mediator/Chromium process RSS and can double-count shared pages;
 it is not isolated browser working memory. Response bytes measure application
 observation JSON, not complete public HTTP/TLS wire bandwidth. These are short
-five-second windows, not sustained-load results. Required Linux CPU/memory and
-wire-budget measurements remain pending, using a stable cgroup/container scope.
+five-second windows, not sustained-load results. The primary stable Linux
+full-runtime measurements above supplement rather than rewrite this artifact.
 
 ## Shared contracts and Web
 
@@ -135,13 +234,43 @@ The real public router and Core authorization run with a controlled runtime
 port; frame fixtures prove protocol handling only. The same cases pass through
 typed TypeScript and Rust SDK methods (36 HTTP cases each). The shared JSON
 inventory contains all three browser operations and their exact named problems.
-Before the parent's 14/07 repair merges, its global count is 238 actual versus
-233 declared; the five unrelated missing entries remain visible, not exempted.
+The parent's 14 environment and four 07 deliverable entries, shared handler
+cases and both SDK dispatchers are retained. The independent JSON policy gate
+passes **238/238 OpenAPI operations, 2834 cases, 1620 exact named HTTP problem
+pairs and 23 protocol-failure pairs** (`shared-inventory-final.log`). This is
+distinct from the Markdown `API_REST` inventory check. Latest focused handler
+replay passes 36 browser cases; Rust SDK passes 36 typed HTTP cases. The
+TypeScript browser-name filter passes 56 cases (the 36 browser-operation cases
+plus existing browser-owned protocol cases).
 
 The merged Web has four focused panel tests and one actual Chrome rendering
 check at 1440/390/320 pixels. It decodes real development JPEGs through a
 controlled public response, verifies default selection and retained manual
 selection, freshness expiry, reconnect, hidden/closed leases, scope changes and
-preserved conversation drafts. It is U evidence, not the missing complete R
-chain. Stable screenshots and logs are under `ticket15-proof/web-final` and
-`web-chrome-merged.log`. Web/SDK TypeScript checks and the merged Web build pass.
+preserved conversation drafts. It is U evidence; the actual chain is separate.
+Earlier screenshots/logs remain under `ticket15-proof/web-final` and
+`web-chrome-merged.log`. Latest merged checks: 3 Web files / 16 tests, typecheck,
+production build, one Chrome U check, two named 14 private-file/shared-workspace
+guard tests, shared browser handler/SDK cases and independent JSON inventory.
+Existing build chunk warnings and baseline format/size issues are not changed.
+
+## Handoff to 16 and 17
+
+16 can use owner-authorized `PUT /api/v1/agents/{id}/browser` explicit enablement
+after current runtime/Agent readiness. Default status is not_enabled; opening
+Computer or creating a Sandbox does not start a browser. Incarnation comes from
+the existing environment endpoint. There is no global desktop startup or Home
+creation option in 15.
+
+17 can extend the private mediated runtime browser command boundary, fenced by
+Agent/Sandbox/runtime boot and browser context. CDP stays on inherited pipes;
+native commands use a private Unix socket. The public service only forwards
+authorized observation/configuration. No public input/navigation route, takeover
+lease, exclusive-input arbitration, PTY or available-control claim is present.
+Environment control remains unsupported.
+
+The single AgentPanel/onSelect and observation owner are preserved; 18 operation
+replay retains explicit selection and never supplies historical browser frames.
+14 private-home/upload guards and shared Workspace behavior remain intact.
+Only own proof services are stopped; worktree and VM remain for the parent.
+No deploy, push or PR is performed.
