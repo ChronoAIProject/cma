@@ -688,6 +688,18 @@ to a setup preview. This is title provenance, not a semantic title generator.
 `runtime_metadata_changed` replay events carry the same atomic metadata snapshot.
 Shared conversation reads retain their existing metadata redaction.
 
+Admission of the first owner task persists a bounded 48-character preview in
+these existing metadata fields, with `description_source: prompt_preview` and
+`description_is_setup_preview: false`. An initial message contributes only with
+explicit `purpose: task`; automatic setup does not supply a task name. The preview
+does not wait for provider output or require another turn. Reconnect previews
+and unknown-source observations cannot replace it; a valid provider title can.
+Owner `owner_title` from revisioned preferences remains the display priority and
+supports repeated renames even when an automatic title was already saved. The
+separate legacy title setter retains its write-once compatibility behavior.
+Automatic title generation excludes a recorded setup/unknown first turn and
+uses the first subsequent task; names and sources remain durable across reads.
+
 
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
 Agent preserves readable history; deleting it records cleanup of its Worktree

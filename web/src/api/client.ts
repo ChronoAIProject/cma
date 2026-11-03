@@ -45,6 +45,7 @@ export interface CommandOptions extends ReadOptions {
 }
 
 export interface AgentStreamOptions extends ReadOptions {
+  readonly idempotencyKey?: string;
   readonly after?: number;
   readonly onEvent: (event: AgentLiveEvent) => void;
 }
