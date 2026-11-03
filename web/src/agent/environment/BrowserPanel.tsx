@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, type AgentBrowserClient, type BrowserObservation } from '@chronoai/cma-sdk';
+import {
+  ApiError,
+  type AgentBrowserClient,
+  type AgentBrowserControlClient,
+  type BrowserObservation,
+} from '@chronoai/cma-sdk';
 import { Button } from '../../ui/Button';
+import { BrowserControl } from './BrowserControl';
 
 type BrowserStatus = BrowserObservation['state'] | 'forbidden';
 type Frame = NonNullable<BrowserObservation['frame']>;
@@ -8,12 +14,14 @@ const hidden = () => document.visibilityState === 'hidden';
 
 export function BrowserPanel({
   client,
+  controlClient,
   agentId,
   incarnation,
   active,
   onReload,
 }: {
   readonly client: AgentBrowserClient;
+  readonly controlClient?: AgentBrowserControlClient;
   readonly agentId: string;
   readonly incarnation: string;
   readonly active: boolean;
@@ -25,6 +33,7 @@ export function BrowserPanel({
     state: BrowserStatus;
     frame?: Frame;
     location?: string;
+    contextId?: string;
   }>();
   const [decoded, setDecoded] = useState<Frame>();
   const [clock, setClock] = useState(Date.now);
@@ -43,7 +52,7 @@ export function BrowserPanel({
     let terminal = false;
     const observer = crypto.randomUUID();
     const publish = (state: BrowserStatus, retained: Frame | null | undefined = frame) => {
-      if (alive) setStored({ scope, state, frame: retained ?? undefined, location });
+      if (alive) setStored({ scope, state, frame: retained ?? undefined, location, contextId });
     };
     const startClock = () => {
       setClock(Date.now());
@@ -159,29 +168,43 @@ export function BrowserPanel({
           unsupported: 'Browser is not supported by this environment.',
           not_enabled: 'Browser is not enabled for this environment.',
         }[current?.state ?? 'loading'];
+  const picture = frame ? (
+    <figure>
+      <img
+        key={frame.sequence}
+        src={`data:image/jpeg;base64,${frame.data}`}
+        alt="Agent browser page"
+        width={1280}
+        height={720}
+        onLoad={() => setDecoded(frame)}
+        onError={() => setDecoded(undefined)}
+      />
+      <figcaption>
+        {current?.location} ·{' '}
+        <time dateTime={frame.captured_at}>{new Date(frame.captured_at).toLocaleTimeString()}</time>
+      </figcaption>
+    </figure>
+  ) : null;
   return (
     <section className="agent-browser" aria-label="Browser observation">
       <p role="status">{message}</p>
-      {frame ? (
-        <figure>
-          <img
-            key={frame.sequence}
-            src={`data:image/jpeg;base64,${frame.data}`}
-            alt="Agent browser page"
-            width={1280}
-            height={720}
-            onLoad={() => setDecoded(frame)}
-            onError={() => setDecoded(undefined)}
-          />
-          <figcaption>
-            {current?.location} ·{' '}
-            <time dateTime={frame.captured_at}>
-              {new Date(frame.captured_at).toLocaleTimeString()}
-            </time>
-          </figcaption>
-        </figure>
-      ) : null}
-      <p>Observation only</p>
+      {controlClient && current?.contextId ? (
+        <BrowserControl
+          key={current.contextId}
+          client={controlClient}
+          agentId={agentId}
+          incarnation={incarnation}
+          contextId={current.contextId}
+          active={!!live && active}
+        >
+          {picture}
+        </BrowserControl>
+      ) : (
+        <>
+          {picture}
+          <p>Observation only</p>
+        </>
+      )}
       {['disconnected', 'forbidden'].includes(current?.state ?? '') ? (
         <Button size="sm" onClick={onReload}>
           Check browser access again
