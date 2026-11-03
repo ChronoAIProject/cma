@@ -32,9 +32,9 @@ not claim a deployed Linux control-plane journey or OS process isolation.
 The file-preservation and Agent-isolation criteria retain their original wording.
 They are marked complete against the repository resource-ownership interpretation
 and verification in [file-scope evidence](../14-FILE-SCOPE.md#acceptance-interpretation):
-authorized shared files belong to Sandbox/Workspace; actual Agent-private homes,
-uploads and runtime state are isolated from the public computer surface. This is
-repository contract analysis, not a new user clarification or scope approval.
+authorized shared files belong to Sandbox/Workspace; the public computer surface
+excludes private home/state roots and foreign Agent uploads. This is repository
+contract analysis, not a new user clarification or scope approval.
 
 ## Testing boundaries（2026-11-03 已确认）
 
@@ -138,7 +138,7 @@ layout passes at both desktop and mobile sizes.
 | Types/build | Final merged Web/e2e TypeScript checks and production build passed; private `cargo check --locked -p layer1-public -p layer4-runtime` passed. SDK TypeScript had already passed; the scope fix adds no SDK field or wire revision |
 | Formatting/lint | Changed UI/e2e Prettier and ESLint passed; changed Rust files passed rustfmt with `skip_children=true`, avoiding unrelated baseline modules; `git diff --check` and Gitleaks passed |
 
-Final functional merge `b31a7c146` includes `7739c431f` (02, 03, 06, 09 and 11).
+Earlier functional merge `b31a7c146` includes `7739c431f` (02, 03, 06, 09 and 11).
 The style append conflict retains both tickets' rules. Final merged evidence is
 in `final-merged-web.log`, `completed-disclosures.log`, `final-merged-chrome.log`,
 `final-merged-rust.log`, `final-merged-build.log`, `final-scope-runtime.log` and
@@ -147,6 +147,25 @@ and five toolbar cases after this merge, including the current scope label and
 retained mobile editor actions; desktop/mobile screenshots were inspected.
 The earlier named durable-output public test actually ran one test, using the
 private target; its evidence remains in `public-output-merged.log`.
+
+Latest functional merge `4f530f283` includes integration `ef5e20c1f` (05).
+The test-module conflict retains both the authorized conversation fixture export
+and task-title tests. Focused follow-up passed 55 web tests across five files
+(task titles, panel scope and all three disclosure suites), Web TypeScript,
+nine core tool-update tests, four public task-title tests and the one public
+durable-output projection test. Rust again used the private target with two jobs;
+all 14 named tests actually ran. Logs are `attribution-merge-web.log`,
+`attribution-merge-types.log` and `attribution-merge-rust.log` in `ticket14-proof`.
+The earlier Chrome, build and file-boundary evidence above was not rerun for the
+documentation correction.
+
+Documentation correction `c6bd673a3` removes the false attribution and restores
+the original acceptance wording. An exact comparison confirms all eight criteria
+match integration's original text, excluding checkbox status. An audit of all 94
+changed files found neither false-attribution phrase. The resource-ownership
+interpretation is recorded separately in `14-FILE-SCOPE.md`; private-file guards
+and the tickets 15/18 capability/selection interfaces are unchanged. Diff whitespace
+checks and Gitleaks passed (`attribution-gitleaks.log`).
 
 Rust uses pinned 1.96.1, `CARGO_BUILD_JOBS=2`, and the private APFS-cloned target
 `/Users/liuyitian/code/cma-ui-worktrees/ticket14-proof/cargo-target`. Workspace
