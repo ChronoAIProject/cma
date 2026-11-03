@@ -50,11 +50,6 @@
   display: flex;
   flex-direction: column;
 }
-.agent-computer__files > .agent-files-panel {
-  flex: 1;
-  height: auto;
-  min-height: 0;
-}
 .agent-computer__scope {
   margin: 0;
   padding: 8px 12px;

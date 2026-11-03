@@ -1,5 +1,13 @@
 # Ticket 10：负向原因验收与交接
 
+后续集成修复见 [INTEGRATION-REPAIRS](INTEGRATION-REPAIRS.md)：14 的 environment
+共享 JSON 操作、10 个 handler cases 及两个 typed SDK dispatch 已补；六项旧首页
+断言、copy 扫描与 CSS collision 已修复，保留本票反馈路由和案例。后续已补齐
+07 四条 delivery 的真实共享契约，inventory 为 235/235。本票从 484 增至 556 行的
+`agents_tests/message_feedback.rs` 已拆出内存存储和 seed fixture：原文件 438 行，
+`message_feedback_fixture.rs` 123 行，未改 gate 或通过改名规避限制。12 项公开反馈/schema
+回归、26 个原因案例及 18 个旧 vote 案例全部通过；日志见 integration repairs 文档。
+
 日期：2026-11-03。状态：本票验收完成；全仓门禁的上游例外单独列出。
 
 工作区 `/Users/liuyitian/code/cma-ui-worktrees/ticket-10`，分支 `codex/cma-ui-10`。初始基线 `7739c431f`，包含 01/02/03/06/09/11；`262a2c6fc` 先合入 14 所在集成，最终 `e5f5e952b` 合入最新集成 `d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8`，同时保留 04/05/14。样式冲突通过保留完整集成文档为原样前缀、追加本票 33 行解决；OpenAPI 复用 04 抽出的 composition，保留其 repository 扩展并增加反馈契约。原工作区、集成工作区及其他 worker 源码未编辑；没有推送、部署、PR 或 worktree 删除。

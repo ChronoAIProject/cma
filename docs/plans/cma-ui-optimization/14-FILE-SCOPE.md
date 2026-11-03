@@ -95,3 +95,9 @@ Logs reside outside the repository in
 `runtime-file-scope-red.log`, `runtime-file-scope-green.log`, and
 `seven-disclosure-regressions.log`. Tests use the private Rust target and actual
 nonzero named tests. The final ticket records final merged check counts.
+
+The bounded integration repair moves the unchanged public-path and home-mutation
+guards to `layer2-core/src/sandbox/agent_filesystem/scope.rs`, keeping their caller
+and ordering intact. Runtime state-root filters and trusted managed-instruction
+paths are untouched. See [INTEGRATION-REPAIRS](INTEGRATION-REPAIRS.md) for the
+post-merge source-size, public-handler and SDK evidence.
