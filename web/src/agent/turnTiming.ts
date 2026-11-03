@@ -11,6 +11,7 @@ export function startTurn(
   return {
     ...state,
     activeRunId: runId,
+    latestTurnId: runId,
     activeRunStartedAt: start,
     turnTiming:
       start === undefined || !Number.isFinite(Date.parse(start))

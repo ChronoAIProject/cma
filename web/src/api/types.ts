@@ -325,6 +325,7 @@ export interface AgentLiveEvent {
 }
 
 export interface AgentRunRequest {
+  readonly forwardedProps?: { readonly answerContext: import('@chronoai/cma-sdk').AnswerContext };
   readonly threadId: string;
   readonly runId: string;
   readonly messages?: readonly {
