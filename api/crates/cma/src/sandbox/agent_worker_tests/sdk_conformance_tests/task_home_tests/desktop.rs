@@ -59,12 +59,16 @@ impl HomeVolumeStore for Homes {
     ) -> layer3_adapter::Result<HomeVolumeReceipt> {
         let attachment = HomeVolumeAttachment {
             request: request.clone(),
-            receipt: HomeVolumeReceipt {
-                native_authority: None,
-                volume_id: request.volume_id.clone(),
-                request_sha256: request.computed_sha256(),
-                storage_reference: "fixture-home".into(),
-                storage_generation: "original-disk".into(),
+            receipt: if request.policy.mounts_full_home() {
+                super::integrated_tests::home::receipt(request)
+            } else {
+                HomeVolumeReceipt {
+                    native_authority: None,
+                    volume_id: request.volume_id.clone(),
+                    request_sha256: request.computed_sha256(),
+                    storage_reference: "fixture-home".into(),
+                    storage_generation: "original-disk".into(),
+                }
             },
         };
         Ok(self
@@ -111,6 +115,18 @@ impl RuntimeBoundary {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBoundary {
+    async fn reserve_home_request(
+        &self,
+        _: &ProviderSandboxRequest,
+        home: &HomeVolumeRequest,
+    ) -> layer3_adapter::Result<HomeVolumeRequest> {
+        let mut home = home.clone();
+        if home.policy.mounts_full_home() {
+            home.scope = Homes::default().allocation_scope();
+        }
+        Ok(home)
+    }
+
     async fn provision(
         &self,
         request: ProviderSandboxRequest,
@@ -226,6 +242,9 @@ pub(super) async fn configure(harness: &mut Harness<MongoSandboxStore>) -> Arc<R
     let mut spec = CodexSandboxSpec::default();
     if native.is_some() {
         spec.deployment.upstream_base_url = "http://127.0.0.1:16416/v1".into();
+        if std::env::var_os("CMA_INTEGRATED_RELEASE_PROOF").is_some() {
+            spec.deployment.platform_base_url = "http://127.0.0.1:16416".into();
+        }
     }
     let runtime = Arc::new(RuntimeBoundary {
         backend: harness.backend.clone(),

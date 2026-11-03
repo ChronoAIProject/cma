@@ -67,6 +67,10 @@
   border: 0;
 }
 
+[data-details-inline] .agent-composer textarea {
+  max-height: min(160px, 20dvh);
+}
+
 .agent-composer textarea:focus-visible {
   box-shadow: none;
 }

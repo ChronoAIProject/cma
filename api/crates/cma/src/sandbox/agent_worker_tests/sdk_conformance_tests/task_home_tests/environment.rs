@@ -15,7 +15,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ring::rand::{SecureRandom, SystemRandom};
 
-struct LocalIdentity;
+pub(super) struct LocalIdentity;
 
 struct RepositoryConnection(std::sync::atomic::AtomicBool);
 
@@ -56,8 +56,9 @@ impl OwnerTokenSource for LocalIdentity {
     }
 }
 
-async fn identity_provider() -> (String, tokio::task::JoinHandle<()>) {
+pub(super) async fn identity_provider() -> (String, tokio::task::JoinHandle<()>) {
     let routes = Router::new()
+        .merge(super::integrated_tests::catalog::identity_routes())
         .route(
             "/api/v1/user-services",
             get(|| async {
@@ -102,6 +103,10 @@ async fn identity_provider() -> (String, tokio::task::JoinHandle<()>) {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
 async fn initial_task_public_default_environment_delivers_exact_task_after_preparation() {
+    if std::env::var_os("CMA_INTEGRATED_RELEASE_PROOF").is_some() {
+        super::integrated_tests::run().await;
+        return;
+    }
     initial_task_environment(None, None, false).await;
     initial_task_environment(None, None, true).await;
 }

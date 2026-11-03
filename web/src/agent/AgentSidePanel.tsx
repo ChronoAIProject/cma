@@ -82,8 +82,8 @@ export function AgentSidePanel({
   useEffect(() => {
     if (observedReadiness.current === readiness) return;
     observedReadiness.current = readiness;
-    if (features?.files.state !== 'available') reloadEnvironment();
-  }, [readiness, features?.files.state, reloadEnvironment]);
+    reloadEnvironment();
+  }, [readiness, reloadEnvironment]);
   const replaySelection = useReplaySelection(observation);
   const [selection, setSelection] = useState<
     { client: typeof client; agentId: string; tab: AgentPanel; open: boolean } | undefined
