@@ -113,6 +113,21 @@ it.each(
       if (method === 'GET' && requestPath === '/api/v1/organizations' && !visitor) {
         return reply({ items: [] });
       }
+      if (method === 'GET' && requestPath === '/openapi.json' && !visitor) {
+        return reply({
+          openapi: '3.1.0',
+          info: { title: 'CMA', version: '1' },
+          paths: {},
+          'x-cma-task-repository': true,
+          components: {
+            schemas: {
+              AgentLifecycleCreateRequest: {
+                properties: { initial_message: { type: 'string' } },
+              },
+            },
+          },
+        });
+      }
       if (method === 'GET' && requestPath === '/api/v1/triggers/public/public-example') {
         return reply({ ...PUBLIC_PREVIEW, always_review: false });
       }
@@ -154,7 +169,12 @@ it.each(
         </StrictMode>,
       );
       await screen.findByRole('heading', {
-        name: path === '/' ? 'Welcome to CMA' : PUBLIC_PREVIEW.title,
+        name:
+          path === '/'
+            ? visitor
+              ? 'Welcome to CMA'
+              : 'What would you like to do?'
+            : PUBLIC_PREVIEW.title,
       });
       await waitFor(() =>
         expect(requests.slice(before)).toContainEqual(
@@ -166,7 +186,13 @@ it.each(
       await act(async () => undefined);
       expect(requests.slice(before)).toContainEqual({ method: 'GET', path: '/auth/session' });
       expect(window.location.pathname).toBe(path === '/' ? '/agent-manager' : path);
-      expect(sessionStorage.length).toBe(0);
+      expect(Object.fromEntries(Object.entries(sessionStorage))).toEqual({
+        'cma:task-viewer': 'unseen-cma-identity',
+      });
+      if (path === '/' && !visitor) {
+        expect(screen.getByRole('textbox', { name: 'Your task' })).toHaveValue('');
+        expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+      }
       expect(rejectedRequests).toEqual([]);
       expect(resourceWrites).toEqual({
         sandboxes: 0,
