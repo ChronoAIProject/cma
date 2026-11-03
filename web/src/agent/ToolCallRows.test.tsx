@@ -27,6 +27,8 @@ describe('ToolCallRow', () => {
     ['in_progress', undefined, 'Outcome not reported (last status: in_progress)', 'neutral'],
   ])('pairs status %s with its word and dot', (status, activeRunId, word, dot) => {
     render(<ToolCallRow tool={call('a', status)} activeRunId={activeRunId} />);
+    const toggle = screen.getByRole('button', { name: /^1 tool call/ });
+    if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle);
     const row = screen.getByRole('article', { name: 'Tool call: Call a' });
     expect(row).toHaveTextContent(word);
     expect(row).toHaveTextContent('execute');
@@ -35,6 +37,7 @@ describe('ToolCallRow', () => {
 
   it('draws no dot for a cancelled call and never states a duration', () => {
     render(<ToolCallRow tool={call('a', 'cancelled')} activeRunId={undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: '1 tool call' }));
     const row = screen.getByRole('article', { name: 'Tool call: Call a' });
     expect(row).toHaveTextContent('Cancelled');
     expect(row.querySelector('.statedot')).toBeNull();
@@ -43,6 +46,7 @@ describe('ToolCallRow', () => {
 
   it('offers Details only when the public contract supplied a body', () => {
     const { rerender } = render(<ToolCallRow tool={call('a', 'completed')} activeRunId="1" />);
+    fireEvent.click(screen.getByRole('button', { name: '1 tool call' }));
     expect(screen.queryByText('Details')).not.toBeInTheDocument();
     rerender(<ToolCallRow tool={call('a', 'completed', { detail: 'exit 0' })} activeRunId="1" />);
     fireEvent.click(screen.getByText('Details'));
