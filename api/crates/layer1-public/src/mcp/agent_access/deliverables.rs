@@ -37,7 +37,7 @@ pub(super) fn tool() -> Value {
         "description":"After actually producing a file, verify its exact home-relative path, or select an already published Agent artifact by its exact ID. Copy the returned marker unchanged on a standalone line in the final answer delivering that result. This reads and hashes bounded bytes; it never publishes private files, takes a snapshot, scans a directory, infers a name, or grants sharing. Do not use absolute paths or credentials. A changed live file cannot later be downloaded as its old result. Document markers come from publish_document/update_document receipts.",
         "inputSchema":{"type":"object","additionalProperties":false,"required":["kind"],"properties":{
             "kind":{"type":"string","enum":["live_file","agent_artifact"]},
-            "path":{"type":"string","minLength":1,"maxLength":2048},
+            "path":{"type":"string","minLength":1,"maxLength":1024},
             "id":{"type":"string","pattern":"^art_[a-f0-9]{64}$"}
         },"oneOf":[{"required":["kind","path"],"properties":{"kind":{"const":"live_file"}}},{"required":["kind","id"],"properties":{"kind":{"const":"agent_artifact"}}}]},
         "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}})

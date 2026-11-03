@@ -40,6 +40,7 @@ export type * from './agents/access-requests.js';
 export type * from './agents/shared.js';
 export type * from './agents/provenance.js';
 export type * from './agents/artifacts.js';
+export type * from './agents/deliverables.js';
 export type * from './agents/attachments.js';
 export type * from './agents/channel-usage.js';
 export type * from './instances/shared.js';
