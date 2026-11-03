@@ -26,6 +26,8 @@ mod startup_support;
 mod startup_timing;
 mod startup_wait;
 mod support;
+#[cfg(test)]
+pub(super) use support::WorkerFailure;
 
 const DEFAULT_LEASE: Duration = Duration::from_secs(18 * 60);
 const DEFAULT_RETRY: Duration = Duration::from_secs(30);

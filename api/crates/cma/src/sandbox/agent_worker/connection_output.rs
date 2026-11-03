@@ -78,22 +78,51 @@ async fn drain<T>(
                     ConversationUpdate::RuntimeOutput { .. } | ConversationUpdate::Lost { .. } => return Err(unavailable()),
                     _ => None,
                 };
+                let mut completed = None;
                 loop {
-                    match recorder.record_update(agent_id, generation, &mut assembly, update.clone(), now_rfc3339()).await {
+                    // Confirmation and recording share the Agent writer queue.
+                    // Keep driving the opener while this receipt waits for its
+                    // transaction, then finish the receipt before handing off.
+                    let recorded = {
+                        let recording = recorder.record_update(agent_id, generation, &mut assembly, update.clone(), now_rfc3339());
+                        tokio::pin!(recording);
+                        loop {
+                            tokio::select! {
+                                result = &mut operation, if completed.is_none() => completed = Some(result),
+                                result = &mut recording => break result,
+                            }
+                        }
+                    };
+                    match recorded {
                         Ok(_) => {
                             if let Some(receipt) = receipt {
                                 if let Err(error) = receipt.acknowledge().await {
-                                    return prefer_failure(operation.as_mut(), adapter_failure(error));
+                                    return recorded_failure(completed, operation.as_mut(), adapter_failure(error));
                                 }
                             }
                             break;
                         }
                         Err(AgentConversationError::Unavailable(_)) => tokio::time::sleep(Duration::from_secs(1)).await,
-                        Err(_) => return Err(unavailable()),
+                        Err(_) => return recorded_failure(completed, operation.as_mut(), unavailable()),
                     }
+                }
+                if let Some(result) = completed {
+                    return result;
                 }
             }
         }
+    }
+}
+
+fn recorded_failure<T>(
+    completed: Option<Result<T, WorkerFailure>>,
+    operation: impl Future<Output = Result<T, WorkerFailure>>,
+    failure: WorkerFailure,
+) -> Result<T, WorkerFailure> {
+    match completed {
+        Some(Err(original)) => Err(original),
+        Some(Ok(_)) => Err(failure),
+        None => prefer_failure(operation, failure),
     }
 }
 
