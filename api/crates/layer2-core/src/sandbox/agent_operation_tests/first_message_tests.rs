@@ -135,6 +135,10 @@ async fn first_message_fence_is_durable_before_the_runtime_side_effect() {
     ));
     assert_eq!(registry.resolutions(), 2);
     let logs = store.agent_log(&agent.id, 0, 20).await.unwrap();
+    let logs: Vec<_> = logs
+        .into_iter()
+        .filter(|entry| !matches!(entry.kind, AgentLogKind::RuntimeMetadataChanged { .. }))
+        .collect();
     assert!(matches!(
         logs.as_slice(),
         [

@@ -257,6 +257,14 @@ impl AgentOperationService {
             from: AgentStatus::Ready,
             to: AgentStatus::Working,
         });
+        if fenced.purpose == Some(super::FirstMessagePurpose::Task) {
+            logs.extend(
+                next.conversation
+                    .observations
+                    .metadata
+                    .record_task_preview(&fenced.text),
+            );
+        }
         self.commit_admission(&current, next, logs, at, parent)
             .await?;
         Ok(PreparedFirstMessage {
