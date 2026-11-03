@@ -31,6 +31,7 @@
 
 .task-home textarea:focus-visible {
   outline: none;
+  box-shadow: none;
 }
 
 .task-home pre {

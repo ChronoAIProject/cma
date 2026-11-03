@@ -159,7 +159,7 @@ function TaskComposer({
       </div>
       {supported === undefined ? <p role="status">Checking task creation…</p> : null}
       {supported === false ? (
-        <p role="status">Task creation is unavailable on this service. Your draft is saved.</p>
+        <p role="status">Task creation is unavailable on this service.</p>
       ) : null}
       {!canCreate ? <p role="alert">You do not have permission to create a new Sandbox.</p> : null}
       {validation ? (
