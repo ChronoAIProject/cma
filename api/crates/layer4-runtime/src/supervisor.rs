@@ -161,6 +161,12 @@ impl Supervisor {
 
     pub(crate) async fn dispatch(&self, request: RequestFrame) -> ResponseFrame {
         let operation = request.operation();
+        if let RequestFrame::BrowserControl(request) = request {
+            return match self.browser_control(request).await {
+                Ok(response) => response,
+                Err(error) => error.response(operation),
+            };
+        }
         if let RequestFrame::Browser(request) = request {
             return match self.browser(request).await {
                 Ok(response) => response,

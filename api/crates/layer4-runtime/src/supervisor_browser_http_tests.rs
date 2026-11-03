@@ -118,6 +118,12 @@ async fn real_browser_enablement_survives_cancelled_http_observation_without_res
     disconnected["operation"] = json!("release");
     let released = exchange(&router, disconnected).await;
     let observed_again = exchange(&router, request.clone()).await;
+    let acquired = exchange(&router, json!({"t":"browser_control", "sandbox_id":"sandbox-test", "runtime_generation":1,
+        "boot_id":supervisor.boot_id, "agent_id":"browser-agent", "context_id":recovered["observation"]["context_id"],
+        "actor":"owner-proof", "client_id":"http-proof", "command":"acquire", "expected_revision":0,
+        "operation_id":"78af4405-b644-44ab-b58d-53ce4d62acc0"})).await;
+    assert_eq!(acquired["t"], "browser_control", "{acquired}");
+    assert_eq!(acquired["control"]["state"], "user");
     request["operation"] = json!("disable");
     exchange(&router, request).await;
     assert_eq!(recovered["t"], "browser", "{recovered}");

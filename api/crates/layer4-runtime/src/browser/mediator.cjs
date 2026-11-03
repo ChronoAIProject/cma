@@ -146,8 +146,9 @@ async function dispatch(request) {
     case 'observe': return observe(request);
     case 'release': observers.delete(request.observer); return status();
     case 'control':
-      if (!browser || browser.closed || !context || request.context_id !== context) throw refused('browser_identity');
-      return control.dispatch(request, input => sendInput(browser, session, input));
+      if (!browser || browser.closed || !context || (request.context_id && request.context_id !== context)) throw refused('browser_identity');
+      if (!request.context_id && request.command !== 'status') throw refused('browser_identity');
+      return { ...await control.dispatch(request, input => sendInput(browser, session, input)), context_id: context };
     default: throw new Error('Unsupported browser operation');
   }
 }

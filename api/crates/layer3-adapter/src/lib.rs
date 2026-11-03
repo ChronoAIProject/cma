@@ -9,10 +9,12 @@ mod agent;
 mod agent_attachment;
 mod agent_filesystem;
 mod browser;
+mod browser_control;
 pub use browser::{
     BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,
     BrowserRequest, BrowserState,
 };
+pub use browser_control::*;
 mod agent_skill_install;
 pub use agent_skill_install::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
 mod agent_provider;
