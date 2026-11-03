@@ -57,10 +57,11 @@ function fixture() {
   };
 }
 
-function panel(client: ReturnType<typeof fixture>['client']) {
+function panel(client: ReturnType<typeof fixture>['client'], accountId = 'owner-a') {
   return (
     <BrowserControl
       client={client}
+      accountId={accountId}
       agentId="agent-a"
       incarnation="current"
       contextId={context}
@@ -166,10 +167,24 @@ it('ignores an old account acquisition response after its panel is removed', asy
   await waitFor(() => expect(acknowledge).toBeDefined());
   oldPanel.unmount();
   const another = fixture();
-  render(panel(another.client));
+  render(panel(another.client, 'owner-b'));
   await screen.findByText('Agent is controlling');
   await act(async () => acknowledge?.());
   expect(screen.queryByText('You are controlling')).not.toBeInTheDocument();
   fireEvent.keyDown(screen.getByRole('application'), { key: 'X' });
   expect(another.requests.every((request) => request.method === 'GET')).toBe(true);
+});
+
+it("does not query another account's stored uncertain operation after switching accounts", async () => {
+  const original = fixture();
+  const oldPanel = render(panel(original.client));
+  original.drop();
+  fireEvent.click(await screen.findByRole('button', { name: 'Take control' }));
+  await screen.findByText('Control state unknown');
+  oldPanel.unmount();
+  const next = fixture();
+  render(panel(next.client, 'owner-b'));
+  await screen.findByText('Agent is controlling');
+  expect(next.requests.at(-1)?.value.operation_id).toBeUndefined();
+  expect(next.requests.every((request) => request.method === 'GET')).toBe(true);
 });

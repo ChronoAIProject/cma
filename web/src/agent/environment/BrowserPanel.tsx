@@ -15,6 +15,7 @@ const hidden = () => document.visibilityState === 'hidden';
 export function BrowserPanel({
   client,
   controlClient,
+  controlAccountId,
   agentId,
   incarnation,
   active,
@@ -22,6 +23,7 @@ export function BrowserPanel({
 }: {
   readonly client: AgentBrowserClient;
   readonly controlClient?: AgentBrowserControlClient;
+  readonly controlAccountId?: string;
   readonly agentId: string;
   readonly incarnation: string;
   readonly active: boolean;
@@ -188,10 +190,11 @@ export function BrowserPanel({
   return (
     <section className="agent-browser" aria-label="Browser observation">
       <p role="status">{message}</p>
-      {controlClient && current?.contextId ? (
+      {controlClient && controlAccountId && current?.contextId ? (
         <BrowserControl
           key={current.contextId}
           client={controlClient}
+          accountId={controlAccountId}
           agentId={agentId}
           incarnation={incarnation}
           contextId={current.contextId}
