@@ -51,6 +51,10 @@ export const v2AgentEventKind = tagged({
     title: nullable(text),
     output: optional(strict({ text, truncated: boolean })),
   }),
+  tool_output_reported: kind('tool_output_reported', {
+    call_id: text,
+    output: strict({ text, truncated: boolean }),
+  }),
   approval_requested: kind('approval_requested', {
     approval_id: text,
     action: nullable(text),

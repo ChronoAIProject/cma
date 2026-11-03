@@ -119,3 +119,9 @@ export type {
 export * from './documents.js';
 
 export type { AgentPreferences, UpdateAgentPreferencesRequest } from './agents/preferences.js';
+export {
+  agentEnvironment,
+  environmentFeature,
+  type AgentEnvironment,
+  type EnvironmentFeature,
+} from './agent-environment.js';
