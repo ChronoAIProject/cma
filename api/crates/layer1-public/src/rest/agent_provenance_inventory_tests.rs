@@ -21,6 +21,62 @@ use layer2_core::{
 use std::sync::Arc;
 
 const PATH: &str = "/api/v1/agents/provenance";
+
+#[tokio::test]
+async fn task_navigation_projects_durable_outcomes_only_to_authorized_owners() {
+    use layer2_core::sandbox::{AgentLogKind, AgentStatus};
+    let (fixture, access, _, _) = fixture(Reply::Member).await;
+    for (id, completed) in [("agt_task_new", false), ("agt_task_done", true)] {
+        let events = if completed {
+            vec![
+                AgentLogKind::TurnStarted {
+                    turn_sequence: 3,
+                    model: None,
+                    origin_key: None,
+                },
+                AgentLogKind::TurnCompleted { turn_sequence: 3 },
+            ]
+        } else {
+            vec![]
+        };
+        agents_tests::insert_agent(
+            &fixture.store,
+            agents_tests::seeded_agent(id, AgentStatus::Ready, if completed { 4 } else { 2 }, None),
+            events,
+        )
+        .await;
+    }
+    let router = super::agent_provenance_inventory_router(AgentProvenanceInventoryService::new(
+        fixture.store,
+        access,
+    ));
+    let (status, body) = agents_tests::json_response(&router, request("", "owner-a", true)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows = body["items"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .find(|row| row["agent_id"] == "agt_task_new")
+            .unwrap()["task_status"],
+        "not_started"
+    );
+    assert_eq!(
+        rows.iter()
+            .find(|row| row["agent_id"] == "agt_task_done")
+            .unwrap()["task_status"],
+        "completed"
+    );
+    for (subject, query) in [
+        ("owner-b", ""),
+        ("recipient", "?shared=true"),
+        ("recipient", "?organization=org"),
+    ] {
+        let (status, body) =
+            agents_tests::json_response(&router, request(query, subject, true)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(!body.to_string().contains("agt_task_"), "{body}");
+    }
+}
+
 fn request(query: &str, subject: &str, verified: bool) -> Request<Body> {
     let mut request =
         agents_tests::request(Method::GET, &format!("{PATH}{query}"), subject, None, None);
@@ -31,6 +87,179 @@ fn request(query: &str, subject: &str, verified: bool) -> Request<Body> {
             .insert(crate::DelegatedCredential::new("request-credential".into()));
     }
     request
+}
+
+#[tokio::test]
+async fn task_navigation_distinguishes_setup_completion_using_recorded_purpose_and_turn_identity() {
+    use layer2_core::sandbox::{
+        AgentLogKind, AgentStatus, FirstMessagePurpose, FirstMessageRecord,
+    };
+    let (fixture, access, _, _) = fixture(Reply::Member).await;
+    let cases = [
+        (
+            "agt_setup_only",
+            Some(FirstMessagePurpose::Setup),
+            false,
+            "not_started",
+        ),
+        (
+            "agt_task_first",
+            Some(FirstMessagePurpose::Task),
+            false,
+            "completed",
+        ),
+        ("agt_legacy_first", None, false, "unknown"),
+        (
+            "agt_task_after_setup",
+            Some(FirstMessagePurpose::Setup),
+            true,
+            "completed",
+        ),
+    ];
+    for (id, purpose, later_task, _) in cases {
+        let at = "2026-09-05T00:00:00Z";
+        let mut first = FirstMessageRecord::new(id, "Identical admission text", at).unwrap();
+        first.purpose = purpose;
+        first.fence_dispatch_for(3, 1, 1, at.into()).unwrap();
+        first.complete(at.into()).unwrap();
+        let mut agent = agents_tests::seeded_agent(
+            id,
+            AgentStatus::Ready,
+            if later_task { 6 } else { 4 },
+            None,
+        );
+        agent.conversation.first_message = Some(first);
+        let mut events = vec![
+            AgentLogKind::TurnStarted {
+                turn_sequence: 3,
+                model: None,
+                origin_key: Some(id.into()),
+            },
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        ];
+        if later_task {
+            events.extend([
+                AgentLogKind::TurnStarted {
+                    turn_sequence: 5,
+                    model: None,
+                    origin_key: None,
+                },
+                AgentLogKind::TurnCompleted { turn_sequence: 5 },
+            ]);
+        }
+        agents_tests::insert_agent(&fixture.store, agent, events).await;
+    }
+    let router = super::agent_provenance_inventory_router(AgentProvenanceInventoryService::new(
+        fixture.store,
+        access,
+    ));
+    let (status, body) = agents_tests::json_response(&router, request("", "owner-a", true)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for (id, _, _, expected) in cases {
+        let row = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["agent_id"] == id)
+            .unwrap();
+        assert_eq!(row["task_status"], expected, "{id}");
+    }
+}
+
+#[tokio::test]
+async fn task_navigation_does_not_call_a_completed_agent_done_after_new_work_is_admitted() {
+    use layer2_core::{
+        ids::{AgentCommandId, AgentResponseId},
+        sandbox::{
+            agent_io::*,
+            store::{SandboxMutationGuard, SandboxStore},
+            AgentLogKind, AgentStatus,
+        },
+    };
+    let (fixture, access, _, _) = fixture(Reply::Member).await;
+    let agent = agents_tests::insert_agent(
+        &fixture.store,
+        agents_tests::seeded_agent("agt_pending", AgentStatus::Ready, 4, None),
+        vec![
+            AgentLogKind::TurnStarted {
+                turn_sequence: 3,
+                model: None,
+                origin_key: None,
+            },
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        ],
+    )
+    .await;
+    let parent = fixture
+        .store
+        .get_sandbox(&agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let command = AgentCommand::message("Next task");
+    let held = access
+        .authorize_personal(
+            &context("owner-a").caller,
+            &ResourceTarget::Agent {
+                agent_id: agent.id.clone(),
+            },
+            ResourceCapability::ViewDetails,
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .reserve_command(CommandReservation {
+            binding: None,
+            envelope: AgentCommandEnvelope {
+                schema_version: AGENT_IO_SCHEMA_VERSION,
+                command_id: AgentCommandId("cmd_task_navigation".into()),
+                agent_id: agent.id.clone(),
+                owner: AgentOwner::Person {
+                    subject: agent.owner.clone(),
+                },
+                actor: context("owner-a").actor,
+                source: AgentCommandSource {
+                    kind: AgentSourceKind::Api,
+                    reference: "task-navigation".into(),
+                },
+                correlation_id: "task-navigation".into(),
+                request_fingerprint: command.fingerprint().unwrap(),
+                command,
+                authorization: AgentAuthorizationRevision {
+                    authority_id: "fixture-custody".into(),
+                    policy_revision: 1,
+                    grant_revision: None,
+                },
+            },
+            key_sha256: command_key_digest("task-navigation").unwrap(),
+            response_id: Some(AgentResponseId("resp_task_navigation".into())),
+            admitted_at: layer2_core::now_rfc3339(),
+            queue_deadline: "2030-09-05T00:00:00Z".into(),
+            queue_capacity: 64,
+            expected_agent_revision: agent.revision,
+            parent: SandboxMutationGuard::capture(&parent),
+            policy: held.snapshot.fence(),
+            authority_deadline: None,
+            admission_audit: None,
+        })
+        .await
+        .unwrap();
+    let router = super::agent_provenance_inventory_router(AgentProvenanceInventoryService::new(
+        fixture.store,
+        access,
+    ));
+    let (status, body) = agents_tests::json_response(&router, request("", "owner-a", true)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["agent_id"] == "agt_pending")
+            .unwrap()["task_status"],
+        "working"
+    );
 }
 
 #[tokio::test]
@@ -144,6 +373,103 @@ async fn provenance_inventory_validates_scope_authority_and_rejects_forged_filte
             .0,
         StatusCode::FORBIDDEN
     );
+}
+
+#[tokio::test]
+async fn task_navigation_filters_shared_failed_turns_even_when_the_agent_is_ready() {
+    let (fixture, access, _, _) = fixture(Reply::Member).await;
+    let router = super::agent_provenance_inventory_router(AgentProvenanceInventoryService::new(
+        fixture.store,
+        access,
+    ));
+    for scope in ["shared=true", "organization=org"] {
+        let (status, body) = agents_tests::json_response(
+            &router,
+            request(&format!("?{scope}&task_status=failed"), "recipient", true),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["items"].as_array().unwrap().len(), 1);
+        assert_eq!(body["items"][0]["task_status"], "failed");
+        assert_eq!(body["items"][0]["status"], "ready");
+        let (status, body) = agents_tests::json_response(
+            &router,
+            request(
+                &format!("?{scope}&task_status=completed"),
+                "recipient",
+                true,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body["items"].as_array().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn task_navigation_shared_titles_keep_owner_priority_and_parent_pause_barriers() {
+    use layer2_core::sandbox::{
+        store::{AgentLogStore, AgentStore, SandboxStore},
+        AgentLogKind, SandboxStatus,
+    };
+    let (fixture, access, _, _) = fixture(Reply::Member).await;
+    let mut agent = fixture
+        .store
+        .get_agent(&layer2_core::AgentId("agt_shared_read".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    agent.conversation.preferences.title = Some("Owner task name".into());
+    agent.conversation.observations.metadata.description = Some("Provider task name".into());
+    let revision = agent.revision;
+    agent.revision += 1;
+    fixture
+        .store
+        .save_agent(revision, agent.clone())
+        .await
+        .unwrap();
+    let mut parent = fixture
+        .store
+        .get_sandbox(&agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = parent.revision;
+    parent.status = SandboxStatus::Paused;
+    parent.revision += 1;
+    fixture.store.save_sandbox(revision, parent).await.unwrap();
+    let router = super::agent_provenance_inventory_router(AgentProvenanceInventoryService::new(
+        fixture.store.clone(),
+        access,
+    ));
+    let (status, body) =
+        agents_tests::json_response(&router, request("?shared=true", "recipient", true)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"][0]["title"], "Owner task name");
+    assert_eq!(body["items"][0]["task_status"], "failed");
+    assert!(body["items"][0].get("runtime_metadata").is_none());
+    for kind in [
+        AgentLogKind::TurnStarted {
+            turn_sequence: 10,
+            model: None,
+            origin_key: None,
+        },
+        AgentLogKind::TurnCompleted { turn_sequence: 10 },
+    ] {
+        fixture
+            .store
+            .append_agent_log(&agent.id, layer2_core::now_rfc3339(), kind)
+            .await
+            .unwrap();
+    }
+    let revision = agent.revision;
+    agent.revision += 1;
+    agent.conversation.last_seq = 11;
+    fixture.store.save_agent(revision, agent).await.unwrap();
+    let (status, body) =
+        agents_tests::json_response(&router, request("?shared=true", "recipient", true)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"][0]["task_status"], "paused");
 }
 
 struct GatedInventory {
