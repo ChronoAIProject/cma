@@ -599,7 +599,8 @@ validates the returned Agent identity. The observation includes policy revision,
 an opaque runtime incarnation and a renewal deadline; it never grants authority
 to a later operation. Files retain the authorized mounted-home scope. Replay is
 available for authorized durable operation records (`operation_records_only`,
-`agent_turn_history`, read-only). Browser and control remain unsupported.
+`agent_turn_history`, read-only). Browser and control availability depend on the
+enabled browser and the runtime's verified capability.
 
 Pass `{ toolOutput: true }` to `agentEventsV2.snapshot` / `agentEventsV2.events`
 or `agents.events` to read bounded recorded output. `tool_output_reported` has no
@@ -690,5 +691,34 @@ identifier per mounted viewer, pin the returned context, and abort on Agent,
 account or authorization changes. A decoded frame is fresh for 3000 ms from its
 actual capture time; repeated sequences do not renew freshness. Poll no faster
 than 1000 ms, and call `agentBrowser.release` when hidden or closed. Release does
-not navigate, close or reset the browser. This API provides observation only;
-there is no public input or takeover operation.
+not navigate, close or reset the browser. Observation grants no input authority.
+
+### Exclusive browser control
+
+`agentBrowserControl.read(agentId, scope)` reads current control and bounded
+audit. The scope pins `runtime_incarnation`, `context_id`, a unique `client_id`
+and an independent random UUID `client_key`. The SDK sends the private key in
+`X-CMA-Browser-Client`, never in the query or JSON body. Selected receipt reads
+add the original `operation_id` and require current owner authority plus the
+original private key. Ordinary authorized history readers receive no lease token.
+
+`agentBrowserControl.change(agentId, change)` accepts `command: 'acquire' |
+'input' | 'renew' | 'return'`, the scope, original UUID `operation_id` and
+`expected_revision`. Except for acquisition, provide the acquired `lease_token`.
+Inputs are `{ kind: 'click', x, y }`, `{ kind: 'text', text }` or a supported
+editing/navigation `{ kind: 'key', key }`. Coordinates address the 1280×720
+browser viewport. There is no arbitrary script, desktop or terminal command.
+
+The runtime serializes user and native Agent input. A user lease lasts 15 seconds
+and requires explicit renewal. Return restores native input in the same page
+and browser context without creating a message or turn. Every public operation
+rechecks current authority; stop input/renewal on account, access, incarnation,
+visibility or connectivity changes.
+
+Keep the exact request after an uncertain response. Query its original operation
+or retry the identical change; do not generate replacement input. Receipts
+report original operation revision plus current state, which may already have
+expired. Audit retains at most 128 metadata entries per volatile browser context,
+without input text, client keys or tokens. See
+`docs/plans/cma-ui-optimization/17-CONTROL-CONTRACT.md` for compatibility floors
+and bounded revocation behavior.

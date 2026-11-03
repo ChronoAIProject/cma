@@ -4,6 +4,7 @@ mod admin;
 mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
+pub mod agent_browser_control;
 mod agent_context;
 pub mod agent_environment;
 pub mod agent_filesystem;

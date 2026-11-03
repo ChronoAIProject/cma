@@ -10,6 +10,14 @@ use tower::ServiceExt as _;
 
 #[async_trait::async_trait]
 impl BrowserAdapter for super::runtime::Files {
+    async fn browser_control(
+        &self,
+        _handle: &RuntimeHandle,
+        request: &BrowserControlRequest,
+    ) -> Result<BrowserControlReceipt> {
+        super::browser_control_cases::runtime_reply(self, request).await
+    }
+
     async fn browser(
         &self,
         handle: &RuntimeHandle,
