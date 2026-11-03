@@ -4,7 +4,7 @@
 
 **Blocked by:** 03（首页任务原文、创建身份与恢复链路）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **优先级:** P0
 
@@ -27,3 +27,15 @@
 ## 范围与依赖说明
 
 不引入第二种创建状态机，也不实现新的 Git 凭据通道；桌面选项和自动命名可独立迭代。
+
+## Execution
+
+- Worktree `/Users/liuyitian/code/cma-ui-worktrees/ticket-04`, branch `codex/cma-ui-04`, baseline `9a900786a99ee2bb9a05f56f68f2a62d61abf189` (01/03/06/09 integrated).
+- Use the approved U/A/R seams above, one behavior per red → green cycle. Preserve the existing lifecycle key, connection continuation, durable first task and immutable workspace receipts. Runtime proof uses an isolated repository and pinned Linux provider; any runtime source change requires the candidate binary.
+- Existing prompt-only repository preparation is insufficient evidence of a pinned checkout. The implementation must finish and record source preparation before dispatching the exact task.
+
+### Integration repairs requested by parent
+
+- Updated `AppCreation.test.tsx` through Settings → Manage environments → Workspace New agent, retaining the exact Workspace assertion and adapting the already-integrated task composer text. Before: stale removed navigation and Home assertions fail. After: AppCreation + Console 12/12 pass (`ticket04-appcreation-before.log`, `ticket04-appcreation-after.log`, outside repo).
+- Extracted the coherent Home/fallback content selection into `ConsoleLanding.tsx`; Console is 491 lines before formatting, below the 500-line source gate. No title policy or ticket 05 implementation changes.
+- These are task-introduced integration repairs, distinct from the documented original formatting, aggregate skill fixture and 508-line Agent operation baseline defects.
