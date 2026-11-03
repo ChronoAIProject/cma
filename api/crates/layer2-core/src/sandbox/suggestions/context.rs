@@ -145,7 +145,16 @@ pub fn work_is_current(
         && sandbox.status == crate::sandbox::SandboxStatus::Active
         && sandbox.lifecycle.operation.is_none()
         && agent.conversation.active_turn.is_none()
-        && agent.conversation.operation.is_none()
+        && agent
+            .conversation
+            .operation
+            .as_ref()
+            .is_none_or(|operation| {
+                operation.state == crate::sandbox::AgentOperationDelivery::ExecutionObserved
+                    && Some(operation.runtime_generation) == agent.conversation.runtime_generation
+                    && operation.turn_sequence == work.scope.turn_sequence
+                    && operation.sequence < work.completed_sequence
+            })
         && agent
             .conversation
             .queued_messages

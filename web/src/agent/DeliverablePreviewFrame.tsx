@@ -22,8 +22,12 @@ export function DeliverablePreviewFrame({
   const [selected, setSelected] = useState<DeliverableSelection>();
   const [opening, setOpening] = useState(0);
   const returnFocus = useRef<HTMLElement | undefined>(undefined);
+  const returnScroll = useRef<{ element: HTMLElement; top: number } | undefined>(undefined);
   useLayoutEffect(() => {
     if (selected || !returnFocus.current) return;
+    if (returnScroll.current?.element.isConnected)
+      returnScroll.current.element.scrollTop = returnScroll.current.top;
+    returnScroll.current = undefined;
     returnFocus.current.focus({ preventScroll: true });
     returnFocus.current = undefined;
   }, [selected]);
@@ -59,6 +63,11 @@ export function DeliverablePreviewFrame({
         selected,
         invalidate,
         open: (value) => {
+          if (!selected) {
+            const element = value.trigger.closest('.agent-surface__conversation');
+            returnScroll.current =
+              element instanceof HTMLElement ? { element, top: element.scrollTop } : undefined;
+          }
           onPreviewOpen();
           setOpening((value) => value + 1);
           setSelected(value);
@@ -67,6 +76,7 @@ export function DeliverablePreviewFrame({
     >
       <AppFrame
         {...props}
+        compactDetailsInline={selected !== undefined}
         detailsOpen={props.detailsOpen || selected !== undefined}
         onDetailsClose={close}
         details={
