@@ -2,8 +2,10 @@
 
 集成修复交接：本票列出的八项旧 Web 断言已由
 [INTEGRATION-REPAIRS](../INTEGRATION-REPAIRS.md) 修复，合并态完整 suite 通过。
-另有独立新缺项：四条已公开的 delivery 操作尚未进入共享 JSON inventory/corpus
-及其 typed SDK dispatch；修复分支保留全部路由，未用调整计数掩盖缺项。
+后续四条 delivery 操作已补入共享 JSON inventory/corpus 及两个 typed SDK dispatch：
+44 个真实 handler 案例保留三类资源、独立授权/撤销、精确 revision/hash 和下载复验，
+五项既有公开回归通过；完整共享 inventory 为 235/235。未只调整计数或削弱门禁，
+native 证明沿用本票已有证据，本轮未重跑。详细命令、非零计数和日志见修复交接文档。
 
 **What to build:** 用户看到本次回答实际交付的文件或持久文档，直接下载，且不会把别的任务或未发布文件当作本次成果。
 

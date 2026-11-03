@@ -2,9 +2,11 @@
 
 后续集成修复见 [INTEGRATION-REPAIRS](INTEGRATION-REPAIRS.md)：14 的 environment
 共享 JSON 操作、10 个 handler cases 及两个 typed SDK dispatch 已补；六项旧首页
-断言、copy 扫描与 CSS collision 已修复，保留本票反馈路由和案例。共享 inventory
-仍单独报告 07 的四条 delivery 缺项。另发现本票 `agents_tests/message_feedback.rs`
-从 484 增至 556 行，仍触发原 500 行 gate；未在 bounded repair 中改写本票源码。
+断言、copy 扫描与 CSS collision 已修复，保留本票反馈路由和案例。后续已补齐
+07 四条 delivery 的真实共享契约，inventory 为 235/235。本票从 484 增至 556 行的
+`agents_tests/message_feedback.rs` 已拆出内存存储和 seed fixture：原文件 438 行，
+`message_feedback_fixture.rs` 123 行，未改 gate 或通过改名规避限制。12 项公开反馈/schema
+回归、26 个原因案例及 18 个旧 vote 案例全部通过；日志见 integration repairs 文档。
 
 日期：2026-11-03。状态：本票验收完成；全仓门禁的上游例外单独列出。
 
