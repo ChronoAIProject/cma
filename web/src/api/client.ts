@@ -20,6 +20,7 @@ import type {
   WorkspaceDetail,
 } from './types';
 import type {
+  Cma,
   AccessibleAgentSource,
   AgentAttachment,
   AgentProvenance,
@@ -164,6 +165,21 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly deliverables?: Pick<
+    Cma['agents'],
+    'answerDeliverables' | 'readAnswerDeliverable' | 'downloadAnswerDeliverable'
+  >;
+  readonly readFeedbackDetails?: (
+    agentId: string,
+    messageId: string,
+    options?: ReadOptions,
+  ) => Promise<import('./feedbackTypes').FeedbackDetails>;
+  readonly setFeedbackReasons?: (
+    agentId: string,
+    messageId: string,
+    body: import('./feedbackTypes').FeedbackReasonRequest,
+    options?: ReadOptions,
+  ) => Promise<import('./feedbackTypes').FeedbackDetails>;
   readonly documents?: DocumentsClient;
   readonly files?: AgentFilesClient;
   readonly readMessageFeedback?: (

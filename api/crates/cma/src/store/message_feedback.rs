@@ -2,7 +2,10 @@
 
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use layer2_core::sandbox::message_feedback::{MessageFeedback, MessageFeedbackStore, MessageVote};
+use layer2_core::sandbox::message_feedback::{
+    FeedbackDetails, FeedbackReasonError, FeedbackReasonRequest, MessageFeedback,
+    MessageFeedbackStore, MessageVote,
+};
 use layer2_core::{sandbox::AgentReadError, AgentId, StoreError, SubjectId};
 use mongodb::{bson::doc, options::IndexOptions, Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
@@ -12,7 +15,6 @@ use super::{durability::majority_collection, schema};
 pub(super) const COLLECTION: &str = "agent_message_feedback";
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Record {
     #[serde(rename = "_id")]
     id: String,
@@ -20,7 +22,8 @@ struct Record {
     owner: String,
     agent_id: String,
     sequence: i64,
-    vote: MessageVote,
+    #[serde(flatten)]
+    details: FeedbackDetails,
 }
 
 pub(crate) struct MongoMessageFeedbackStore {
@@ -42,10 +45,121 @@ impl MongoMessageFeedbackStore {
             .map_err(|_| StoreError::Unavailable("initialize message feedback index".into()))?;
         Ok(Self { records })
     }
+
+    async fn load(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+    ) -> Result<Option<Record>, AgentReadError> {
+        let id = identity(owner, agent, sequence)?;
+        let row = self
+            .records
+            .find_one(doc! {"_id": &id})
+            .await
+            .map_err(unavailable)?;
+        if let Some(row) = &row {
+            schema::require_current(row.document_schema_version).map_err(|_| corrupt())?;
+            if row.owner != owner.as_str()
+                || row.agent_id != agent.as_str()
+                || u64::try_from(row.sequence).ok() != Some(sequence)
+                || row.id != id
+            {
+                return Err(corrupt());
+            }
+        }
+        Ok(row)
+    }
+
+    async fn replace(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+        previous: Option<&Record>,
+        details: FeedbackDetails,
+    ) -> Result<bool, AgentReadError> {
+        let row = Record {
+            id: identity(owner, agent, sequence)?,
+            document_schema_version: schema::DOCUMENT_SCHEMA_VERSION,
+            owner: owner.to_string(),
+            agent_id: agent.to_string(),
+            sequence: i64::try_from(sequence).map_err(|_| corrupt())?,
+            details,
+        };
+        if let Some(previous) = previous {
+            let version = i64::try_from(previous.details.version).map_err(|_| corrupt())?;
+            let mut filter =
+                doc! {"_id": &row.id, "document_schema_version": schema::DOCUMENT_SCHEMA_VERSION};
+            if version == 0 {
+                filter.insert(
+                    "$or",
+                    vec![doc! {"version": 0}, doc! {"version": {"$exists": false}}],
+                );
+            } else {
+                filter.insert("version", version);
+            }
+            filter.insert(
+                "vote",
+                mongodb::bson::serialize_to_bson(&previous.details.vote).map_err(|_| corrupt())?,
+            );
+            return self
+                .records
+                .replace_one(filter, &row)
+                .await
+                .map(|result| result.matched_count == 1)
+                .map_err(unavailable);
+        }
+        match self.records.insert_one(row).await {
+            Ok(_) => Ok(true),
+            Err(error) if super::sandbox_mongo::is_duplicate_key(&error) => Ok(false),
+            Err(error) => Err(unavailable(error)),
+        }
+    }
 }
 
 #[async_trait]
 impl MessageFeedbackStore for MongoMessageFeedbackStore {
+    async fn get(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+    ) -> Result<FeedbackDetails, AgentReadError> {
+        Ok(self
+            .load(owner, agent, sequence)
+            .await?
+            .map(|row| row.details)
+            .unwrap_or_default())
+    }
+
+    async fn set_reasons(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+        request: &FeedbackReasonRequest,
+    ) -> Result<FeedbackDetails, FeedbackReasonError> {
+        let previous = self.load(owner, agent, sequence).await?;
+        let current = previous
+            .as_ref()
+            .map(|row| row.details.clone())
+            .unwrap_or_default();
+        let next = current.with_reasons(request)?;
+        if next == current
+            || self
+                .replace(owner, agent, sequence, previous.as_ref(), next.clone())
+                .await?
+        {
+            return Ok(next);
+        }
+        let current = self.get(owner, agent, sequence).await?;
+        if current.with_reasons(request)? == current {
+            return Ok(current);
+        }
+        Err(FeedbackReasonError::Conflict)
+    }
+
     async fn list(
         &self,
         owner: &SubjectId,
@@ -57,7 +171,7 @@ impl MessageFeedbackStore for MongoMessageFeedbackStore {
         let after = i64::try_from(after).unwrap_or(i64::MAX);
         let through = i64::try_from(through).unwrap_or(i64::MAX);
         let rows: Vec<Record> = self.records
-            .find(doc! {"owner": owner.as_str(), "agent_id": agent.as_str(), "sequence": {"$gt": after, "$lte": through}})
+            .find(doc! {"owner": owner.as_str(), "agent_id": agent.as_str(), "sequence": {"$gt": after, "$lte": through}, "vote": {"$in": ["up", "down"]}})
             .sort(doc! {"sequence": 1})
             .limit(i64::from(limit))
             .await
@@ -76,7 +190,7 @@ impl MessageFeedbackStore for MongoMessageFeedbackStore {
                 }
                 Ok(MessageFeedback {
                     sequence,
-                    vote: row.vote,
+                    vote: row.details.vote.ok_or_else(corrupt)?,
                 })
             })
             .collect()
@@ -89,43 +203,24 @@ impl MessageFeedbackStore for MongoMessageFeedbackStore {
         sequence: u64,
         vote: Option<MessageVote>,
     ) -> Result<(), AgentReadError> {
-        let id = identity(owner, agent, sequence)?;
-        let sequence = i64::try_from(sequence).map_err(|_| corrupt())?;
-        let filter = doc! {"_id": &id, "owner": owner.as_str(), "agent_id": agent.as_str(), "sequence": sequence};
-        match vote {
-            None => {
-                self.records.delete_one(filter).await.map_err(unavailable)?;
-            }
-            Some(vote) => {
-                let row = Record {
-                    id,
-                    document_schema_version: schema::DOCUMENT_SCHEMA_VERSION,
-                    owner: owner.to_string(),
-                    agent_id: agent.to_string(),
-                    sequence,
-                    vote,
-                };
-                match self
-                    .records
-                    .replace_one(filter.clone(), &row)
-                    .upsert(true)
-                    .await
-                {
-                    Ok(_) => {}
-                    // Two first votes may both observe absence. The unique index
-                    // chooses one insert; the other remains an ordinary replacement.
-                    Err(error) if super::sandbox_mongo::is_duplicate_key(&error) => {
-                        self.records
-                            .replace_one(filter, &row)
-                            .upsert(true)
-                            .await
-                            .map_err(unavailable)?;
-                    }
-                    Err(error) => return Err(unavailable(error)),
-                }
+        for _attempt in 0..32 {
+            let previous = self.load(owner, agent, sequence).await?;
+            let current = previous
+                .as_ref()
+                .map(|row| row.details.clone())
+                .unwrap_or_default();
+            let next = current.with_vote(vote)?;
+            if current == next
+                || self
+                    .replace(owner, agent, sequence, previous.as_ref(), next)
+                    .await?
+            {
+                return Ok(());
             }
         }
-        Ok(())
+        Err(AgentReadError::Unavailable(
+            "message feedback contention; retry the same vote".into(),
+        ))
     }
 }
 
@@ -138,6 +233,10 @@ fn unavailable(_: mongodb::error::Error) -> AgentReadError {
 fn corrupt() -> AgentReadError {
     AgentReadError::Corrupt("message feedback record is invalid".into())
 }
+
+#[cfg(test)]
+#[path = "message_feedback_mongo_tests.rs"]
+mod concurrency_tests;
 
 #[cfg(test)]
 mod tests {

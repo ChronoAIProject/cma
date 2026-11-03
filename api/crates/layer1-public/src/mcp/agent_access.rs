@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 
 mod dispatch;
 mod documents;
+mod deliverables;
 mod limits;
 mod reply;
 #[cfg(test)]
@@ -30,6 +31,7 @@ struct AccessState {
     auth: Arc<dyn AgentAccessToolAuthenticator>,
     admission: Arc<dyn AgentAccessToolAdmission>,
     documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
+    deliverables: Option<Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>>,
     public_origin: String,
     concurrency: tokio::sync::Semaphore,
     rate: limits::RateLimit,
@@ -52,6 +54,16 @@ pub fn agent_tools_router(
     documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
     public_origin: &str,
 ) -> Router {
+    agent_delivery_tools_router(auth, admission, documents, None, public_origin)
+}
+
+pub fn agent_delivery_tools_router(
+    auth: Arc<dyn AgentAccessToolAuthenticator>,
+    admission: Arc<dyn AgentAccessToolAdmission>,
+    documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
+    deliverables: Option<Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>>,
+    public_origin: &str,
+) -> Router {
     Router::new()
         .route("/api/v1/agent-tools", post(invoke))
         .layer(axum::middleware::from_fn(headers))
@@ -59,6 +71,7 @@ pub fn agent_tools_router(
             auth,
             admission,
             documents,
+            deliverables,
             public_origin: public_origin.trim_end_matches('/').to_owned(),
             concurrency: tokio::sync::Semaphore::new(32),
             rate: limits::RateLimit::default(),
