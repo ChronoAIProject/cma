@@ -239,6 +239,74 @@ it('reloads only the saved cursor from freshly authorized pages without future p
   expect(scenario.requests.every((request) => request.startsWith('GET '))).toBe(true);
 });
 
+it('finds the recorded completion of an overlapping operation after restoring the earlier completion cursor', async () => {
+  const scenario = fixture();
+  scenario.append({
+    type: 'plan_set',
+    entries: [{ title: 'Parallel work', status: 'in_progress' }],
+  });
+  for (const number of [1, 2])
+    scenario.append({
+      type: 'tool_started',
+      call_id: `command-${number}`,
+      kind: 'execute',
+      title: `printf operation-${number}`,
+      status: 'in_progress',
+    });
+  scenario.append({
+    type: 'tool_updated',
+    call_id: 'command-1',
+    title: null,
+    status: 'completed',
+    output: { text: 'known-output-1', truncated: false },
+  });
+  const original = scenario.renderPanel();
+  await screen.findByText('known-output-1');
+  fireEvent.click(screen.getByRole('button', { name: 'Previous operation' }));
+  expect(screen.getByText(`Cursor ${cursor(4)}`)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Next operation' }));
+  expect(screen.getByText(`Cursor ${cursor(5)}`)).toBeVisible();
+  original.unmount();
+  scenario.append({
+    type: 'tool_updated',
+    call_id: 'command-2',
+    title: null,
+    status: 'completed',
+    output: { text: 'known-output-2', truncated: false },
+  });
+  scenario.renderPanel();
+  expect(await screen.findByText('known-output-1')).toBeVisible();
+  expect(screen.getByText(`Cursor ${cursor(5)}`)).toBeVisible();
+  expect(screen.queryByText('known-output-2')).not.toBeInTheDocument();
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Next operation' }), { key: 'ArrowRight' });
+  expect(await screen.findByText('known-output-2')).toBeVisible();
+  expect(screen.getByRole('article')).toHaveAccessibleName(
+    'Recorded operation: printf operation-2',
+  );
+  expect(screen.getByText(`Cursor ${cursor(6)}`)).toBeVisible();
+  expect(screen.getByText('Status: completed')).toBeVisible();
+  expect(screen.getByText('Parallel work: in_progress')).toBeVisible();
+  await act(async () => {
+    scenario.command(3);
+    scenario.observation.publish([
+      {
+        id: 'command-3',
+        runId: '1',
+        kind: 'execute',
+        title: 'printf operation-3',
+        status: 'completed',
+      },
+    ]);
+  });
+  expect(screen.getByText('known-output-2')).toBeVisible();
+  expect(screen.queryByText('known-output-3')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Return Live' }));
+  expect(await screen.findByText('known-output-3')).toBeVisible();
+  expect(screen.getByText(`Live cursor ${cursor(8)}`)).toBeVisible();
+  expect(scenario.events).toHaveLength(8);
+  expect(scenario.requests.every((request) => request.startsWith('GET '))).toBe(true);
+});
+
 it('shows explicit gaps and truncated output and never inherits a previous turn plan', async () => {
   const scenario = fixture();
   scenario.append({ type: 'plan_set', entries: [{ title: 'Old turn plan', status: 'completed' }] });
@@ -273,6 +341,33 @@ it('keeps bounded pages navigable with keyboard controls across the 50-operation
   fireEvent.keyDown(previous, { key: 'End' });
   expect(await screen.findByText('known-output-52')).toBeVisible();
   expect(screen.getAllByRole('article')).toHaveLength(1);
+});
+
+it('keeps both navigation directions ordered across a restored 50-operation forward window', async () => {
+  const scenario = fixture();
+  scenario.command(1);
+  scenario.command(2);
+  const original = scenario.renderPanel();
+  await screen.findByText('known-output-2');
+  fireEvent.click(screen.getByRole('button', { name: 'Previous operation' }));
+  original.unmount();
+  for (let number = 3; number <= 53; number += 1) scenario.command(number);
+  scenario.renderPanel();
+  expect(await screen.findByText('known-output-1')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Next operation' }));
+  expect(await screen.findByText('known-output-2')).toBeVisible();
+  expect(screen.getByText('Record 1 of 50 in this window')).toBeVisible();
+  for (let step = 0; step < 49; step += 1)
+    fireEvent.click(screen.getByRole('button', { name: 'Next operation' }));
+  expect(screen.getByText('known-output-51')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Next operation' }));
+  expect(await screen.findByText('known-output-52')).toBeVisible();
+  expect(screen.getByText('Record 1 of 2 in this window')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Previous operation' }));
+  expect(await screen.findByText('known-output-51')).toBeVisible();
+  expect(screen.getAllByRole('article')).toHaveLength(1);
+  expect(scenario.events).toHaveLength(107);
+  expect(scenario.requests.every((request) => request.startsWith('GET '))).toBe(true);
 });
 
 it('opens the plan actual turn and returns Live to a newer turn without changing its identity', async () => {

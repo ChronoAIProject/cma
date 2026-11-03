@@ -68,6 +68,7 @@ impl AgentReadService {
                             break;
                         }
                         AgentLogKind::TurnStarted { .. }
+                        | AgentLogKind::ConversationGap { .. }
                         | AgentLogKind::TurnFailed { .. }
                         | AgentLogKind::TurnInterrupted { .. }
                         | AgentLogKind::ConversationOpened { .. }
@@ -127,6 +128,7 @@ impl AgentReadService {
                             (AgentTranscriptRole::Owner, content)
                         }
                         AgentLogKind::TurnStarted { .. }
+                        | AgentLogKind::ConversationGap { .. }
                         | AgentLogKind::TurnCompleted { .. }
                         | AgentLogKind::TurnFailed { .. }
                         | AgentLogKind::TurnInterrupted { .. }

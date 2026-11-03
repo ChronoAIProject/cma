@@ -32,10 +32,13 @@ function harness(
   download: (item: AnswerDeliverable, signal?: AbortSignal | null) => Promise<Response>,
   read = (item: AnswerDeliverable) => item,
 ) {
+  const requests: URL[] = [];
   const sdk = createClient({
     baseUrl: 'https://cma.test',
     fetch: async (input, options) => {
-      const path = new URL(String(input)).pathname;
+      const url = new URL(String(input));
+      requests.push(url);
+      const path = url.pathname;
       const identity = { agent_id: 'agt_1', answer_id: 'event:3', turn_sequence: 1 };
       if (path.endsWith('/deliverables')) return Response.json({ ...identity, items });
       const item = items.find((entry) => path.includes(entry.id))!;
@@ -75,7 +78,7 @@ function harness(
       }
     />
   );
-  return { ...render(view()), view, access };
+  return { ...render(view()), view, access, requests };
 }
 const opaque = (body: string) =>
   new Response(body, { headers: { 'content-type': 'application/octet-stream' } });
@@ -121,13 +124,16 @@ it('applies the existing 1 MiB preview bound before requesting any file body', a
   const body = 'a'.repeat(1024 * 1024 + 1);
   const item = await delivery('huge.txt', body);
   const download = vi.fn(async () => opaque(body));
-  harness([item], download);
+  const { requests } = harness([item], download);
   fireEvent.click(await screen.findByRole('button', { name: 'Preview huge.txt' }));
   expect(
     await panel().findByText('Preview exceeds the 1 MiB limit. Download to view this file.'),
   ).toBeVisible();
   expect(panel().getByRole('button', { name: 'Download huge.txt' })).toBeEnabled();
   expect(download).not.toHaveBeenCalled();
+  const reads = requests.filter((url) => url.pathname.endsWith(item.id));
+  expect(reads).toHaveLength(1);
+  expect(reads[0]!.searchParams.get('verify')).not.toBe('true');
 });
 
 it('offers a download fallback for PDF without opening an active document or fetching a preview body', async () => {

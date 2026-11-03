@@ -84,7 +84,7 @@ async fn answer_deliverables_list_immutable_metadata_without_reading_bodies() {
             content: "Produce a result".into(),
         },
         AgentLogKind::AgentMessage {
-            content: described.marker,
+            content: described.marker.clone(),
         },
         AgentLogKind::TurnCompleted { turn_sequence: 3 },
     ] {
@@ -110,6 +110,67 @@ async fn answer_deliverables_list_immutable_metadata_without_reading_bodies() {
             .1,
         b"abc"
     );
+    for gap_after_answer in [false, true] {
+        let turn_sequence = agent.conversation.last_seq + 1;
+        let mut events = vec![
+            AgentLogKind::TurnStarted {
+                turn_sequence,
+                model: None,
+                origin_key: None,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "Produce another result".into(),
+            },
+        ];
+        if !gap_after_answer {
+            events.push(AgentLogKind::ConversationGap { frames: 1 });
+        }
+        events.push(AgentLogKind::AgentMessage {
+            content: described.marker.clone(),
+        });
+        let answer_sequence = agent.conversation.last_seq + events.len() as u64;
+        if gap_after_answer {
+            events.push(AgentLogKind::ConversationGap { frames: 1 });
+        }
+        events.push(AgentLogKind::TurnCompleted { turn_sequence });
+        agent.conversation.last_seq += events.len() as u64;
+        agent.revision += 1;
+        store
+            .save_agent(agent.revision - 1, agent.clone())
+            .await
+            .unwrap();
+        for kind in events {
+            store
+                .append_agent_log(&agent.id, NOW.into(), kind)
+                .await
+                .unwrap();
+        }
+        let delivery_id = &listed.items[0].id;
+        assert!(matches!(
+            service.list(&authority, &agent.id, answer_sequence).await,
+            Err(DeliverableError::Answer(AgentReadError::NotFound))
+        ));
+        for verify in [false, true] {
+            assert!(matches!(
+                service
+                    .read_item(&authority, &agent.id, answer_sequence, delivery_id, verify)
+                    .await,
+                Err(DeliverableError::Answer(AgentReadError::NotFound))
+            ));
+        }
+        assert!(matches!(
+            service
+                .inspect(&authority, &agent.id, answer_sequence, delivery_id)
+                .await,
+            Err(DeliverableError::Answer(AgentReadError::NotFound))
+        ));
+        assert!(matches!(
+            service
+                .download(&authority, &agent.id, answer_sequence, delivery_id)
+                .await,
+            Err(DeliverableError::Answer(AgentReadError::NotFound))
+        ));
+    }
 }
 
 #[tokio::test]
@@ -219,7 +280,7 @@ async fn answer_deliverables_live_file_never_becomes_a_snapshot_or_shared_artifa
         Arc::new(super::filesystem::OrganizationAdmin),
     ));
     let artifacts = agent_artifacts::AgentArtifactService::new(store.clone(), access.clone());
-    let file_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let file_reads = Arc::new(std::sync::Mutex::new(Vec::new()));
     let files = agent_filesystem::AgentFileService::new(
         access.clone(),
         Arc::new(super::attachments::runtime::UnusedRuntime {
@@ -279,12 +340,9 @@ async fn answer_deliverables_live_file_never_becomes_a_snapshot_or_shared_artifa
             .await
             .unwrap();
     }
-    let reads_before_list = file_reads.load(std::sync::atomic::Ordering::SeqCst);
+    let reads_before_list = file_reads.lock().unwrap().len();
     let original = service.list(&authority, &agent.id, 5).await.unwrap();
-    assert_eq!(
-        file_reads.load(std::sync::atomic::Ordering::SeqCst),
-        reads_before_list
-    );
+    assert_eq!(file_reads.lock().unwrap().len(), reads_before_list);
     let delivery = &original.items[0].id;
     for turn_sequence in (7..10007).step_by(4) {
         for kind in [
@@ -418,7 +476,26 @@ async fn answer_deliverables_live_file_never_becomes_a_snapshot_or_shared_artifa
         service.list(&shared, &agent.id, 5).await.unwrap().items[0].status,
         DeliverableStatus::Denied
     );
-    std::fs::write(root.join("result.bin"), b"new bytes").unwrap();
+    let grown = std::fs::File::create(root.join("result.bin")).unwrap();
+    grown.set_len(2 * 1024 * 1024).unwrap();
+    let reads_before_metadata = file_reads.lock().unwrap().len();
+    let metadata = service
+        .read_item(&authority, &agent.id, 5, delivery, false)
+        .await
+        .unwrap();
+    assert_eq!(metadata.item.reference.size_bytes, 8);
+    assert_eq!(metadata.item.status, DeliverableStatus::Unchecked);
+    assert_eq!(file_reads.lock().unwrap().len(), reads_before_metadata);
+    assert!(matches!(
+        service.download(&authority, &agent.id, 5, delivery).await,
+        Err(DeliverableError::Changed)
+    ));
+    assert_eq!(file_reads.lock().unwrap().last(), Some(&8));
+    assert_eq!(
+        &file_reads.lock().unwrap()[..2],
+        &[layer3_adapter::MAX_AGENT_FILE_BYTES, 8]
+    );
+    std::fs::write(root.join("result.bin"), b"modified").unwrap();
     assert_eq!(
         service
             .inspect(&authority, &agent.id, 5, delivery)
@@ -448,7 +525,85 @@ async fn answer_deliverables_live_file_never_becomes_a_snapshot_or_shared_artifa
         .inspect(&authority, &agent.id, 5, delivery)
         .await
         .unwrap();
-    assert_eq!(unavailable.status, DeliverableStatus::TooLarge);
+    assert_eq!(unavailable.status, DeliverableStatus::Changed);
+    assert!(matches!(
+        service
+            .describe(
+                &authority,
+                &agent.id,
+                DeliverableResource::LiveFile {
+                    path: "result.bin".into(),
+                },
+            )
+            .await,
+        Err(DeliverableError::File(
+            agent_filesystem::AgentFileError::TooLarge
+        ))
+    ));
+    assert_eq!(
+        file_reads.lock().unwrap().last(),
+        Some(&layer3_adapter::MAX_AGENT_FILE_BYTES)
+    );
+    std::fs::write(root.join("result.bin"), b"").unwrap();
+    assert!(matches!(
+        service.download(&authority, &agent.id, 5, delivery).await,
+        Err(DeliverableError::Changed)
+    ));
+    let empty = service
+        .describe(
+            &authority,
+            &agent.id,
+            DeliverableResource::LiveFile {
+                path: "result.bin".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(empty.reference.size_bytes, 0);
+    assert_eq!(file_reads.lock().unwrap().last(), Some(&1));
+    let mut current = store.get_agent(&agent.id).await.unwrap().unwrap();
+    let turn_sequence = current.conversation.last_seq + 1;
+    let answer_sequence = turn_sequence + 2;
+    for kind in [
+        AgentLogKind::TurnStarted {
+            turn_sequence,
+            model: None,
+            origin_key: None,
+        },
+        AgentLogKind::OwnerMessage {
+            content: "Keep the empty result".into(),
+        },
+        AgentLogKind::AgentMessage {
+            content: empty.marker,
+        },
+        AgentLogKind::TurnCompleted { turn_sequence },
+    ] {
+        store
+            .append_agent_log(&agent.id, NOW.into(), kind)
+            .await
+            .unwrap();
+    }
+    let revision = current.revision;
+    current.revision += 1;
+    current.conversation.last_seq = answer_sequence + 1;
+    store.save_agent(revision, current).await.unwrap();
+    let empty_id = empty.reference.id().unwrap();
+    assert!(service
+        .download(&authority, &agent.id, answer_sequence, &empty_id)
+        .await
+        .unwrap()
+        .1
+        .is_empty());
+    for content in [vec![b'x'], vec![b'x'; 2 * 1024 * 1024]] {
+        std::fs::write(root.join("result.bin"), content).unwrap();
+        assert!(matches!(
+            service
+                .download(&authority, &agent.id, answer_sequence, &empty_id)
+                .await,
+            Err(DeliverableError::Changed)
+        ));
+        assert_eq!(file_reads.lock().unwrap().last(), Some(&1));
+    }
     let mut sandbox = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
     let revision = sandbox.revision;
     sandbox.revision += 1;
