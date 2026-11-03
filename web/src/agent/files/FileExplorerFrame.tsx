@@ -35,7 +35,7 @@ export function FileExplorerFrame({
     );
   return (
     <aside
-      className="agent-files-panel"
+      className={`agent-files-panel${embedded ? ' agent-files-panel--embedded' : ''}`}
       aria-label="Agent files"
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !event.defaultPrevented && !busy) {

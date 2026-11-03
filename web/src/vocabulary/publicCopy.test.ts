@@ -31,8 +31,8 @@ function visibleLiterals(source: string): readonly string[] {
   const scan = (node: ts.Node, visible = false) => {
     if (ts.isJsxText(node)) found.push(node.text);
     if (ts.isJsxAttribute(node)) {
-      if (node.initializer !== undefined)
-        scan(node.initializer, visibleAttributes.has(node.name.getText(file)));
+      if (node.initializer !== undefined && visibleAttributes.has(node.name.getText(file)))
+        scan(node.initializer, true);
       return;
     }
     const literal =
@@ -87,7 +87,7 @@ describe('public vocabulary', () => {
 
   it('detects JSX text, expression branches, accessible labels and imperative error sentences', () => {
     const values = visibleLiterals(
-      'const token = "failed_terminal"; const error = "Launch failed"; <><p>{busy ? "retry_ready" : "Ready"}</p><p>retained</p><button aria-label="checkpoint" className="wire_class" /></>',
+      'const token = "failed_terminal"; const error = "Launch failed"; <><p>{busy ? "retry_ready" : "Ready"}</p><p>retained</p><button aria-label="checkpoint" className="input wire_class" /></>',
     );
     expect(
       values.flatMap((value) => [...value.matchAll(forbidden)].map((match) => match[0])),
