@@ -425,7 +425,8 @@ of agent recovery. Rollback after canonical enrollment must keep both readers.
 
 Compatibility readers preserve installed URLs until a durable idle maintenance
 operation changes them. `CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION` enables that
-operation for an explicit batch. It is empty by default and requires managed
+operation for an explicit batch. The application default is disabled; the
+production manifest selects the reviewed cohort below. It requires managed
 document context. The JSON contains `revision`, `origin` and `agents`; the origin
 must equal `CHRONO_SERVER_PUBLIC_URL`, revision must be at least 2 and greater
 than the context revision already applied, and agents contains exact Agent IDs
@@ -451,8 +452,8 @@ The proof is checked again after admission and before native reload. This fallba
 does not enable ordinary guidance refreshes or override an observed native goal.
 Paused Agents are not awakened
 for this operation; their normal recovery must reach a verified idle boundary.
-Provider-managed conversations without the CMA access binding are explicitly
-unsupported by this operation and require a separate binding endpoint audit.
+Provider-managed conversations require the separately audited binding relay
+below; the managed access capability is not interchangeable with a provider key.
 
 The existing maintenance admission persists the exact service origin and fences
 new execution. The adapter resolves the original capability, closes only the idle
@@ -482,3 +483,36 @@ provider binding proxies, paused recovery paths, webhooks and retained external
 clients have been accounted for. Migrating the managed Agents cannot rewrite
 URLs stored in somebody else's SDK client. Browser navigation redirects remain
 independent of this endpoint migration.
+
+
+## Preserve the enabled production transport configuration
+
+The production manifest records the reviewed revision-2 cohort of 27 Agent IDs
+and the nine existing provider binding IDs enrolled in the canonical relay.
+These are the same explicit selections applied during the migration; this
+configuration does not broaden the cohort or wake paused resources. A stopped
+or deleted Agent ID in the historical cohort does not recreate that Agent.
+
+`CHRONO_PROVIDER_TOOL_RELAY` maps the enrolled bindings' original
+`https://bot-gateway.chrono-ai.fun/mcp` authority to the fixed upstream
+`https://cma.nyxid.ai/event-gateway/mcp`. Native tool requests use
+`https://cma.nyxid.ai/api/v1/provider-tools`. The relay preserves the original
+binding receipt and provider credential; the old endpoint is an identity match,
+not the upstream used by the enabled relay. New conversations for those bindings
+also enroll in the canonical relay.
+
+Keep these settings through normal ConfigMap updates. Restoring the initial empty
+relay setting after enrollment would remove authorization for the installed relay
+capabilities. Keep a compatible API binary and the enabled relay for rollback;
+disabling new managed migration admission does not require disabling the relay.
+A first deployment into an environment that has not enrolled must still deploy
+compatible readers, drain older workers, and then activate its reviewed cohort.
+Do not apply the whole production ConfigMap merely to copy these two settings:
+runtime image selection and other staged features have their own rollout gates.
+
+Activation is not proof of completion. Count an existing Agent only after its
+refresh is acknowledged and its current transport record identifies the canonical
+origin. Check the original conversation/history and credentials before and after,
+and verify discovery through the new host from the original runtime. Existing
+old-domain routes and historical signing audiences remain for retained clients.
+Their separate retirement is outside this migration's endpoint cutover.
