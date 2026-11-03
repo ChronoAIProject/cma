@@ -1,5 +1,11 @@
 # 03：在首页直接提交并可靠启动一项任务
 
+集成修复交接：见 [INTEGRATION-REPAIRS](../INTEGRATION-REPAIRS.md)。AppPublic 六项旧
+首页断言现通过实际 task composer / visitor landing 与精确 viewer marker 验证，
+仍断言 remount 不创建资源、不创建 launch、没有意外请求。可见区域名称统一为
+Submitted task；copy 检查仍扫描可见内容，仅排除多 class CSS 属性。合并态完整
+Web suite 329 files / 2,963 tests 通过，没有提交 skip。
+
 **What to build:** 用户在首页输入一句任务就能进入自己的 Agent；创建、首条任务、刷新及响应丢失属于同一条可恢复链路。
 
 **Blocked by:** None（评审确认后可独立开始）。

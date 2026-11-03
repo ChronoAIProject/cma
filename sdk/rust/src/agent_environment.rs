@@ -18,7 +18,7 @@ pub enum EnvironmentAvailability {
 }
 
 #[doc = "One feature's availability and explicit data scope; never a retained grant."]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct EnvironmentFeature {
     #[doc = "Current availability."]
     pub state: EnvironmentAvailability,
@@ -31,7 +31,7 @@ pub struct EnvironmentFeature {
 }
 
 #[doc = "Environment observation scoped to one authorized Agent."]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentEnvironment {
     #[doc = "Exact Agent identity."]
     pub agent_id: String,
