@@ -4,17 +4,32 @@ import { mergeRuntimeMetadata } from './runtimeMetadata';
 
 /** The same label is used by the header, document title and hierarchy. */
 export function agentDisplayTitle(
-  agent: Pick<AgentDetail, 'title' | 'ownerTitle' | 'runtimeMetadata'>,
+  agent: Pick<AgentDetail, 'title' | 'ownerTitle' | 'runtimeMetadata'> & { readonly id?: string },
 ): string {
   const metadata = agent.runtimeMetadata;
   const setupPreview =
     metadata?.descriptionSource === 'prompt_preview' && metadata.descriptionIsSetupPreview === true;
+  const configured = boundedTitle(agent.title);
   return (
     agent.ownerTitle?.trim() ||
-    (!setupPreview && metadata?.description?.trim()) ||
-    agent.title?.trim() ||
-    'Untitled agent'
+    (!setupPreview &&
+      boundedTitle(
+        metadata?.description,
+        metadata?.descriptionSource === 'prompt_preview' ? 48 : 64,
+      )) ||
+    (configured !== agent.id && configured !== `Agent ${agent.id}` && configured) ||
+    'Untitled task'
   );
+}
+
+function boundedTitle(value: string | undefined, limit = 64): string | undefined {
+  return value === undefined
+    ? undefined
+    : Array.from(value.trim().split(/[\r\n]/, 1)[0] ?? '')
+        .filter((character) => !/\p{Cc}/u.test(character))
+        .slice(0, limit)
+        .join('')
+        .trim();
 }
 
 /** Runtime notifications update visible metadata without a hierarchy refresh. */
