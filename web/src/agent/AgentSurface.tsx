@@ -43,11 +43,13 @@ import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
 import { AgentHeaderProgress } from './AgentHeaderProgress';
 import { messageSubmission } from './messageSubmission';
+import type { AgentComputerObservation } from './environment/observation';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
 
 interface AgentSurfaceProps {
+  readonly computerObservation?: AgentComputerObservation;
   readonly suggestedReplies?: SuggestedReplySet | null;
   readonly lifecycleClient?: CmaWebClient;
   readonly accessUncertain?: boolean;
@@ -72,6 +74,7 @@ interface AgentSurfaceProps {
 }
 
 export function AgentSurface({
+  computerObservation,
   suggestedReplies,
   lifecycleClient,
   draft,
@@ -351,6 +354,7 @@ export function AgentSurface({
           />
         ) : null}
         <MessageStream
+          onReplay={computerObservation?.selectReplay}
           deliverables={
             lifecycleClient?.deliverables && viewerId && !accessUncertain && accessAuthorized
               ? { agentId, viewerId, client: lifecycleClient.deliverables }
