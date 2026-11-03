@@ -377,6 +377,7 @@ impl Supervisor {
                 .await
                 .map_err(|error| RuntimeError::unavailable("agent_termination_failed", error))?;
             self.agents.write().await.remove(&request.agent_id);
+            self.browsers.lock().await.remove(&request.agent_id);
         }
         let receipt = AgentCloseReceipt {
             operation_id: request.operation_id,
@@ -412,6 +413,13 @@ impl Supervisor {
             environment.insert(name.clone(), value.clone());
         }
         environment.insert("HOME".into(), launch.home.clone());
+        environment.insert(
+            "CMA_BROWSER_SOCKET".into(),
+            crate::browser::directory(&self.config, &self.boot_id, launch.agent_id.as_str())
+                .join("browser.sock")
+                .to_string_lossy()
+                .into_owned(),
+        );
         Ok(environment)
     }
 }

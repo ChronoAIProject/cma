@@ -2,6 +2,41 @@ use super::HostedAdapter;
 use crate::wire::{RequestFrame, ResponseFrame};
 use crate::{AdapterError, RuntimeHandle};
 
+#[async_trait::async_trait]
+impl crate::BrowserAdapter for HostedAdapter {
+    async fn browser(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::BrowserRequest,
+    ) -> crate::Result<crate::BrowserReceipt> {
+        let state = self.known_state(handle).await?;
+        validate_identity(
+            &state,
+            &request.sandbox_id,
+            request.runtime_generation,
+            &request.boot_id,
+        )?;
+        let status = self.inspect_runtime_status(handle).await?;
+        if !status.agent_browser {
+            return Err(AdapterError::Unsupported(
+                "runtime browser observation is unavailable".into(),
+            ));
+        }
+        if status.boot_id != request.boot_id || !status.credential_ready || status.restore_pending {
+            return Err(AdapterError::Rejected(
+                "browser runtime identity changed".into(),
+            ));
+        }
+        match self
+            .exchange(handle, RequestFrame::Browser(request.clone()))
+            .await?
+        {
+            ResponseFrame::Browser(receipt) => Ok(receipt),
+            _ => unreachable!("exchange verifies response operation"),
+        }
+    }
+}
+
 fn validate_identity(
     state: &super::RuntimeState,
     sandbox_id: &str,

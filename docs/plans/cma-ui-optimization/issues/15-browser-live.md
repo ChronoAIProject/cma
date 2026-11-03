@@ -4,7 +4,7 @@
 
 **Blocked by:** 14（环境面板、能力作用范围与授权数据生命周期）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **优先级:** P3
 
@@ -28,3 +28,15 @@
 ## 范围与依赖说明
 
 本票使用一个明确已启用的测试环境验证观察能力；16 再把能力带入普通首页创建，17 再加入控制权。没有录像存储或操作执行入口。
+
+## Implementation evidence (2026-11-03)
+
+- Isolated branch `codex/cma-ui-15`, worktree `ticket-15`, starting at integration
+  `826de20e95cf02aad86673003ca813279d33d9dd`.
+- Approved seams: U (normal Agent computer panel), A (authenticated environment
+  and browser observation), R (pinned native Agent navigation through the runtime
+  browser mediator). Controlled frames prove protocol behavior only.
+- First slice: native Agent navigates two local pages through a mediated browser
+  command; real bounded frames follow that navigation and observation reconnection
+  retains the same browser context. Production sandbox prerequisites are checked
+  before claiming the capability.
