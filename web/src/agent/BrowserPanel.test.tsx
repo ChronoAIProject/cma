@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient, type AgentEnvironment } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import { agentClient } from '../test/agent';
@@ -263,13 +263,13 @@ it('keeps an explicit operation replay selection when an enabled browser becomes
   expect(onSelect).toHaveBeenCalledWith('activity');
 });
 
-const feature = (state: string) => ({
+const feature = (state: AgentEnvironment['browser']['state']): AgentEnvironment['browser'] => ({
   state,
   reason: 'proof',
   scope: 'agent_browser',
   writable: false,
 });
-const environment = (state: string) => ({
+const environment = (state: AgentEnvironment['browser']['state']): AgentEnvironment => ({
   agent_id: 'agent-a',
   policy_revision: 1,
   runtime_incarnation: 'incarnation',
