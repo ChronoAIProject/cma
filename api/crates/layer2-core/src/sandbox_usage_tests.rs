@@ -231,3 +231,24 @@ fn sandbox_usage_nonallocation_writes_advance_the_source_watermark() {
         .unwrap()
         .is_none());
 }
+
+#[test]
+fn sandbox_usage_runtime_release_during_pause_records_a_pause_edge() {
+    let mut value = sandbox();
+    assert!(value.runtime.is_some());
+    let (active, _) = observe(None, &value, 1, &at(0), false).unwrap().unwrap();
+    value.revision += 1;
+    value.status = SandboxStatus::Pausing;
+    value.runtime = None;
+    let (pausing, event) = observe(Some(&active), &value, 2, &at(30), false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(event.kind, UsageEventKind::Paused);
+    assert_eq!(event.quantity.uptime_seconds, 30);
+    value.revision += 1;
+    value.status = SandboxStatus::Paused;
+    let (paused, _) = observe(Some(&pausing), &value, 3, &at(40), false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(paused.totals.uptime_seconds, 30);
+}

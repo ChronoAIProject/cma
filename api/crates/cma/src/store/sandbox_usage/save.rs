@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::store::sandbox_mongo::{
-    commit_transaction, is_transient, start_transaction, unsigned, CommitOutcome,
+    commit_transaction, is_duplicate_key, is_transient, start_transaction, unsigned, CommitOutcome,
     TRANSACTION_ATTEMPTS,
 };
 
@@ -11,7 +11,7 @@ pub(in crate::store) async fn save(
     expected: u64,
     sandbox: &Sandbox,
 ) -> Result<(), SandboxStoreError> {
-    let at = layer2_core::now_rfc3339();
+    let at = sandbox.updated_at.clone();
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store.client.start_session().await.map_err(unavailable)?;
         start_transaction(&mut session).await.map_err(unavailable)?;
@@ -94,6 +94,48 @@ async fn apply(
     .await
 }
 
+/// Every aggregate revision participates, including lease and credential saves.
+/// Call after a successful revision CAS and before committing the same session.
+pub(in crate::store) async fn record_saved(
+    store: &MongoSandboxStore,
+    session: &mut ClientSession,
+    sandbox: &Sandbox,
+    expected_revision: u64,
+) -> Result<(), TransactionEventError> {
+    use TransactionEventError::{Domain, Driver};
+    // A fence-only write has no new observation time. In particular it must not
+    // initialize an untracked legacy Sandbox at its historical updated_at.
+    if sandbox.revision == expected_revision {
+        return Ok(());
+    }
+    let document = store
+        .sandboxes
+        .find_one(doc! { "_id": sandbox.id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(Driver)?
+        .ok_or(Domain(SandboxStoreError::NotFound))?;
+    let seq = document
+        .get_i64("last_seq")
+        .map_err(|error| Domain(SandboxStoreError::Corrupt(error.to_string())))?;
+    let seq = unsigned(seq, "sandbox sequence")
+        .map_err(|error| Domain(SandboxStoreError::Corrupt(error)))?;
+    super::record(
+        store,
+        session,
+        sandbox,
+        seq,
+        &sandbox.updated_at,
+        (seq, expected_revision),
+        false,
+    )
+    .await
+}
+
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
-    SandboxStoreError::Unavailable(error.to_string())
+    if is_duplicate_key(&error) {
+        SandboxStoreError::Duplicate
+    } else {
+        SandboxStoreError::Unavailable(error.to_string())
+    }
 }
