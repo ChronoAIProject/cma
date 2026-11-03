@@ -145,6 +145,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'conversation_gap':
       return recover(next, {
         id: `gap:${String(event.seq)}`,
+        runId: next.activeRunId,
         title: 'Incomplete conversation output',
         detail: `${String(number(kind.frames) ?? 0)} live frame(s) were lost. Stored messages remain available, but the output may be incomplete.`,
       });
@@ -185,7 +186,10 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       return {
         ...finishTurn(next, runId, event.appendedAt),
         messages: next.messages.map((message) =>
-          message === finalMessage && message.role === 'assistant' && message.content.trim() !== ''
+          message === finalMessage &&
+          message.role === 'assistant' &&
+          message.content.trim() !== '' &&
+          !next.recovery.some((notice) => notice.runId === runId && notice.id.startsWith('gap:'))
             ? { ...message, finalAnswer: true }
             : message,
         ),

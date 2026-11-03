@@ -113,7 +113,7 @@ impl MessageFeedbackService {
         vote: Option<MessageVote>,
     ) -> Result<(), AgentReadError> {
         self.reads
-            .require_owned_message(caller, agent, sequence)
+            .require_owned_final_answer(caller, agent, sequence)
             .await?;
         self.store.set(&caller.subject, agent, sequence, vote).await
     }
