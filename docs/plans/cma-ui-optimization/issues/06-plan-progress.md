@@ -4,7 +4,7 @@
 
 **Blocked by:** None（复用已有 PlanSet 和工具事件）。
 
-**Status:** done — 本票 U/A/R 验收完成，等待集成 merger 接收
+**Status:** done — 本票 U/A/R 验收及独立集成已完成
 
 **优先级:** P1
 

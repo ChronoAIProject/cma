@@ -4,7 +4,7 @@
 
 **Blocked by:** 11（建议数据身份、发送与失效语义）。
 
-**Status:** in-progress
+**Status:** in-progress — 技术实现、独立 AI 评审与最终修复验收完成；仅待实际人工质量结论。
 
 **优先级:** P1
 
@@ -37,3 +37,5 @@ Implementation, persistence, bounded real generation and focused A/U/browser evi
 Ticket 12's editor and ticket 10's feedback are merged through integration `f793a41518fa969af068d7913ff6310dee7e040b`. Generated sets use the existing append/replace/undo/cancel and normal-send recovery. Ticket 13 observes actual edited acceptance, uncertain-request recovery and receipt-bound outcomes through the shared metric seam; no duplicate editor or message protocol was introduced. The combined edit criterion is complete.
 
 The [independent parent AI review](../13-PARENT-AI-REVIEW.md) passes all five actual v3 samples. This is explicitly AI review. Machine implementation and proof work are complete; status remains in-progress solely for literal human/user quality acceptance at the full-delivery review. Unknown actual billed cost remains an explicit evidence limitation, not a fabricated estimate or a reason to stall the remaining tickets.
+
+The [concise human acceptance page](../13-HUMAN-REVIEW.md) reproduces the five goals, answers and saved suggestions exactly. Each was checked against the retained actual public-read JSON. The [final review record](../FINAL-REVIEW.md) closes technical findings separately; the original human criterion remains unchecked until an actual person provides a conclusion.
