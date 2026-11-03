@@ -5,6 +5,21 @@ use crate::{
 };
 use std::sync::Arc;
 
+pub(super) fn provider_tools(
+    config: &Config,
+    stores: &crate::store::MongoStores,
+) -> Result<(Arc<crate::store::MongoProviderToolSource>, axum::Router), String> {
+    let source = crate::store::MongoProviderToolSource::with_relay(
+        stores.sandbox_model.clone(),
+        stores.sandbox_credentials.clone(),
+        config.provider_tool_relay.clone(),
+        &config.public_url,
+        &config.auth_encryption_key,
+    )?;
+    let routes = crate::provider_tool_relay::router(source.clone());
+    Ok((source, routes))
+}
+
 pub(super) fn agent_access_tools(
     config: &Config,
     stores: &crate::store::MongoStores,

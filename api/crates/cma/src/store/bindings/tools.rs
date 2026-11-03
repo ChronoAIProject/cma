@@ -9,6 +9,11 @@ use mongodb::ClientSession;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+mod relay;
+mod relay_auth;
+#[cfg(test)]
+mod relay_tests;
+mod relay_transport;
 #[cfg(test)]
 mod tests;
 mod transaction;
@@ -20,11 +25,12 @@ use validation::Scope;
 
 pub(crate) struct MongoProviderToolSource {
     store: Arc<MongoSandboxStore>,
+    relay: Option<relay::Authority>,
 }
 
 impl MongoProviderToolSource {
     pub(crate) fn new(store: Arc<MongoSandboxStore>) -> Arc<Self> {
-        Arc::new(Self { store })
+        Arc::new(Self { store, relay: None })
     }
 
     async fn resolve_in(
@@ -99,11 +105,26 @@ impl MongoProviderToolSource {
             request.clone(),
             fence,
             proxy,
-            receipt.map(|record| HostedToolOpenReceipt {
-                boot_id: record.boot_id,
-                conversation: record.conversation,
+            receipt.as_ref().map(|record| HostedToolOpenReceipt {
+                boot_id: record.boot_id.clone(),
+                conversation: record.conversation.clone(),
             }),
         )?;
+        let attachment = self
+            .relay_for_open(
+                attachment,
+                &scope,
+                receipt.is_some()
+                    || request.resume_conversation.is_some()
+                    || snapshot
+                        .resource
+                        .lineage
+                        .agent
+                        .as_ref()
+                        .is_some_and(|agent| agent.conversation.conversation_id.is_some()),
+                session,
+            )
+            .await?;
         Ok(Some((attachment, scope)))
     }
 }
@@ -121,7 +142,7 @@ impl HostedProviderToolSource for MongoProviderToolSource {
             .await?
         {
             Outcome::Resolved(binding) => Ok(binding.map(|binding| *binding)),
-            Outcome::Confirmed => unreachable!("resolve returns a binding"),
+            _ => unreachable!("resolve returns a binding"),
         }
     }
 
@@ -138,6 +159,38 @@ impl HostedProviderToolSource for MongoProviderToolSource {
             return Err(refused());
         }
         self.run(Operation::Confirm(attachment, conversation))
+            .await?;
+        Ok(())
+    }
+
+    async fn prepare_transport(
+        &self,
+        binding: &HostedProviderToolBinding,
+        origin: &str,
+        conversation: &str,
+        sequence: u64,
+    ) -> layer3_adapter::Result<HostedProviderToolBinding> {
+        match self
+            .run(Operation::Transport(
+                binding,
+                Some(origin),
+                conversation,
+                sequence,
+            ))
+            .await?
+        {
+            Outcome::Resolved(Some(binding)) => Ok(*binding),
+            _ => unreachable!("transport preparation returns a binding"),
+        }
+    }
+
+    async fn confirm_transport(
+        &self,
+        binding: &HostedProviderToolBinding,
+        conversation: &str,
+        sequence: u64,
+    ) -> layer3_adapter::Result<()> {
+        self.run(Operation::Transport(binding, None, conversation, sequence))
             .await?;
         Ok(())
     }
@@ -158,6 +211,7 @@ impl MongoProviderToolSource {
             .await?
             .ok_or_else(refused)?;
         if current.scope() != attachment.scope()
+            || !current.same_transport(attachment)
             || current.provenance_sha256() != attachment.provenance_sha256()
             || scope
                 .runtime
@@ -200,6 +254,8 @@ impl MongoProviderToolSource {
         {
             return Err(refused().into());
         }
+        self.confirm_relay_open(attachment, &scope, conversation, session)
+            .await?;
         let record = OpenRecord {
             scope,
             boot_id: observed.boot_id.clone(),

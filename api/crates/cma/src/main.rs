@@ -20,6 +20,7 @@ mod permissions;
 mod profile_authoring;
 mod profile_policy;
 mod projections;
+mod provider_tool_relay;
 mod rate_limit;
 mod sandbox;
 mod shutdown;

@@ -41,12 +41,14 @@ mod mongo_tests;
 const BINDINGS: &str = "provider_bindings";
 const CONVERSATIONS: &str = "binding_conversations";
 const TOOL_OPENS: &str = "provider_tool_opens";
+const TOOL_RELAYS: &str = "provider_tool_relays";
 
 #[derive(Clone)]
 pub(super) struct BindingCollections {
     pub(super) records: Collection<Document>,
     pub(super) conversations: Collection<Document>,
     pub(super) tool_opens: Collection<Document>,
+    pub(super) tool_relays: Collection<Document>,
     pub(super) preparations: Collection<Document>,
 }
 
@@ -58,6 +60,7 @@ impl BindingCollections {
                 BINDINGS,
                 CONVERSATIONS,
                 TOOL_OPENS,
+                TOOL_RELAYS,
                 reprovision::PREPARATIONS,
             ],
         )
@@ -66,6 +69,7 @@ impl BindingCollections {
             records: majority_collection(database, BINDINGS),
             conversations: majority_collection(database, CONVERSATIONS),
             tool_opens: majority_collection(database, TOOL_OPENS),
+            tool_relays: majority_collection(database, TOOL_RELAYS),
             preparations: majority_collection(database, reprovision::PREPARATIONS),
         };
         for (collection, keys) in [

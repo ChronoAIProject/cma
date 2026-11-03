@@ -83,6 +83,8 @@ data:
   # Existing runtime tool credentials and conversation bindings retain this authority.
   # Keep its /api/v1/agent-tools route serving directly while those Agents exist.
   CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION: ""
+  # Explicit provider binding relay; disabled until compatible readers have drained.
+  CHRONO_PROVIDER_TOOL_RELAY: ""
   CHRONO_AGENT_ACCESS_RETAINED_ORIGINS: "https://bot.chrono-ai.fun"
   # Agent Manager resolves selected immutable versions through the separate
   # Image Manager service using the caller's delegated NyxID credential.
