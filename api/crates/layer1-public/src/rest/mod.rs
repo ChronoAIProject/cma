@@ -72,7 +72,7 @@ mod badge_mark;
 mod badge_tests;
 mod defaults;
 mod desktop;
-pub use desktop::desktop_router;
+pub use desktop::{desktop_router, desktop_router_with_origins};
 mod documents;
 pub use documents::documents_router;
 mod embed;
