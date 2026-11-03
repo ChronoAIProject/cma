@@ -41,7 +41,7 @@ it('adopts a title generated after the completed first turn without reloading or
     </CmaClientProvider>,
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
-  expect(screen.getByRole('heading', { name: 'Untitled agent' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Untitled task' })).toBeInTheDocument();
   const composer = screen.getByRole('textbox', { name: 'Message' });
   composer.focus();
   fireEvent.change(composer, { target: { value: 'Keep this unsent draft' } });
