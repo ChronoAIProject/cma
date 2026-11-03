@@ -11,7 +11,7 @@ export function textContent(content: AgentFileContent): string | undefined {
     return undefined;
   }
 }
-function imageType(name: string): string | undefined {
+export function imageType(name: string): string | undefined {
   const extension = name.toLowerCase().split('.').at(-1);
   return (
     {
@@ -51,6 +51,7 @@ export function FilePreview({
   onReload,
   onDownload,
   onDelete,
+  hideHeader = false,
 }: {
   readonly file?: AgentFileEntry;
   readonly content?: AgentFileContent;
@@ -63,6 +64,7 @@ export function FilePreview({
   readonly onReload: () => void;
   readonly onDownload: () => void;
   readonly onDelete: () => void;
+  readonly hideHeader?: boolean;
 }) {
   const original = content ? textContent(content) : undefined;
   const dirty = draft !== undefined && draft !== original;
@@ -72,30 +74,32 @@ export function FilePreview({
         <p className="agent-files__empty">Select a file to preview it.</p>
       ) : (
         <>
-          <header className="agent-files__file-header">
-            <code title={`/home/${file.path}`}>{file.name}</code>
-            {dirty ? <span aria-label="Unsaved changes">Unsaved</span> : null}
-            <div className="agent-files__actions">
-              <Button
-                size="sm"
-                icon={<IconDownloadOutline16 />}
-                aria-label="Download file"
-                title="Download file"
-                disabled={busy}
-                onClick={onDownload}
-              />
-              {!readOnly ? (
+          {!hideHeader ? (
+            <header className="agent-files__file-header">
+              <code title={`/home/${file.path}`}>{file.name}</code>
+              {dirty ? <span aria-label="Unsaved changes">Unsaved</span> : null}
+              <div className="agent-files__actions">
                 <Button
                   size="sm"
-                  icon={<IconTrashOutline16 />}
-                  aria-label="Delete file"
-                  title="Delete file"
+                  icon={<IconDownloadOutline16 />}
+                  aria-label="Download file"
+                  title="Download file"
                   disabled={busy}
-                  onClick={onDelete}
+                  onClick={onDownload}
                 />
-              ) : null}
-            </div>
-          </header>
+                {!readOnly ? (
+                  <Button
+                    size="sm"
+                    icon={<IconTrashOutline16 />}
+                    aria-label="Delete file"
+                    title="Delete file"
+                    disabled={busy}
+                    onClick={onDelete}
+                  />
+                ) : null}
+              </div>
+            </header>
+          ) : null}
           {loading ? (
             <p role="status">Opening file…</p>
           ) : content && imageType(file.name) ? (

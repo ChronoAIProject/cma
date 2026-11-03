@@ -216,6 +216,18 @@
 - 本次只合入实现与机器证据，13 仍为 **in-progress / 尚未完整验收**。逐字核对原始 AC 文本未变，恰好一个 literal independent human quality criterion 未勾选；parent AI review 通过五个 v3 样本不等于人审，不将其改为完成。实际 billed cost 继续为 null/unknown，无零值替代、估算或虚构 native/model availability；实际样本日志与环境边界保留在既有外部证据中。
 - shared JSON inventory 235 actual / 230 declared 的 07/14 缺口仍由 parent repair worker `01a19fd8-0df5-7730-92e2-cefbe954f9b4` 处理；未重复 CSS/size/inventory/task-status/AppPublic 等集成修复。它们与原始 skill/Core/format/508-line Agent service/LocalAgentV2 head-404 问题分别记录，不宣称全仓或部署绿色。仅写集成 worktree，无原工作区或其他 worker 源码修改，无 push、PR 或部署。
 
+## Ticket 08 worker delivery（2026-11-03）
+
+- 独立 worktree `ticket-08` / `codex/cma-ui-08`，确认起点 `01656f54f` 包含 07 + 12；使用已确认 U/A/Chrome 边界，无新增人工澄清。原始七项 AC 原文保留并逐项完成，见 [08-EVIDENCE.md](08-EVIDENCE.md)。
+- 样式先追加再实施（`2baa0a81c`），预览实现 `43171c01c`。复用 07 的精确回答关联、版本、digest 和授权下载，以及既有 FilePreview、MessageContent、useAuthorizedRead、AppFrame；没有新协议或动态模型调用。HTML/SVG/链接不成为交互页面，PDF 明确下载回退，1 MiB 预览上限保留。
+- 只在 Console 用独立 frame wrapper 接入；没有改 AgentSidePanel/AgentComputer/AgentSurface/MessageStream 或 15、18 的 browser/replay 容器。已访问文件编辑器持续挂载，预览切换和关闭不会替换会话/composer，资源撤销清除受限内容。真正 Chrome red 修正了移动端 inert 清除后的原卡片焦点，以及下载后 Escape 的处理。
+- `441524648` 将最新 integration `a2965df09` 合入本分支（10、13 已纳入）。唯一冲突为 Web Style 末尾；逐字断言结果为 integration 完整前缀 + 本票原样追加，没有改写已有规则。`e5b38408b` 收紧关闭 callback dependency。
+- U 聚焦 10 文件 / 65 passed；本票三文件共 19 tests。整套合并态 Web 333 文件：330 passed / 3 failed，2,985 tests passed / 8 failed。失败为既有 AppPublic 6 项、REST tool_output URL 1 项及 TaskHome public-copy 1 项，不弱化断言或重复 parent repair。
+- A：独立 target + `--cfg cma_ui_ticket08`、Rust 1.96.1、jobs 2；5 个回答交付 Router 测试和 1 个精确 OpenAPI inventory 测试真实非零通过。TS SDK 9 tests 通过。没有新增 API/SDK source 或契约。
+- Chrome 1440px/390px 共 4 场景通过，覆盖实际下载字节、键盘/触屏、原卡片焦点、详情/文件/预览往返、草稿/附件/节点/滚动、延迟保存、危险 HTML/SVG/Markdown、PNG 解码、PDF 回退、撤销清除。TypeScript、E2E typecheck、ESLint、production build、owned Prettier 和 diff check 通过；截图已目检。
+- 外部证据根目录 `/Users/liuyitian/code/cma-ui-worktrees/evidence/ticket-08`，含逐阶段 red/green、全部命令日志、Chrome PNG、独立 Cargo executable/hash、21 路径 manifest 与 shared-hunks。CSS 剩余 incoming `.agent-files-panel` 碰撞；size gate 剩余 incoming 556/517/503 和原始 508 行问题。没有将整仓或生产声明为绿色。
+- 所有写入仅本 worktree；无 push、PR、部署、动态模型生成或生产操作。验证后停止本票 Vite/Chrome，不动共享 Mongo/VM 和其他 worker，保留 worktree/证据供独立 merger 集成。
+
 
 ## Ticket 18 完成与交接（2026-11-03）
 
