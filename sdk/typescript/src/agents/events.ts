@@ -91,6 +91,10 @@ export const agentEventKind = tagged({
     title: optional(text),
     output: optional(object({ text, truncated: boolean })),
   }),
+  tool_output_reported: variant('tool_output_reported', {
+    call_id: text,
+    output: object({ text, truncated: boolean }),
+  }),
   approval_requested: variant('approval_requested', {
     approval_id: text,
     action: optional(text),

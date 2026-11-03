@@ -33,6 +33,7 @@ export const v2ActivityItem = variant('mcp_call', {
     if (value !== null) throw new ProtocolError('Activity output must be absent');
     return null;
   },
+  'cma:output': optional(object({ text, truncated: boolean })),
   error: (value: unknown) => {
     if (value !== null) throw new ProtocolError('Activity error body must be absent');
     return null;

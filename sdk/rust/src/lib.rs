@@ -19,6 +19,7 @@ mod macros;
 pub mod admin;
 pub mod agent_card;
 pub mod agent_delegations;
+pub mod agent_environment;
 pub mod agent_events_v2;
 pub mod agent_files;
 pub mod agents;
