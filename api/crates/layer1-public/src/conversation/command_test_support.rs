@@ -151,8 +151,13 @@ pub(crate) fn router(state: AgentConversationState, store: Arc<InMemorySandboxSt
     let execution = Arc::new(Execution(state.clone()));
     let worker =
         AgentCommandWorker::new(store, execution, "protocol-contract-worker".into()).unwrap();
+    let v2 = crate::responses::v2::router(crate::responses::v2::ResponsesV2State::new(
+        state.commands.clone().unwrap(),
+        state.reads.clone(),
+    ));
     crate::agui::router(state.clone())
         .merge(crate::responses::router(state))
+        .merge(v2)
         .layer(axum::middleware::from_fn_with_state(worker, drive))
 }
 
@@ -162,13 +167,31 @@ async fn drive(
     next: Next,
 ) -> Response {
     authenticate(&mut request);
-    let mutation = request.method() == axum::http::Method::POST
-        && matches!(
-            request.uri().path(),
-            "/api/v1/agui/run" | "/api/v1/responses"
-        );
+    let v2 =
+        request.method() == axum::http::Method::POST && request.uri().path() == "/api/v2/responses";
+    let mutation = v2
+        || request.method() == axum::http::Method::POST
+            && matches!(
+                request.uri().path(),
+                "/api/v1/agui/run" | "/api/v1/responses"
+            );
     if !mutation {
         return next.run(request).await;
+    }
+    if v2 {
+        let response = next.run(request).await;
+        for command in worker
+            .discover(&PageRequest::default())
+            .await
+            .unwrap()
+            .items
+        {
+            worker
+                .run_one(&command.receipt.envelope.command_id)
+                .await
+                .unwrap();
+        }
+        return response;
     }
     let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {

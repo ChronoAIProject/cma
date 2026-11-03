@@ -12,6 +12,30 @@ v2 rules in this section.
 
 ## Responses v2
 
+Conditional follow-ups may include
+`"answer_context":{"turn_sequence":3,"answer_sequence":5}` on either creation
+route. The sequences identify the current successfully completed turn and its
+final nonempty assistant message. The answer sequence must exceed the positive
+turn sequence; both fit a signed 64-bit integer (TypeScript additionally requires
+safe integers). Admission atomically rejects an active or replaced answer, pending
+input, or any newer admitted message, including one later cancelled or rejected.
+This uses the ordinary permission checks and command queue. It adds no send route.
+
+Scope is immutable canonical intent. Keep exact input, scope and `Idempotency-Key`
+when recovering uncertain delivery; authorized same-key replay returns the original
+receipt before checking the now-stale answer. A different key or changed intent
+cannot recover that receipt. Invalid conditions return 422 `invalid_answer_context`;
+ineligible new admissions return 409 `agent_command_not_admissible`. The latter is
+an explicit refusal of new admission; callers can remove the expired suggestion.
+Permission or network failures alone never prove that a prior request was refused.
+Clients without a condition retain ordinary append semantics.
+
+Internally this condition uses the existing `after_turn` order and reserved
+`cma.answer_sequence` metadata. Applications must not supply that metadata key;
+the condition consumes one of the 16 metadata entries. Persisted commands retain
+their existing schema and fingerprint/replay behavior. Older public servers reject
+this unsupported extension; clients must not drop it and resubmit unconditionally.
+
 An optional request `model` must match the Agent's current conversation settings;
 it does not override those settings. Once a command starts a turn, its response
 retains the model selected at that durable dispatch boundary. Later settings

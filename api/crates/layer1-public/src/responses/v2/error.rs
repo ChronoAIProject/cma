@@ -145,10 +145,14 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
             "This idempotency key already identifies different input.",
             Some("Idempotency-Key"),
         ),
+        CommandAdmissionError::Ledger(CommandLedgerError::NotAdmissible) => error(
+            StatusCode::CONFLICT,
+            "agent_command_not_admissible",
+            "This request was not admitted. Its answer or Agent is no longer eligible.",
+            None,
+        ),
         CommandAdmissionError::Ledger(
-            CommandLedgerError::Conflict
-            | CommandLedgerError::NotAdmissible
-            | CommandLedgerError::StaleClaim,
+            CommandLedgerError::Conflict | CommandLedgerError::StaleClaim,
         ) => error(
             StatusCode::CONFLICT,
             "agent_command_admission_conflict",
