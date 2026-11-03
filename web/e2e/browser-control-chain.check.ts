@@ -76,6 +76,7 @@ test('real Web input exclusively controls the native Agent browser through publi
         privateKey = outgoing.headers()['x-cma-browser-client']!;
       }
       const response = await route.fetch({ url: origins[access] + url.pathname + url.search });
+      if (command) console.log('Control mutation', command.command, response.status());
       if (control && response.ok()) receipts.push(await response.json());
       if (command && command.command === drop) {
         drop = undefined;
@@ -119,6 +120,7 @@ test('real Web input exclusively controls the native Agent browser through publi
   await expect(page.getByRole('button', { name: 'Take control' })).toBeEnabled({ timeout: 10000 });
   drop = 'acquire';
   await page.getByRole('button', { name: 'Take control' }).click();
+  await expect.poll(() => mutations.filter((value) => value.command === 'acquire').length).toBe(1);
   await expect(page.getByText('Control state unknown', { exact: true })).toBeVisible();
   expect((await native('-LOST-ACQUIRE')).refused).toBe(true);
   await page.getByRole('button', { name: 'Check original operation' }).click();
