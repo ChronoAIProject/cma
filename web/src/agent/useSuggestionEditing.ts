@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { ComposerSuggestionEditorHandle } from './ComposerSuggestionEditor';
 import type { AgentController } from './controllerTypes';
 import type { messageSubmission } from './messageSubmission';
 import type { SuggestedReplySet } from './suggestions';
+import { confirmSuggestionSend, rememberSuggestionRequest } from './suggestionMetrics';
 
 function sameSet(left: SuggestedReplySet | undefined, right: SuggestedReplySet | undefined) {
   return (
@@ -24,7 +25,7 @@ export function useSuggestionEditing(
   controller: AgentController,
 ) {
   const editorRef = useRef<ComposerSuggestionEditorHandle>(null);
-  const [edited, setEdited] = useState<SuggestedReplySet>();
+  const [edited, setEdited] = useState<{ set: SuggestedReplySet; itemId: string }>();
   const [dismissed, setDismissed] = useState<SuggestedReplySet>();
   const retained = controller.readSuggestionRequest?.();
   const consumed =
@@ -33,19 +34,57 @@ export function useSuggestionEditing(
     retained.answerContext?.turn_sequence === suggestions.scope.turn_sequence &&
     retained.answerContext?.answer_sequence === suggestions.scope.answer_sequence;
   const source = consumed || sameSet(suggestions, dismissed) ? undefined : suggestions;
+  const currentSource = useRef(source);
+  useLayoutEffect(() => {
+    currentSource.current = source;
+    return () => {
+      currentSource.current = undefined;
+    };
+  }, [source]);
   if (consumed && !sameSet(suggestions, dismissed)) setDismissed(suggestions);
-  if (edited && !sameSet(edited, source)) setEdited(undefined);
+  if (edited && !sameSet(edited.set, source)) setEdited(undefined);
   return {
     source,
     editorRef,
     edit(text: string) {
-      if (source)
-        editorRef.current?.edit(text, (applied) => setEdited(applied ? source : undefined));
+      const item = source?.items.find((candidate) => candidate.text === text);
+      if (source && item)
+        editorRef.current?.edit(text, (applied) =>
+          setEdited(applied ? { set: source, itemId: item.id } : undefined),
+        );
     },
     send(submit: ReturnType<typeof messageSubmission>, content: string, accepted: () => void) {
-      const scope = sameSet(source, edited) ? source?.scope : undefined;
-      return submit(content, accepted, scope, (reason) => {
-        if (reason && scope) setDismissed(source);
+      const selection = sameSet(source, edited?.set) ? edited : undefined;
+      const scope = selection?.set.scope;
+      const request = submit(
+        content,
+        (receipt) => {
+          if (selection) confirmSuggestionSend(selection.set, selection.itemId, 'edited', receipt);
+          accepted();
+        },
+        scope,
+        (reason) => {
+          if (reason && scope) setDismissed(source);
+        },
+      );
+      return Promise.resolve(request).then(() => {
+        if (!selection || !sameSet(selection.set, currentSource.current)) return;
+        const input = controller.readSuggestionRequest?.();
+        if (
+          input?.input !== content ||
+          input.answerContext?.turn_sequence !== scope?.turn_sequence ||
+          input.answerContext?.answer_sequence !== scope?.answer_sequence
+        )
+          return;
+        if (input.state === 'pending')
+          rememberSuggestionRequest(selection.set, selection.itemId, 'edited', input.key);
+        else
+          confirmSuggestionSend(
+            selection.set,
+            selection.itemId,
+            'edited',
+            input.receipt ?? undefined,
+          );
       });
     },
   };

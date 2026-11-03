@@ -3,6 +3,7 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['suggestions-invalid_query', 'invalid_instance_query'],
   ['feedback-reasons-invalid-comment', 'invalid_agent_request'],
   ['feedback-reasons-invalid-message', 'invalid_agent_request'],
   ['feedback-reasons-unknown-reason', 'invalid_json'],

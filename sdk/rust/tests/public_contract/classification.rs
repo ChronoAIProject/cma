@@ -13,6 +13,7 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("suggestions-invalid_query", Classification::TypedShape),
     ("feedback-reasons-invalid-comment", Classification::Local),
     ("feedback-reasons-invalid-message", Classification::Local),
     (
