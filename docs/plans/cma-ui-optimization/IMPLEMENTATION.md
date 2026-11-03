@@ -249,3 +249,13 @@
 - 仅 ticket18 路径符合 500 source / 2000 test gate；全仓三个超限文件与 `a2965df09` 字节一致（508-line Agent service、503-line conversation、556-line feedback test 的现有 gate 分类），既有 skill/format/LocalAgentV2 head-404 问题单独保留，不宣称全仓绿色。最新 integration 保留 07/10/12/13 交付、反馈、编辑和建议逻辑，13 的待人工验收状态未改。
 - 08 合并后针对 replay/Console preview/panel/memo 再验 4 文件 / 15 passed，types/build/Console format 通过；Console 500 行。真实 native→public HTTP→Chrome reload 全链再次通过，执行计数仍 4→4；最新证据在 `ticket18-proof/merged08-runtime/`，此前证明日志保留。Web Style 和 ledger 严格保留最新 integration 前缀，再追加 18。
 - 自有 preview/native/public 服务已停止；shared Colima/Mongo 保持运行。保留 worktree/private target/proof artifacts，交由 parent cleanup 和独立 merger；无 push、PR、部署，未写原工作区、integration 或其他 worker 源码。
+
+## Ticket 18 集成（2026-11-03）
+
+- 合并前集成工作区干净，分支 `codex/cma-ui-optimization`、HEAD `7cd701d0fe6c2496256a01eca59919ee8d899c82`。已读取完整 `18-EVIDENCE.md`、`18-FILE-SCOPE.md` 和 18 ticket；37 路径 manifest 与实际 diff 完全匹配，原始八项 AC 文本未改且均已勾选，候选包含最新 08 集成。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-18` 的 `68c8b8192aff5ce3f2ecdad035044d4da0f5cfdc`，merge commit 为 `70482a73b88067f4cdfa11bf8fddc570f5a52ae7`。无冲突，合并树与候选完全一致，无额外源码修正；Web Style 与原 ledger 严格保留完整前缀后追加 18。
+- 共享 hunk 为 Console/Computer observation、AgentSidePanel replay 入口、AgentSurface/SharedAgent 到 MessageStream/StreamEntry/PlanCard 的实际 turn 导航，以及公开 typed snapshot/head/tail reader；保留现有 finalAnswer/feedback、08 preview wrapper 与文件编辑保持、13 保存建议/12 编辑身份。environment 仅声明只读 operation_records_only，纯 incarnation/history helper 移至既有 agent_environment 模块，文件私有访问 guard 不改；不新增 API route、视频、Browser 私有上下文或 control 能力。
+- 合并态执行 `npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/OperationReplay.test.tsx src/ConsoleDeliverablePreview.test.tsx src/agent/AgentSidePanel.test.tsx src/agent/MessageStream.performance.test.tsx src/agent/PlanCard.test.tsx src/resources/SharedAgent.test.tsx src/Console.test.tsx`，实际 7 文件 / 56 tests 全部通过；`npm --prefix web run typecheck` 通过。覆盖历史固定游标/Return Live、实际 turn 链接、共享/owner Computer scope、08 预览与 memo/performance；没有重复 native、Mongo、public Rust/SDK 或全 Web。
+- `git diff --check 7cd701d0fe6c2496256a01eca59919ee8d899c82 HEAD`、worktree 和记录提交前 cached diff check 通过。已逐字断言 08 DeliverablePreview/Frame、13 useAgentSuggestions、12 useSuggestionEditing 与 13 tracker 保持合并前内容；13 仍 in-progress、literal human quality AC 未勾选，费用仍 null/unknown。
+- worker 的固定 Codex/ACP native→public HTTP→Chrome/reload 4→4、零 replay API 写请求和六条 shared handler/typed SDK case 证据保留，merger 不将受控模型、测试 owner/in-memory store、最小镜像包装称为 production/Mongo restart/录像证明。07/14 shared corpus、10 helper/size、其他既有集成修复仍由 parent repair 负责；原始 skill/Core/format/508-line service/LocalAgentV2 head-404 限制另记，不宣称全仓绿色。
+- 仅写集成 worktree，无原工作区或其他 worker 源码修改。独立 Responses compatibility 修复及 15 Linux/gVisor 验证未触碰；无 push、PR、部署或外部运行环境操作。
