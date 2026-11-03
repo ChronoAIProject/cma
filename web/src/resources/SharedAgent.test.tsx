@@ -481,7 +481,7 @@ it('retains new live messages and resolved controls when older rich history fini
   );
   expect(screen.getAllByText('A new message during history loading.')).toHaveLength(1);
   expect(screen.getAllByText('A new live answer')).toHaveLength(1);
-  const process = screen.getByRole('button', { name: '1 tool call', exact: true });
+  const process = screen.getByRole('button', { name: /^1 tool call$/ });
   expect(process).toHaveAttribute('aria-expanded', 'false');
   await userEvent.click(process);
   expect(process).toHaveAttribute('aria-expanded', 'true');
@@ -650,7 +650,7 @@ it('retains hydrated tools, approvals, live text and the composer across unchang
   );
   const composer = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Keep this draft' } });
-  const process = screen.getByRole('button', { name: '1 tool call', exact: true });
+  const process = screen.getByRole('button', { name: /^1 tool call$/ });
   expect(process).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(process);
   expect(process).toHaveAttribute('aria-expanded', 'true');

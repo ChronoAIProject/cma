@@ -4,16 +4,17 @@
 
 **Blocked by:** None（复用现有文件侧栏和工具事件）。
 
-**Status:** in-progress
+**Status:** done
 
-Implementation uses the approved U/A/R boundaries. The existing file contract is
-the authorized Sandbox `/home/`, not an isolated Agent directory; this ticket
-preserves that contract and labels it explicitly. Cross-Agent file isolation is
-not proved by that API. An isolated pinned native command, candidate durable fold,
-public projection and Chrome reload now have staged evidence below. This is not a
-deployed candidate Linux control-plane journey. The ticket remains in progress
-because the cross-Agent filesystem isolation criterion is not satisfied by the
-preserved mounted-home contract.
+Implementation uses the approved U/A/R boundaries. The remaining scope question
+is resolved by the repository's actual layout: authorized Sandbox workspace and
+worktree files are intentionally shared, while supervisor control/Agent homes,
+runtime state and foreign Agent uploads are private. Public files now enforce
+that distinction without withdrawing shared workspace editing or downloads.
+See [file-scope evidence](../14-FILE-SCOPE.md) for source contracts, enforcement
+and red/green proofs. An isolated pinned native command, candidate durable fold,
+public projection and Chrome reload also have staged evidence below; this does
+not claim a deployed Linux control-plane journey or OS process isolation.
 
 **优先级:** P3
 
@@ -25,7 +26,7 @@ preserved mounted-home contract.
 - [x] 环境能力及拒绝原因由公开的可信状态提供，定义 browser/files/operation-output/replay/control 的支持状态与作用范围；加载中、unsupported、未启用、权限不足和暂时故障可区分。
 - [x] 没有浏览器能力时显示说明，不放假浏览器图和 Live 标记；15 接入后使用同一 panel scope。shared view 只提供获授权的数据和动作。
 - [x] 面板、历史和消息流共享当前事件观察结果，避免为每个 tab 再建立重复整段订阅；隐藏页面停止无必要轮询，重新打开按游标恢复。
-- [ ] Agent/账号/权限改变立即隔离旧数据与晚到回调；不会展示同 Sandbox 其他 Agent 的文件、进程或输出。
+- [x] Agent/账号/权限改变立即隔离旧数据与晚到回调；不会展示同 Sandbox 其他 Agent 的私有文件、状态或输出。按 2026-11-03 用户澄清，已授权共享的 Workspace/worktree 文件保留原语义，不误判为其他 Agent 的私有输出。
 - [x] 详情、文件预览与电脑面板保持单一可理解的选中状态；其更新不重挂载会话、不清空文本/附件/滚动位置。
 
 ## Testing boundaries（2026-11-03 已确认）
@@ -71,7 +72,11 @@ preserved mounted-home contract.
   contract before changing that state; 17 owns control.
 - Files explicitly retain `mounted_home` (`/home`), while output uses
   `agent_turn_history`. No provider address or boot identifier is exposed. Do
-  not treat the mounted home as proof of an Agent-private filesystem.
+  not treat the mounted home as proof of an Agent-private filesystem. Public
+  file routes exclude `.cma`, `cma/.cma`, foreign `attachments/<agent>` namespaces
+  and destructive ancestors. The runtime also protects configured state and
+  checkpoint roots inside the mounted home. Internal managed instruction
+  operations remain separate and tested; shared workspace files remain usable.
 - ACP text content and the bridge's reported `rawOutput.formatted_output` pass
   through the actual core recorder. Each durable output snapshot is bounded to
   16 KiB of valid UTF-8, with explicit truncation. `ToolOutputReported` preserves
@@ -113,37 +118,45 @@ layout passes at both desktop and mobile sizes.
 | Rust SDK event/files/Responses suites | 25 passed, including typed recorded output and all activity replay cursors |
 | TypeScript SDK | 67 files / 3,560 tests passed at merge `b4e445225`; SDK typecheck also passed after `9a900786a` |
 | Focused web before 03/06 merge | 12 files / 116 tests passed; lifecycle, files/presence, attachments, shared permissions/drafts, final-answer identity, plans and conversation/message performance |
-| Focused web after 03/06 merge | 13 files / 126 passed, 3 failed: two existing SharedAgent tool-article assertions and one MessageIdentity tool-article assertion now encounter ticket06's collapsed completed-process disclosure. These failures are not counted as passing evidence or changed by this ticket |
+| Intermediate web after 03/06 merge | 126 passed, 3 disclosure assertions failed; ticket02 later independently identified four more ActiveThinking failures. All seven are repaired in this branch by expanding real disclosures, with ordering/pending/replay checks retained |
+| Final merged web | 10 files / 84 tests passed, including all three disclosure suites, scoped permissions/drafts, files/presence, lifecycle, plan scope and long-conversation performance. After the final type-safe selector correction, all three disclosure files again passed 48/48 with no exclusions |
+| Private-file public routes | 2 named tests passed: protected Agent homes/control roots and Agent-scoped uploads, owner/viewer/writer matrix, shared workspace edits/downloads, same-prefix namespace denial and recursive ancestor protection |
+| Existing file REST corpus | `agent-filesystem.json` replay passed through `shared_public_contract_matches_real_backend`; no fixture recording/update mode used |
+| Runtime file boundary | 11 named tests passed: real runtime HTTP private state/alias checks plus existing versioned writes, hidden/binary files, size bounds, symlink races, shared credential protection and lifecycle recovery |
+| Managed settings compatibility | 4 actual `hosted::managed_context::writer_tests` passed: exact home writes/receipts, concurrent edits, uncertain acknowledgments and stale-boot fencing |
 | Final scoped U checks | 4 passed: expired/pending/failed renewal and recovery with existing output; revoked history plus late callback; write-revocation draft preservation; unknown-call output does not invent a status. New expiry test first failed with `scoped-proof` still in the DOM, then passed after the authority gate |
 | Chrome computer | 6 passed; native recorded output and reload, capability reasons, statusless/truncated/missing output, 10,000 turns, mobile focus, desktop drafts/scroll |
 | Chrome existing toolbar | 5 passed; 1600px/390px × light/dark, retained files, resize bounds, rename and system prompt continuity |
 | Scoped Chrome refresh | 1 passed: output visible before environment renewal, absent after `operation_output: forbidden`, browser denial remains distinct; no writes |
-| Types/build | Web, e2e and SDK TypeScript checks passed after the scope fix; private `cargo check --locked -p layer1-public -p layer4-runtime` passed after `9a900786a`; production web build passed at `b4e445225` |
-| Formatting/lint | Changed UI/e2e Prettier and ESLint passed; changed Rust files passed rustfmt with `skip_children=true`, avoiding unrelated baseline modules; `git diff --check` passed; Gitleaks scanned eight implementation/proof commits with no leaks |
+| Types/build | Final merged Web/e2e TypeScript checks and production build passed; private `cargo check --locked -p layer1-public -p layer4-runtime` passed. SDK TypeScript had already passed; the scope fix adds no SDK field or wire revision |
+| Formatting/lint | Changed UI/e2e Prettier and ESLint passed; changed Rust files passed rustfmt with `skip_children=true`, avoiding unrelated baseline modules; `git diff --check` and Gitleaks passed |
 
-Final integration merge `dba184683` includes `424b1534e` (03, 06, 09 and 11).
-The style append conflict retains both tickets' rules. On that merged tree the
-four scoped U tests, the Chrome environment-withdrawal check, all three TypeScript
-typechecks, private public/runtime cargo check, and the named durable-output
-public test passed. The latter actually ran **one test** (`414 filtered out`),
-using the private target, rather than accepting a zero-test artifact. Evidence:
-`scope-merged.log`, `scope-chrome-merged.log`, `public-output-merged.log`,
-`public-check-merged.log`, and `final-gitleaks.log` under `ticket14-proof`.
-No broad suite was repeated solely for this evidence update. The three earlier
-post-06 assertions remain a reported integration gap, not a claimed green suite.
+Final functional merge `b31a7c146` includes `7739c431f` (02, 03, 06, 09 and 11).
+The style append conflict retains both tickets' rules. Final merged evidence is
+in `final-merged-web.log`, `completed-disclosures.log`, `final-merged-chrome.log`,
+`final-merged-rust.log`, `final-merged-build.log`, `final-scope-runtime.log` and
+`completed-gitleaks.log` under `ticket14-proof`. Chrome passed all six computer
+and five toolbar cases after this merge, including the current scope label and
+retained mobile editor actions; desktop/mobile screenshots were inspected.
+The earlier named durable-output public test actually ran one test, using the
+private target; its evidence remains in `public-output-merged.log`.
 
 Rust uses pinned 1.96.1, `CARGO_BUILD_JOBS=2`, and the private APFS-cloned target
 `/Users/liuyitian/code/cma-ui-worktrees/ticket14-proof/cargo-target`. Workspace
 packages were privately cleaned before proof builds; `cma-sdk` was separately
 cleaned there. Initial filename-based filters matched zero tests and are **not**
 accepted evidence; the corrected module filters above ran the named tests.
-The shared target and other workers' builds were not cleaned or stopped.
+The shared target and other workers' builds were not cleaned or stopped. The
+initial file-corpus replay exceeded the default test-thread stack; rerunning
+with `RUST_MIN_STACK=16777216` passed. An initial `managed_context_tests` filename
+filter matched zero tests and is excluded; the actual module filter above ran
+four named tests. Filtered zero-test integration executables are not counted.
 
 The focused web commands use `--configLoader=runner --no-cache --maxWorkers=2`.
 Final scope evidence is in `ticket14-proof/scope-red.log`, `scope-green.log`, and
 `scope-final.log`; the last command ran four named tests and intentionally
 excluded 23 unrelated SharedAgent tests. The full post-merge result is separately
-reported above, including its three failures.
+reported above, including its intermediate failures and their completed repair.
 Early Vite/Vitest runs used generated dependency caches through the prepared
 `web/node_modules` link into the original checkout. Final checks use a private
 APFS dependency clone at `ticket14-proof/web-deps-TnKt07/node_modules`; original
@@ -178,10 +191,10 @@ worker's shared cache was attempted.
 This proves actual native output survives the candidate recording/projection and
 page boundaries. It does not claim a deployed candidate Linux HTTP service,
 database-process restart, real-model quality, browser observation, replay or
-interactive PTY. The existing file API exposes the authorized Sandbox home, so
-the stronger “no other Agent's files in the same Sandbox” criterion remains open.
-The ticket is not marked done and needs a separate authority/isolation decision
-consistent with preserving existing file access.
+interactive PTY. The public file scope now separates intentionally shared
+Sandbox workspace facts from actual private Agent/runtime namespaces, based on
+the source contracts and the user's explicit clarification. It does not claim
+that arbitrary shared work-product files or processes are OS-isolated per Agent.
 
 All source changes stay on `codex/cma-ui-14`; integration is only merged into this
 worktree. No production deployment, original/integration source write, push or

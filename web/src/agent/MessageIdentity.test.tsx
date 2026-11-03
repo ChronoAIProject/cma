@@ -160,7 +160,7 @@ describe('identity runs', () => {
     expect(agent.map(named)).toEqual(['Chrono Agent', null]);
     expect(own[1]!.querySelector('img')).toBeNull();
     expect(agent[1]!.querySelector('.message__avatar svg')).toBeNull();
-    const process = screen.getByRole('button', { name: '1 tool call', exact: true });
+    const process = screen.getByRole('button', { name: /^1 tool call$/ });
     expect(process).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(process);
     expect(process).toHaveAttribute('aria-expanded', 'true');
