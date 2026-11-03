@@ -206,3 +206,12 @@
 - parent 已独立读取固定 rubric、五例实际 raw output 与 saved public JSON，全部 v3 样本通过。报告原样保存在 [13-PARENT-AI-REVIEW](13-PARENT-AI-REVIEW.md)，仅为 AI review，绝不称 human approval。所有机器工作完成；仅 literal human 质量验收留待整套 19 交付用户评审，tracker 仍明确 in-progress。实际账单缺失仍为 null/unknown，不虚构费用，不阻塞 16–19。
 - 共享 inventory 235 actual / 230 declared 的缺口由 incoming 14 environment 和 07 四个 deliverable operation 组成；13 自身 entry/cases 完整。已报告 parent repair，未改 gate 或重复 CSS/size/task-status/AppPublic 修复。原始 baseline 限制仍分开记录。
 - 13 自有 source ≤500（AgentSurface/OpenAPI 均 495）、test ≤2000；owned preview/model proxy 已停止，无遗留 13 测试库，shared Mongo/VM 保留运行。保留 worktree/private targets 供 parent 清理；无 push、PR、部署或原/其他 worker 工作区修改。
+
+## Ticket 13 实现集成，人工验收待定（2026-11-03）
+
+- 合并前集成工作区干净，分支 `codex/cma-ui-optimization`、HEAD `f793a41518fa969af068d7913ff6310dee7e040b`。已读取 13 ticket、完整 `13-EVIDENCE.md`、`13-PARENT-AI-REVIEW.md`，审阅相对该基线的实际 82 路径清单与 suggestion/editor/client 共享修改；候选包含该最新基线。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-13` 的 `83ea396a4d49535cbc1484034b34f2b3202b3bb2`，merge commit 为 `171a6a82d90695428f23c7fd6d577ac059369fde`。无冲突，合并树与候选逐文件完全一致，无 integration-only 源码修正。已断言 Web Style 和已有 ledger 全文保留为原样前缀，13 样式只在末尾追加。
+- 合并态执行 `npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/AgentSurface.contextualSuggestions.test.tsx src/agent/AgentSurface.suggestionEditing.test.tsx src/agent/AgentSurface.suggestions.test.tsx`，实际 3 文件 / 40 tests 全部通过；`npm --prefix web run typecheck` 通过。覆盖当前回答建议、失效/晚到结果、12 编辑/草稿恢复与 receipt 指标整合；未重复 native、真实模型、Mongo、SDK 或广泛检查。
+- `git diff --check f793a41518fa969af068d7913ff6310dee7e040b HEAD` 和记录提交前的 worktree/cached diff check 通过。已断言 MessageFooter、StreamEntry 与 MessageStream performance tests 相对合并前完全未变，保留既有 finalAnswer、10 reasons 和交付展示；共享编辑仍使用 12 的 editor、普通消息协议与既有选择/恢复身份。
+- 本次只合入实现与机器证据，13 仍为 **in-progress / 尚未完整验收**。逐字核对原始 AC 文本未变，恰好一个 literal independent human quality criterion 未勾选；parent AI review 通过五个 v3 样本不等于人审，不将其改为完成。实际 billed cost 继续为 null/unknown，无零值替代、估算或虚构 native/model availability；实际样本日志与环境边界保留在既有外部证据中。
+- shared JSON inventory 235 actual / 230 declared 的 07/14 缺口仍由 parent repair worker `01a19fd8-0df5-7730-92e2-cefbe954f9b4` 处理；未重复 CSS/size/inventory/task-status/AppPublic 等集成修复。它们与原始 skill/Core/format/508-line Agent service/LocalAgentV2 head-404 问题分别记录，不宣称全仓或部署绿色。仅写集成 worktree，无原工作区或其他 worker 源码修改，无 push、PR 或部署。
