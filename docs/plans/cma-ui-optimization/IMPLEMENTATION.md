@@ -121,3 +121,15 @@
 - 合并态检查（集成工作区执行）：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/ConsoleTaskTitle.test.tsx src/ConsoleTitle.test.tsx src/agent/presentation.test.ts` 通过，3 文件 / 24 tests；`npm --prefix web run typecheck` 通过。`git diff --check 4e86b3b75b55525736a4f63e147de7e7485f36f3 HEAD` 与记录提交前的 `git diff --check` 通过。未重复广泛/native/Rust 检查。
 - 待修复的首页/创建及折叠操作测试仍属本轮集成回归，由 04/14 处理，不误记为原始基线。Console 原有 503 行集成超限在本票标题路由补充后为 506 行，继续交由 04 修复；原始 skill contract/Core fixture、格式及 508 行 Agent service 问题独立保留。未合入 14，等待 parent 明确最终 SHA。
 - 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。
+
+## Ticket 14 集成（2026-11-03）
+
+- 合并前 `codex/cma-ui-optimization` 工作区干净，HEAD 为 `ef5e20c1f51b57833f115a61da55e57a70a4fe2a`；票分支通过 `4f530f283` 包含该状态。已读取票文档和 `14-FILE-SCOPE.md`，94 路径 diff 与 `ticket14-proof/changed-paths.txt` 完全匹配；另逐字断言原始八条验收标准未改变，仅勾选状态不同。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-14` 的 `a8c4283b4fd3dd495526b45904dd57e85dcb6db8`，merge commit 为 `e20ad60052e1804b1211114ec52a08292402a039`。无 merge 冲突，初始合并树与票分支完全一致。
+- 严格追加检查发现 14 的四段 Web Style 增量插入了既有正文和 changelog 中间；独立文档修正 `f4e71dd07adfc2a5372a0bfbf0b7ee449fa27a7b` 将四段完整文字与条目按原顺序移至末尾。已断言最终文件保留全部既有字节为原样前缀；仅增加段间分隔空行，其他候选源码与票分支完全一致。
+- 文件边界依据现有资源所有权契约：保留授权共享 Workspace/worktree 的读取、下载和编辑；排除实际 `.cma` 私有 Agent home/控制树、其他 Agent 上传命名空间及配置到 mounted home 内的 runtime/checkpoint 状态。内部 managed-instruction API 保持独立兼容；这是源码契约解释，不是假托新用户澄清或批准，也不声明 OS 进程隔离。
+- 保留 01/02/03/05/06/09/11，新增 output metadata 与既有 `finalAnswer`、计划、耗时、Home、真实任务名称并存。14 已完成，公开环境观察的 browser/replay/control 仍明确 unsupported；15/18 的依赖 frontier 已开放，后续需各自证明授权数据契约，17 继续负责 control。
+- 合并态检查（集成工作区执行）：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/AgentSidePanel.test.tsx src/agent/AgentHeader.test.tsx src/resources/SharedAgent.test.tsx src/agent/MessageIdentity.test.tsx src/agent/ActiveThinking.test.tsx` 通过，5 文件 / 54 tests，无排除或跳过；包含修复全部七项 06 折叠操作断言的三个完整回归文件。`npm --prefix web run typecheck` 通过。
+- `git diff --check ef5e20c1f51b57833f115a61da55e57a70a4fe2a HEAD` 与记录提交前的 `git diff --check` 通过。未重复 worker 已有的私有 target 非零 Rust/file-boundary/managed-settings 或广泛/native 检查，本次没有 Rust 运行；新增 durable 输出记录仍要求兼容 reader，具体证据边界和限制见票文档。
+- 04 继续负责本轮 Home/创建集成修复；Console 随本票面板接线由 506 行增至 524 行，行数超限亦继续交由 04。已修复的七项披露断言及这些待修复项均不是原始基线缺陷；原始 skill contract/Core fixture、格式及 508 行 Agent service 问题独立保留。
+- 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。

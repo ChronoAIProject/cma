@@ -131,7 +131,8 @@ Keepalive comments are not events.
 | `RUN_FINISHED` | Complete or interrupt outcome; approval requests carry interrupts |
 | `RUN_ERROR` | Recorded turn failure, stopped Agent or deleted Agent; `code`, `message` |
 | `TOOL_CALL_START` | `toolCallId`, `toolCallName`, optional `cma:toolKind` |
-| `TOOL_CALL_END` | `toolCallId`, `cma:status` |
+| `TOOL_CALL_END` | `toolCallId`, `cma:status`, optional `cma:output: {text, truncated}` |
+| `CUSTOM` with `name: "cma.tool_output_reported"` | `value: {toolCallId, output: {text, truncated}}`; no invented status |
 | `REASONING_MESSAGE_CONTENT` | Live-only reasoning text when the deployment advertises live frames |
 | `STATE_DELTA` | JSON Patch-style updates to the closed state paths below |
 
@@ -226,6 +227,12 @@ bounds; Rust callers reconnect explicitly. Personal-owner streams remain usable
 when recipient grants change or the organization provider is unavailable.
 
 ## Read-Only Companions
+
+Reported operation output is bounded to 16 KiB of valid UTF-8 per durable record.
+It is a replacement snapshot, not a delta to concatenate. Missing output is
+unknown, not an empty successful command. Output-only updates retain the last
+reported status and never create an executable client tool call. Existing
+`threadId`, `runId`, durable cursors and `view_history` checks continue to apply.
 
 The Sandbox companion supplies parent context and first-message state for an
 owned Agent. It does not accept mutations or change its Agent's parentage.

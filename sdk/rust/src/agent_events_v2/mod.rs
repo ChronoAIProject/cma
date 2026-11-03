@@ -18,6 +18,8 @@ const MAX_BYTES: usize = 4 * 1024 * 1024;
 /// One bounded fixed-head snapshot request.
 #[derive(Debug, Clone, Default)]
 pub struct SnapshotOptions {
+    #[doc = "Request bounded reported tool output when supported by the server."]
+    pub tool_output: bool,
     /// Maximum rows from 1 through 200; the server defaults to 100.
     pub limit: Option<u16>,
     /// Exact continuation from the preceding page, never the tail cursor.
@@ -26,6 +28,8 @@ pub struct SnapshotOptions {
 /// One read-only replay/tail connection, without implicit reconnect.
 #[derive(Debug, Clone, Default)]
 pub struct TailOptions {
+    #[doc = "Request bounded reported tool output when supported by the server."]
+    pub tool_output: bool,
     /// Request real server observation timestamps for live fragments; older servers may omit them.
     pub live_timestamps: bool,
     /// Last fully applied Agent cursor; omission starts at retained history's beginning.
@@ -51,14 +55,21 @@ impl AgentEventsV2<'_> {
     pub async fn head(&self, agent_id: &str) -> Result<AgentEventHead> {
         cursor::identifier(agent_id)?;
         validation::head(
-            self.read(&["api", "v2", "agents", agent_id, "events", "head"], &[])
-                .await?,
+            self.read(
+                &["api", "v2", "agents", agent_id, "events", "head"],
+                &[],
+                false,
+            )
+            .await?,
             agent_id,
         )
     }
     /// Observe eligibility for new-tab transport selection under authentication.
     pub async fn read_transport_eligibility(&self) -> Result<UiTransport> {
-        validation::eligibility(self.read(&["api", "v2", "ui", "transport"], &[]).await?)
+        validation::eligibility(
+            self.read(&["api", "v2", "ui", "transport"], &[], false)
+                .await?,
+        )
     }
     /// Fetch one bounded fixed-head page. Apply all pages before tailing through_cursor.
     pub async fn snapshot(
@@ -84,6 +95,7 @@ impl AgentEventsV2<'_> {
             self.read(
                 &["api", "v2", "agents", agent_id, "events", "snapshot"],
                 &query,
+                options.tool_output,
             )
             .await?,
             agent_id,
@@ -118,6 +130,12 @@ impl AgentEventsV2<'_> {
                 reqwest::header::HeaderValue::from_static("cma-live-observed-at"),
             );
         }
+        if options.tool_output {
+            request.headers.append(
+                "prefer",
+                reqwest::header::HeaderValue::from_static("cma-tool-output"),
+            );
+        }
         if let Some(cursor) = &options.last_event_id {
             request.headers.insert(
                 "last-event-id",
@@ -142,10 +160,17 @@ impl AgentEventsV2<'_> {
         &self,
         segments: &[&str],
         query: &[(&str, String)],
+        tool_output: bool,
     ) -> Result<T> {
         let mut request = Request::get(segments);
         request.root = true;
         request.query = query;
+        if tool_output {
+            request.headers.insert(
+                "prefer",
+                reqwest::header::HeaderValue::from_static("cma-tool-output"),
+            );
+        }
         let received = http::receive_bounded(&self.client.inner, request, MAX_BYTES).await?;
         if !received
             .headers

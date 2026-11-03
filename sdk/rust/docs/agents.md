@@ -524,3 +524,18 @@ is automatically retried. Retain local edits after a conflict and reread before
 an explicit retry. View links may browse/download; only owners and current
 view-write links may change files. Older runtimes return
 `file_runtime_unsupported` until updated while idle.
+
+### Computer observation
+
+`client.agent_files().environment(agent_id)` reads current feature availability,
+reasons and scopes with a policy revision, opaque runtime incarnation and renewal
+deadline. The SDK validates the Agent identity. Each later operation still
+checks authorization. Files retain the mounted-home scope; browser, replay and
+control are currently unsupported.
+
+Use `SnapshotOptions { tool_output: true, ..Default::default() }` and
+`TailOptions { tool_output: true, ..Default::default() }` for Agent events v2, or
+`agents().events_with_output(agent_id, options)` for legacy event reads. Reported
+output is a bounded `{text, truncated}` replacement snapshot. Output-only events
+do not carry a status. Responses v2 `ActivityItem.recorded_output` reads the
+additive `cma:output` extension while the standard `output` remains absent.

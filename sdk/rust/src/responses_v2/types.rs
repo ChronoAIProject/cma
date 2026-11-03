@@ -75,6 +75,9 @@ pub struct ActivityItem {
     pub arguments: String,
     /// Absent in the activity-only contract.
     pub output: Option<String>,
+    #[doc = "Bounded reported output, separate from executable tool results."]
+    #[serde(rename = "cma:output")]
+    pub recorded_output: Option<crate::agents::RecordedToolOutput>,
     /// Absent in the activity-only contract.
     pub error: Option<serde_json::Value>,
     /// Current call lifecycle.
