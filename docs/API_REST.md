@@ -1434,6 +1434,7 @@ Directory creation uses `directory: true`. File operations do not require an
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `GET /api/v1/agents/{id}/environment` | - | - | 200 EnvironmentView |
 | `GET /api/v1/agents/{id}/files/tree` | - | path | 200 FileListView |
 | `GET /api/v1/agents/{id}/files/content` | - | path*, max_bytes | 200 FileReadView |
 | `GET /api/v1/agents/{id}/files/download` | - | path* | 200 application/octet-stream |
