@@ -81,7 +81,7 @@ data:
   # Agent Manager resolves selected immutable versions through the separate
   # Image Manager service using the caller's delegated NyxID credential.
   CHRONO_IMAGE_MANAGER_BASE_URL: "http://cma-image-manager"
-  CHRONO_SERVER_CORS_ORIGIN: "https://bot.chrono-ai.fun"
+  CHRONO_SERVER_CORS_ORIGIN: "https://bot.chrono-ai.fun,https://cma.nyxid.ai"
   # Continuously refilled process-local budgets, also the maximum burst.
   # Admission protects authentication work; health has a separate budget.
   CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE: "6000"

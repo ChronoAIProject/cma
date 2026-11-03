@@ -414,6 +414,7 @@ impl ControlPlaneComposition {
                 projections.reads(),
                 adapter.clone(),
                 &config.public_url,
+                &config.cors_origins,
             ))
             .merge(projections.conversation_router(
                 context,
