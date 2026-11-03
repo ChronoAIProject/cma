@@ -1,8 +1,9 @@
-import { ApiError, type Cma, type V2ResponseReceipt } from '@chronoai/cma-sdk';
+import { ApiError, type Cma, type V2ResponseReceipt, type AnswerContext } from '@chronoai/cma-sdk';
 import type { AgentTransportJournal } from './journal';
 import type { InputRecord } from './journalRecord';
 
 interface SubmissionOptions {
+  readonly answerContext?: AnswerContext;
   readonly signal?: AbortSignal;
   readonly authorize?: () => Promise<void>;
   readonly onAccepted: (receipt: V2ResponseReceipt) => void;
@@ -18,7 +19,7 @@ export function submitAgentInput(
   options: SubmissionOptions,
 ): Promise<void> {
   options.signal?.throwIfAborted();
-  return submit(sdk, journal, journal.retain(input), options);
+  return submit(sdk, journal, journal.retain(input, options.answerContext), options);
 }
 
 /** Explicit recovery never changes a pending key/body or silently switches to v1. */
@@ -52,7 +53,11 @@ async function submit(
     const send = () =>
       sdk.responsesV2.createForAgent(
         journal.agentId,
-        { input: input.input, stream: true },
+        {
+          input: input.input,
+          stream: true,
+          ...(input.answerContext ? { answer_context: input.answerContext } : {}),
+        },
         {
           idempotencyKey: input.key,
           signal: request.signal,
@@ -102,9 +107,11 @@ async function submit(
   } catch (error) {
     if (!acknowledged) {
       if (
+        !receiptObserved &&
         error instanceof ApiError &&
-        error.status === 422 &&
-        error.code === 'invalid_response_input'
+        ((error.status === 422 &&
+          ['invalid_response_input', 'invalid_answer_context'].includes(error.code ?? '')) ||
+          (error.status === 409 && error.code === 'agent_command_not_admissible'))
       )
         journal.refused(input.key);
       throw error;
