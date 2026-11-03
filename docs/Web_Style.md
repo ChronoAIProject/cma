@@ -3815,3 +3815,39 @@ anchor and the single availability explanation; Overview describes the tools'
 purpose without repeating that explanation.
 
 | 2026-10-28 | Remove the redundant tool catalog heading and overview availability copy while retaining the Event tools section anchor and accessible catalog region. |
+
+### Task navigation and environment settings (2026-11-03)
+
+Agent Manager navigation defaults to **Tasks**, without an Agents/Sandboxes
+switch. The sidebar **Settings** menu contains **Manage environments**, opening
+the existing Sandbox hierarchy. **Back to tasks** restores the task selection,
+scope, status filter, scroll position and keyboard focus. Environment navigation
+retains its own status filter and expansion. Existing resource links and scoped
+creation actions keep their public routes and lifecycle eligibility. Switching
+navigation modes does not replace the current conversation or its draft.
+
+Task rows use the existing stacked tree-row geometry: a truncated title with
+its full hover text, then a visible status word and the existing state dot.
+Manual title, eligible runtime description and configured title keep their
+existing priority; an empty title reads **Untitled task**, never an internal ID.
+Tasks use **Ready to start**, **Completed**, **Working**, **Waiting for approval**,
+**Preparing**, **Paused**, **Stopped**, and **Failed**. Ready to start requires
+confirmed absence of turns. Completed requires a durable successful last turn
+and no active, queued or admitted work. Missing evidence reads **Status
+unavailable**. Failure, interruption and parent lifecycle barriers take priority
+over an old success. These are task facts; resource lifecycle states are unchanged.
+Completed and Ready to start use the existing neutral tone, working/preparation
+the active tone, approval the warning tone, failure the error tone, and paused/
+stopped the muted tone. Color never replaces the visible word.
+
+The Settings and Back to tasks controls reuse quiet sidebar rows and shared
+menus, 32px on desktop and at least 44px below 30rem. The Tasks heading uses the
+existing 13px secondary filter label. Personal, Organization and Shared remain
+in Filter alongside task status. Long titles never displace status. Narrow
+screens retain the navigation sheet, Escape handling and focus return. Empty
+lists state that no tasks match; failed refreshes retain already shown tasks
+with an alert and retry. Stale scoped rows remain readable but cannot navigate
+or act until access is checked again; denied access removes them. Stale rows omit
+the state dot and keep the last known state word alongside the refresh warning.
+
+| 2026-11-03 | Make task navigation the default, move Sandbox browsing under Settings, display authorized last-turn state with visible words, and preserve navigation position and lifecycle barriers. |

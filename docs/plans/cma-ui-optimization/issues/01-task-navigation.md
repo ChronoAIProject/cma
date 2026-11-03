@@ -4,7 +4,12 @@
 
 **Blocked by:** None（评审确认后可独立开始）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
+
+**Implementation:** `codex/cma-ui-01`, isolated `ticket-01` worktree. Approved U/A
+seams; each behavior follows red → green. First U red observed 2026-11-03:
+`TaskNavigation.test.tsx` could not find visible “Ready to start”; both ready
+Agents previously exposed only the hidden lifecycle word “Ready”.
 
 **优先级:** P0
 
