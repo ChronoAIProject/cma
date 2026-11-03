@@ -41,9 +41,9 @@
             "writable": false
           },
           "replay": {
-            "state": "unsupported",
-            "reason": "not_supported_by_contract",
-            "scope": "none",
+            "state": "available",
+            "reason": "operation_records_only",
+            "scope": "agent_turn_history",
             "writable": false
           },
           "control": {
@@ -97,9 +97,9 @@
             "writable": false
           },
           "replay": {
-            "state": "unsupported",
-            "reason": "not_supported_by_contract",
-            "scope": "none",
+            "state": "available",
+            "reason": "operation_records_only",
+            "scope": "agent_turn_history",
             "writable": false
           },
           "control": {
@@ -155,9 +155,9 @@
             "writable": false
           },
           "replay": {
-            "state": "unsupported",
-            "reason": "not_supported_by_contract",
-            "scope": "none",
+            "state": "available",
+            "reason": "operation_records_only",
+            "scope": "agent_turn_history",
             "writable": false
           },
           "control": {
@@ -213,9 +213,9 @@
             "writable": false
           },
           "replay": {
-            "state": "unsupported",
-            "reason": "not_supported_by_contract",
-            "scope": "none",
+            "state": "available",
+            "reason": "operation_records_only",
+            "scope": "agent_turn_history",
             "writable": false
           },
           "control": {
@@ -269,9 +269,9 @@
             "writable": false
           },
           "replay": {
-            "state": "unsupported",
-            "reason": "not_supported_by_contract",
-            "scope": "none",
+            "state": "available",
+            "reason": "operation_records_only",
+            "scope": "agent_turn_history",
             "writable": false
           },
           "control": {
@@ -325,9 +325,9 @@
             "writable": false
           },
           "replay": {
-            "state": "unsupported",
-            "reason": "not_supported_by_contract",
-            "scope": "none",
+            "state": "available",
+            "reason": "operation_records_only",
+            "scope": "agent_turn_history",
             "writable": false
           },
           "control": {
