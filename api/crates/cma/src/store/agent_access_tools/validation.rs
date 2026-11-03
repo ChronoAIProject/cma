@@ -57,6 +57,45 @@ pub(super) fn request(
     request: &AgentOpenRequest,
     fence: u64,
 ) -> Result<()> {
+    request_identity(snapshot, request)?;
+    let agent = snapshot
+        .resource
+        .lineage
+        .agent
+        .as_ref()
+        .ok_or(Error::Refused)?;
+    if !valid_fence(agent, fence) {
+        return Err(Error::Refused);
+    }
+    Ok(())
+}
+
+/// A retained attachment outlives the lease that published it. Only maintenance
+/// may use that exact completed lease; its durable operation is checked by the
+/// caller. Any newly scheduled/claimed work or a later fence invalidates it.
+pub(super) fn retained_request(
+    snapshot: &AgentProvenanceSnapshot,
+    request: &AgentOpenRequest,
+    fence: u64,
+) -> Result<()> {
+    request_identity(snapshot, request)?;
+    let agent = snapshot
+        .resource
+        .lineage
+        .agent
+        .as_ref()
+        .ok_or(Error::Refused)?;
+    let completed = fence > 0
+        && agent.work.lease.is_none()
+        && agent.work.step == AgentWorkStep::None
+        && fence.checked_add(1) == Some(agent.work.next_fence);
+    if !valid_fence(agent, fence) && !completed {
+        return Err(Error::Refused);
+    }
+    Ok(())
+}
+
+fn request_identity(snapshot: &AgentProvenanceSnapshot, request: &AgentOpenRequest) -> Result<()> {
     let lineage = &snapshot.resource.lineage;
     let agent = lineage.agent.as_ref().ok_or(Error::Refused)?;
     let tree = lineage.worktree.as_ref().ok_or(Error::Refused)?;
@@ -67,7 +106,6 @@ pub(super) fn request(
     );
     if !request.has_valid_sha256()
         || request != &expected
-        || !valid_fence(agent, fence)
         || request
             .resume_conversation
             .as_deref()
