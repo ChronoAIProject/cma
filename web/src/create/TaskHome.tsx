@@ -122,7 +122,7 @@ function TaskComposer({
           if (!canCreate || supported !== true || intent || lifecycle.pending) return;
           const invalid =
             draft.desktop && !desktopAvailable
-              ? 'Desktop capability is unavailable. Keep the task and clear the desktop option, or try again later.'
+              ? 'Desktop is unavailable. Keep the task and clear the desktop option, or try again later.'
               : !draft.text.trim()
                 ? 'Describe a task before starting.'
                 : new TextEncoder().encode(draft.text).length > 262144

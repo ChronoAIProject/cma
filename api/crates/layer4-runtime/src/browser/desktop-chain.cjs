@@ -72,7 +72,7 @@ async function main() {
     if (request.kind === 'provision') {
       if (provision) { assert.deepEqual(request.body, provision); return { ready: true }; }
       provision = request.body;
-      assert(provision.image.uri.endsWith('@sha256:ddda63f74cd1b2067102fb43e66e1a2c47ced2f569c701bcc52d309bf816e112'));
+      assert.equal(provision.image.uri, process.env.CMA_DESKTOP_RUNTIME_IMAGE);
       await mkdir(provision.env.CHRONO_RUNTIME_HOME, { recursive: true });
       runtime = spawn(binary, [], { detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: {
         ...provision.env, PATH: process.env.PATH, TMPDIR: '/tmp', CHRONO_RUNTIME_BIND: '127.0.0.1:19416',
