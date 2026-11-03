@@ -51,3 +51,60 @@
   line-height: 20px;
   overflow-wrap: anywhere;
 }
+
+.plan-card__summary,
+.plan-card__current {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.plan-card__status {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-card__current {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.plan-card__progress {
+  height: 4px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 8px;
+}
+
+.plan-card__progress > span {
+  display: block;
+  height: 100%;
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.plan-card__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.plan-card__toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.plan-card__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
