@@ -14,6 +14,7 @@ use layer2_core::sandbox::{
 };
 use tower::ServiceExt;
 
+mod completed_operation;
 mod lifecycle;
 mod samples;
 
