@@ -4,7 +4,7 @@
 
 **Blocked by:** 07（经过验证的回答资源身份、授权与版本）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **优先级:** P1
 
