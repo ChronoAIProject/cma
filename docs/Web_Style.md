@@ -1655,6 +1655,28 @@ summary remains the single polite progress announcement.
 
 ## 14. Retired terminal plane
 
+The Agent computer is a retained sibling of the conversation. On layouts with
+room for the existing 640px center and 300px details floor it opens by default;
+an explicit collapse is retained. Narrow layouts start closed and offer Show
+Agent computer. The existing right overlay has Back to conversation and Escape,
+restores focus to its opener, and keeps the composer and reading position mounted.
+Details and computer occupy the same selection slot. Files, Operation output and
+Browser are named keyboard-operable tabs with 44px targets. The header uses the
+existing 48px height, 8px/16px padding and 14/20 title; bodies use 12px gaps/insets,
+13/20 secondary explanations and existing code typography. No new colors or motion.
+
+Files retains the authorized explorer and unsaved edits when tabs or panels close.
+The existing file API grants mounted-home access; label that scope explicitly and
+do not describe it as an isolated Agent filesystem. Operation output is read-only,
+grouped by recorded turn and stable tool identity, in event order. It uses the
+conversation's existing observation, never a second event subscription. Recorded
+status words remain authoritative; missing output says Output not reported,
+bounded output says Output truncated. Render output as plain preformatted text.
+Browser, replay and control remain unavailable until public capability evidence
+supports them; there is no illustrative browser frame, Live label, command input
+or PTY. Loading, unsupported, not enabled, forbidden and temporary failure remain
+distinct. Authority changes invalidate cached content and late callbacks.
+
 There is no terminal plane in this release: no terminal renderer, theme picker,
 plane-switch control, terminal resize behavior or xterm dependency. The former
 terminal palette and transition contract are retired. Agent conversations follow
@@ -3815,3 +3837,5 @@ anchor and the single availability explanation; Overview describes the tools'
 purpose without repeating that explanation.
 
 | 2026-10-28 | Remove the redundant tool catalog heading and overview availability copy while retaining the Event tools section anchor and accessible catalog region. |
+
+| 2026-11-03 | Define the retained Agent computer, responsive default and return focus, shared selection, authorized mounted-home files, and read-only recorded operation output with explicit missing/truncated evidence and unavailable browser capabilities. |
