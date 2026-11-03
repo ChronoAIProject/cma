@@ -44,13 +44,27 @@ test('R pinned native command output survives the public projection and page rel
   }
 });
 
-test('LOCAL browser availability comes from the scoped public environment observation', async ({
+test('LOCAL scoped environment refresh withdraws existing output and reports browser availability', async ({
   page,
   baseURL,
 }) => {
   const fixture = new LocalAgentV2();
   let availability = 'not_enabled';
+  let outputAvailability = 'available';
   try {
+    fixture.append({ type: 'turn_started', turn_sequence: 1 });
+    fixture.append({
+      type: 'tool_started',
+      call_id: 'scoped-command',
+      title: 'printf environment-proof',
+      kind: 'execute',
+      status: 'in_progress',
+    });
+    fixture.append({
+      type: 'tool_output_reported',
+      call_id: 'scoped-command',
+      output: { text: 'environment-proof', truncated: false },
+    });
     await page.setViewportSize({ width: 1600, height: 1000 });
     await fixture.route(page, baseURL!);
     await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
@@ -60,7 +74,7 @@ test('LOCAL browser availability comes from the scoped public environment observ
           schema_version: 1,
           agent_id: 'agt_contract',
           incarnation: 'a'.repeat(64),
-          through_cursor: cursor(0),
+          through_cursor: cursor(fixture.items.length),
           active_turn: null,
         },
       }),
@@ -82,7 +96,7 @@ test('LOCAL browser availability comes from the scoped public environment observ
             writable: true,
           },
           operation_output: {
-            state: 'available',
+            state: outputAvailability,
             reason: 'recorded_output_only',
             scope: 'agent_turn_history',
             writable: false,
@@ -110,6 +124,8 @@ test('LOCAL browser availability comes from the scoped public environment observ
     );
     await page.goto('/agents/agt_contract');
     const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+    await computer.getByRole('tab', { name: 'Operation output' }).click();
+    await expect(computer.locator('pre')).toHaveText('environment-proof');
     await computer.getByRole('tab', { name: 'Browser', exact: true }).click();
     await expect(
       computer.getByText('Browser is not enabled for this environment.', { exact: true }),
@@ -120,6 +136,18 @@ test('LOCAL browser availability comes from the scoped public environment observ
       computer.getByText('Browser access is not permitted.', { exact: true }),
     ).toBeVisible();
     expect(await computer.locator('iframe, video, canvas').count()).toBe(0);
+    await computer.getByRole('tab', { name: 'Operation output' }).click();
+    await expect(computer.locator('pre')).toHaveText('environment-proof');
+    outputAvailability = 'forbidden';
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(computer.getByText('Operation output access is not permitted.')).toBeVisible();
+    await expect(computer.locator('pre')).toHaveCount(0);
+    fixture.append({
+      type: 'tool_output_reported',
+      call_id: 'scoped-command',
+      output: { text: 'late environment-proof', truncated: false },
+    });
+    await expect(computer.locator('pre')).toHaveCount(0);
     expect(fixture.writes).toEqual([]);
   } finally {
     await fixture.close(page);
