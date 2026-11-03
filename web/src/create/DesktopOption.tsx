@@ -21,7 +21,9 @@ export function DesktopOption({
 }) {
   const description = useId();
   const [capability, setCapability] = useState<DesktopCapability>();
-  const [failure, setFailure] = useState<string>();
+  const [failure, setFailure] = useState<string | undefined>(() =>
+    client.readDesktopCapability ? undefined : 'Desktop creation is unavailable on this service.',
+  );
   useEffect(() => {
     const abort = new AbortController();
     onAvailable(false);
@@ -29,7 +31,6 @@ export function DesktopOption({
       { workspace_id: workspaceId, sandbox_id: sandboxId },
       { signal: abort.signal },
     );
-    if (!request) setFailure('Desktop creation is unavailable on this service.');
     void request?.then(
       (value) => {
         if (abort.signal.aborted) return;
@@ -49,7 +50,7 @@ export function DesktopOption({
         <input
           type="checkbox"
           checked={enabled}
-          disabled={frozen || capability?.state !== 'available'}
+          disabled={frozen || (!enabled && capability?.state !== 'available')}
           aria-describedby={description}
           onChange={(event) => onChange(event.target.checked)}
         />

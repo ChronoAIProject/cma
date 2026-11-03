@@ -9,6 +9,8 @@ use layer2_core::resource_access::{
 };
 use tower::ServiceExt;
 
+mod desktop;
+mod desktop_native;
 mod environment;
 mod recovery;
 mod restart;
@@ -111,6 +113,30 @@ async fn router_with_connections(
     can_create: bool,
     connections: Arc<dyn layer2_core::sandbox::SandboxCredentialPrerequisite>,
 ) -> Router {
+    router_with_support(
+        store,
+        registry,
+        database,
+        database_client,
+        owner,
+        can_create,
+        desktop::CreationSupport {
+            connections,
+            adapter: None,
+        },
+    )
+    .await
+}
+
+async fn router_with_support(
+    store: Arc<MongoSandboxStore>,
+    registry: Arc<LiveAgentRegistry>,
+    database: &mongodb::Database,
+    database_client: &mongodb::Client,
+    owner: &str,
+    can_create: bool,
+    support: desktop::CreationSupport,
+) -> Router {
     let profiles = Arc::new(
         MongoProfileStore::open(database_client, database.name())
             .await
@@ -132,9 +158,9 @@ async fn router_with_connections(
             store.clone(),
             profiles.clone(),
             SandboxPolicy::default(),
-            connections,
+            support.connections,
         ),
-        WorkspaceService::new(store, profiles.clone()),
+        WorkspaceService::new(store.clone(), profiles.clone()),
         services.agents(),
         profiles,
         ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
@@ -144,19 +170,42 @@ async fn router_with_connections(
             min_memory_mib: 128,
             max_memory_mib: 16384,
         },
-        SandboxCapacity::default(),
+        if support.adapter.is_some() {
+            desktop::capacity()
+        } else {
+            SandboxCapacity::default()
+        },
         Arc::new([] as [String; 0]),
         Arc::new(MongoAgentLifecycleStore::open(database).await.unwrap()),
         None,
+        support.adapter.as_ref().map(|adapter| {
+            layer2_core::sandbox::desktop_creation::DesktopCreationService::new(
+                adapter.clone(),
+                desktop::image(),
+                Some(desktop::image()),
+            )
+            .unwrap()
+        }),
     );
-    services
+    let mut routes = services
         .with_lifecycle(lifecycle.clone())
         .with_lifecycle_operations(lifecycle)
-        .router(Arc::new(UnusedCompatibilityLedger))
-        .layer(middleware::from_fn_with_state(
-            (SubjectId::new(owner), can_create),
-            authenticate_task_owner,
-        ))
+        .router(Arc::new(UnusedCompatibilityLedger));
+    if let Some(adapter) = support.adapter {
+        routes = routes.merge(layer1_public::rest::agent_filesystem_router(
+            layer2_core::sandbox::agent_filesystem::AgentFileService::new(
+                Arc::new(ResourceAccessService::new(
+                    store,
+                    Arc::new(PersonalAuthority),
+                )),
+                adapter,
+            ),
+        ));
+    }
+    routes.layer(middleware::from_fn_with_state(
+        (SubjectId::new(owner), can_create),
+        authenticate_task_owner,
+    ))
 }
 
 async fn authenticate_task_owner(

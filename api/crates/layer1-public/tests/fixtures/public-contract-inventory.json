@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 238,
+  "openapi_operations": 239,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -2597,7 +2597,8 @@
         "forbidden",
         "not_authenticated",
         "permission_denied",
-        "temporarily_unavailable"
+        "temporarily_unavailable",
+        "desktop_unsupported"
       ]
     },
     "GET /api/v1/agent-lifecycle/{id}": {
@@ -3352,6 +3353,17 @@
         "not_authenticated",
         "resource_not_found",
         "invalid_file_request"
+      ]
+    },
+    "GET /api/v1/desktop-capability": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/desktop_creation.rs# Read-only verified creation capability; no resource allocation.",
+      "required_problems": [
+        "not_authenticated",
+        "permission_denied",
+        "invalid_instance_query",
+        "invalid_request",
+        "temporarily_unavailable"
       ]
     }
   }
