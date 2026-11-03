@@ -593,7 +593,10 @@ async fn lifecycle_recapture_atomically_fences_already_paused_rows_without_dupli
     client.database(&name).drop().await.unwrap();
 }
 
-async fn claimed_pause_fixture(store: &MongoSandboxStore, suffix: &str) -> (Sandbox, Vec<Agent>) {
+pub(super) async fn claimed_pause_fixture(
+    store: &MongoSandboxStore,
+    suffix: &str,
+) -> (Sandbox, Vec<Agent>) {
     let mut value = sandbox(&format!("sbx_lifecycle_{suffix}"));
     value.name = format!("lifecycle-{suffix}");
     value.runtime = Some(RuntimeBinding {
@@ -646,7 +649,7 @@ fn lifecycle_agent(sandbox: &Sandbox, id: &str, conversation_id: &str) -> Agent 
     agent
 }
 
-fn checkpoint_for_agents(agents: &[Agent], epoch: u64) -> SandboxCheckpointRef {
+pub(super) fn checkpoint_for_agents(agents: &[Agent], epoch: u64) -> SandboxCheckpointRef {
     let captures = agents
         .iter()
         .map(|agent| {
@@ -677,7 +680,7 @@ fn checkpoint_for_agents(agents: &[Agent], epoch: u64) -> SandboxCheckpointRef {
     .unwrap()
 }
 
-fn checkpoint_mutation(
+pub(super) fn checkpoint_mutation(
     claimed: &Sandbox,
     agents: &[Agent],
     checkpoint: SandboxCheckpointRef,
@@ -721,7 +724,10 @@ fn checkpoint_mutation(
     }
 }
 
-fn pause_agents_mutation(claimed: &Sandbox, agents: &[Agent]) -> SandboxLifecycleMutation {
+pub(super) fn pause_agents_mutation(
+    claimed: &Sandbox,
+    agents: &[Agent],
+) -> SandboxLifecycleMutation {
     let mut next_sandbox = claimed.clone();
     let Some(SandboxLifecycleOperation::Pause { phase, .. }) =
         next_sandbox.lifecycle.operation.as_mut()
