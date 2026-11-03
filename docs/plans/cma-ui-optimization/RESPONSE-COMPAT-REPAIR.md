@@ -46,8 +46,8 @@ The store/runtime input port is controlled; this is actual public HTTP/old-reade
 proof, not a new native command run, Mongo restart, old-binary schema rollback,
 browser proof or deployment. Known skill/full-format, 508-line service and
 LocalAgentV2 head-404 issues remain untouched. No repair UI or `Web_Style.md`
-changes. Integration `7cd701d0fe6c2496256a01eca59919ee8d899c82` merged cleanly into
-this branch; its preview changes do not alter the validated API/SDK sources.
+changes. Latest integration merges are clean and pinned in the external manifest;
+focused Rust/SDK checks run again after the ticket 18 core-source merge.
 
 ## Evidence, reproduction and file manifest
 
