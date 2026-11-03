@@ -227,3 +227,13 @@
 - Chrome 1440px/390px 共 4 场景通过，覆盖实际下载字节、键盘/触屏、原卡片焦点、详情/文件/预览往返、草稿/附件/节点/滚动、延迟保存、危险 HTML/SVG/Markdown、PNG 解码、PDF 回退、撤销清除。TypeScript、E2E typecheck、ESLint、production build、owned Prettier 和 diff check 通过；截图已目检。
 - 外部证据根目录 `/Users/liuyitian/code/cma-ui-worktrees/evidence/ticket-08`，含逐阶段 red/green、全部命令日志、Chrome PNG、独立 Cargo executable/hash、21 路径 manifest 与 shared-hunks。CSS 剩余 incoming `.agent-files-panel` 碰撞；size gate 剩余 incoming 556/517/503 和原始 508 行问题。没有将整仓或生产声明为绿色。
 - 所有写入仅本 worktree；无 push、PR、部署、动态模型生成或生产操作。验证后停止本票 Vite/Chrome，不动共享 Mongo/VM 和其他 worker，保留 worktree/证据供独立 merger 集成。
+
+## Ticket 08 集成（2026-11-03）
+
+- 合并前集成工作区干净，分支 `codex/cma-ui-optimization`、HEAD `a2965df09581de5fa0fa35af54b69db56cd83ab9`。已读取 08 ticket、完整 `08-EVIDENCE.md` 和外部 `evidence/ticket-08/manifest.txt`、`shared-hunks.patch`；21 路径 manifest 与候选实际 diff 完全一致，5 个共享文件的 patch 也逐字匹配。原始七项 AC 文本未改，全部已勾选。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-08` 的 `11dbdbc8b2d02f975653ad74aaf930da2109b326`，merge commit 为 `f01deeb6fad63b03c91b366d84037fdc0acbb063`。无冲突，合并树与候选完全一致；无 integration-only 源码修正。已断言 Web Style 和已有 ledger 保留全部原样前缀，08 样式仅追加。
+- 合并态执行 `npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/ConsoleDeliverablePreview.test.tsx src/agent/DeliverablePreview.test.tsx src/agent/SharedDeliverablePreview.test.tsx src/agent/AnswerDeliverables.test.tsx src/agent/MessageContent.test.tsx src/agent/MessageStream.performance.test.tsx src/agent/AgentSidePanel.test.tsx src/agent/files/AgentFiles.test.tsx src/agent/files/AgentFiles.presence.test.tsx src/ConsoleDraftRecovery.test.tsx`，实际 10 文件 / 65 tests 全部通过；`npm --prefix web run typecheck` 通过。
+- 聚焦覆盖回答资源选择、安全只读渲染/权限清除、PDF 下载回退、面板/文件编辑保持、消息性能与 composer 草稿恢复。API/SDK 无源码变化且无冲突，不重复 worker 的 public Rust、inventory、SDK、Chrome 或广泛/native/model 检查。`git diff --check a2965df09581de5fa0fa35af54b69db56cd83ab9 HEAD`、worktree 和记录提交前 cached diff check 通过。
+- 已断言 13 tracker 与合并前逐字一致，仍为 in-progress，唯一 literal human quality AC 未勾选；没有将 parent AI review 变成人工批准，实际 billed cost 仍为 null/unknown。
+- worker 全 Web 的八项已知集成失败以及 CSS/size/shared JSON inventory/task-status/10 helper 等修复仍由 parent repair 负责；其候选尚未合入本次集成，merger 未重复或掩盖这些检查。原始 skill/Core/format/508-line service/LocalAgentV2 head-404 限制仍分别记录。15 的有界环境验证与独立 `response-compat-repair` 工作未触碰；不宣称全仓或部署绿色。
+- 仅写集成 worktree，无原工作区或其他 worker 源码修改，无 push、PR、部署或外部运行环境操作。
