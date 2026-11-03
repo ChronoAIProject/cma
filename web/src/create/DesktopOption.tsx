@@ -39,7 +39,7 @@ export function DesktopOption({
       },
       () => {
         if (!abort.signal.aborted)
-          setFailure('Desktop capability could not be verified. Try again later.');
+          setFailure('Desktop availability could not be checked. Try again later.');
       },
     );
     return () => abort.abort();
@@ -64,7 +64,7 @@ export function DesktopOption({
               ? capability.state === 'available'
                 ? 'Prepares a browser for this Agent. Requires extra preparation time and memory.'
                 : `Desktop unavailable: ${capability.reason}`
-              : 'Checking desktop capability…'))}
+              : 'Checking desktop availability…'))}
       </p>
     </div>
   );
