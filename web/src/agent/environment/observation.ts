@@ -7,6 +7,14 @@ interface OperationObservation {
 }
 
 export class AgentComputerObservation {
+  constructor(
+    readonly scope: {
+      readonly client: object;
+      readonly subject: string;
+      readonly agentId?: string;
+    },
+  ) {}
+
   private value: OperationObservation | undefined;
   private readonly listeners = new Set<() => void>();
 

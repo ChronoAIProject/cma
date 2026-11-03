@@ -38,6 +38,7 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
   const id = text(event.toolCallId);
   if (id === undefined) return state;
   const current = state.toolCalls.find((tool) => tool.id === id);
+  if (event.type === 'CUSTOM' && current === undefined) return state;
   if (event.type === 'TOOL_CALL_START') {
     return updateTool(
       state,

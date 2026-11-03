@@ -94,7 +94,7 @@ function ConsoleContent({
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
   const computerObservation = useMemo(
-    () => new AgentComputerObservation(),
+    () => new AgentComputerObservation({ client, subject: user.id, agentId: selectedAgent }),
     [client, user.id, selectedAgent],
   );
   const ownerViews = useOwnerViews();

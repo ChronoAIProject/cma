@@ -1,5 +1,48 @@
 import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { binding, cursor, LocalAgentV2 } from './agent-v2.fixture';
+
+test('R pinned native command output survives the public projection and page reload', async ({
+  page,
+  baseURL,
+}, info) => {
+  const proof = process.env.CMA_PUBLIC_OUTPUT_PROOF_FILE;
+  test.skip(!proof, 'Requires the isolated native ACP capture projected by the candidate core');
+  const output = readFileSync(proof!, 'utf8');
+  const fixture = new LocalAgentV2();
+  fixture.enabled = false;
+  try {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v1/agui/events**', (route) =>
+      route.fulfill({ contentType: 'text/event-stream', body: output }),
+    );
+    await page.route('**/api/v1/agents/agt_contract/files/tree**', (route) =>
+      route.fulfill({ json: { path: '', entries: [] } }),
+    );
+    await page.goto('/agents/agt_contract');
+    for (const attempt of ['initial', 'reload']) {
+      if (attempt === 'reload') await page.reload();
+      const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+      await computer.getByRole('tab', { name: 'Operation output' }).click();
+      const operation = computer
+        .getByRole('region', { name: 'Turn 3', exact: true })
+        .getByRole('article');
+      await expect(operation.locator('pre')).toHaveText('native-computer-proof\n');
+      await expect(operation.getByText('Completed', { exact: true })).toBeVisible();
+      expect(
+        await computer
+          .getByRole('tabpanel', { name: 'Operation output' })
+          .locator('input, textarea, [contenteditable=true], iframe')
+          .count(),
+      ).toBe(0);
+    }
+    await page.screenshot({ path: info.outputPath('computer-native-output.png') });
+    expect(fixture.writes).toEqual([]);
+  } finally {
+    await fixture.close(page);
+  }
+});
 
 test('LOCAL browser availability comes from the scoped public environment observation', async ({
   page,
@@ -234,6 +277,9 @@ test('LOCAL narrow computer entry returns keyboard focus and preserves the compo
     await expect(computer).toBeVisible();
     await expect(computer.getByRole('button', { name: 'Back to conversation' })).toBeFocused();
     await computer.getByRole('tab', { name: 'Browser', exact: true }).click();
+    await expect(
+      computer.getByText('Environment capabilities are unavailable. Try again.', { exact: true }),
+    ).toBeVisible();
     await page.screenshot({ path: info.outputPath('computer-mobile.png') });
     await page.keyboard.press('Escape');
     await expect(computer).toBeHidden();
