@@ -227,6 +227,9 @@ export function mergeTranscriptSnapshot(
       Number(current.latestTurnId ?? 0) >= Number(snapshot.latestTurnId ?? 0)
         ? current.latestTurnId
         : snapshot.latestTurnId,
+    turnOutcomes: useSnapshotState
+      ? { ...current.turnOutcomes, ...snapshot.turnOutcomes }
+      : { ...snapshot.turnOutcomes, ...current.turnOutcomes },
     turnTiming: Object.fromEntries(
       [
         ...new Set([

@@ -1,7 +1,7 @@
 import { SuggestedReplies } from './SuggestedReplies';
-import { scenarioSuggestions, type SuggestedReplySet } from './suggestions';
+import { useSuggestedReplies, type SuggestedReplySet } from './suggestions';
 import { Presence } from '../ui/Presence';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
@@ -41,6 +41,7 @@ import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
 import { messageSubmission } from './messageSubmission';
+import { PlanProgress } from './PlanProgress';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -112,32 +113,11 @@ export function AgentSurface({
     !readOnly && (state.status === 'ready' || (accessAuthorized && state.status !== 'error')),
   );
   const verified = connection.verified;
-  const suggestionMessages = state.status === 'ready' ? state.conversation.messages : undefined;
-  const suggestionTurn = state.status === 'ready' ? state.conversation.latestTurnId : undefined;
-  const activeSuggestionTurn =
-    state.status === 'ready' ? state.conversation.activeRunId : undefined;
-  const suggestionViewer = viewerId ?? verified?.owner ?? '';
-  const suggestions = useMemo(
-    () =>
-      suggestionMessages &&
-      scenarioSuggestions(
-        {
-          messages: suggestionMessages,
-          latestTurnId: suggestionTurn,
-          activeRunId: activeSuggestionTurn,
-        },
-        suggestionViewer,
-        agentId,
-        suggestedReplies,
-      ),
-    [
-      suggestionMessages,
-      suggestionTurn,
-      activeSuggestionTurn,
-      suggestionViewer,
-      agentId,
-      suggestedReplies,
-    ],
+  const suggestions = useSuggestedReplies(
+    state.status === 'ready' ? state.conversation : undefined,
+    viewerId ?? verified?.owner ?? '',
+    agentId,
+    suggestedReplies,
   );
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
@@ -230,6 +210,9 @@ export function AgentSurface({
     <section className="agent-surface">
       {connections.dialog}
       <OwnerAgentHeader
+        progress={
+          <PlanProgress plans={conversation.plans} activeRunId={conversation.activeRunId} />
+        }
         onTitleUpdated={controller.applyAgentTitle}
         detail={detail}
         availability={controller.resourceAvailability}
