@@ -224,6 +224,7 @@ function ConsoleContent({
     ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
       <SharedAgent
         key={shared.id}
+        viewerId={user.id}
         client={client.resourceViews}
         web={client}
         computerObservation={computerObservation}

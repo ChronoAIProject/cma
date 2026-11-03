@@ -17,6 +17,7 @@ use layer3_adapter::{
 use std::sync::Arc;
 use std::time::SystemTime;
 
+mod read_check;
 mod scope;
 use scope::{public_path, require_home_mutation};
 
