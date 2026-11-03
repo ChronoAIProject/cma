@@ -11,8 +11,8 @@ export function startTurn(
   return {
     ...state,
     activeRunId: runId,
+    latestTurnId: runId,
     activeRunStartedAt: start,
-    latestRunId: runId,
     turnTiming:
       start === undefined || !Number.isFinite(Date.parse(start))
         ? state.turnTiming
@@ -36,10 +36,10 @@ export function finishTurn(
     !Number.isFinite(Date.parse(finishedAt)) ||
     Date.parse(finishedAt) < Date.parse(startedAt)
   )
-    return { ...state, latestRunId: runId };
+    return { ...state, latestTurnId: runId };
   return {
     ...state,
-    latestRunId: runId,
+    latestTurnId: runId,
     turnTiming: {
       ...state.turnTiming,
       [runId]: { startedAt, finishedAt: previous?.finishedAt ?? finishedAt },
