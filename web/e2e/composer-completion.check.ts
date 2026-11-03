@@ -37,6 +37,10 @@ for (const transport of ['agui', 'responses'] as const) {
         reducedMotion: 'reduce',
         colorScheme: width === 390 ? 'dark' : 'light',
       });
+      await page.addInitScript(
+        (appearance) => localStorage.setItem('cma:appearance', appearance),
+        width === 390 ? 'dark' : 'light',
+      );
       const boundary = new LocalStartup();
       const v2 = transport === 'responses' ? new LocalAgentV2() : undefined;
       let stream: ServerResponse | undefined;
@@ -121,17 +125,19 @@ for (const transport of ['agui', 'responses'] as const) {
           }),
         );
         await page.goto('/agents/agt_contract');
+        await expect(page.locator('html')).toHaveCSS(
+          'color-scheme',
+          width === 390 ? 'dark' : 'light',
+        );
         const field = page.getByRole('textbox', { name: 'Message', exact: true });
         await expect(field).toBeEnabled();
         await expect.poll(() => connections).toBeGreaterThan(0);
         await field.fill('Keep my draft and attachment while settings and header change.');
-        await page
-          .locator('input[type="file"]')
-          .setInputFiles({
-            name: 'notes.txt',
-            mimeType: 'text/plain',
-            buffer: Buffer.from('notes'),
-          });
+        await page.locator('input[type="file"]').setInputFiles({
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          buffer: Buffer.from('notes'),
+        });
         await expect(page.getByText('Ready', { exact: true })).toBeVisible();
         await mkdir(directory, { recursive: true });
         await page.screenshot({
