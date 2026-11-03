@@ -24,6 +24,7 @@ fn detail(error: ConfigError) -> String {
 fn unset_keys_take_their_documented_defaults_and_leave_the_console_off() {
     let config = config_with(&[]).unwrap();
     assert!(!config.enabled);
+    assert!(config.nyxid_public_url.is_none());
     assert_eq!(config.client_id, "");
     assert!(config.client_secret.is_none());
     assert_eq!(config.login_rate_per_minute, 60);
@@ -35,6 +36,30 @@ fn unset_keys_take_their_documented_defaults_and_leave_the_console_off() {
     let defaults = ConsoleConfig::default();
     assert_eq!(defaults.session_idle, config.session_idle);
     assert_eq!(defaults.sessions_max, config.sessions_max);
+}
+
+#[test]
+fn oauth_origin_is_optional_and_rejects_non_public_or_credentialed_urls() {
+    let config =
+        config_with(&[(CMAEG_CONSOLE_NYXID_PUBLIC_URL, "https://API.NYXID.AI:443")]).unwrap();
+    assert_eq!(
+        config.nyxid_public_url.as_deref(),
+        Some("https://api.nyxid.ai")
+    );
+    for value in [
+        "",
+        "http://api.nyxid.ai",
+        "http://nyxid.chrono-bot.svc",
+        "https://api.nyxid.ai/",
+        "https://api.nyxid.ai/oauth",
+        "https://user:secret@api.nyxid.ai",
+        "https://api.nyxid.ai?scope=openid",
+        "https://api.nyxid.ai#fragment",
+    ] {
+        let message = detail(config_with(&[(CMAEG_CONSOLE_NYXID_PUBLIC_URL, value)]).unwrap_err());
+        assert!(message.contains(CMAEG_CONSOLE_NYXID_PUBLIC_URL));
+        assert!(!message.contains("user:secret"));
+    }
 }
 
 #[test]
