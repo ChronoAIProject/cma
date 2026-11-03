@@ -2598,7 +2598,8 @@
         "not_authenticated",
         "permission_denied",
         "temporarily_unavailable",
-        "desktop_unsupported"
+        "desktop_unsupported",
+        "invalid_request"
       ]
     },
     "GET /api/v1/agent-lifecycle/{id}": {
