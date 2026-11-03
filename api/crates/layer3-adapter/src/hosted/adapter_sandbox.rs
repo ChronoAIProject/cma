@@ -209,27 +209,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         frame: CredentialFrame,
     ) -> crate::Result<()> {
-        if frame.operation_id.trim().is_empty()
-            || frame.value.expose().is_empty()
-            || frame.custody_generation == Some(0)
-        {
-            return Err(AdapterError::Rejected(
-                "credential operation id, value, and non-zero generation are required".into(),
-            ));
-        }
-        self.verify_bound_home(handle).await?;
-        let operation_id = frame.operation_id.clone();
-        match self.exchange(handle, RequestFrame::Credential(frame)).await {
-            Ok(ResponseFrame::Credential(CredentialReceipt {
-                operation_id: returned,
-                installed: true,
-            })) if returned == operation_id => Ok(()),
-            Ok(ResponseFrame::Credential(_)) => Err(AdapterError::Rejected(
-                "runtime did not acknowledge the exact credential operation".into(),
-            )),
-            Ok(_) => unreachable!("exchange verifies response operation"),
-            Err(error) => Err(error),
-        }
+        self.deliver_credential_exact(handle, frame).await
     }
 
     async fn prepare_workspace(
@@ -370,7 +350,7 @@ impl SandboxAdapter for HostedAdapter {
         conversation_id: &str,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<ConversationChannel> {
-        let recovery = (conversation_id, None);
+        let recovery = (conversation_id, None, None);
         agent::reconnect_agent(self, handle, authority_fence, request, recovery, updates).await
     }
 
@@ -388,7 +368,27 @@ impl SandboxAdapter for HostedAdapter {
             handle,
             authority_fence,
             request,
-            (conversation_id, recovered_prompt),
+            (conversation_id, recovered_prompt, None),
+            updates,
+        )
+        .await
+    }
+
+    async fn reconnect_agent_with_context(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        operation_sequence: u64,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<ConversationChannel> {
+        agent::reconnect_agent(
+            self,
+            handle,
+            authority_fence,
+            request,
+            (conversation_id, None, Some(operation_sequence)),
             updates,
         )
         .await

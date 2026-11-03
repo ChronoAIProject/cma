@@ -36,6 +36,7 @@ impl HostedAgentRuntime for CodexRuntime {
             provider_tool: None,
             access_tool: None,
             recovered_prompt: None,
+            recovered_context_sequence: None,
         })
     }
 }

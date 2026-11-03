@@ -73,6 +73,11 @@ test("retained pinned bridge refreshes document tools on its same thread and kee
     // cma/agent-instructions extension or a runtime image/process restart.
     await bridge.call("session/close",{sessionId:created.sessionId});
     await bridge.call("session/close",{sessionId:created.sessionId}); // ambiguous close ACK replay
+    await assert.rejects(bridge.call("session/set_mode",{sessionId:created.sessionId,modeId:"agent-full-access"}),
+      error => {
+        assert.deepEqual(error.actual,{code:-32603,message:"Internal error",data:{details:"Session "+created.sessionId+" not found"}});
+        return true;
+      });
     await bridge.call("session/load",{sessionId:created.sessionId,cwd:directory,mcpServers:tools});
     await bridge.call("session/set_model",{sessionId:created.sessionId,modelId:"gpt-6[high]"});
     await bridge.call("session/set_config_option",{sessionId:created.sessionId,configId:"reasoning_effort",value:"high"});

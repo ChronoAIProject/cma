@@ -399,6 +399,27 @@ pub trait SandboxAdapter: Send + Sync {
             .await
     }
 
+    /// Reattach only to replay one already admitted idle context operation.
+    /// The caller must complete that operation before publishing the input.
+    #[allow(clippy::too_many_arguments)]
+    async fn reconnect_agent_with_context(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        operation_sequence: u64,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<ConversationChannel> {
+        if operation_sequence == 0 {
+            return Err(unsupported(
+                "context recovery requires an admitted operation",
+            ));
+        }
+        self.reconnect_agent(handle, authority_fence, request, conversation_id, updates)
+            .await
+    }
+
     async fn close_agent(
         &self,
         handle: &RuntimeHandle,
