@@ -37,7 +37,13 @@ impl AgentWorker {
                     context,
                     connection_fence,
                     &request,
-                    (&target.conversation_id, recovered_prompt.clone()),
+                    (
+                        &target.conversation_id,
+                        recovered_prompt.clone(),
+                        agent
+                            .pending_managed_context()
+                            .map(|(sequence, _)| sequence),
+                    ),
                     updates,
                 )
                 .await?;
@@ -66,6 +72,18 @@ impl AgentWorker {
                             .operations
                             .retire_managed_context_replayed(&refresh_target, &authority, sequence)
                             .await
+                            .map_err(|error| {
+                                WorkerFailure::retryable(
+                                    "managed_context_confirmation_unavailable",
+                                    error.to_string(),
+                                )
+                            })?;
+                        // This attachment permits only the now-retired operation.
+                        // Discard it; the next claim performs an ordinary handshake.
+                        return Err(WorkerFailure::retryable(
+                            "managed_context_reconnect_required",
+                            "retired context recovery requires a new attachment",
+                        ));
                     }
                     Err(error) => return Err(adapter_failure(error)),
                 };
@@ -138,20 +156,45 @@ impl AgentWorker {
         context: &AgentContext,
         authority_fence: u64,
         request: &AgentOpenRequest,
-        (conversation_id, recovered_prompt): (&str, Option<layer3_adapter::PromptIdentity>),
+        (conversation_id, recovered_prompt, recovered_context): (
+            &str,
+            Option<layer3_adapter::PromptIdentity>,
+            Option<u64>,
+        ),
         updates: mpsc::Sender<layer3_adapter::ConversationUpdate>,
     ) -> Result<ConversationChannel, WorkerFailure> {
-        match tokio::time::timeout(
-            self.config.open_timeout,
-            self.dependencies.adapter.reconnect_agent_with_prompt(
-                &context.runtime,
-                authority_fence,
-                request,
-                conversation_id,
-                recovered_prompt,
-                updates,
-            ),
-        )
+        match tokio::time::timeout(self.config.open_timeout, async {
+            if let Some(sequence) = recovered_context {
+                if recovered_prompt.is_some() {
+                    return Err(layer3_adapter::AdapterError::OperationIdentityConflict(
+                        "active turn cannot replay idle context".into(),
+                    ));
+                }
+                self.dependencies
+                    .adapter
+                    .reconnect_agent_with_context(
+                        &context.runtime,
+                        authority_fence,
+                        request,
+                        conversation_id,
+                        sequence,
+                        updates,
+                    )
+                    .await
+            } else {
+                self.dependencies
+                    .adapter
+                    .reconnect_agent_with_prompt(
+                        &context.runtime,
+                        authority_fence,
+                        request,
+                        conversation_id,
+                        recovered_prompt,
+                        updates,
+                    )
+                    .await
+            }
+        })
         .await
         {
             Ok(Ok(channel)) => Ok(channel),

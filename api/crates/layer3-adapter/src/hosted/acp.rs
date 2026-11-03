@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -96,6 +96,7 @@ pub(super) struct Bridge {
     pub(super) instructions_support: AtomicU8,
     pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub(super) context_goal: Mutex<Option<(String, bool)>>,
+    pub(super) recovering_context: AtomicU64,
 }
 
 pub(super) struct OpenedBridge {
@@ -183,6 +184,13 @@ impl Bridge {
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<OpenedBridge> {
+        if settings.recovered_context_sequence.is_some()
+            && (resume_conversation.is_none() || recovered_prompt.is_some())
+        {
+            return Err(AdapterError::Rejected(
+                "context recovery requires one quiet retained conversation".into(),
+            ));
+        }
         if recovered_prompt.is_some() && resume_conversation.is_none() {
             return Err(AdapterError::Rejected(
                 "prompt recovery requires a held conversation".into(),
@@ -221,6 +229,7 @@ impl Bridge {
             instructions_support: AtomicU8::new(0),
             context_refresh: settings.context_refresh.clone(),
             context_goal: Mutex::new(None),
+            recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
         });
         let (updates, relay) = super::update_relay::spawn(updates_tx);
         if let Some(session) = &startup_session {
