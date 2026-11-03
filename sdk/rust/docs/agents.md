@@ -2,6 +2,14 @@
 
 <!-- nav: 5 Agents -->
 
+`client.agents().suggestions(agent_id, cma_sdk::answer_context::AnswerContext {
+turn_sequence: 3, answer_sequence: 5 }).await` reads a saved contextual result.
+This GET never generates or sends input. A `ready` reading contains a stable
+`SuggestedReplySet`; pending, empty, unavailable, failed and expired states do
+not block ordinary conversation. Preserve the returned scope for an unchanged
+suggestion's normal conditional send. Observations retain measured tokens and
+latency, with provider-reported cost when available and `None` when unknown.
+
 Use `agents().create_lifecycle` for Image Manager selections and inline Agent
 configuration. Omit the image to use the deployment default. Persist the exact
 request and key before submission so an uncertain result can be retried safely.
@@ -496,6 +504,19 @@ the greatest durable sequence in a successfully completed turn. Other targets
 return 404; historical votes remain readable, and the up/down/null request and
 response shapes remain unchanged.
 
+`agents().feedback_details(agent_id, "event:42")` returns `FeedbackDetails` with
+viewer/Agent/answer identities, `version`, `reasons`, `comment`, `updated_at`,
+and `request_id`. After confirming down, call `set_feedback_reasons(agent_id,
+"event:42", &FeedbackReasonRequest { expected_version, request_id, reasons,
+comment })`. `FeedbackReason` has six variants: `Inaccurate`, `Unanswered`,
+`UnusableSteps`, `Incomplete`, `Unclear`, `Other`; selections must be distinct.
+Use an empty optional comment or at most 500 Unicode code points, and a stable
+ASCII request ID (1–128 letters/digits or `_.:-`). Exact retries recover the same
+durable result; stale versions or changed request reuse return 409
+`feedback_version_conflict`. Reread after an uncertain outcome. Up/null atomically
+clears saved details for all clients, while retaining a version fence. No Agent
+input or training operation is created.
+
 ### Agent session share links
 
 `resource_access().create_agent_share_link(agent_id, &CreateAgentShareLinkRequest,
@@ -550,3 +571,27 @@ plan; absent snapshots stay unknown. Fresh authorized reads restore a position
 after reload. Keep live reception separate and use a fresh snapshot for Live.
 Expose gaps and unavailable or expired positions; no expiry deadline is promised
 by the retained event contract. These queries admit no command or control effects.
+
+### Answer deliverables
+
+`agents().answer_deliverables(agent_id, "event:42", None)` reads the explicitly
+referenced resources in one completed final answer. Each item keeps its original
+Agent, answer, turn, resource kind and version evidence. A live home file remains
+a mutable file; an approved artifact and a document source revision retain their
+independent identities. Ordinary filenames in prose do not create deliveries.
+
+`describe_deliverable(agent_id, &DeliverableResource::LiveFile { path:
+"report.csv".into() }, None)` verifies an explicit resource and returns a marker
+for inclusion as a standalone line in the final answer. It does not publish files.
+Document references use an explicit positive source revision. Agent runtime tools
+return the same verified markers with publication receipts.
+
+`read_answer_deliverable(agent_id, answer_id, delivery_id, true, None)` verifies
+one item's bytes on an explicit retry. Metadata listing does not eagerly read
+file bodies. `download_answer_deliverable(agent_id, answer_id, &item, None)`
+returns opaque bytes only after checking the size, SHA-256 and current independent
+resource authorization, including another authorization read after buffering.
+Dropping the future cancels the operation; all download steps share one deadline.
+Saving the bytes is the caller's choice. Changed live files cannot substitute for
+the answer's original bytes; changed documents can still deliver their original
+source revision. Pass a document share token only when independently authorized.

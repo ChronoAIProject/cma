@@ -2,6 +2,15 @@
 
 <!-- nav: 5 Agents -->
 
+Read saved contextual follow-ups with
+`client.agents.suggestions(agentId, { turn_sequence: 3, answer_sequence: 5 })`.
+This is a read-only GET. `ready` contains the shared `SuggestedReplySet` with
+stable identity, exact text, ranks and generation strategy version; other states
+hide the group without blocking the answer or manual composer. Preserve its
+`scope` as `answer_context` for an unchanged suggestion's normal conditional
+send. Generation observations report token usage and latency; missing cost is
+null, never a zero-cost claim. Neither reading nor refreshing starts model work.
+
 Use `agents.createLifecycle` to create an Agent from an Image Manager selection
 and inline configuration. Omit `image` for the deployment default. Persist the
 exact request and idempotency key before sending it; an uncertain response must
@@ -532,6 +541,19 @@ nonempty Assistant message with the greatest durable sequence in a successfully
 completed turn. Other targets return 404; historical votes remain readable, and
 the up/down/null request and response shapes remain unchanged.
 
+`agents.feedbackDetails(agentId, 'event:42')` reads `FeedbackDetails`, including
+authenticated viewer/Agent/answer identities, `version`, saved `reasons`,
+`comment`, `updated_at`, and the last reason `request_id`. After confirming down,
+call `agents.setFeedbackReasons(agentId, 'event:42', { expected_version,
+request_id, reasons, comment })`. Use the read version and a new stable ASCII
+request ID (1–128 letters/digits or `_.:-`). Reasons are a unique subset of
+`inaccurate`, `unanswered`, `unusable_steps`, `incomplete`, `unclear`, `other`.
+An empty comment is optional detail; the maximum is 500 Unicode code points.
+After an uncertain reply, retry the identical body or reread its receipt. An
+exact retry returns the same version; stale/reused requests return 409
+`feedback_version_conflict`. Up/null clears saved details atomically, including
+for old clients. These calls never send input or train a model.
+
 ### Agent session share links
 
 `client.resourceAccess.createAgentShareLink(agentId, { audience, mode, token }, options)`
@@ -597,3 +619,58 @@ receiving live events independently and read a fresh snapshot on Return Live.
 There is no configured event expiry deadline in this contract; a missing or
 expired position must not silently move to a different operation. These GETs
 never execute, recover or acknowledge a command, approval, feedback or control.
+
+### Answer deliverables
+
+When a fresh metadata read makes a download unavailable, `DeliverableUnavailable`
+preserves its typed `status` (for example, `denied` or `changed`) without releasing
+bytes. It extends `ProtocolError`; ordinary HTTP failures remain `ApiError` with
+their resource-specific problem codes.
+
+`agents.answerDeliverables(agentId, 'event:5', options)` reads structured results
+belonging to that completed final answer. Request it only for visible answers
+containing explicit delivery markers. The response preserves Agent, turn and
+answer identities and up to 32 distinct items. Each item keeps its original
+resource selector, safe name, media type, size and SHA-256.
+
+Published `agent_artifact` identities, independent `document` source revisions
+and `live_file` paths remain different resource kinds. Lists use authorized
+metadata; a live file initially reports `unchecked` (Verify on download).
+`readAnswerDeliverable(agentId, answerId, deliveryId, { verify: true })` checks
+only that selected item's actual bytes for an explicit retry. A newer document
+revision reports `version_changed` while retaining the original source download.
+Changed/deleted files, unavailable runtimes and withdrawn access have separate
+statuses. Sharing a conversation does not grant file/document access.
+
+`downloadAnswerDeliverable` takes the selected item as its expected version. It
+checks current metadata, bounds the opaque response by that version's size,
+verifies SHA-256, and rechecks current access before returning bytes. It does not
+render, save, publish or execute them. One deadline and AbortSignal cover the
+entire operation; abort on viewer, Agent or authorization changes. Document token
+links use `shareToken` in these options, never a query parameter.
+
+```ts
+import type { Cma } from '@chronoai/cma-sdk';
+
+export async function readFirstDeliverable(
+  client: Cma,
+  agentId: string,
+  answerId: string,
+  signal: AbortSignal,
+) {
+  const answer = await client.agents.answerDeliverables(agentId, answerId, { signal });
+  const item = answer.items[0];
+  if (item === undefined) return undefined;
+  const bytes = await client.agents.downloadAnswerDeliverable(agentId, answerId, item, { signal });
+  return { name: item.reference.name, bytes };
+}
+```
+
+`describeDeliverable(agentId, selector, options)` explicitly verifies a selected
+resource and returns `{reference, marker}`. Only the server-generated marker,
+unchanged on its own line in the durable final answer, establishes association.
+The SDK rejects a marker that differs from its verified metadata. Ordinary file
+names and code spans never establish association; this operation does not
+publish private files. Runtime tools also return these verified descriptors.
+Backend answer verification is bounded to 128 subsequent events and a 512-event
+turn within 4 MiB/15 seconds, failing closed rather than reconstructing history.

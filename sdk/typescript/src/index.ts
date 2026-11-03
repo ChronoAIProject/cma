@@ -41,6 +41,8 @@ export type * from './agents/access-requests.js';
 export type * from './agents/shared.js';
 export type * from './agents/provenance.js';
 export type * from './agents/artifacts.js';
+export type * from './agents/deliverables.js';
+export { DeliverableUnavailable } from './agents/deliverables.js';
 export type * from './agents/attachments.js';
 export type * from './agents/channel-usage.js';
 export type * from './instances/shared.js';
@@ -111,11 +113,17 @@ export * from './event-worker-profiles.js';
 
 export type { AgentSettings, UpdateAgentSettingsRequest } from './agents/settings.js';
 
+export type { SuggestedReplySet, SuggestedReplyReading } from './agents/suggestions.js';
 export type {
   MessageVote,
   MessageFeedback,
   MessageFeedbackPage,
 } from './agents/message-feedback.js';
+export type {
+  FeedbackReason,
+  FeedbackReasonRequest,
+  FeedbackDetails,
+} from './agents/feedback-reasons.js';
 
 export * from './documents.js';
 

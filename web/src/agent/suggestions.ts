@@ -1,15 +1,8 @@
 import type { ConversationState } from './conversation';
 import { useMemo } from 'react';
 
-export interface SuggestedReplySet {
-  readonly id: string;
-  readonly viewerId: string;
-  readonly agentId: string;
-  readonly answerId: string;
-  readonly scope: { readonly turn_sequence: number; readonly answer_sequence: number };
-  readonly source: { readonly kind: 'template' | 'generated'; readonly version: string };
-  readonly items: readonly { readonly id: string; readonly text: string; readonly rank: number }[];
-}
+import type { SuggestedReplySet } from '@chronoai/cma-sdk';
+export type { SuggestedReplySet } from '@chronoai/cma-sdk';
 
 export function useSuggestedReplies(
   conversation: Pick<ConversationState, 'messages' | 'activeRunId' | 'latestTurnId'> | undefined,

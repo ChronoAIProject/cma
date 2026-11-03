@@ -146,3 +146,72 @@
 - 实际命令：`cargo +1.96.1 test --offline --locked --manifest-path api/Cargo.toml -p layer1-public --lib rest::openapi::tests::every_exported_operation_appears_in_the_rest_documentation_inventory -- --exact --nocapture`；实际 1 passed、0 failed、0 ignored、421 filtered。日志为集成工作区 `api/target/integration04-inventory-clean.log` 与 `api/target/integration04-inventory-test.log`；无其他 Rust/broad/native 重跑。
 - `git diff --check a426b87ee5852866850cab192b37d14f9f2087c6 HEAD` 与记录提交前的 `git diff --check` 通过。LocalAgentV2 head-404 已由 04 在原始 `60fc98ee5` 实测确认，保留为原始 fixture 缺陷；其他已记录原始 skill/Core/格式/508 行 service 限制未混入修正，不宣称全仓或生产环境绿色。
 - 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，没有清理共享 Cargo target，无推送、部署或生产操作。
+
+## Ticket 07 集成（2026-11-03）
+
+- 合并前集成工作区干净，HEAD 为 `d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8`。已读取完整 07 票证据、主要路径与共享 hunk 交接，并审阅实际 79 路径清单；候选包含该最新基线。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-07` 的 `06f884afcc08210a4ffae699df25f4956bdd2686`，merge commit 为 `2e37395cb94a7ec12d58171978dcfc02776d1fa0`。无冲突，初始合并树与候选完全一致。
+- 候选将交付样式插入既有 04 条目前；独立文档修正 `d6d154bc3c81e1541eb023cd4c6b622642db7524` 保留全部既有字节为前缀，将 07 原样追加。其他候选源码完全一致。09 finalAnswer/反馈、06 plan、02 elapsed、14 computer/文件 guard 与既有 browser 接口保留。
+- 合并态：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/AnswerDeliverables.test.tsx src/agent/MessageStream.performance.test.tsx` 通过，2 文件 / 11 tests；`npm --prefix web run typecheck`、`git diff --check d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8 HEAD` 及记录提交前的 `git diff --check` 通过。未重复广泛/native/Rust 检查。
+- 07 完成，08 可从记录提交启动，沿用独立资源种类、精确 answer/delivery/revision/digest、当前授权、metadata-only 列表与有界 body 下载；不把 live file 当不可变快照。
+- parent 的独立 integration-repair worker 继续处理本轮重复 `.agent-files-panel` CSS、filesystem/conversation 行数超限、environment shared JSON inventory、AppPublic/TaskHome/URL 断言及 task-status 查询成本；本 merger 不重复。07 后 filesystem 为 517 行（增加模块声明），此前 515；原始 508 行 Agent service、skill/Core/格式/LocalAgentV2 head-404 仍独立记录，不称全仓绿色。
+- 仅写集成 worktree；无原工作区或其他 worker 源码修改，无推送或部署。
+
+## Ticket 12 集成（2026-11-03）
+
+- 完成 07 后从干净的 `a752868183d220dddc98412d253cd69eeaf21b93` 开始；已读取 12 票和 `12-EVIDENCE.md`，16 路径 manifest 与候选相对共同基线 `d19c225bd` 的 diff 完全匹配。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-12` 的 `a977d65b90b74c29d6f6e11675b4630ce8b3e04c`，merge commit 为 `510c175f7b351f6ab418190c9c6fdf75d416be3f`。唯一冲突为 Web Style 末尾同时追加；保留已集成 07 全文，再原样追加 12，已断言严格前缀和增量完全一致。AgentSurface 自动合并，无源代码冲突或额外修正。
+- 保留 07 delivery context、既有 finalAnswer、plan/completion/computer，以及正常 composer/transport。编辑复用建议身份，保留附件、明确追加/替换/取消与撤回，未确认请求仍保留原 body/key，失效来源转普通草稿；不新增发送协议。
+- 合并态：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/AgentSurface.suggestionEditing.test.tsx src/agent/AgentSurface.suggestions.test.tsx` 通过，2 文件 / 29 tests；`npm --prefix web run typecheck`、`git diff --check a752868183d220dddc98412d253cd69eeaf21b93 HEAD`、冲突解决后的 `git diff --cached --check` 及记录提交前的 `git diff --check` 通过。
+- 无广泛/native/Rust 重复验证。07 记录的独立 integration-repair 任务和原始基线问题仍分开保留；未修复、跳过或弱化这些检查。仅写集成 worktree，无其他 worker/原工作区源码编辑，无推送或部署。
+
+## Ticket 10 worker 交付（2026-11-03）
+
+- 独立 worktree `/Users/liuyitian/code/cma-ui-worktrees/ticket-10`、分支 `codex/cma-ui-10`，从 `7739c431f` 开始；`262a2c6fc` 先合入 14，最终 `e5f5e952b` 合入最新集成 `d19c225bd`（含 04/05/14）。样式先于 UI，合并冲突保留集成全文为原样前缀，仅追加本票规则。由独立 merger 合入集成；无推送、部署或 PR，保留本 worktree。
+- 六项多选、500 Unicode 码点可选说明；原因独立版本条件写入与公开回读，精确重试、失联回执恢复、旧客户端 up/null 原子清理及墓碑防 ABA。复用 09 最终回答身份、投票恢复和 `feedbackRecovery`，本页草稿按 viewer/Agent/answer 隔离；关闭、失败、重新编辑及账号/权限改变均有用户边界验证，不产生发送或训练操作。
+- 首条指定 red → green 为 `message_feedback_delayed_reasons_after_up_never_restore_down_or_reasons`，实际 1 failed → 1 passed。合并态 A/投影 12、Core 2、Mongo 4 个命名测试通过；真实 handler 新原因 26 + 旧 vote 18 案例通过；Mongo 使用共享 ticket11 容器的独立 UUID 数据库，48 轮 up/null 竞态与 12 路重试通过，数据库已清理，共享 VM/容器保留。
+- 合并态相关 Web 115 文件/950 tests 通过（含 14 的七项折叠回归）；最终聚焦 44 tests 通过。1440/390px Chrome 各通过，截图已检查；TypeScript SDK 2740 tests、Rust SDK 全部 2732 个分类契约通过；类型、lint、构建和 48 个 SDK 文档示例通过。[完整验收矩阵、日志、复跑命令及 51 路径 manifest](10-EVIDENCE.md)。
+- 上游门禁单独交接：14 的 `.agent-files-panel` 双文件声明导致 CSS gate 失败，已在纯 `a426b87ee` 快照独立复现；14 的新增 environment route 缺少共享 JSON contract inventory/corpus 登记，合并态实际 230、登记 229，独立于最新集成已修复的 REST 文档 inventory。10 两个路由及所有新旧反馈契约通过；不通过删路由、改计数或 skip 隐藏缺口。最终 AppCreation/Console 与反馈共 57 tests 通过，AppPublic 六项旧首页断言仍失败。04 的首页/Console 修复只随集成合入，原始格式/技能 fixture/508 行 service 未修改，不声明全仓绿色。
+- 本票触及源文件均 ≤500 行，测试 ≤2000 行；OpenAPI 复用 04 抽出的组合函数并保留其 repository 扩展，主文件 496 行。无原工作区、集成工作区或其他 worker 源码编辑；只关闭本票本地服务，保留共享 Mongo 和 worktree。
+
+## Ticket 10 集成（2026-11-03）
+
+- 顺序完成 07、12 后，从干净的 `01656f54f0c42a9e891b906a29172d9e1cbe1d24` 开始；已读取 10 票、`10-EVIDENCE.md`，51 路径 manifest 与候选相对共同基线 `d19c225bd` 的实际 diff 完全匹配。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-10` 的 `f76ba24befce02ec9d8827bc02d428ac65db2b6e`，merge commit 为 `707b108ebda4b9b09a9a390c0c6c691ba0baf535`。实际四处冲突：OpenAPI composition 保留 07 deliverables 与 10 feedback 的 document merge 和既有 repository 扩展；Web client 保留两组独立能力；Web Style、IMPLEMENTATION 保留全部先前文本，再原样追加 10 内容。已逐字断言两份文档等于原完整前缀加候选增量。
+- 保留既有 finalAnswer/投票身份、交付资源 authority、plan/elapsed、computer/browser、12 普通 composer 编辑/附件/undo 与发送恢复；无行为选择或额外产品修正。
+- 合并态 Web：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/FeedbackReasons.test.tsx src/agent/AnswerFeedback.test.tsx src/agent/MessageStream.performance.test.tsx src/agent/AnswerDeliverables.test.tsx` 通过，4 文件 / 35 tests；`npm --prefix web run typecheck` 通过。delivery 回归覆盖实际共享 client 合并，没有重复广泛/native 证据。
+- 因实际 OpenAPI composition 冲突，追加局部 Rust 验证。使用集成独有、非 symlink 的 `api/target`，`CARGO_BUILD_JOBS=2`、`RUST_MIN_STACK=33554432`、`RUSTFLAGS='--cfg cma_ui_ticket04'`；先执行 `cargo +1.96.1 clean --offline --manifest-path api/Cargo.toml -p layer1-public`（仅私有 target，移除 522 文件 / 1.1 GiB），日志确认从 integration 路径重编译 Layer 2、1。
+- 首次 `cargo +1.96.1 test --offline --locked --manifest-path api/Cargo.toml -p layer1-public --lib rest::openapi::agent_manager::tests:: -- --nocapture` 实际 9 passed / 1 failed：路径计数仍为 07 的 63。10 加一个路径、两个 operation，明确路由表实际为 64 / 79；独立修正提交 `ddb73f7d12bcd4afaef12770ba79312cc493b6ef` 仅将两个精确期望从 63 / 77 更新为 64 / 79，保留逐项 full/focused 等价、唯一 operation ID、真实 router、schema 引用与身份断言。该局部 count 是本批集成问题，不是原始基线；与未修复的 environment shared JSON inventory 缺口不同，没有改其数字或弱化 gate。
+- 同命令重跑实际 10 passed、0 failed、0 ignored、428 filtered；包含新旧操作、feedback schema、answer-bound deliverables 和实际 router 选择检查。另执行 `cargo +1.96.1 test --offline --locked --manifest-path api/Cargo.toml -p layer1-public --lib rest::openapi::tests::every_exported_operation_appears_in_the_rest_documentation_inventory -- --exact --nocapture`，实际 1 passed、0 failed、0 ignored、437 filtered。证据保存在集成 `api/target/integration10-openapi-{clean,test,recheck}.log` 和 `api/target/integration10-doc-inventory.log`；无共享 target 清理、0-test 证据或其他 Rust/SDK/Mongo/native 重复。
+- 冲突解决后的 cached diff check、`git diff --check 01656f54f0c42a9e891b906a29172d9e1cbe1d24 HEAD`、本批 `git diff --check d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8 HEAD` 与记录提交前的 worktree diff check 通过。已确认 07/12/10 三个交付 SHA 均为最终集成祖先。
+- parent 的独立 repair worker 继续负责重复 CSS、filesystem/conversation 行数、environment shared JSON inventory、AppPublic/TaskHome/URL 断言与 task-status 查询成本；不重复这些任务，不将其称作原始基线。原始 508 行 Agent service、skill/Core/格式/LocalAgentV2 head-404 限制保持独立。08 已由 parent 从 `01656f54f` 启动；本次只写集成 worktree，无原工作区/其他 worker 源码编辑，无推送、部署或全仓绿色声明。
+
+
+## Ticket 13 worker delivery（2026-11-03）
+
+- 独立 worktree `/Users/liuyitian/code/cma-ui-worktrees/ticket-13`、分支 `codex/cma-ui-13`，起点 `424b1534e`。先提交 Web Style `1455d4d06`，再提交 public/UI late-A red→green `f958b0bae`、生产持久化/模型适配/SDK/实际样本 `d0cff82a0`，以及可见曝光和恢复回执指标修正 `3a1aa9a46`。
+- 已在本票分支合入最新集成 `d19c225bd2a373f0e4861e95ebbbb5a5bca8adc8`，merge `543ea035e`；仅 Web Style 追加点冲突，最终文件严格保留集成全文前缀并原样追加本票块。未写原工作区、集成 worktree 或其他 worker；无 push/PR/deploy。
+- 确认最终回答后同事务保存有界生成任务；既有授权模型代理异步生成；稳定 owner/Agent/canonical answer/strategy identity；GET/history 不生成、不启动 Agent turn。一次持久 claim、重启明确失败、晚到结果及新 input/authority fence、用量/延迟/provider 明示费用保存已实现。复用 11 `SuggestedReplySet` 和 conditional normal-send；12 独占编辑行为。
+- 固定 rubric 先于样本；最终 5 次实际调用覆盖比较、文档修改、中文澄清、无合适建议、错误成果声明，公开 GET 与重新打开的 Mongo store 核实保存值。共 2,200 input / 270 output tokens，35,629ms 总生成时间；实际费用字段缺失，保存 null，未推算费用。早期失败质量样本完整保留。样本已交 parent 独立复核，不将实现 AI 或 parent AI 评价称作人工审批。
+- 最终合并态：8 public generation tests、4 Mongo tests、6 条本票 public contract cases、53 Web U tests、7 选定 TypeScript SDK tests、2 Rust SDK tests 通过；Web/E2E types 与 focused lint 通过。此前合并态真实 Chrome 5 tests 通过，1440/320 px 双主题截图已保留。日志与明细见 [13-EVIDENCE](13-EVIDENCE.md)。不重复无改变风险的付费模型样本或广泛测试。
+- 该早期 checkpoint 的 12 编辑接线已在下述最终整合中完成；状态仅为 literal human quality signoff 保留 in-progress。provider 实际金额仍未知，明确保留限制，不虚构费用。13 的生成、保存、读取和本地有界指标实现均已交付；不建立 analytics 平台。
+- 独立报告 incoming 14 的 shared public-contract inventory 缺口：`GET /api/v1/agents/{id}/environment` 无 entry/cases，合并态实际 229 vs inventory 228；本票 endpoint + 6 cases 完整通过。04 已修正 REST 文档 inventory 和 OpenAPI source-size，并修复其负责的 AppCreation/Console 问题；这些与原始 skill fixtures/format/508-line Agent service 基线分开记录，不扩大本票修复范围。
+- 自有 preview/model servers 已停止；本票测试数据库已清空，shared Mongo ping=1，未停止 VM/container。保留 worktree 和私有 Rust targets 供 parent 清理。独立人审样本入口：[13-MODEL-SAMPLES](13-MODEL-SAMPLES.md)。
+
+### Ticket 13 最终整合交接
+
+- 已合并最新 integration `f793a41518fa969af068d7913ff6310dee7e040b`，包括 07、12、10；`6de02dae9` 为最终基线合并。12 的编辑行为与正常 admission/recovery 保留，13 只接入保存建议和 edited receipt/outcome 指标，无重复 editor、answer identity 或消息协议。
+- 编辑指标先红后绿：直接确认及丢回执恢复两例最初因缺失指标失败；最终真实 AgentSurface/transport 证明未确认不计数、原 body/key/condition 恢复、新草稿保留、一次 edited confirmation 和独立的后续任务 outcome。组合 U 88 passed，最终 hook 生命周期复验 40 passed；Chrome 6 passed，含真实样本文本的编辑与 late-A。
+- 最新合并态 public lifecycle 8、Mongo 4、shared HTTP 1 test/6 cases、focused OpenAPI 10、REST docs 1、TS SDK 7、Rust SDK 2 named tests 均通过；types/lint/局部格式/secret scan 通过。精确日志和环境边界见 [13-EVIDENCE](13-EVIDENCE.md)。OpenAPI 13 新增一个 GET 的精确 count 已调为 65 paths / 80 operations；保留全部 identity/schema 检查。
+- parent 已独立读取固定 rubric、五例实际 raw output 与 saved public JSON，全部 v3 样本通过。报告原样保存在 [13-PARENT-AI-REVIEW](13-PARENT-AI-REVIEW.md)，仅为 AI review，绝不称 human approval。所有机器工作完成；仅 literal human 质量验收留待整套 19 交付用户评审，tracker 仍明确 in-progress。实际账单缺失仍为 null/unknown，不虚构费用，不阻塞 16–19。
+- 共享 inventory 235 actual / 230 declared 的缺口由 incoming 14 environment 和 07 四个 deliverable operation 组成；13 自身 entry/cases 完整。已报告 parent repair，未改 gate 或重复 CSS/size/task-status/AppPublic 修复。原始 baseline 限制仍分开记录。
+- 13 自有 source ≤500（AgentSurface/OpenAPI 均 495）、test ≤2000；owned preview/model proxy 已停止，无遗留 13 测试库，shared Mongo/VM 保留运行。保留 worktree/private targets 供 parent 清理；无 push、PR、部署或原/其他 worker 工作区修改。
+
+## Ticket 13 实现集成，人工验收待定（2026-11-03）
+
+- 合并前集成工作区干净，分支 `codex/cma-ui-optimization`、HEAD `f793a41518fa969af068d7913ff6310dee7e040b`。已读取 13 ticket、完整 `13-EVIDENCE.md`、`13-PARENT-AI-REVIEW.md`，审阅相对该基线的实际 82 路径清单与 suggestion/editor/client 共享修改；候选包含该最新基线。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-13` 的 `83ea396a4d49535cbc1484034b34f2b3202b3bb2`，merge commit 为 `171a6a82d90695428f23c7fd6d577ac059369fde`。无冲突，合并树与候选逐文件完全一致，无 integration-only 源码修正。已断言 Web Style 和已有 ledger 全文保留为原样前缀，13 样式只在末尾追加。
+- 合并态执行 `npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/AgentSurface.contextualSuggestions.test.tsx src/agent/AgentSurface.suggestionEditing.test.tsx src/agent/AgentSurface.suggestions.test.tsx`，实际 3 文件 / 40 tests 全部通过；`npm --prefix web run typecheck` 通过。覆盖当前回答建议、失效/晚到结果、12 编辑/草稿恢复与 receipt 指标整合；未重复 native、真实模型、Mongo、SDK 或广泛检查。
+- `git diff --check f793a41518fa969af068d7913ff6310dee7e040b HEAD` 和记录提交前的 worktree/cached diff check 通过。已断言 MessageFooter、StreamEntry 与 MessageStream performance tests 相对合并前完全未变，保留既有 finalAnswer、10 reasons 和交付展示；共享编辑仍使用 12 的 editor、普通消息协议与既有选择/恢复身份。
+- 本次只合入实现与机器证据，13 仍为 **in-progress / 尚未完整验收**。逐字核对原始 AC 文本未变，恰好一个 literal independent human quality criterion 未勾选；parent AI review 通过五个 v3 样本不等于人审，不将其改为完成。实际 billed cost 继续为 null/unknown，无零值替代、估算或虚构 native/model availability；实际样本日志与环境边界保留在既有外部证据中。
+- shared JSON inventory 235 actual / 230 declared 的 07/14 缺口仍由 parent repair worker `01a19fd8-0df5-7730-92e2-cefbe954f9b4` 处理；未重复 CSS/size/inventory/task-status/AppPublic 等集成修复。它们与原始 skill/Core/format/508-line Agent service/LocalAgentV2 head-404 问题分别记录，不宣称全仓或部署绿色。仅写集成 worktree，无原工作区或其他 worker 源码修改，无 push、PR 或部署。

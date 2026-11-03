@@ -17,6 +17,9 @@ use std::sync::Arc;
 #[path = "filesystem_runtime.rs"]
 mod runtime;
 
+#[cfg(test)]
+#[path = "native_deliverables.rs"]
+mod native_deliverables;
 #[path = "filesystem_scope_tests.rs"]
 mod scope_tests;
 
