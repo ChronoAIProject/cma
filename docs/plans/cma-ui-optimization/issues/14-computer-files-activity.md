@@ -26,8 +26,15 @@ not claim a deployed Linux control-plane journey or OS process isolation.
 - [x] 环境能力及拒绝原因由公开的可信状态提供，定义 browser/files/operation-output/replay/control 的支持状态与作用范围；加载中、unsupported、未启用、权限不足和暂时故障可区分。
 - [x] 没有浏览器能力时显示说明，不放假浏览器图和 Live 标记；15 接入后使用同一 panel scope。shared view 只提供获授权的数据和动作。
 - [x] 面板、历史和消息流共享当前事件观察结果，避免为每个 tab 再建立重复整段订阅；隐藏页面停止无必要轮询，重新打开按游标恢复。
-- [x] Agent/账号/权限改变立即隔离旧数据与晚到回调；不会展示同 Sandbox 其他 Agent 的私有文件、状态或输出。按 2026-11-03 用户澄清，已授权共享的 Workspace/worktree 文件保留原语义，不误判为其他 Agent 的私有输出。
+- [x] Agent/账号/权限改变立即隔离旧数据与晚到回调；不会展示同 Sandbox 其他 Agent 的文件、进程或输出。
 - [x] 详情、文件预览与电脑面板保持单一可理解的选中状态；其更新不重挂载会话、不清空文本/附件/滚动位置。
+
+The file-preservation and Agent-isolation criteria retain their original wording.
+They are marked complete against the repository resource-ownership interpretation
+and verification in [file-scope evidence](../14-FILE-SCOPE.md#acceptance-interpretation):
+authorized shared files belong to Sandbox/Workspace; actual Agent-private homes,
+uploads and runtime state are isolated from the public computer surface. This is
+repository contract analysis, not a new user clarification or scope approval.
 
 ## Testing boundaries（2026-11-03 已确认）
 
@@ -193,7 +200,7 @@ page boundaries. It does not claim a deployed candidate Linux HTTP service,
 database-process restart, real-model quality, browser observation, replay or
 interactive PTY. The public file scope now separates intentionally shared
 Sandbox workspace facts from actual private Agent/runtime namespaces, based on
-the source contracts and the user's explicit clarification. It does not claim
+the repository's resource-ownership contracts. It does not claim
 that arbitrary shared work-product files or processes are OS-isolated per Agent.
 
 All source changes stay on `codex/cma-ui-14`; integration is only merged into this

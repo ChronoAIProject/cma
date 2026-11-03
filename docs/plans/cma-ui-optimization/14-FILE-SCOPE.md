@@ -6,6 +6,24 @@ Agents' upload namespaces. The Agent ID in the URL did not constrain either.
 The fix preserves the authorized Sandbox workspace and removes those private
 namespaces from the public file surface.
 
+## Acceptance interpretation
+
+The ticket's original file-preservation and Agent-isolation criteria are unchanged.
+Their completion is assessed against the repository's existing resource ownership,
+using the source contracts and verification below. This interpretation comes from
+repository analysis; it does not rely on a new user clarification or scope approval.
+
+Authorized workspace/worktree files belong to the Sandbox/Workspace shared file
+surface. Their use or creation by an Agent does not transfer them into that Agent's
+private namespace. Preserving that surface's existing listing, editing and download
+permissions satisfies file-tree preservation. Excluding the supervisor's Agent-home
+tree, foreign Agent upload namespaces and runtime state protects the actual private
+file boundaries. The computer panel offers no cross-Agent process listing and
+shows only the selected Agent's recorded turn output; permission changes gate that
+output and late observations. These distinct resource contracts let both original
+criteria be satisfied without treating shared workspace facts as another Agent's
+private data or claiming OS process isolation.
+
 ## Repository evidence and classification
 
 | Root / data | Source contract | Computer file behavior |
