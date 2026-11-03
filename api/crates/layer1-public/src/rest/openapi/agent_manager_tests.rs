@@ -114,6 +114,24 @@ fn focused_contract_has_one_creation_and_interaction_model() {
     assert!(full["paths"].get("/api/v1/responses").is_some());
 }
 
+#[test]
+fn public_contract_advertises_optional_initial_task_support() {
+    for contract in [full(), document()] {
+        let schema = &contract["components"]["schemas"]["AgentLifecycleCreateRequest"];
+        let kind = &schema["properties"]["initial_message"]["type"];
+        assert!(
+            kind == "string"
+                || kind
+                    .as_array()
+                    .is_some_and(|types| types.contains(&serde_json::json!("string"))),
+            "{schema}"
+        );
+        assert!(!schema["required"]
+            .as_array()
+            .is_some_and(|fields| fields.contains(&serde_json::json!("initial_message"))));
+    }
+}
+
 fn assert_references_resolve(value: &Value, document: &Value) {
     match value {
         Value::Object(object) => {

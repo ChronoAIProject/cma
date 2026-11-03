@@ -5,6 +5,7 @@ mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
 mod agent_context;
+pub mod agent_environment;
 pub mod agent_filesystem;
 pub mod agent_io;
 pub mod agent_live_skills;
@@ -71,6 +72,8 @@ mod first_message;
 mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
+mod task_status;
+pub use task_status::AgentTaskStatus;
 mod home;
 mod home_native;
 pub use home_native::SandboxNativePool;
@@ -199,7 +202,7 @@ pub use credential_prerequisite::{
 pub use error::SandboxModelError;
 pub use event::{
     AgentAvailableCommand, AgentConfigOption, AgentLogEntry, AgentLogKind, AgentPlanStep,
-    SandboxEvent, SandboxEventKind,
+    RecordedToolOutput, SandboxEvent, SandboxEventKind,
 };
 pub use execution::ProvisioningExecution;
 pub use first_message::{

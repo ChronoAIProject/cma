@@ -69,7 +69,10 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   return {
     deliverables: sdk.agents,
     documents: documentsClient(),
-    files: agentFilesClient(),
+    files: {
+      ...agentFilesClient(),
+      environment: (id, options) => sdk.agentFiles.environment(id, options),
+    },
     updateSandboxRuntime: async (id, targetVersion, options) => {
       const result = await sdk.sandboxes.updateRuntime(
         id,
@@ -86,6 +89,21 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
+    readTaskCreationSupport: async (options) => {
+      const document = await sdk.readOpenApi(options);
+      const components = document.components as
+        | {
+            schemas?: {
+              AgentLifecycleCreateRequest?: {
+                properties?: { initial_message?: { type?: unknown } };
+              };
+            };
+          }
+        | undefined;
+      const type =
+        components?.schemas?.AgentLifecycleCreateRequest?.properties?.initial_message?.type;
+      return type === 'string' || (Array.isArray(type) && type.includes('string'));
+    },
     createAgentLifecycle: async (input: AgentLifecycleCreateInput, options) => {
       const response = await fetch('/api/agent-manager/v1/agents', {
         method: 'POST',
@@ -208,7 +226,11 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       };
     },
     readAgentEvents: async (id, options) => {
-      const page = await sdk.agents.events(id, { after: options?.cursor, signal: options?.signal });
+      const page = await sdk.agents.events(id, {
+        after: options?.cursor,
+        signal: options?.signal,
+        toolOutput: true,
+      });
       return {
         items: page.items.map((event) => ({
           seq: event.seq,

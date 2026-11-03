@@ -28,10 +28,10 @@ it.each(['shared', 'organization:research'])(
     };
     const view = render(<ScopedNavigation {...props} statusFilter="working" />);
     await screen.findByText('No Agents match this scope and status on this page.');
-    expect(requests[0]?.searchParams.get('status')).toBe('working');
-    view.rerender(<ScopedNavigation {...props} statusFilter="ready" />);
+    expect(requests[0]?.searchParams.get('task_status')).toBe('working');
+    view.rerender(<ScopedNavigation {...props} statusFilter="not_started" />);
     await waitFor(() => expect(requests).toHaveLength(2));
-    expect(requests[1]?.searchParams.get('status')).toBe('ready');
+    expect(requests[1]?.searchParams.get('task_status')).toBe('not_started');
     expect(requests[1]?.searchParams.has('cursor')).toBe(false);
     expect(screen.queryByText('Personal tree')).not.toBeInTheDocument();
   },

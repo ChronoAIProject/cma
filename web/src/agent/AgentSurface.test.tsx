@@ -5,10 +5,58 @@ import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../tes
 import { ApiError } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
 import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
-import { conversationFromTranscript, type ConversationState } from './conversation';
+import { conversationFromTranscript, foldAgentEvent, type ConversationState } from './conversation';
 import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
+
+it('links the compact header only to the current turn plan and preserves the draft in a new turn', () => {
+  let conversation = conversationFromTranscript({ agentId: 'agt_1', throughSeq: 0, turns: [] });
+  const append = (seq: number, kind: Record<string, unknown>) => {
+    conversation = foldAgentEvent(conversation, {
+      seq,
+      appendedAt: '2026-11-03T00:00:00Z',
+      kind: kind as { type: string },
+    });
+  };
+  append(1, { type: 'turn_started', turn_sequence: 1 });
+  append(2, {
+    type: 'plan_set',
+    entries: [
+      { title: 'Read instructions', status: 'completed' },
+      { title: 'Apply change', status: 'in_progress' },
+      { title: 'Verify', status: 'pending' },
+    ],
+  });
+  const draw = () => (
+    <AgentSurface
+      agentId="agt_1"
+      controller={controller({
+        status: 'ready',
+        detail: AGENT_DETAIL,
+        workspace: workspaceFixture(),
+        conversation,
+      })}
+      detailsOpen={false}
+      onDetailsOpenChange={() => {}}
+      onNavigate={() => {}}
+    />
+  );
+  const view = render(draw());
+  const link = screen.getByRole('link', { name: 'Current plan: 1/3 steps · Step 2' });
+  expect(link.closest('header')).not.toBeNull();
+  expect(link).toHaveAttribute('href', `#${screen.getByRole('region', { name: 'Plan' }).id}`);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+    target: { value: 'Retain next draft' },
+  });
+  append(3, { type: 'turn_completed', turn_sequence: 1 });
+  append(4, { type: 'turn_started', turn_sequence: 4 });
+  view.rerender(draw());
+  expect(screen.queryByRole('link', { name: /^Current plan:/ })).not.toBeInTheDocument();
+  expect(screen.getAllByRole('region', { name: 'Plan' })).toHaveLength(1);
+  expect(screen.getByText('Response finished · Plan completion not fully reported')).toBeVisible();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Retain next draft');
+});
 
 it('places settings inside the composer box and preserves draft and busy-turn apply rules', async () => {
   const defaults = {
@@ -39,7 +87,8 @@ it('places settings inside the composer box and preserves draft and busy-turn ap
     </CmaClientProvider>
   );
   const view = render(draw(true));
-  const chip = await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  fireEvent.click(await screen.findByRole('button', { name: /^Agent settings:/ }));
+  const chip = screen.getByRole('button', { name: /^Model and reasoning effort/ });
   expect(chip).toHaveTextContent('GPT-6 High');
   const form = screen.getByRole('form', { name: 'Message Agent' });
   // Settings sit inside the composer box, in the row of controls under the draft.
@@ -467,6 +516,7 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: '1 tool call' }));
   const tool = screen.getByRole('article', { name: 'Tool call: Typecheck' });
   expect(tool).toHaveTextContent('shell');
   expect(tool).toHaveTextContent('Completed');

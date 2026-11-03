@@ -20,8 +20,64 @@ mod runtime;
 #[cfg(test)]
 #[path = "native_deliverables.rs"]
 mod native_deliverables;
+#[path = "filesystem_scope_tests.rs"]
+mod scope_tests;
+
+#[tokio::test]
+async fn computer_environment_public_route_preserves_file_scope_and_denies_foreign_readers() {
+    use crate::rest::agents_tests::request;
+    use axum::{
+        body::to_bytes,
+        http::{Method, StatusCode},
+    };
+    use tower::ServiceExt;
+    for (name, writable) in [("filesystem_owner", true), ("filesystem_viewer", false)] {
+        let fixture = scenario(name).await.unwrap();
+        let response = fixture
+            .router
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/agents/agt_shared_read/environment",
+                fixture.subject.unwrap(),
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+        assert_eq!(body["agent_id"], "agt_shared_read");
+        assert_eq!(body["files"]["scope"], "mounted_home");
+        assert_eq!(body["files"]["writable"], writable);
+        assert_eq!(body["operation_output"]["scope"], "agent_turn_history");
+        assert_eq!(body["browser"]["state"], "unsupported");
+        assert!(!body.to_string().contains("runtime_address"));
+    }
+    let fixture = scenario("filesystem_foreign").await.unwrap();
+    let response = fixture
+        .router
+        .oneshot(request(
+            Method::GET,
+            "/api/v1/agents/agt_shared_read/environment",
+            "foreign",
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    let kind = name.strip_prefix("filesystem_")?;
+    scenario_with_runtime(name, Arc::new(runtime::Files::new(kind))).await
+}
+
+async fn scenario_with_runtime(
+    name: &str,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Option<Scenario> {
     let kind = name.strip_prefix("filesystem_")?;
     assert!([
         "owner",
@@ -127,7 +183,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         }
     }
     let caller = context(subject);
-    let service = AgentFileService::new(access, Arc::new(runtime::Files::new(kind)));
+    let service = AgentFileService::new(access, adapter);
     let mut router = super::super::agent_filesystem_router(service);
     if kind != "anonymous" {
         router = router.layer(Extension(caller.clone())).layer(Extension(

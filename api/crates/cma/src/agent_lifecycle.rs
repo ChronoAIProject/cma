@@ -289,7 +289,7 @@ impl InlineAgentLifecycle {
         } else {
             let agent = self
                 .agents
-                .create_for_lifecycle(
+                .create_for_lifecycle_with_purpose(
                     caller,
                     actor.as_ref(),
                     &workspace_id,
@@ -304,6 +304,7 @@ impl InlineAgentLifecycle {
                             operation_id: lease.id.clone(),
                         },
                     },
+                    validation::first_message_purpose(&request),
                 )
                 .await
                 .map_err(|error| match error {
