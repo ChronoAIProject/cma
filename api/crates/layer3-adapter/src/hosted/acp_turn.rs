@@ -30,6 +30,7 @@ impl Bridge {
                 .await
             }
             ConversationInput::RefreshContext {
+                service_origin,
                 operation_sequence,
                 readiness_receipt,
                 previous_guidance,
@@ -49,6 +50,7 @@ impl Bridge {
                     reasoning_effort,
                     permission,
                     working_directory.as_deref(),
+                    service_origin.as_deref(),
                 )
                 .await
             }

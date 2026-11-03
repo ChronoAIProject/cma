@@ -145,6 +145,33 @@ pub trait HostedAccessToolSource: Send + Sync {
         binding: &HostedAccessToolBinding,
         conversation: &str,
     ) -> crate::Result<()>;
+
+    /// Resolve only a durable, fenced idle maintenance intent. A requested URL
+    /// alone never grants authority to replace a retained tool connection.
+    async fn prepare_transport(
+        &self,
+        _binding: &HostedAccessToolBinding,
+        _origin: &str,
+        _conversation: &str,
+        _operation_sequence: u64,
+    ) -> crate::Result<HostedAccessToolBinding> {
+        Err(AdapterError::Unsupported(
+            "retained tool transport migration is unavailable".into(),
+        ))
+    }
+
+    /// Confirm only after the same native conversation acknowledged its new
+    /// tools and retained settings. Unknown results replay the durable intent.
+    async fn confirm_transport(
+        &self,
+        _binding: &HostedAccessToolBinding,
+        _conversation: &str,
+        _operation_sequence: u64,
+    ) -> crate::Result<()> {
+        Err(AdapterError::Unsupported(
+            "retained tool transport migration is unavailable".into(),
+        ))
+    }
 }
 
 fn valid_tool_credential(value: &str) -> bool {
