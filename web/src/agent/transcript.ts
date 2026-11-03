@@ -9,6 +9,10 @@ function messageStatus(outcome: Readonly<Record<string, unknown>>) {
 export function conversationFromTranscript(transcript: AgentTranscript): ConversationState {
   const messages = new Map<string, ConversationMessage>();
   for (const turn of transcript.turns) {
+    const finalSequence =
+      turn.outcome.type === 'completed'
+        ? Math.max(0, ...turn.messages.map((message) => message.sequence))
+        : undefined;
     for (const message of turn.messages) {
       const id = `event:${String(message.sequence)}`;
       // A queued pre-write retry keeps the admitted event but belongs to the latest turn.
@@ -21,6 +25,11 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
         at: message.appendedAt,
         order: message.sequence,
         sequence: message.sequence,
+        ...(message.role === 'assistant' &&
+        message.sequence === finalSequence &&
+        message.content.trim() !== ''
+          ? { finalAnswer: true }
+          : {}),
       });
     }
   }
