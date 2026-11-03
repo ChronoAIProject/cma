@@ -92,6 +92,7 @@ export interface ConversationState {
   readonly turnTiming?: Readonly<
     Record<string, { readonly startedAt: string; readonly finishedAt?: string }>
   >;
+  readonly lastTurn?: { readonly runId: string; readonly outcome: string };
   /** Ephemeral visible text already covered by the latest provider usage report. */
   readonly visibleUsageAnchor?: {
     readonly turnSequence: number;

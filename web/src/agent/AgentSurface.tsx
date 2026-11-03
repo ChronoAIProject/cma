@@ -14,6 +14,7 @@ import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
 import './Agent.css';
 import { OwnerAgentHeader } from './OwnerAgentHeader';
+import { TurnCompletion } from './TurnCompletion';
 import { Alert } from '../ui/Alert';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { agentBreadcrumb, agentHeaderMenu } from './headerActions';
@@ -184,6 +185,13 @@ export function AgentSurface({
     <section className="agent-surface">
       {connections.dialog}
       <OwnerAgentHeader
+        completion={
+          historyIncomplete ||
+          starting ||
+          ['stopped', 'failed', 'deleted'].includes(status) ? undefined : (
+            <TurnCompletion conversation={conversation} />
+          )
+        }
         onTitleUpdated={controller.applyAgentTitle}
         detail={detail}
         availability={controller.resourceAvailability}
