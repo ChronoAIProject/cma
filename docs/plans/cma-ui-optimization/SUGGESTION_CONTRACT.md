@@ -1,10 +1,12 @@
 # Suggestions handoff: tickets 09, 11, 12 and 13
 
-Ticket 11 uses the same `ConversationMessage.finalAnswer` boolean being implemented
-by ticket 09. The immutable canonical answer identity is Agent ID + durable message
+Ticket 11 uses ticket 09's `ConversationMessage.finalAnswer` and the backend's
+`AgentTranscriptTurn::final_answer()`. The immutable canonical answer identity is Agent ID + durable message
 `sequence`, associated with `runId` (the turn sequence). No second completed-answer
 cache is retained in `ConversationState`. Both durable replay and transcript hydration
-must mark only the final nonempty assistant message of a successfully completed turn.
+must mark only the final nonempty assistant message of a successfully completed turn
+with no missing output frames. `latestTurnId` prevents an old answer from becoming
+eligible again after a newer empty or failed turn; it is not a second answer identity.
 Worker 14's operation-output fields remain independent.
 
 `web/src/agent/suggestions.ts` defines `SuggestedReplySet`: stable set ID, viewer ID,
@@ -20,6 +22,21 @@ Once the answer expires, edited text remains ordinary manual input. Ticket 13 su
 persisted contextual sets through this contract, with a new source/version and stable
 item IDs; its separately authorized generation and quality validation are not implemented
 by ticket 11. Invalid or stale sets must fail closed before rendering/sending.
+
+`AgentSurface.suggestedReplies` is the delivery seam: omitted uses the bounded
+template, `null` means unavailable/loading/no suggestions, and a supplied set must
+match the current viewer, Agent, turn and final answer. Sets contain one to three
+unique nonempty items with strictly increasing nonnegative integer ranks. Text is
+rendered and sent without trimming, including newlines and trailing spaces; empty
+or oversized text is rejected. A supplied invalid set hides only the suggestion
+region. Ticket 13 owns generation, persistence, cancellation and quality evidence;
+ticket 11 does not fetch or manufacture generated candidates. The three-candidate
+U test is explicitly a supplied boundary fixture, not production generation.
+
+Ticket 12 must assign a fresh request identity to a changed edited intent and must
+not replace an unconfirmed request's retained text. Recovery uses the original
+text, scope and key. Any edit after the source answer expires is ordinary composer
+input, not permission to bypass conditional admission.
 
 The public conditional-send shape is `answer_context: {turn_sequence, answer_sequence}`
 on Responses v2 creation, and `forwardedProps.answerContext` with that same object on

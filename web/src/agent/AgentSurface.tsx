@@ -1,7 +1,7 @@
 import { SuggestedReplies } from './SuggestedReplies';
-import { scenarioSuggestions } from './suggestions';
+import { scenarioSuggestions, type SuggestedReplySet } from './suggestions';
 import { Presence } from '../ui/Presence';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
@@ -45,6 +45,7 @@ const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
 
 interface AgentSurfaceProps {
+  readonly suggestedReplies?: SuggestedReplySet | null;
   readonly lifecycleClient?: CmaWebClient;
   readonly accessUncertain?: boolean;
   /** Current personal access was checked for this exact Agent before mounting. */
@@ -68,6 +69,7 @@ interface AgentSurfaceProps {
 }
 
 export function AgentSurface({
+  suggestedReplies,
   lifecycleClient,
   draft,
   agentId,
@@ -109,6 +111,33 @@ export function AgentSurface({
     !readOnly && (state.status === 'ready' || (accessAuthorized && state.status !== 'error')),
   );
   const verified = connection.verified;
+  const suggestionMessages = state.status === 'ready' ? state.conversation.messages : undefined;
+  const suggestionTurn = state.status === 'ready' ? state.conversation.latestTurnId : undefined;
+  const activeSuggestionTurn =
+    state.status === 'ready' ? state.conversation.activeRunId : undefined;
+  const suggestionViewer = viewerId ?? verified?.owner ?? '';
+  const suggestions = useMemo(
+    () =>
+      suggestionMessages &&
+      scenarioSuggestions(
+        {
+          messages: suggestionMessages,
+          latestTurnId: suggestionTurn,
+          activeRunId: activeSuggestionTurn,
+        },
+        suggestionViewer,
+        agentId,
+        suggestedReplies,
+      ),
+    [
+      suggestionMessages,
+      suggestionTurn,
+      activeSuggestionTurn,
+      suggestionViewer,
+      agentId,
+      suggestedReplies,
+    ],
+  );
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
   const optimistic = useOptimisticMessages(
@@ -228,7 +257,6 @@ export function AgentSurface({
       }
     });
   };
-  const suggestions = scenarioSuggestions(conversation, viewerId ?? verified?.owner ?? '', agentId);
   const approvalBusy =
     controller.pending === 'approval' ||
     historyIncomplete ||
