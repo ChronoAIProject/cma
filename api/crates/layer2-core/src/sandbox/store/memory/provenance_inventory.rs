@@ -92,16 +92,10 @@ fn task_snapshot(
         .agent
         .as_ref()
         .ok_or(SandboxStoreError::NotFound)?;
-    let latest = state.agent_logs.get(id).and_then(|entries| {
-        entries
-            .iter()
-            .rev()
-            .find(|entry| crate::sandbox::AgentTaskStatus::relevant(&entry.kind))
-    });
+    let entries = state.agent_logs.get(id).map_or(&[][..], Vec::as_slice);
     let pending_work = state.agent_commands.values().any(|command| {
         command.receipt.envelope.agent_id == agent.id && !command.status.is_terminal()
     });
-    snapshot.task_status =
-        crate::sandbox::AgentTaskStatus::from_latest(agent, latest, pending_work);
+    snapshot.task_status = crate::sandbox::AgentTaskStatus::from_log(agent, entries, pending_work);
     Ok(snapshot)
 }

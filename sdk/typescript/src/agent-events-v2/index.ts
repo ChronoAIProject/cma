@@ -69,14 +69,16 @@ export class AgentEventsV2 {
         page_cursor: previous,
       }),
       options,
-      {
-        Prefer: [
-          options.messageBindings ? 'cma-message-bindings' : undefined,
-          options.toolOutput ? 'cma-tool-output' : undefined,
-        ]
-          .filter(Boolean)
-          .join(', '),
-      },
+      options.messageBindings || options.toolOutput
+        ? {
+            Prefer: [
+              options.messageBindings ? 'cma-message-bindings' : undefined,
+              options.toolOutput ? 'cma-tool-output' : undefined,
+            ]
+              .filter(Boolean)
+              .join(', '),
+          }
+        : undefined,
     );
     return v2AgentEventPage(value, id, limit, previous);
   }
