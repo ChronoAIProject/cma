@@ -22,6 +22,13 @@ pub enum WorkspaceOrigin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkspaceSource {
+    RepositorySnapshot {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_commit: Option<String>,
+    },
     GitRepository {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

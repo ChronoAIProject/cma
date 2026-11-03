@@ -38,6 +38,11 @@ function load(
       !intent.body.name ||
       (intent.body.initial_message !== undefined &&
         typeof intent.body.initial_message !== 'string') ||
+      (intent.body.repository !== undefined &&
+        (!intent.body.repository ||
+          typeof intent.body.repository.url !== 'string' ||
+          (intent.body.repository.ref !== undefined &&
+            typeof intent.body.repository.ref !== 'string'))) ||
       intent.body.workspace_id !== workspaceId ||
       intent.body.sandbox_id !== sandboxId ||
       (intent.agentId !== undefined && (typeof intent.agentId !== 'string' || !intent.agentId)) ||
