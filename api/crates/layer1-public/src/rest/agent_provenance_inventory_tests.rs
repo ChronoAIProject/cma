@@ -90,6 +90,83 @@ fn request(query: &str, subject: &str, verified: bool) -> Request<Body> {
 }
 
 #[tokio::test]
+async fn task_navigation_distinguishes_setup_completion_using_recorded_purpose_and_turn_identity() {
+    use layer2_core::sandbox::{
+        AgentLogKind, AgentStatus, FirstMessagePurpose, FirstMessageRecord,
+    };
+    let (fixture, access, _, _) = fixture(Reply::Member).await;
+    let cases = [
+        (
+            "agt_setup_only",
+            Some(FirstMessagePurpose::Setup),
+            false,
+            "not_started",
+        ),
+        (
+            "agt_task_first",
+            Some(FirstMessagePurpose::Task),
+            false,
+            "completed",
+        ),
+        ("agt_legacy_first", None, false, "unknown"),
+        (
+            "agt_task_after_setup",
+            Some(FirstMessagePurpose::Setup),
+            true,
+            "completed",
+        ),
+    ];
+    for (id, purpose, later_task, _) in cases {
+        let at = "2026-09-05T00:00:00Z";
+        let mut first = FirstMessageRecord::new(id, "Identical admission text", at).unwrap();
+        first.purpose = purpose;
+        first.fence_dispatch_for(3, 1, 1, at.into()).unwrap();
+        first.complete(at.into()).unwrap();
+        let mut agent = agents_tests::seeded_agent(
+            id,
+            AgentStatus::Ready,
+            if later_task { 6 } else { 4 },
+            None,
+        );
+        agent.conversation.first_message = Some(first);
+        let mut events = vec![
+            AgentLogKind::TurnStarted {
+                turn_sequence: 3,
+                model: None,
+                origin_key: Some(id.into()),
+            },
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        ];
+        if later_task {
+            events.extend([
+                AgentLogKind::TurnStarted {
+                    turn_sequence: 5,
+                    model: None,
+                    origin_key: None,
+                },
+                AgentLogKind::TurnCompleted { turn_sequence: 5 },
+            ]);
+        }
+        agents_tests::insert_agent(&fixture.store, agent, events).await;
+    }
+    let router = super::agent_provenance_inventory_router(AgentProvenanceInventoryService::new(
+        fixture.store,
+        access,
+    ));
+    let (status, body) = agents_tests::json_response(&router, request("", "owner-a", true)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for (id, _, _, expected) in cases {
+        let row = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["agent_id"] == id)
+            .unwrap();
+        assert_eq!(row["task_status"], expected, "{id}");
+    }
+}
+
+#[tokio::test]
 async fn task_navigation_does_not_call_a_completed_agent_done_after_new_work_is_admitted() {
     use layer2_core::{
         ids::{AgentCommandId, AgentResponseId},
