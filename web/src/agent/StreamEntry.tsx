@@ -13,6 +13,7 @@ import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdent
 import { MessageFooter } from './MessageFooter';
 import type { MessageFeedbackControls } from './useMessageFeedback';
 import type { Entry } from './timeline';
+import type { ConversationState } from './model';
 
 function StreamEntryView({
   entry,
@@ -20,6 +21,7 @@ function StreamEntryView({
   approvalReadOnly = false,
   onApproval,
   activeRunId,
+  planOutcome,
   showUsage = false,
   usage,
   duration,
@@ -34,6 +36,7 @@ function StreamEntryView({
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
   /** Only the active turn can still be running a call. */
   readonly activeRunId?: string;
+  readonly planOutcome?: NonNullable<ConversationState['turnOutcomes']>[string];
   readonly showUsage?: boolean;
   readonly usage?: AgentUsage['currentTurn'];
   readonly duration?: string;
@@ -101,7 +104,14 @@ function StreamEntryView({
     );
   }
   if (entry.kind === 'tool') return <ToolCallRow tool={entry.item} activeRunId={activeRunId} />;
-  if (entry.kind === 'plan') return <PlanCard plan={entry.item} />;
+  if (entry.kind === 'plan')
+    return (
+      <PlanCard
+        plan={entry.item}
+        active={entry.item.runId !== undefined && entry.item.runId === activeRunId}
+        outcome={planOutcome}
+      />
+    );
   if (entry.kind === 'recovery') {
     const notice = entry.item;
     if (notice.clearsOn !== undefined)
@@ -154,6 +164,8 @@ export const StreamEntry = memo(StreamEntryView, (previous, next) => {
       previous.continued === next.continued
     );
   if (next.entry.kind === 'tool') return previous.activeRunId === next.activeRunId;
+  if (next.entry.kind === 'plan')
+    return previous.activeRunId === next.activeRunId && previous.planOutcome === next.planOutcome;
   if (next.entry.kind === 'approval')
     return (
       previous.approvalBusy === next.approvalBusy &&
