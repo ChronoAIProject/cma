@@ -135,7 +135,7 @@ export function AgentSidePanel({
         >
           {visited && mayRead && client.files ? (
             <FileExplorer
-              key={`${agentId}:${shared}:${mayWrite}`}
+              key={`${agentId}:${shared}`}
               panel
               embedded
               client={client.files}
