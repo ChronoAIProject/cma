@@ -149,8 +149,10 @@ test('acquired user lease writes a known form while concurrent native Agent inpu
     await delay(100);
     assert.equal(values.at(-1), 'USER-17-AGENT');
     assert.equal(pages, 1, 'No page reload or browser replacement on return');
+    await delay(1100);
     const returned = await call('observe', { observer: 'proof' });
     assert.equal(returned.context_id, enabled.context_id);
+    assert(returned.frame.sequence > frame.frame.sequence, 'Return evidence must use a newly captured frame');
     if (process.env.CMA_CONTROL_PROOF_DIRECTORY) {
       await mkdir(process.env.CMA_CONTROL_PROOF_DIRECTORY, { recursive: true });
       await writeFile(join(process.env.CMA_CONTROL_PROOF_DIRECTORY, 'native-control.json'), JSON.stringify({
