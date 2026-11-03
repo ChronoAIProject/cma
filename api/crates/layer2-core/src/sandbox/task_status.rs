@@ -89,7 +89,21 @@ impl AgentTaskStatus {
         };
         match latest.kind {
             AgentLogKind::Created { .. } => Self::NotStarted,
-            AgentLogKind::TurnCompleted { .. } => Self::Completed,
+            AgentLogKind::TurnCompleted { turn_sequence } => {
+                match agent
+                    .conversation
+                    .first_message
+                    .as_ref()
+                    .filter(|message| message.turn_sequence == Some(turn_sequence))
+                {
+                    Some(message) => match message.purpose {
+                        Some(super::FirstMessagePurpose::Setup) => Self::NotStarted,
+                        Some(super::FirstMessagePurpose::Task) => Self::Completed,
+                        None => Self::Unknown,
+                    },
+                    None => Self::Completed,
+                }
+            }
             AgentLogKind::TurnFailed { .. } => Self::Failed,
             AgentLogKind::TurnInterrupted { .. } => Self::Stopped,
             AgentLogKind::TurnStarted { .. } => Self::Working,
