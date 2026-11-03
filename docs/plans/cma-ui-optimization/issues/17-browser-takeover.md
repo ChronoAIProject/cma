@@ -4,7 +4,7 @@
 
 **Blocked by:** 15（真实浏览器身份、画面与能力已验证）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **优先级:** P3
 
