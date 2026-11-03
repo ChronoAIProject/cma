@@ -28,6 +28,9 @@ mod queued_cancellations;
 #[path = "command_model_tests.rs"]
 mod models;
 
+#[path = "suggested_reply_tests.rs"]
+mod suggested_replies;
+
 fn context(subject: &str) -> CallerContext {
     CallerContext {
         credential_source: crate::resource_access::CredentialSource::Retained,

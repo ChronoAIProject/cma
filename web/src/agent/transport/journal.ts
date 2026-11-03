@@ -1,9 +1,11 @@
 import { parseRecord, type InputRecord, type TransportRecord } from './journalRecord';
 import type { ControlRecord } from './controlRecord';
 import { IdentityChangedError } from './identity';
+import type { AnswerContext } from '@chronoai/cma-sdk';
 import { QueuedCancellationJournal } from './queuedJournal';
 import { QueuedInputJournal } from './queuedInputJournal';
 import { InterruptionJournal } from './interruptionJournal';
+import { LegacySuggestionJournal } from './legacySuggestionJournal';
 
 const PREFIX = 'cma:agent-transport:v1:';
 const IDENTITY = `${PREFIX}identity`;
@@ -79,6 +81,7 @@ export class AgentTransportJournal {
   readonly queuedCancellation: QueuedCancellationJournal;
   readonly queuedInputs: QueuedInputJournal;
   readonly interruption: InterruptionJournal;
+  readonly legacySuggestion: LegacySuggestionJournal;
 
   constructor(
     private readonly storage: BrowserStorage,
@@ -87,6 +90,15 @@ export class AgentTransportJournal {
     private readonly makeKey: () => string,
   ) {
     this.key = `${PREFIX}${encodeURIComponent(identity.user)}:${encodeURIComponent(agent)}`;
+    this.legacySuggestion = new LegacySuggestionJournal(
+      storage,
+      `${this.key}:suggestion:${identity.epoch}`,
+      () => {
+        if (this.current()?.transport !== 'agui')
+          throw new Error('This Agent has not selected AG-UI.');
+      },
+      makeKey,
+    );
     this.interruption = new InterruptionJournal(
       storage,
       `${this.key}:interruption:${identity.epoch}`,
@@ -215,7 +227,7 @@ export class AgentTransportJournal {
   }
 
   /** Reuse the pending exact intent. A different message cannot replace uncertainty. */
-  retain(input: string): InputRecord {
+  retain(input: string, answerContext?: AnswerContext): InputRecord {
     if (this.interruption.read()?.receipt === null)
       throw new Error('Recover your pending interruption before sending another input.');
     const current = this.current();
@@ -223,11 +235,20 @@ export class AgentTransportJournal {
       throw new Error('This Agent has not selected the Responses transport.');
     const previous = current.input;
     if (previous?.state === 'pending') {
-      if (previous.input !== input)
+      if (
+        previous.input !== input ||
+        JSON.stringify(previous.answerContext) !== JSON.stringify(answerContext)
+      )
         throw new Error('Recover your pending message before sending a different message.');
       return previous;
     }
-    const intent: InputRecord = { state: 'pending', key: this.makeKey(), input, receipt: null };
+    const intent: InputRecord = {
+      state: 'pending',
+      key: this.makeKey(),
+      input,
+      receipt: null,
+      ...(answerContext === undefined ? {} : { answerContext }),
+    };
     this.save({ ...current, input: intent });
     return intent;
   }
