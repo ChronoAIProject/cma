@@ -4,6 +4,8 @@ const { createServer } = require('node:http');
 const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 const { DevTools } = require('./devtools.cjs');
+const { BrowserControl, refused } = require('./control.cjs');
+const { sendInput } = require('./input.cjs');
 const { setTimeout: delay } = require('node:timers/promises');
 
 const directory = process.argv[2];
@@ -12,6 +14,7 @@ let browser;
 let profile;
 let session;
 let context;
+let control = new BrowserControl();
 let frame;
 let state = 'not_enabled';
 let location = 'Blank page';
@@ -46,6 +49,7 @@ async function disable() {
   browser = undefined;
   frame = undefined;
   context = undefined;
+  control = new BrowserControl();
   session = undefined;
   observers.clear();
   state = 'not_enabled';
@@ -84,6 +88,7 @@ function safeLocation(value) {
 }
 
 async function navigate(value) {
+  control.requireAgent();
   if (!browser || browser.closed) throw new Error('Browser is not enabled');
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || value.length > 8192)
@@ -140,23 +145,30 @@ async function dispatch(request) {
     case 'disable': return disable();
     case 'observe': return observe(request);
     case 'release': observers.delete(request.observer); return status();
+    case 'control':
+      if (!browser || browser.closed || !context || request.context_id !== context) throw refused('browser_identity');
+      return control.dispatch(request, input => sendInput(browser, session, input));
     default: throw new Error('Unsupported browser operation');
   }
 }
 
 const agent = createServer(async (request, response) => {
   try {
-    if (request.method !== 'POST' || request.url !== '/navigate') { response.writeHead(404).end(); return; }
+    if (request.method !== 'POST' || !['/navigate', '/input'].includes(request.url)) { response.writeHead(404).end(); return; }
     let body = '';
     for await (const chunk of request) {
       body += chunk;
       if (body.length > 16384) throw new Error('Navigation too large');
     }
     const value = JSON.parse(body);
-    const result = await serialized(() => navigate(value.url));
+    const result = await serialized(() => {
+      control.requireAgent();
+      if (!browser || browser.closed) throw refused('browser_disconnected');
+      return request.url === '/navigate' ? navigate(value.url) : sendInput(browser, session, value.input);
+    });
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify(result));
-  } catch { response.writeHead(409).end(JSON.stringify({ error: 'Browser navigation unavailable' })); }
+  } catch (error) { response.writeHead(409).end(JSON.stringify({ error: error.code ?? 'browser_disconnected' })); }
 });
 agent.requestTimeout = 15000;
 agent.maxConnections = 8;
@@ -175,8 +187,8 @@ async function main() {
       request = JSON.parse(line);
       const value = await serialized(() => dispatch(request));
       process.stdout.write(JSON.stringify({ id: request.id, value }) + '\n');
-    } catch {
-      process.stdout.write(JSON.stringify({ id: request?.id, error: 'Browser request refused' }) + '\n');
+    } catch (error) {
+      process.stdout.write(JSON.stringify({ id: request?.id, error: error.code ?? 'Browser request refused' }) + '\n');
     }
   });
   const close = async () => { await disable(); agent.close(); process.exit(0); };
