@@ -5,13 +5,13 @@ require "yaml"
 path = File.expand_path("../../infra/api/httproute.yaml", __dir__)
 routes = YAML.load_stream(File.read(path)).select { |doc| doc&.fetch("kind", nil) == "HTTPRoute" }
 
-def route!(routes, name, hostname)
+def route!(routes, name, hostname, listener = "https")
   route = routes.find { |doc| doc.dig("metadata", "name") == name }
   abort("missing HTTPRoute #{name}") unless route
   abort("#{name} has unexpected namespace") unless route.dig("metadata", "namespace") == "chrono-bot"
   abort("#{name} has unexpected hostnames") unless route.dig("spec", "hostnames") == [hostname]
 
-  expected_parent = [{ "name" => "chronoai-gateway", "namespace" => "gateway-infra", "sectionName" => "https" }]
+  expected_parent = [{ "name" => "chronoai-gateway", "namespace" => "gateway-infra", "sectionName" => listener }]
   abort("#{name} has unexpected parentRefs") unless route.dig("spec", "parentRefs") == expected_parent
   route
 end
@@ -33,12 +33,13 @@ end
 https_routes = routes.select do |route|
   route.dig("spec", "parentRefs").any? { |parent| parent["sectionName"] != "http" }
 end
-expected_names = %w[cma-agent-manager cma-web]
+expected_names = %w[cma-agent-manager cma-web cma-web-nyxid]
 actual_names = https_routes.map { |route| route.dig("metadata", "name") }.sort
 abort("unexpected competing HTTPS routes: #{actual_names.inspect}") unless actual_names == expected_names
 
 api = ownership(route!(routes, "cma-agent-manager", "bot-api.chrono-ai.fun"))
 web = ownership(route!(routes, "cma-web", "bot.chrono-ai.fun"))
+nyxid_web = ownership(route!(routes, "cma-web-nyxid", "cma.nyxid.ai", "https-nyxid"))
 
 api_backend = [{ "group" => "", "kind" => "Service", "name" => "cma-agent-manager", "port" => 80, "weight" => 1 }]
 web_backend = [{ "group" => "", "kind" => "Service", "name" => "cma-web", "port" => 80, "weight" => 1 }]
@@ -69,5 +70,6 @@ end
 
 abort("unexpected API route ownership: #{api.inspect}") unless api == expected_api
 abort("unexpected app route ownership: #{web.inspect}") unless web == expected_web
+abort("unexpected Nyxid app route ownership: #{nyxid_web.inspect}") unless nyxid_web == expected_web
 
 puts "HTTPRoute backend ownership is exact"

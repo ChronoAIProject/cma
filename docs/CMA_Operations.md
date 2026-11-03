@@ -5,6 +5,10 @@ The current runtime contract is **3**, not the contract-2 image named in the
 original #832 plan. Product semantics are defined in [CMA Model](CMA_Model.md);
 public routes are in [REST](API_REST.md).
 
+For the staged move to `cma.nyxid.ai`, including additive HTTPRoutes, the URL
+inventory, application cutover gates and rollback, see
+[CMA domain migration](CMA_Domain_Migration.md).
+
 ## CMAEG
 
 CMAEG (CMA Event Gateway) is a separate stateless service that receives
