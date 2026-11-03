@@ -43,6 +43,16 @@ claim that an out-of-band account change synchronously reaches the Sandbox.
 Old user input never runs after expiry. Runtime/mediator replacement changes
 the browser context or runtime incarnation and rejects the old identity.
 
+Native HTTP requests capture their context before reading the request body.
+Execution rejects a changed context, including a body delayed across explicit
+disable/enable. The historical early review of `1637de223` identified this
+counterexample; the regression reproduced an incorrectly applied real input
+before the context check, then passed for both delayed input and navigation.
+That early slice also lacked expiry. The current real-Chrome expiry regression
+waits beyond the 15-second deadline without a release or renewal, verifies the
+old token is refused, and observes native input resume. These findings are not
+closed by an upstream timer or UI button state.
+
 ## Receipts, uncertainty and audit
 
 Clients retain the exact operation id and request while a reply is uncertain.

@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
+const { once } = require('node:events');
 const { mkdtemp, rm } = require('node:fs/promises');
 const { createServer, request: httpRequest } = require('node:http');
 const { tmpdir } = require('node:os');
@@ -69,8 +70,38 @@ async function fixture(test) {
   assert.equal((await agent('/navigate', { url: `http://127.0.0.1:${page.address().port}/form` })).status, 200);
   const base = { operation: 'control', context_id: enabled.context_id, actor: 'owner-proof', client_id: 'first-client' };
   const command = (command, revision, extra = {}) => ({ ...base, command, expected_revision: revision, operation_id: randomUUID(), ...extra });
-  return { call, rpc, agent, command, base, values };
+  return { call, rpc, agent, command, base, values, directory, url: `http://127.0.0.1:${page.address().port}/form` };
 }
+
+test('a native request with a delayed body cannot act in a replacement browser context', { timeout: 40000 }, async test => {
+  const browser = await fixture(test);
+  for (const path of ['/input', '/navigate']) {
+    let complete;
+    const result = new Promise(resolve => { complete = resolve; });
+    const request = httpRequest({ socketPath: join(browser.directory, 'browser.sock'), path, method: 'POST',
+      headers: { Expect: '100-continue' } }, response => {
+      let body = '';
+      response.on('data', bytes => { body += bytes; });
+      response.on('end', () => complete({ status: response.statusCode, ...JSON.parse(body) }));
+    });
+    request.flushHeaders();
+    await once(request, 'continue');
+    request.write('{');
+    const previous = await browser.call({ operation: 'status' });
+    await browser.call({ operation: 'disable' });
+    const replacement = await browser.call({ operation: 'enable' });
+    assert.notEqual(previous.context_id, replacement.context_id);
+    assert.equal((await browser.agent('/navigate', { url: browser.url })).status, 200);
+    const value = path === '/input' ? { input: { kind: 'text', text: 'STALE-BODY' } } : { url: 'about:blank' };
+    request.end(JSON.stringify(value).slice(1));
+    assert.deepEqual(await result, { status: 409, error: 'browser_identity' });
+  }
+  await delay(100);
+  assert.deepEqual(browser.values, []);
+  assert.equal((await browser.agent('/input', { input: { kind: 'text', text: 'CURRENT' } })).status, 200);
+  await delay(100);
+  assert.deepEqual(browser.values, ['CURRENT']);
+});
 
 test('lost acquisition/input/return receipts recover exactly; a competing client and old lease cannot write', { timeout: 30000 }, async test => {
   const browser = await fixture(test);
