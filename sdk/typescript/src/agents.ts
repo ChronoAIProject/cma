@@ -81,6 +81,7 @@ import {
 import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
 import { readAgentChannelUsage, listAgentChannelUsageHistory } from './agents/channel-usage.js';
+import { readDesktopCapability, type DesktopScope } from './agents/desktop.js';
 import {
   listAgentArtifacts,
   readAgentArtifact,
@@ -220,6 +221,10 @@ export class Agents {
       body: input(agentLifecycleCreateRequest, body),
       expectedStatus: 202,
     });
+  }
+
+  desktopCapability(scope: DesktopScope = {}, options: OperationOptions = {}) {
+    return readDesktopCapability(this.config, scope, options);
   }
 
   /** Read owner-visible provisioning progress; succeeded means the Agent is ready. */

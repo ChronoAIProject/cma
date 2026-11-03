@@ -50,6 +50,7 @@ async fn lifecycle_replays_exact_task_bytes_and_keeps_legacy_omission() {
     let request = AgentLifecycleCreateRequest {
         name: "New task".into(),
         initial_message: Some("  比较三个工具\n保留原文。  ".into()),
+        desktop: None,
         workspace_id: None,
         sandbox_id: None,
         image: None,

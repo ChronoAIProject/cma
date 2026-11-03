@@ -59,6 +59,8 @@ mod agent_source;
 pub use agent_provenance::agent_provenance_router;
 mod agent_history;
 mod agent_lifecycle;
+mod desktop_creation;
+pub use desktop_creation::DesktopCreationScope;
 #[cfg(test)]
 mod agent_provenance_tests;
 mod agent_share_links;

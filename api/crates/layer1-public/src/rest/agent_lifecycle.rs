@@ -25,6 +25,8 @@ pub struct AgentLifecycleCreateRequest {
     /// Repository tasks prepare an immutable source checkout in a new Sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_message: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desktop: bool,
     /// Add an Agent to this owned, ready Workspace using its existing Sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
@@ -171,6 +173,8 @@ pub trait AgentLifecycleOperationReader: Send + Sync {
 
 #[derive(Debug, Error)]
 pub enum AgentLifecycleProvisioningError {
+    #[error("desktop is unavailable: {0}")]
+    DesktopUnsupported(String),
     #[error("the Agent Manager lifecycle implementation is unavailable")]
     Unavailable,
     #[error("the authenticated caller cannot create an Agent")]
@@ -193,6 +197,12 @@ pub enum AgentLifecycleProvisioningError {
 impl IntoResponse for AgentLifecycleProvisioningError {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match &self {
+            Self::DesktopUnsupported(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent-manager-desktop-unsupported",
+                "desktop_unsupported",
+                self.to_string(),
+            ),
             Self::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "agent-manager-unavailable",
@@ -257,6 +267,22 @@ impl IntoResponse for AgentLifecycleProvisioningError {
 /// Provisioning port implemented by the composed Agent Manager.
 #[async_trait]
 pub trait AgentLifecycleProvisioner: Send + Sync {
+    async fn desktop_capability(
+        &self,
+        _caller: &Caller,
+        _context: Option<&CallerContext>,
+        _scope: super::DesktopCreationScope,
+    ) -> Result<
+        layer2_core::sandbox::desktop_creation::DesktopCapability,
+        AgentLifecycleProvisioningError,
+    > {
+        Ok(
+            layer2_core::sandbox::desktop_creation::DesktopCapability::unavailable(
+                "This service does not support desktop creation.",
+            ),
+        )
+    }
+
     async fn create(
         &self,
         caller: &Caller,
