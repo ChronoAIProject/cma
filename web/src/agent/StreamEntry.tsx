@@ -13,6 +13,8 @@ import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdent
 import { MessageFooter } from './MessageFooter';
 import type { MessageFeedbackControls } from './useMessageFeedback';
 import type { Entry } from './timeline';
+import { AnswerDeliverables } from './AnswerDeliverables';
+import { answerProse } from './answerDeliveries';
 import type { ConversationState } from './model';
 
 function StreamEntryView({
@@ -48,6 +50,16 @@ function StreamEntryView({
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
+    const canDeliver =
+      message.role === 'assistant' &&
+      message.finalAnswer === true &&
+      !message.liveOnly &&
+      message.status !== 'streaming' &&
+      /^event:[1-9]\d*$/.test(message.id);
+    const delivery =
+      message.role === 'assistant'
+        ? answerProse(message.content, message.status === 'streaming')
+        : { content: message.content, references: 0 };
     const identity = messageIdentity(message.role, user, unknownUserName);
     return (
       <article
@@ -62,8 +74,11 @@ function StreamEntryView({
           {message.role === 'user' ? (
             <UserMessage content={message.content} />
           ) : (
-            <MessageContent content={message.content} streaming={message.status === 'streaming'} />
+            <MessageContent content={delivery.content} streaming={message.status === 'streaming'} />
           )}
+          {canDeliver && delivery.references ? (
+            <AnswerDeliverables answerId={message.id} references={delivery.references} />
+          ) : null}
           {/* A turn that reported nothing draws no line; absence is never shown as zero. */}
           {duration === undefined ? null : (
             <div className="message__duration" aria-label="Turn duration">
@@ -79,7 +94,7 @@ function StreamEntryView({
             id={message.id}
             canVote={message.role === 'assistant' && message.finalAnswer === true}
             at={message.at}
-            content={message.content}
+            content={delivery.content}
             committed={
               !message.liveOnly &&
               message.status !== 'streaming' &&
