@@ -1587,7 +1587,8 @@ adds file/document permission. Previously downloaded bytes cannot be recalled.
 
 Answer verification targets one committed turn, scanning at most 128 events
 after the requested message and 512 events in that turn, with a 4 MiB/15 second
-projection bound. Gaps or inconsistent boundaries fail closed. HTTP requests
+projection bound. Exceeded budgets return 503 without treating the Agent as
+missing. Gaps or inconsistent boundaries fail closed. HTTP requests
 have a 30 second deadline. No list or per-card authorization rebuilds the full
 conversation, and listing does not download file bodies. See
 [Agent Manager](API_Agent_Manager.md#files-settings-and-access) for client usage.

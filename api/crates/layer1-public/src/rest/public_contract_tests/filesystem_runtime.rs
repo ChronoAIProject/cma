@@ -140,7 +140,11 @@ impl SandboxAdapter for Files {
         let bytes = if let Some(root) = &self.root {
             std::fs::read(root.join(&request.path)).map_err(|_| missing())?
         } else {
-            files.get(&request.path).and_then(Option::as_ref).ok_or_else(missing)?.clone()
+            files
+                .get(&request.path)
+                .and_then(Option::as_ref)
+                .ok_or_else(missing)?
+                .clone()
         };
         if bytes.len() as u64 > request.max_bytes {
             return Err(AdapterError::Rejected(

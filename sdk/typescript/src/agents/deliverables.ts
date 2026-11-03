@@ -290,14 +290,22 @@ export function readAnswerDeliverable(
   );
 }
 
+export class DeliverableUnavailable extends ProtocolError {
+  constructor(readonly status: AnswerDeliverable['status']) {
+    super(`delivery is unavailable (${status})`);
+    this.name = 'DeliverableUnavailable';
+  }
+}
+
 function requireDownload(current: AnswerDeliverable, expected: AnswerDeliverable) {
   if (
     current.id !== expected.id ||
-    JSON.stringify(current.reference) !== JSON.stringify(expected.reference) ||
-    !['ready', 'unchecked', 'version_changed'].includes(current.status)
+    JSON.stringify(current.reference) !== JSON.stringify(expected.reference)
   ) {
-    throw new ProtocolError(`delivery is unavailable or changed (${current.status})`);
+    throw new ProtocolError('delivery metadata does not match this answer version');
   }
+  if (!['ready', 'unchecked', 'version_changed'].includes(current.status))
+    throw new DeliverableUnavailable(current.status);
 }
 
 export function downloadAnswerDeliverable(

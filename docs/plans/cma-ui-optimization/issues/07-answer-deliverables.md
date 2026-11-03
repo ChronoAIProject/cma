@@ -73,6 +73,8 @@
 
 ### 可复现 R 命令
 
+下载时的状态也经 U seam red → green：下载后授权复核被撤销时原先只显示通用失败，现由 SDK 的 `DeliverableUnavailable.status` 保留具体状态，页面显示 Access unavailable 且不保存字节；文件真实下载路由返回 `deliverable_changed` 时原先丢失原因，现显示 File changed since this answer，单卡 Retry 仍可用。交付组件和原有历史性能共 **11 tests passed**。
+
 先在本 worktree `web/` 启动 `npm run dev -- --host 127.0.0.1 --port 4537 --strictPort`，再从本 worktree 根执行：
 
 ```sh
