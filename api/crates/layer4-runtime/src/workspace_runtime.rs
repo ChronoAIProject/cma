@@ -160,9 +160,20 @@ async fn prepare_in_staging(
         )
     })?;
     let staged = staged_request(request);
-    let receipt =
-        crate::workspace_source::prepare(&staging_root, config.allow_local_git, &staged).await?;
-    publish_staged(config, request, receipt.resolved_commit)
+    let receipt = if matches!(
+        request.source,
+        layer3_adapter::WorkspaceSource::RepositorySnapshot { .. }
+    ) {
+        crate::repository_snapshot::prepare(config, &staging_root, &staged).await?
+    } else {
+        crate::workspace_source::prepare(&staging_root, config.allow_local_git, &staged).await?
+    };
+    publish_staged(
+        config,
+        request,
+        receipt.resolved_commit,
+        receipt.source_commit,
+    )
 }
 
 async fn recover_prepared_receipt(
@@ -198,13 +209,20 @@ async fn recover_prepared_receipt(
     else {
         return Ok(None);
     };
-    publish_staged(config, request, receipt.resolved_commit).map(Some)
+    publish_staged(
+        config,
+        request,
+        receipt.resolved_commit,
+        receipt.source_commit,
+    )
+    .map(Some)
 }
 
 fn publish_staged(
     config: &RuntimeConfig,
     request: &layer3_adapter::WorkspaceRequest,
     resolved_commit: String,
+    source_commit: Option<String>,
 ) -> Result<WorkspaceReceipt> {
     let staged = staging_root(&config.home).join(&request.workspace_id);
     let published = config.home.join(&request.name);
@@ -227,6 +245,7 @@ fn publish_staged(
         name: request.name.clone(),
         path: published.to_string_lossy().into_owned(),
         resolved_commit,
+        source_commit,
     })
 }
 

@@ -44,6 +44,12 @@ pub(crate) async fn prepare(
     let git = GitRunner::new(allow_local_git);
     let resolved_commit = async {
         match &request.source {
+            WorkspaceSource::RepositorySnapshot { .. } => {
+                return Err(RuntimeError::rejected(
+                    "repository_connection_required",
+                    "source snapshots require the credentialed workspace preparation path",
+                ))
+            }
             WorkspaceSource::Clone { url, reference } => {
                 clone_workspace(
                     home,
@@ -71,6 +77,7 @@ pub(crate) async fn prepare(
         name: request.name.clone(),
         path: path.to_string_lossy().into_owned(),
         resolved_commit,
+        source_commit: None,
     })
 }
 
@@ -105,6 +112,7 @@ pub(crate) async fn inspect_prepared(
         name: request.name.clone(),
         path: path.to_string_lossy().into_owned(),
         resolved_commit,
+        source_commit: crate::repository_snapshot::source_commit(&path, &request.source)?,
     }))
 }
 
@@ -270,7 +278,7 @@ fn github_authority(value: &str) -> Option<&str> {
         .next()
 }
 
-fn install_worktree_metadata(repository: &Path, workspace_id: &str) -> Result<()> {
+pub(crate) fn install_worktree_metadata(repository: &Path, workspace_id: &str) -> Result<()> {
     let info = repository.join(".git/info");
     crate::fs_durability::create_dir_all(&info)
         .map_err(|error| io_error("create Git info directory", error))?;
