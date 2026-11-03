@@ -177,6 +177,9 @@ function ConsoleContent({
       : route.kind === 'not_found'
         ? 'Page not found'
         : undefined,
+    route.kind === 'agent' && (personalAgentId !== undefined || shared !== undefined)
+      ? 'inherit'
+      : 'product',
   );
   const permissions: TreePermissions = {
     createAgent: canCreate,
