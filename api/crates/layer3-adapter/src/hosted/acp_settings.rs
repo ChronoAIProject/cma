@@ -245,6 +245,10 @@ fn legacy_instruction_resume_failed(error: &AdapterError) -> bool {
 
 #[async_trait::async_trait]
 impl crate::ConversationSettingsSupport for Bridge {
+    async fn managed_context_progress(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        self.output_progress().await
+    }
+
     async fn managed_context_receipt(&self, sequence: u64) -> Option<String> {
         self.context_readiness_receipt(sequence, false).await
     }

@@ -107,6 +107,7 @@ module GatewaySourceContract
           gateway_public_route("PathPrefix", "openapi.json", "/openapi.json"),
           gateway_public_route("PathPrefix", "docs", "/docs"),
           { "matches" => [path("PathPrefix", "/event-gateway/connect"), path("PathPrefix", "/event-gateway/legacy-console")], "backendRefs" => backend("cma-event-gateway") },
+          { "matches" => [path("PathPrefix", "/console")], "backendRefs" => backend("cma-event-gateway") },
         ],
       }),
     ]
