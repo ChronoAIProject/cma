@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "task-policy-disabled",
+      "operation": "GET /api/v2/ui/task-experience",
+      "scenario": "task_policy_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/ui/task-experience",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.ui.task_experience",
+          "schema_version": 1,
+          "account_id": "owner-a",
+          "capabilities": {
+            "task_home_admission": false,
+            "suggested_followup_admission": false,
+            "desktop_enable": false,
+            "browser_takeover": false,
+            "replay_presentation": false
+          }
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "task-policy-cohort",
+      "operation": "GET /api/v2/ui/task-experience",
+      "scenario": "task_policy_cohort",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/ui/task-experience",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.ui.task_experience",
+          "schema_version": 1,
+          "account_id": "owner-a",
+          "capabilities": {
+            "task_home_admission": true,
+            "suggested_followup_admission": false,
+            "desktop_enable": false,
+            "browser_takeover": false,
+            "replay_presentation": true
+          }
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "task-policy-excluded",
+      "operation": "GET /api/v2/ui/task-experience",
+      "scenario": "task_policy_excluded",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/ui/task-experience",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.ui.task_experience",
+          "schema_version": 1,
+          "account_id": "owner-b",
+          "capabilities": {
+            "task_home_admission": false,
+            "suggested_followup_admission": false,
+            "desktop_enable": false,
+            "browser_takeover": false,
+            "replay_presentation": false
+          }
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "task-policy-empty",
+      "operation": "GET /api/v2/ui/task-experience",
+      "scenario": "task_policy_empty",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/ui/task-experience",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.ui.task_experience",
+          "schema_version": 1,
+          "account_id": "owner-a",
+          "capabilities": {
+            "task_home_admission": false,
+            "suggested_followup_admission": false,
+            "desktop_enable": false,
+            "browser_takeover": false,
+            "replay_presentation": false
+          }
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "task-policy-all",
+      "operation": "GET /api/v2/ui/task-experience",
+      "scenario": "task_policy_all",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/ui/task-experience",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.ui.task_experience",
+          "schema_version": 1,
+          "account_id": "owner-b",
+          "capabilities": {
+            "task_home_admission": true,
+            "suggested_followup_admission": true,
+            "desktop_enable": true,
+            "browser_takeover": true,
+            "replay_presentation": true
+          }
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "task-policy-anonymous",
+      "operation": "GET /api/v2/ui/task-experience",
+      "scenario": "task_policy_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/ui/task-experience",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      }
+    }
+  ]
+}

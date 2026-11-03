@@ -10,6 +10,7 @@ export function DesktopOption({
   frozen,
   onChange,
   onAvailable,
+  policyAllowed = false,
 }: {
   readonly client: CmaWebClient;
   readonly workspaceId?: string;
@@ -18,6 +19,7 @@ export function DesktopOption({
   readonly frozen: boolean;
   readonly onChange: (enabled: boolean) => void;
   readonly onAvailable: (available: boolean) => void;
+  readonly policyAllowed?: boolean;
 }) {
   const description = useId();
   const [capability, setCapability] = useState<DesktopCapability>();
@@ -50,7 +52,7 @@ export function DesktopOption({
         <input
           type="checkbox"
           checked={enabled}
-          disabled={frozen || (!enabled && capability?.state !== 'available')}
+          disabled={frozen || (!enabled && (!policyAllowed || capability?.state !== 'available'))}
           aria-describedby={description}
           onChange={(event) => onChange(event.target.checked)}
         />
@@ -59,12 +61,14 @@ export function DesktopOption({
       <p id={description}>
         {frozen
           ? 'Desktop choice is saved with the submitted task.'
-          : (failure ??
-            (capability
-              ? capability.state === 'available'
-                ? 'Prepares a browser for this Agent. Requires extra preparation time and memory.'
-                : `Desktop unavailable: ${capability.reason}`
-              : 'Checking desktop availability…'))}
+          : !policyAllowed
+            ? 'Desktop is unavailable. Your current choice is kept.'
+            : (failure ??
+              (capability
+                ? capability.state === 'available'
+                  ? 'Prepares a browser for this Agent. Requires extra preparation time and memory.'
+                  : `Desktop unavailable: ${capability.reason}`
+                : 'Checking desktop availability…'))}
       </p>
     </div>
   );
