@@ -4,19 +4,19 @@
 
 **Blocked by:** 03（首页任务原文、创建身份与恢复链路）。
 
-**Status:** in-progress
+**Status:** done
 
 **优先级:** P0
 
 ## Acceptance criteria
 
-- [ ] 仓库是可选上下文，省略时继续创建空工作区；选择或清除仓库不清空任务正文。
-- [ ] 合法 GitHub 仓库/ref 与原任务一起冻结在创建操作中；展示实际解析的 commit，不把输入 ref 当已验证版本。
-- [ ] 缺少 GitHub 权限时沿已有服务连接流程处理；完成连接后继续原请求，不能新建第二个 Agent或在取消连接后悄悄执行。
-- [ ] 仓库不可访问、ref 不存在、准备失败和任务执行失败分别说明；保留原文与选项，明确何时恢复原请求、何时修改后发起新意图。
-- [ ] 自动仓库准备与真实任务有明确顺序，准备失败时用户任务不能在错误目录执行；已有上下文不静默被新仓库覆盖。
-- [ ] 重复点击、刷新及准备期间服务恢复仍对同一任务/同一实际代码版本负责；沿用已有来源检出与文件保护规则。
-- [ ] 公开契约接受的上下文组合与服务端一致；UI 不允许服务器不支持的 Workspace/Sandbox/repository 组合。
+- [x] 仓库是可选上下文，省略时继续创建空工作区；选择或清除仓库不清空任务正文。
+- [x] 合法 GitHub 仓库/ref 与原任务一起冻结在创建操作中；展示实际解析的 commit，不把输入 ref 当已验证版本。
+- [x] 缺少 GitHub 权限时沿已有服务连接流程处理；完成连接后继续原请求，不能新建第二个 Agent或在取消连接后悄悄执行。
+- [x] 仓库不可访问、ref 不存在、准备失败和任务执行失败分别说明；保留原文与选项，明确何时恢复原请求、何时修改后发起新意图。
+- [x] 自动仓库准备与真实任务有明确顺序，准备失败时用户任务不能在错误目录执行；已有上下文不静默被新仓库覆盖。
+- [x] 重复点击、刷新及准备期间服务恢复仍对同一任务/同一实际代码版本负责；沿用已有来源检出与文件保护规则。
+- [x] 公开契约接受的上下文组合与服务端一致；UI 不允许服务器不支持的 Workspace/Sandbox/repository 组合。
 
 ## Testing boundaries（2026-11-03 已确认）
 
@@ -37,5 +37,12 @@
 ### Integration repairs requested by parent
 
 - Updated `AppCreation.test.tsx` through Settings → Manage environments → Workspace New agent, retaining the exact Workspace assertion and adapting the already-integrated task composer text. Before: stale removed navigation and Home assertions fail. After: AppCreation + Console 12/12 pass (`ticket04-appcreation-before.log`, `ticket04-appcreation-after.log`, outside repo).
-- Extracted the coherent Home/fallback content selection into `ConsoleLanding.tsx`; Console is 491 lines before formatting, below the 500-line source gate. No title policy or ticket 05 implementation changes.
+- Extracted Home/fallback selection into `ConsoleLanding.tsx` and creation/access policy into `ConsoleCreationAccess.ts`; final Console is 494 lines with all merged 05/14 hooks intact. OpenAPI document composition is also extracted, leaving its schema inventory at 498 lines.
 - These are task-introduced integration repairs, distinct from the documented original formatting, aggregate skill fixture and 508-line Agent operation baseline defects.
+
+### Completion evidence
+
+- Full contracts, red/green records, source/image hashes, test commands and parent/19 findings: [04 evidence](../04-EVIDENCE.md).
+- 88 Web tests, 7 real Chrome checks, 11 public/Mongo task contracts, 298 runtime unit tests plus one CLI integration, 33 TypeScript SDK tests and 2 Rust SDK tests passed. Two pre-existing external-fixture runtime tests remain ignored; the new pinned native proof passed 1/1 without skips.
+- The final actual Linux candidate includes 14. Its real worktree retains the resolved source after ref movement and runtime restart; pinned Codex 0.147.0/ACP 1.4.0 reads the known file and actual HEAD and executes the first task. Ambiguous partial preparation fails closed without re-resolving the ref.
+- Latest integration `a426b87ee5852866850cab192b37d14f9f2087c6` merged in `32bfb92c6428d1b12fce23e4d9a7a9a21437f92f`; no 05 ownership conflict, no desktop scope. Original LocalAgentV2 head-404 and inherited 14 OpenAPI inventory omission are separately documented for 19; neither is claimed green.
