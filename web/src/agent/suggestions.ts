@@ -1,4 +1,5 @@
 import type { ConversationState } from './conversation';
+import { useMemo } from 'react';
 
 export interface SuggestedReplySet {
   readonly id: string;
@@ -8,6 +9,23 @@ export interface SuggestedReplySet {
   readonly scope: { readonly turn_sequence: number; readonly answer_sequence: number };
   readonly source: { readonly kind: 'template' | 'generated'; readonly version: string };
   readonly items: readonly { readonly id: string; readonly text: string; readonly rank: number }[];
+}
+
+export function useSuggestedReplies(
+  conversation: Pick<ConversationState, 'messages' | 'activeRunId' | 'latestTurnId'> | undefined,
+  viewerId: string,
+  agentId: string,
+  provided?: SuggestedReplySet | null,
+) {
+  const messages = conversation?.messages;
+  const activeRunId = conversation?.activeRunId;
+  const latestTurnId = conversation?.latestTurnId;
+  return useMemo(
+    () =>
+      messages &&
+      scenarioSuggestions({ messages, activeRunId, latestTurnId }, viewerId, agentId, provided),
+    [messages, activeRunId, latestTurnId, viewerId, agentId, provided],
+  );
 }
 
 export function scenarioSuggestions(
