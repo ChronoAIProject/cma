@@ -1,4 +1,4 @@
-# Bounded integration repairs — tickets 01 / 03 / 14
+# Bounded integration repairs — tickets 01 / 03 / 07 / 10 / 14
 
 This is the authorized repair batch within the existing 19-ticket workflow, not
 an additional ticket or the final standards/spec review. Work is isolated to
@@ -21,6 +21,11 @@ workspace and the integration worktree remain untouched by this worker.
   public inventory/status behavior, Ready completion/queued/corruption handling,
   and the separately measured Mongo query scaling; do not claim production
   latency from a synthetic query probe.
+- Complete ticket 07's four delivery operations in the shared JSON inventory,
+  real-handler corpus and typed SDK dispatch, preserving independent resource
+  access, selected revision/hash identity and download reauthorization.
+- Extract ticket 10's reusable feedback memory/seed fixture from its overlong
+  test source. Keep the existing filename limits and behavioral tests intact.
 
 ## Initial reproduced failures and repairs
 
@@ -101,11 +106,11 @@ committed skips or test exclusions. Web typecheck, eslint and the unchanged CSS
 collision gate pass (`web-typecheck.log`, `web-lint.log`, `css-final.log`). jsdom
 prints its existing cross-Document navigation notices without failing tests.
 
-The source-size gate no longer reports either repaired production source:
+The first source-size pass no longer reports either repaired production source:
 `agent_filesystem.rs` is 473 lines and `conversation.ts` is 469. It reports the
 unchanged original 508-line `agent_operation_service.rs` and the newly merged
-ticket-10 `agents_tests/message_feedback.rs` at 556 lines. The latter file is
-outside this batch's owned source and is a separate new integration handoff.
+ticket-10 `agents_tests/message_feedback.rs` at 556 lines. The later explicitly
+authorized 07/10 follow-up below resolves the latter overrun.
 
 ## Task status query repair
 
@@ -161,7 +166,7 @@ Final affected Rust checks use Rust 1.96.1, `--offline --locked`, jobs=2,
 | layer1-public environment shared corpus | 1 passed / 10 cases after 13 | `environment-after13.log` |
 | layer1-public suggestions shared corpus | 1 passed / 6 cases after 13 | `suggestions-after13.log` |
 | cma public hierarchy/shared-inventory status regression | 1 passed after 13; 1,606 filtered, no zero-test claim | `status-after13.log` |
-| layer1-public exact shared JSON inventory | 1 failed after final `a2965df09` merge: 235 actual / 231 registered; only the four ticket-07 delivery routes remain missing | `inventory-final-tip.log` |
+| layer1-public exact shared JSON inventory, before 07 follow-up | 1 failed after `a2965df09` merge: 235 actual / 231 registered; the four ticket-07 delivery routes were missing | `inventory-final-tip.log` |
 
 The first Core filter used the source filename rather than its registered module
 and selected zero tests (`core-filter-miss.log`). It is excluded from evidence.
@@ -188,10 +193,11 @@ entries, including both environment and suggestions; `f450bfab5` reconciles thei
 parallel count additions without claiming the four absent delivery entries.
 Post-13 Web and SDK TypeScript typechecks, Web lint and the unchanged CSS gate
 also pass (`typecheck-after13.log`, `sdk-ts-typecheck-after13.log`,
-`lint-after13.log`, `css-after13.log`). `file-size-after13.log` still reports only
-the two separately classified files below. No new checks are suppressed.
+`lint-after13.log`, `css-after13.log`). That run's `file-size-after13.log` reports
+the baseline file and the ticket-10 overrun subsequently repaired below. No
+checks are suppressed.
 
-The remaining missing shared operations are:
+The four previously missing shared operations, now covered, are:
 
 ```text
 POST /api/v1/agents/{id}/deliverable-references
@@ -200,6 +206,66 @@ GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}
 GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download
 ```
 
+## Authorized 07/10 follow-up — final owned gates
+
+The parent confirmed that the delivery omissions and feedback overrun were new
+19-ticket integration defects owned by this repair batch. The inventory failure
+was reproduced as one named test, 235 actual / 231 declared operations
+(`deliveries-inventory-red.log`). TypeScript's completeness check failed on the
+unmapped list operation (`deliveries-sdk-ts-red.log`); Rust's named shared replay
+failed on the same missing dispatch (`deliveries-sdk-rust-red.log`). These are
+actual red runs, not inferred failures or zero-test selections.
+
+`deliverable_cases.rs` reuses ticket 07's public-test composition and the
+deterministic filesystem boundary used by its native fixture. The real service
+publishes an artifact, creates a document, verifies a mounted-home file, and
+appends their explicit markers to a completed final answer. The new shared
+`answer-deliverables.json` contains **44 cases** across all four operations:
+three resource kinds; owner and authorized viewer reads; independent document
+denial and revocation; foreign and anonymous callers; nonfinal/missing targets;
+invalid revision/answer identity; unavailable capabilities; original document
+bytes after a later edit; and refusal of changed live-file bytes. JSON bodies,
+named problems, digest/revision identity and private download headers are
+recorded from the actual handlers and then replayed without recording.
+
+Both SDKs invoke their typed delivery methods. Successful downloads consume
+real shared metadata, opaque bytes, then a second metadata read, with every
+request and exact total checked. Refused downloads pair a successful earlier
+metadata observation with the real refusal case, representing access/session
+loss or unavailable/changed bytes after precheck. No synthetic metadata is
+substituted. Three invalid-input cases exercise actual SDK preflight and decode
+the corresponding backend error; they are not counted as typed HTTP replay.
+The TypeScript expected URL encodes the answer identity's colon exactly as its
+typed path builder does; Rust emits the equivalent literal-colon path. Other
+operations retain their one-request contract and exact assertions.
+
+The feedback extraction moves the existing memory-store implementation and
+seeded completed-answer fixture into `message_feedback_fixture.rs` (**123
+lines**). The original `message_feedback.rs` remains under its original name at
+**438 lines**, retaining its behavior tests and reasons submodule. This changes
+neither test classification nor the size gate. No production feedback behavior
+or database service changes are needed.
+
+| Final affected check | Actual result | Log in `/tmp/cma-integration-repairs/` |
+| --- | --- | --- |
+| Exact shared inventory | 1 passed; **235 actual / 235 declared** operations, 2,792 cases, 1,599 named HTTP problem pairs, 23 protocol failure pairs | `deliveries-inventory-final.log` |
+| Delivery real-handler shared corpus | 1 passed / **44 cases**, recording disabled | `answer-deliverables-final-public.log` |
+| Existing delivery public regressions | **5 passed**; existing native proof remains ignored and is not claimed as rerun | `deliveries-public-regressions.log` |
+| Existing feedback public/schema regressions | **12 passed** | `feedback-extraction-regressions.log` |
+| Feedback reasons and old vote shared handlers | 1 passed / **26 cases**, then 1 passed / **18 cases** | `feedback-reasons-final-public.log`, `message-feedback-final-public.log` |
+| TypeScript full shared corpus + delivery/feedback SDK regressions | **3 files / 2,809 tests passed**, including 2,797 shared-harness tests | `deliveries-feedback-sdk-ts-final.log` |
+| Rust full shared typed corpus | 1 passed; **2,348 typed HTTP, 176 typed preflight, 241 unrepresentable wire shapes, 27 browser-owned** cases | `deliveries-sdk-rust-final.log` |
+| SDK TypeScript typecheck and changed-test lint | passed | `deliveries-sdk-ts-typecheck-final.log`, `deliveries-sdk-ts-lint.log` |
+| Unchanged source-size gate | Only the original 508-line `agent_operation_service.rs` remains; **1 / 4,472** files reported | `file-size-deliveries-feedback.log` |
+
+Latest integration `a2965df09581de5fa0fa35af54b69db56cd83ab9` is already included
+through `afae935e3`; a final merge/check targets the integration branch from this
+worktree only. All incoming 07/10/13 routes and cases remain present. Ticket 15's
+new browser operations remain its worker's responsibility and are not part of
+this integration tip. This follow-up changes no frontend source; the prior full
+Web result **330 files / 2,974 tests** remains the latest Web evidence and was
+not rerun unnecessarily.
+
 The query-probe database and the failed-red fixture database
 `cma_804_shared_provenance_corrupt_5560_0` were dropped after verifying the unique
 fixture marker (`mongo-cleanup.json`). The green Mongo test drops its own
@@ -207,15 +273,11 @@ PID/sequence database. This worker started no persistent service; the shared
 Mongo container/VM stays running. The worktree and private build/evidence paths
 remain for parent cleanup.
 
-Remaining failures are explicitly separated:
+Remaining limitations are explicitly separated:
 
-- **New, outside owned repair source:** ticket 07 omitted its four delivery
-  operations from shared JSON inventory/corpus/SDK dispatch. The global inventory
-  is still red. Its routes and focused contract remain present; no expected-count
-  or coverage bypass hides this omission.
-- **New, outside owned repair source:** ticket 10's `agents_tests/message_feedback.rs`
-  grew from 484 lines at `d19c225bd` to 556; the unchanged 500-line filename-based
-  gate reports it. No test rename or gate exception is introduced here.
+- **Owned new integration defects:** none remain in the assigned gates. The four
+  delivery entries have actual shared cases/typed dispatch, and the feedback
+  source overrun is resolved by cohesive fixture extraction.
 - **Original and untouched:** public/Core skill fixtures, LocalAgentV2 head-404,
   and formatter drift remain the earlier tickets' documented limitations, not
   newly rerun failures. The original 508-line `agent_operation_service.rs` is
@@ -229,17 +291,22 @@ occurred.
 
 ## Repair manifest
 
-29 paths differ from integration `a2965df09581de5fa0fa35af54b69db56cd83ab9`.
+40 paths differ from integration `a2965df09581de5fa0fa35af54b69db56cd83ab9`.
 Incoming feature changes are excluded from this repair-only manifest.
 
 ```text
 api/crates/cma/src/store/agent_task_status.rs
 api/crates/cma/src/store/sandbox_mongo_integration_tests/resource_access_tests/shared_inventory_tests.rs
 api/crates/cma/src/store/sandbox_mongo_integration_tests/resource_access_tests/shared_inventory_tests/task_status.rs
+api/crates/layer1-public/src/rest/agents_tests/message_feedback.rs
+api/crates/layer1-public/src/rest/agents_tests/message_feedback_fixture.rs
+api/crates/layer1-public/src/rest/public_contract_tests.rs
+api/crates/layer1-public/src/rest/public_contract_tests/deliverable_cases.rs
 api/crates/layer1-public/src/rest/public_contract_tests/filesystem_cases.rs
 api/crates/layer1-public/src/rest/public_contract_tests/inventory.rs
 api/crates/layer1-public/tests/fixtures/public-contract-inventory.json
 api/crates/layer1-public/tests/fixtures/public-contract/agent-environment.json
+api/crates/layer1-public/tests/fixtures/public-contract/answer-deliverables.json
 api/crates/layer2-core/src/sandbox/agent_filesystem.rs
 api/crates/layer2-core/src/sandbox/agent_filesystem/scope.rs
 docs/plans/cma-ui-optimization/10-EVIDENCE.md
@@ -250,7 +317,13 @@ docs/plans/cma-ui-optimization/issues/03-task-home.md
 docs/plans/cma-ui-optimization/issues/07-answer-deliverables.md
 docs/plans/cma-ui-optimization/issues/14-computer-files-activity.md
 sdk/rust/src/agent_environment.rs
+sdk/rust/tests/public_contract.rs
+sdk/rust/tests/public_contract/classification.rs
+sdk/rust/tests/public_contract/deliverables.rs
 sdk/rust/tests/public_contract/resources.rs
+sdk/typescript/tests/public-contract.test.ts
+sdk/typescript/tests/public-contract/deliverables.ts
+sdk/typescript/tests/public-contract/expectations.ts
 sdk/typescript/tests/public-contract/resources.ts
 web/src/AppPublic.test.tsx
 web/src/agent/conversation.ts
