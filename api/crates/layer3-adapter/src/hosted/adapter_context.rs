@@ -125,6 +125,13 @@ impl HostedAdapter {
             request.options.working_directory.clone(),
             tools,
         )
-        .map(Some)
+        .map(|context| {
+            Some(match (&self.access_tools, &settings.access_tool) {
+                (Some(source), Some(binding)) => {
+                    context.with_access(source.clone(), binding.clone())
+                }
+                _ => context,
+            })
+        })
     }
 }
