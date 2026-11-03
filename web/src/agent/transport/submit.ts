@@ -110,7 +110,8 @@ async function submit(
         !receiptObserved &&
         error instanceof ApiError &&
         ((error.status === 422 &&
-          ['invalid_response_input', 'invalid_answer_context'].includes(error.code ?? '')) ||
+          (['invalid_response_input', 'invalid_answer_context'].includes(error.code ?? '') ||
+            (input.answerContext !== undefined && error.code === 'responses_field_unsupported'))) ||
           (error.status === 409 && error.code === 'agent_command_not_admissible'))
       )
         journal.refused(input.key);

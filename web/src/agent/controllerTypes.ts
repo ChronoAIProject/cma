@@ -48,7 +48,7 @@ export interface AgentController {
     content: string,
     onAccepted?: (receipt?: MessageAcceptance) => void,
     onReceiptObserved?: (receipt: MessageAcceptance) => void,
-    onRefused?: (reason?: 'answer_changed') => void,
+    onRefused?: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
     answerContext?: AnswerContext,
   ) => Promise<void>;
   readonly interrupt: () => Promise<void>;

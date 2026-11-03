@@ -189,7 +189,7 @@ export function AgentSurface({
     content: string,
     onAccepted: () => void,
     answerContext?: import('@chronoai/cma-sdk').AnswerContext,
-    onRefused?: (reason?: 'answer_changed') => void,
+    onRefused?: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
   ) => {
     if (readOnly || verified === undefined) return;
     const message = optimistic.begin(
@@ -202,7 +202,7 @@ export function AgentSurface({
         message.settled();
         resolve();
       };
-      const cancelled = (reason?: 'answer_changed') => {
+      const cancelled = (reason?: 'answer_changed' | 'suggestions_unavailable') => {
         message.cancelled();
         onRefused?.(reason);
         resolve();
