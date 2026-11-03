@@ -27,6 +27,9 @@ mod origins;
 mod records;
 #[cfg(test)]
 pub(in crate::store) mod tests;
+mod transport;
+#[cfg(test)]
+mod transport_tests;
 mod validation;
 use records::{OpenRecord, Scope};
 
@@ -99,6 +102,10 @@ impl MongoAgentAccessToolSource {
                     .authenticate_in(capability, &mut session)
                     .await
                     .map(|identity| Outcome::Authenticated(Box::new(identity))),
+                Operation::Transport(binding, origin, conversation, sequence) => self
+                    .transport_in(binding, origin, conversation, sequence, &mut session)
+                    .await
+                    .map(|binding| Outcome::Resolved(Some(binding))),
                 Operation::Setup(capability) => self
                     .setup_in(capability, &mut session)
                     .await
@@ -165,6 +172,43 @@ impl HostedAccessToolSource for MongoAgentAccessToolSource {
         }
     }
 
+    async fn prepare_transport(
+        &self,
+        binding: &HostedAccessToolBinding,
+        origin: &str,
+        conversation: &str,
+        operation_sequence: u64,
+    ) -> layer3_adapter::Result<HostedAccessToolBinding> {
+        match self
+            .run(Operation::Transport(
+                binding,
+                Some(origin),
+                conversation,
+                operation_sequence,
+            ))
+            .await?
+        {
+            Outcome::Resolved(Some(binding)) => Ok(binding),
+            _ => unreachable!("transport returns a binding"),
+        }
+    }
+
+    async fn confirm_transport(
+        &self,
+        binding: &HostedAccessToolBinding,
+        conversation: &str,
+        operation_sequence: u64,
+    ) -> layer3_adapter::Result<()> {
+        self.run(Operation::Transport(
+            binding,
+            None,
+            conversation,
+            operation_sequence,
+        ))
+        .await?;
+        Ok(())
+    }
+
     async fn confirm_open(
         &self,
         binding: &HostedAccessToolBinding,
@@ -181,6 +225,7 @@ impl HostedAccessToolSource for MongoAgentAccessToolSource {
 enum Operation<'a> {
     Resolve(&'a RuntimeHandle, &'a AgentOpenRequest, u64),
     Confirm(&'a HostedAccessToolBinding, &'a str),
+    Transport(&'a HostedAccessToolBinding, Option<&'a str>, &'a str, u64),
     Authenticate(&'a str),
     Setup(&'a str),
 }
@@ -190,6 +235,7 @@ impl Operation<'_> {
         let (operation, agent_id) = match self {
             Self::Resolve(_, request, _) => ("resolve", Some(request.options.slot.as_str())),
             Self::Confirm(binding, _) => ("confirm_open", Some(binding.scope().1.as_str())),
+            Self::Transport(binding, _, _, _) => ("transport", Some(binding.scope().1.as_str())),
             Self::Authenticate(_) => ("authenticate", None),
             Self::Setup(_) => ("setup", None),
         };

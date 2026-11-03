@@ -10,7 +10,9 @@ use layer2_core::ServiceId;
 
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
+mod access_migration;
 mod access_origins;
+pub(crate) use access_migration::AgentAccessMigration;
 mod agent_sandbox;
 mod execution;
 mod gateway;
@@ -143,6 +145,7 @@ pub struct Config {
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
+    pub(crate) agent_access_transport_migration: Option<AgentAccessMigration>,
     /// Base URL for the independently deployed Image Manager service.  CMA
     /// only uses it with the request's delegated user credential.
     pub image_manager_base_url: String,
@@ -223,6 +226,15 @@ impl Config {
         let public_url = value_or(&mut lookup, "CHRONO_SERVER_PUBLIC_URL", DEFAULT_PUBLIC_URL)?;
         validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
         let agent_access_retained_origins = access_origins::retained(&mut lookup)?;
+        let agent_access_transport_migration = access_migration::parse(&mut lookup)?;
+        if agent_access_transport_migration
+            .as_ref()
+            .is_some_and(|migration| {
+                migration.origin.trim_end_matches('/') != public_url.trim_end_matches('/')
+            })
+        {
+            return Err("CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION origin must match CHRONO_SERVER_PUBLIC_URL".into());
+        }
         let image_manager_base_url = parse_service_base_url(
             "CHRONO_IMAGE_MANAGER_BASE_URL",
             &value_or(
@@ -337,10 +349,17 @@ impl Config {
             validate_origin("CHRONO_NYXID_BASE_URL", base_url)?;
         }
 
+        let document_storage = DocumentStorageConfig::from_lookup(&mut lookup)?;
+        if agent_access_transport_migration.is_some() && document_storage.is_none() {
+            return Err(
+                "CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION requires managed document context".into(),
+            );
+        }
         Ok(Self {
             bind,
             public_url,
             agent_access_retained_origins,
+            agent_access_transport_migration,
             image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
@@ -369,7 +388,7 @@ impl Config {
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
-            document_storage: DocumentStorageConfig::from_lookup(&mut lookup)?,
+            document_storage,
         })
     }
 
