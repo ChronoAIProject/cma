@@ -34,6 +34,11 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
     }
   }
   const activeTurn = transcript.turns.find((turn) => turn.outcome.type === 'active');
+  const lastTurn = transcript.turns.reduce<(typeof transcript.turns)[number] | undefined>(
+    (latest, turn) =>
+      latest === undefined || turn.turnSequence > latest.turnSequence ? turn : latest,
+    undefined,
+  );
   const recovery: RecoveryNotice[] = transcript.turns.flatMap((turn) => {
     const failure = object(turn.outcome.failure);
     if (turn.outcome.type !== 'failed') return [];
@@ -60,6 +65,13 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
     recovery,
     activeRunId: activeTurn === undefined ? undefined : String(activeTurn.turnSequence),
     activeRunStartedAt: activeTurn?.startedAt,
+    lastTurn:
+      lastTurn === undefined
+        ? undefined
+        : {
+            runId: String(lastTurn.turnSequence),
+            outcome: text(lastTurn.outcome.type) ?? 'unknown',
+          },
     turnTiming: Object.fromEntries(
       transcript.turns.map((turn) => [
         String(turn.turnSequence),

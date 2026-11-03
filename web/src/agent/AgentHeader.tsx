@@ -22,6 +22,7 @@ export function AgentHeader({
   moreActions = [],
   onMoreAction,
   sandbox,
+  completion,
   filesOpen = false,
   onFilesOpenChange,
   onShare,
@@ -40,6 +41,7 @@ export function AgentHeader({
   readonly moreActions?: readonly MenuEntry[];
   readonly onMoreAction?: (id: string) => void;
   readonly sandbox?: ReactNode;
+  readonly completion?: ReactNode;
   readonly filesOpen?: boolean;
   readonly onFilesOpenChange?: (open: boolean) => void;
   readonly onShare?: () => void;
@@ -94,6 +96,7 @@ export function AgentHeader({
         </h1>
         {sandbox}
       </div>
+      {completion}
       <div className="agent-toolbar__actions">
         {onShare ? (
           <Button size="sm" variant="ghost" icon={<IconShareOutline16 />} onClick={onShare}>

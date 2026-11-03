@@ -184,7 +184,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         undefined,
       );
       return {
-        ...finishTurn(next, runId, event.appendedAt),
+        ...finishTurn(next, runId, event.appendedAt, 'completed'),
         messages: next.messages.map((message) =>
           message === finalMessage &&
           message.role === 'assistant' &&
@@ -441,7 +441,14 @@ function foldLive(
       .filter((approval): approval is ApprovalRequest => approval !== undefined)
       .reduce((items, approval) => upsert(items, approval), next.approvals);
     return {
-      ...(interrupts.length === 0 ? finishTurn(next, event.runId, event.timestamp) : next),
+      ...(interrupts.length === 0
+        ? finishTurn(
+            next,
+            event.runId,
+            event.timestamp,
+            outcome?.type === 'complete' ? 'completed' : 'unknown',
+          )
+        : next),
       approvals,
       reasoning: [],
       activeRunId: undefined,
