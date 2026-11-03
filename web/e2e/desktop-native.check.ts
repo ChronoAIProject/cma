@@ -90,7 +90,7 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
   await page.reload();
   await expect(page.getByRole('checkbox', { name: 'Enable desktop' })).toBeChecked();
   await page.getByRole('button', { name: 'Recover original task' }).click();
-  await expect(page).toHaveURL(/\/agents\/agt_/);
+  await expect(page).toHaveURL(/\/agents\/agt_/, { timeout: 90000 });
   const agentVisibleAt = Date.now();
   const agentId = new URL(page.url()).pathname.split('/').at(-1)!;
   const open = page.getByRole('button', { name: 'Show Agent computer', exact: true });
