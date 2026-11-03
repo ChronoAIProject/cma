@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { MessageAcceptance } from './controllerTypes';
+import type { AgentController, MessageAcceptance } from './controllerTypes';
 import type { ConversationState } from './conversation';
 import type { SuggestedReplySet } from './suggestions';
 
@@ -33,6 +33,10 @@ const pending = new Map<
   { metric: Extract<SuggestionMetric, { kind: 'send_confirmed' }>; at: number }
 >();
 const emitted = new Map<string, number>();
+const attempts = new Map<
+  string,
+  { scope: Scope; itemId: string; mode: SuggestionSendMode; requestKey: string; at: number }
+>();
 const limit = 100;
 const lifetime = 30 * 60 * 1000;
 
@@ -65,34 +69,73 @@ export function confirmSuggestionSend(
   receipt?: MessageAcceptance,
 ) {
   if (!receipt || !set.items.some((item) => item.id === itemId)) return;
+  confirm(scope(set), itemId, mode, receipt);
+}
+
+function confirm(
+  identityScope: Scope,
+  itemId: string,
+  mode: SuggestionSendMode,
+  receipt: MessageAcceptance,
+) {
   const identity = 'commandId' in receipt ? receipt.commandId : receipt.runId;
-  const key = JSON.stringify([set.viewerId, set.agentId, set.id, itemId, identity]);
-  const metric = { ...scope(set), kind: 'send_confirmed' as const, itemId, mode, receipt };
+  const key = JSON.stringify([
+    identityScope.viewerId,
+    identityScope.agentId,
+    identityScope.setId,
+    itemId,
+    identity,
+  ]);
+  const metric = { ...identityScope, kind: 'send_confirmed' as const, itemId, mode, receipt };
   if (!emit(`send:${key}`, metric)) return;
   pending.set(key, { metric, at: Date.now() });
   if (pending.size > limit) pending.delete(pending.keys().next().value!);
+}
+
+export function rememberSuggestionRequest(
+  set: SuggestedReplySet,
+  itemId: string,
+  mode: SuggestionSendMode,
+  requestKey: string,
+) {
+  if (!requestKey || !set.items.some((item) => item.id === itemId)) return;
+  attempts.set(JSON.stringify([set.viewerId, set.agentId, requestKey]), {
+    scope: scope(set),
+    itemId,
+    mode,
+    requestKey,
+    at: Date.now(),
+  });
+  if (attempts.size > limit) attempts.delete(attempts.keys().next().value!);
 }
 
 export function useSuggestionExposure(set: SuggestedReplySet, enabled: boolean) {
   const element = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!enabled || !element.current || typeof IntersectionObserver === 'undefined') return;
+    let intersecting = false;
+    const expose = () => {
+      if (document.visibilityState !== 'visible' || !intersecting) return;
+      emit(`exposure:${JSON.stringify([set.viewerId, set.agentId, set.id])}`, {
+        ...scope(set),
+        kind: 'exposure',
+      });
+    };
     const observer = new IntersectionObserver(
       (entries) => {
-        if (
-          document.visibilityState !== 'visible' ||
-          !entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.5)
-        )
-          return;
-        emit(`exposure:${JSON.stringify([set.viewerId, set.agentId, set.id])}`, {
-          ...scope(set),
-          kind: 'exposure',
-        });
+        intersecting = entries.some(
+          (entry) => entry.isIntersecting && entry.intersectionRatio >= 0.5,
+        );
+        expose();
       },
       { threshold: 0.5 },
     );
     observer.observe(element.current);
-    return () => observer.disconnect();
+    document.addEventListener('visibilitychange', expose);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', expose);
+    };
   }, [set, enabled]);
   return element;
 }
@@ -101,8 +144,25 @@ export function useSuggestionOutcomes(
   conversation: ConversationState | undefined,
   viewerId: string,
   agentId: string,
+  retained?: ReturnType<NonNullable<AgentController['readSuggestionRequest']>>,
 ) {
   useEffect(() => {
+    for (const [key, attempt] of attempts) {
+      if (Date.now() - attempt.at > lifetime) {
+        attempts.delete(key);
+        continue;
+      }
+      if (
+        attempt.scope.viewerId !== viewerId ||
+        attempt.scope.agentId !== agentId ||
+        retained?.key !== attempt.requestKey ||
+        retained.state !== 'accepted' ||
+        !retained.receipt
+      )
+        continue;
+      confirm(attempt.scope, attempt.itemId, attempt.mode, retained.receipt);
+      attempts.delete(key);
+    }
     for (const [key, entry] of pending) {
       if (Date.now() - entry.at > lifetime) {
         pending.delete(key);
@@ -125,5 +185,5 @@ export function useSuggestionOutcomes(
       emit(`outcome:${key}`, { ...metric, kind: 'task_outcome', outcome });
       pending.delete(key);
     }
-  }, [conversation, viewerId, agentId]);
+  }, [conversation, viewerId, agentId, retained]);
 }
