@@ -118,6 +118,7 @@ async fn fixture_app() -> (Server, ManagementState, LaunchRequest, Creator) {
         Arc::new(server.records.clone()),
         Arc::new(CreatorAuthenticator::new("http://127.0.0.1:9").unwrap()),
         crate::ManagementConfig {
+            console_public_url: None,
             master_keys: Arc::new(fixture::keys()),
             public_url: "http://127.0.0.1:8090".into(),
             public_api_url: "http://127.0.0.1:8090".into(),

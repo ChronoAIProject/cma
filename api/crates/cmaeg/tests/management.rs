@@ -89,6 +89,7 @@ fn management_state(
         records,
         creator_auth,
         cmaeg::ManagementConfig {
+            console_public_url: None,
             master_keys: Arc::new(ring),
             public_url: "http://127.0.0.1:8090".into(),
             public_api_url: "http://127.0.0.1:8090".into(),
