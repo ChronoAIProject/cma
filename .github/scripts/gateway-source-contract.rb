@@ -91,14 +91,6 @@ module GatewaySourceContract
     })
     values = { "infra/api/httproute.yaml" => routes, "infra/api/healthcheckpolicy.yaml" => [health] }
     values["infra/cmaeg/httproute.yaml"] = [
-      gateway_route("cma-event-gateway", {
-        "parentRefs" => parent("https"), "hostnames" => ["bot-gateway.chrono-ai.fun"],
-        "rules" => [{ "matches" => all, "backendRefs" => backend("cma-event-gateway") }],
-      }),
-      gateway_route("cma-event-gateway-http-redirect", {
-        "parentRefs" => parent("http"), "hostnames" => ["bot-gateway.chrono-ai.fun"],
-        "rules" => [{ "matches" => all, "filters" => [{ "type" => "RequestRedirect", "requestRedirect" => { "scheme" => "https", "statusCode" => 301 } }] }],
-      }),
       gateway_route("cma-event-gateway-public-nyxid", {
         "parentRefs" => parent("https-nyxid"), "hostnames" => ["cma.nyxid.ai"],
         "rules" => [
