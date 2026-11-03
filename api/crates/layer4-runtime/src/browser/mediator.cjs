@@ -154,6 +154,7 @@ async function dispatch(request) {
 }
 
 const agent = createServer(async (request, response) => {
+  const originatingContext = context;
   try {
     if (request.method !== 'POST' || !['/navigate', '/input'].includes(request.url)) { response.writeHead(404).end(); return; }
     let body = '';
@@ -163,6 +164,7 @@ const agent = createServer(async (request, response) => {
     }
     const value = JSON.parse(body);
     const result = await serialized(() => {
+      if (!originatingContext || originatingContext !== context) throw refused('browser_identity');
       control.requireAgent();
       if (!browser || browser.closed) throw refused('browser_disconnected');
       return request.url === '/navigate' ? navigate(value.url) : sendInput(browser, session, value.input);

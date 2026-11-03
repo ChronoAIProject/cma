@@ -83,6 +83,11 @@ impl AgentFileService {
             scope: "agent_browser",
             writable,
         };
+        if self.adapter.browser().is_none()
+            || matches!(browser.state, EnvironmentAvailability::Unsupported)
+        {
+            return Ok(EnvironmentFeature::unsupported());
+        }
         if !authorized
             .decision
             .allows(ResourceCapability::ManageSharing)
@@ -92,9 +97,6 @@ impl AgentFileService {
                 "browser_owner_required",
                 false,
             ));
-        }
-        if self.adapter.browser().is_none() {
-            return Ok(EnvironmentFeature::unsupported());
         }
         if !matches!(browser.state, EnvironmentAvailability::Available) {
             return Ok(feature(
