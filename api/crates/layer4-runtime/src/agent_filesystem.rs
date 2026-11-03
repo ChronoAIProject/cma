@@ -33,6 +33,7 @@ pub(crate) fn list(
         &request.boot_id,
     )?;
     check_scope(
+        config,
         request.owner_access,
         &request.protected_paths,
         &request.path,
@@ -47,7 +48,15 @@ pub(crate) fn list(
         } else {
             format!("{}/{}", request.path, name)
         };
-        if check_scope(request.owner_access, &request.protected_paths, &path, false).is_err() {
+        if check_scope(
+            config,
+            request.owner_access,
+            &request.protected_paths,
+            &path,
+            false,
+        )
+        .is_err()
+        {
             continue;
         }
         let metadata = stat(&directory, &name)?;
@@ -99,6 +108,7 @@ pub(crate) fn read(
         return Err(rejected("file read bound is invalid"));
     }
     check_scope(
+        config,
         request.owner_access,
         &request.protected_paths,
         &request.path,
@@ -129,6 +139,7 @@ pub(crate) fn write(
         .content()
         .map_err(|_| rejected("file content is invalid or too large"))?;
     check_scope(
+        config,
         request.owner_access,
         &request.protected_paths,
         &request.path,
@@ -243,6 +254,7 @@ pub(crate) fn delete(
         &request.boot_id,
     )?;
     check_scope(
+        config,
         request.owner_access,
         &request.protected_paths,
         &request.path,
@@ -259,7 +271,30 @@ pub(crate) fn delete(
     })
 }
 
-fn check_scope(owner: bool, provider_paths: &[String], path: &str, remove: bool) -> Result<()> {
+fn check_scope(
+    config: &RuntimeConfig,
+    owner: bool,
+    provider_paths: &[String],
+    path: &str,
+    remove: bool,
+) -> Result<()> {
+    let file_root = if config.home == Path::new("/home/cma") {
+        Path::new("/home")
+    } else {
+        config.home.as_path()
+    };
+    let requested = Path::new(path);
+    if [&config.state_root, &config.checkpoint_root]
+        .into_iter()
+        .filter_map(|root| root.strip_prefix(file_root).ok())
+        .any(|protected| {
+            requested.starts_with(protected) || (remove && protected.starts_with(requested))
+        })
+    {
+        return Err(rejected(
+            "runtime state and checkpoint files are not public files",
+        ));
+    }
     if owner {
         return Ok(());
     }
