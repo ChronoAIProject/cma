@@ -244,6 +244,7 @@ it('restores an accepted home task after refresh and opens its exact preparing A
   await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: '比较三个工具' } });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByText('Task accepted. Preparing your Agent.');
   first.unmount();
   readable = true;
