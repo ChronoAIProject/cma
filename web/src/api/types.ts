@@ -148,6 +148,12 @@ export interface SandboxDetail extends SandboxSummary {
 }
 
 export type WorkspaceSource =
+  | {
+      readonly type: 'repository_snapshot';
+      readonly url: string;
+      readonly reference?: string;
+      readonly source_commit?: string;
+    }
   | { readonly type: 'git_repository'; readonly url: string; readonly reference?: string }
   | { readonly type: 'empty' };
 
@@ -246,6 +252,7 @@ export interface AgentDetail {
     readonly status: WorkspaceStatus;
     readonly profile: ProfileReference;
     readonly resolvedCommit?: string;
+    readonly source?: WorkspaceSource;
   };
   readonly sandbox: {
     readonly id: string;
