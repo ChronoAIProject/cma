@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::sandbox::{Agent, AgentLogEntry, AgentLogKind, AgentStatus};
+use crate::sandbox::{Agent, AgentLogEntry, AgentStatus};
 
 use super::{AgentCommand, AgentInputOrder, CommandLedgerError, CommandReservation};
 
@@ -73,48 +73,18 @@ impl AnswerContext {
     }
 }
 
-#[derive(Default)]
-pub struct AnswerObservation {
-    turn: Option<u64>,
-    message: Option<u64>,
-    completed: bool,
-}
-
-impl AnswerObservation {
-    pub fn observe(&mut self, entry: &AgentLogEntry) {
-        match &entry.kind {
-            AgentLogKind::TurnStarted { turn_sequence, .. } => {
-                self.turn = Some(*turn_sequence);
-                self.message = None;
-                self.completed = false;
-            }
-            AgentLogKind::OwnerMessage { .. } => {
-                self.message = None;
-                self.completed = false;
-            }
-            AgentLogKind::AgentMessage { content } => {
-                self.message = (!content.trim().is_empty()).then_some(entry.seq);
-                self.completed = false;
-            }
-            AgentLogKind::TurnCompleted { turn_sequence } => {
-                self.completed = self.turn == Some(*turn_sequence);
-            }
-            AgentLogKind::TurnFailed { .. } | AgentLogKind::TurnInterrupted { .. } => {
-                self.completed = false
-            }
-            _ => {}
-        }
-    }
-
-    pub fn current(&self) -> Option<AnswerContext> {
-        if !self.completed {
-            return None;
-        }
-        Some(AnswerContext {
-            turn_sequence: self.turn?,
-            answer_sequence: self.message?,
+pub fn answer_context_for_log(
+    agent: &Agent,
+    entries: &[AgentLogEntry],
+) -> Result<Option<AnswerContext>, CommandLedgerError> {
+    let projection = crate::sandbox::agent_reads_fold::fold_agent_log(agent, entries)
+        .map_err(|_| CommandLedgerError::Corrupt)?;
+    Ok(projection.transcript.turns.last().and_then(|turn| {
+        turn.final_answer().map(|answer| AnswerContext {
+            turn_sequence: turn.turn_sequence,
+            answer_sequence: answer.sequence,
         })
-    }
+    }))
 }
 
 pub fn require_answer_context(
