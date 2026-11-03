@@ -50,6 +50,82 @@ it('keeps protocol metadata out of streaming prose without creating premature ca
   expect(screen.queryByRole('list', { name: 'Answer deliverables' })).toBeNull();
 });
 
+it('shows access revocation discovered after buffering and never saves those bytes', async () => {
+  const saved = vi.fn(() => 'blob:forbidden');
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL = saved;
+      static revokeObjectURL() {}
+    },
+  );
+  let metadataReads = 0;
+  const client = createClient({
+    baseUrl: 'https://cma.test',
+    fetch: async (input) => {
+      const path = new URL(String(input)).pathname;
+      const identity = { agent_id: 'agent-1', answer_id: 'event:5', turn_sequence: 3 };
+      if (path.endsWith('/deliverables')) return json({ ...identity, items: [first] });
+      if (path.endsWith('/download'))
+        return new Response('abc', { headers: { 'content-type': 'application/octet-stream' } });
+      return json({
+        ...identity,
+        item: { ...first, status: ++metadataReads === 1 ? 'unchecked' : 'denied' },
+      });
+    },
+  });
+  const state = transcript();
+  render(
+    <MessageStream
+      conversation={{ ...state, messages: state.messages.slice(0, 1) }}
+      onApproval={vi.fn()}
+      deliverables={{ agentId: 'agent-1', viewerId: 'owner', client: client.agents }}
+    />,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'Download first.txt' }));
+  expect(await screen.findByText('Access unavailable')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Download first.txt' })).toBeDisabled();
+  expect(saved).not.toHaveBeenCalled();
+});
+
+it('explains a changed live file reported by the download route and keeps retry independent', async () => {
+  const client = createClient({
+    baseUrl: 'https://cma.test',
+    fetch: async (input) => {
+      const path = new URL(String(input)).pathname;
+      const identity = { agent_id: 'agent-1', answer_id: 'event:5', turn_sequence: 3 };
+      if (path.endsWith('/download'))
+        return new Response(
+          JSON.stringify({
+            type: 'https://cma.test/problems/deliverable-changed',
+            title: 'File changed',
+            status: 409,
+            detail: 'Bytes differ from the referenced version.',
+            code: 'deliverable_changed',
+          }),
+          { status: 409, headers: { 'content-type': 'application/problem+json' } },
+        );
+      return json(
+        path.endsWith('/deliverables')
+          ? { ...identity, items: [first] }
+          : { ...identity, item: first },
+      );
+    },
+  });
+  const state = transcript();
+  render(
+    <MessageStream
+      conversation={{ ...state, messages: state.messages.slice(0, 1) }}
+      onApproval={vi.fn()}
+      deliverables={{ agentId: 'agent-1', viewerId: 'owner', client: client.agents }}
+    />,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'Download first.txt' }));
+  expect(await screen.findByText('File changed since this answer')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Download first.txt' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Retry first.txt' })).toBeEnabled();
+});
+
 function transcript() {
   return {
     ...conversationFromTranscript({ agentId: 'agent-1', throughSeq: 0, turns: [] }),

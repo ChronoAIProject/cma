@@ -1,5 +1,6 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AnswerDeliverable } from '@chronoai/cma-sdk';
+import { ApiError, DeliverableUnavailable } from '@chronoai/cma-sdk';
 import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDeliveries';
 import { Button } from '../ui/Button';
 import { IconPaperclipOutline16 } from '../ui/icons';
@@ -16,6 +17,24 @@ const statusText: Record<AnswerDeliverable['status'], string> = {
   too_large: 'Exceeds the resource limit',
   unavailable: 'Download unavailable; retry',
 };
+
+function downloadFailureStatus(error: unknown): AnswerDeliverable['status'] | undefined {
+  if (error instanceof DeliverableUnavailable) return error.status;
+  if (!(error instanceof ApiError)) return;
+  const statuses: Readonly<Record<string, AnswerDeliverable['status']>> = {
+    deliverable_changed: 'changed',
+    file_conflict: 'changed',
+    file_not_found: 'missing',
+    file_too_large: 'too_large',
+    file_runtime_not_ready: 'not_ready',
+    file_runtime_unsupported: 'unavailable',
+    file_unavailable: 'unavailable',
+    deliverable_unavailable: 'unavailable',
+  };
+  return (
+    statuses[error.code ?? ''] ?? ([401, 403, 404].includes(error.status) ? 'denied' : undefined)
+  );
+}
 
 function preserveFollowingMessage(element: HTMLElement | null) {
   const scroller = element?.closest('.agent-surface__conversation');
@@ -75,8 +94,12 @@ function DeliveryRow({
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      if (!abort.signal.aborted) setError('Download failed; retry');
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        const status = downloadFailureStatus(error);
+        if (status) setItem({ ...item, status });
+        else setError('Download failed; retry');
+      }
     } finally {
       if (!abort.signal.aborted) {
         pending.current = undefined;
