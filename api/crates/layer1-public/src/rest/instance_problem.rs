@@ -155,7 +155,7 @@ impl From<AgentOperationError> for InstanceProblem {
 
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
-        let (status, slug, detail, code) = match &self {
+        let (status, slug, detail, code): (_, _, &str, _) = match &self {
             Self::ResourceAccess(error) => return super::resource_access_problem::ResourceProblem(error.clone()).into_response(),
             Self::Connection(error) => return super::instances_problem::HierarchyProblem::connection(error.clone()).into_response(),
             Self::Forbidden => (
@@ -207,7 +207,7 @@ impl IntoResponse for InstanceProblem {
             } => (
                 StatusCode::CONFLICT,
                 "agent-skill-version-upgrade-unsupported",
-                format!(
+                &format!(
                     "Skill {id:?} is already installed at version {installed:?}; changing it to version {requested:?} is unsupported on an existing Agent. Create a replacement Agent with the requested profile."
                 ),
                 "agent_skill_version_upgrade_unsupported",
