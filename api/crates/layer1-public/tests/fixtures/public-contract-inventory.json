@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 239,
+  "openapi_operations": 240,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -2247,6 +2247,11 @@
       "required_problems": [
         "not_authenticated"
       ]
+    },
+    "GET /api/v2/ui/task-experience": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/task_experience.rs# Current caller policy is private/no-store and separate from environment capability or accepted recovery.",
+      "required_problems": ["not_authenticated"]
     },
     "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation": {
       "classification": "openapi",

@@ -13,11 +13,13 @@ import './ComposerSettings.css';
 export function SessionSettings({
   agentId,
   active,
+  runtimeReady,
   busy,
   authorizeUpdate,
 }: {
   readonly agentId: string;
   readonly active: boolean;
+  readonly runtimeReady: boolean;
   readonly busy: boolean;
   readonly authorizeUpdate?: (signal: AbortSignal) => Promise<void>;
 }) {
@@ -35,7 +37,7 @@ export function SessionSettings({
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string>();
   useEffect(() => {
-    if (!active) return;
+    if (!active || !runtimeReady) return;
     const request = new AbortController();
     void (async () => {
       setModelsLoading(true);
@@ -57,7 +59,7 @@ export function SessionSettings({
       }
     })();
     return () => request.abort();
-  }, [active, agentId, busy, client, modelsReload]);
+  }, [active, runtimeReady, agentId, busy, client, modelsReload]);
   const [intent, setIntent] = useState<{ key: string; body: AgentSettingsView } | undefined>(
     undefined,
   );

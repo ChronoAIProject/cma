@@ -54,6 +54,7 @@ mod source_cases;
 mod state_cases;
 mod suggestion_cases;
 mod symbols;
+mod task_experience_cases;
 mod trigger_cases;
 mod warm_pool_cases;
 
@@ -154,6 +155,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = task_experience_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = Box::pin(deliverable_cases::scenario(name)).await {
         return scenario;
     }
