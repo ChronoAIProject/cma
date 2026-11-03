@@ -29,6 +29,7 @@ describe('setPlan', () => {
       {
         id: 'plan:1',
         runId: '1',
+        incomplete: true,
         entries: [{ title: 'Read lemma 4.1 proof', status: 'completed' }],
       },
     ]);
