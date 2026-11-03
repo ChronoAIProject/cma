@@ -488,7 +488,9 @@ use super::trigger_openapi_shapes::*;
     )
 )]
 struct ApiDoc;
+pub fn document() -> utoipa::openapi::OpenApi {
+    composition::compose(ApiDoc::openapi())
+}
 pub use agent_manager::document as agent_manager_document;
-pub use composition::document;
 #[cfg(test)]
 mod tests;
