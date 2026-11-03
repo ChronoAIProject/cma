@@ -158,6 +158,7 @@ impl ControlPlaneComposition {
         )
         .with_connections(connection_prerequisite.clone())
         .with_message_feedback(stores.message_feedback.clone())
+        .with_suggestions(stores.sandbox_model.clone())
         .with_skill_support(Arc::new(crate::projections::AdapterAgentSkillSupport(
             adapter.clone(),
         )))

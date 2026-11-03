@@ -168,7 +168,7 @@ export interface CmaWebClient {
     agentId: string,
     scope: { readonly turn_sequence: number; readonly answer_sequence: number },
     options?: { readonly signal?: AbortSignal },
-  ) => Promise<import('../agent/useContextualSuggestions').SuggestedReplyReading>;
+  ) => Promise<import('@chronoai/cma-sdk').SuggestedReplyReading>;
   readonly documents?: DocumentsClient;
   readonly files?: AgentFilesClient;
   readonly readMessageFeedback?: (

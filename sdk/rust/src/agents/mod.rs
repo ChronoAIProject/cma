@@ -16,6 +16,8 @@ mod channel_usage;
 mod events;
 mod lifecycle;
 mod message_feedback;
+mod suggestions;
+pub use suggestions::*;
 mod models;
 mod preferences;
 mod provenance;

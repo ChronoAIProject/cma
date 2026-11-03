@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+mod contextual_suggestions;
 mod conversation_fixtures;
 mod creation_delegation;
 mod lifecycle;
@@ -11,7 +12,6 @@ mod models;
 mod settings;
 mod shared_settings;
 mod skills;
-mod contextual_suggestions;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 
 use async_trait::async_trait;
