@@ -24,9 +24,9 @@ it('loads composer settings independently of optional creation provenance', asyn
   const view = render(draw(false));
   expect(readAgentSettings).not.toHaveBeenCalled();
   view.rerender(draw(true));
-  expect(
-    await screen.findByRole('button', { name: /^Agent settings:/ }),
-  ).toHaveTextContent('gpt-6 · High · Autonomous');
+  expect(await screen.findByRole('button', { name: /^Agent settings:/ })).toHaveTextContent(
+    'gpt-6 · High · Autonomous',
+  );
   expect(readAgentProvenance).not.toHaveBeenCalled();
   view.rerender(draw(false));
   expect(readAgentSettings.mock.calls[0]?.[1].signal.aborted).toBe(true);
