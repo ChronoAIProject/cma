@@ -13,7 +13,11 @@ export interface AnswerDeliveryAccess {
 
 export const AnswerDeliveryContext = createContext<AnswerDeliveryAccess | undefined>(undefined);
 
-export function answerProse(content: string): { content: string; references: number } {
+export function answerProse(
+  content: string,
+  streaming = false,
+): { content: string; references: number } {
+  if (!content.includes('<!--cma-deliverable:')) return { content, references: 0 };
   let fence: { character: string; width: number } | undefined;
   const markers = new Set<string>();
   const lines = content.split('\n').filter((line) => {
@@ -33,6 +37,8 @@ export function answerProse(content: string): { content: string; references: num
       markers.add(line);
       return false;
     }
+    if (!fence && streaming && /^<!--cma-deliverable:v1:[A-Za-z0-9_-]{0,4096}>?$/.test(line))
+      return false;
     return true;
   });
   return { content: lines.join('\n'), references: Math.min(markers.size, 32) };
