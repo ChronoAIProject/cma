@@ -175,6 +175,7 @@ export function worktree(value: Wire.Worktree): Worktree {
 
 function agentSummary(value: Wire.HierarchyAgentSummary): AgentSummary {
   return {
+    taskStatus: value.task_status,
     id: value.id,
     workspaceId: value.workspace_id,
     worktreeId: value.worktree_id,
