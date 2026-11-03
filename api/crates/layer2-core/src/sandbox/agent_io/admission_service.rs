@@ -51,6 +51,7 @@ pub struct AgentCommandService {
     pub(super) store: Arc<dyn AgentCommandStore>,
     pub(super) access: Arc<ResourceAccessService>,
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
+    task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
 }
 
 impl AgentCommandService {
@@ -63,7 +64,26 @@ impl AgentCommandService {
             store,
             access,
             authority,
+            task_experience: Default::default(),
         })
+    }
+
+    pub fn with_task_experience(
+        self: Arc<Self>,
+        policy: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store: self.store.clone(),
+            access: self.access.clone(),
+            authority: self.authority.clone(),
+            task_experience: policy,
+        })
+    }
+
+    pub fn task_experience_policy(
+        &self,
+    ) -> Arc<crate::sandbox::task_experience::TaskExperiencePolicy> {
+        self.task_experience.clone()
     }
 
     /// Revalidate operation visibility before returning an older adapter's
@@ -113,6 +133,26 @@ impl AgentCommandService {
             agent_id: request.envelope.agent_id.clone(),
         };
         let capability = command_capability(&request.envelope.command);
+        if AnswerContext::from_command(&request.envelope.command)?.is_some()
+            && !self.task_experience.allows(&context.caller.subject,
+                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission)
+        {
+            let existing = self
+                .with_authority_bound(
+                    &authorized,
+                    capability,
+                    self.store.get_admitted_command(&request.scope(), &request.key_sha256),
+                )
+                .await;
+            self.fence(&authorized, &target, capability).await?;
+            if let Some(record) = existing?? {
+                let CommandReservationResult::Existing(record) = request.replay(record)? else {
+                    return Err(CommandLedgerError::Corrupt.into());
+                };
+                return Ok(CommandStatusView::from_record(&record));
+            }
+            return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
+        }
         let expected = request.clone();
         let lineage = &authorized.snapshot.lineage;
         let retry_creation = submission.expected_agent_revision.is_none()

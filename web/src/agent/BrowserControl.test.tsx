@@ -67,6 +67,7 @@ it('waits for acquisition receipt, sends real viewport input through the public 
       agentId="agent-a"
       incarnation="current"
       active
+      controlAdmission
       onReload={() => {}}
     />,
   );

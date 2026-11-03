@@ -55,6 +55,8 @@ mod workspace;
 mod desktop;
 #[path = "agent_lifecycle_image.rs"]
 mod image;
+#[path = "agent_lifecycle_policy.rs"]
+mod task_policy;
 pub(crate) use image::{ImageManagerResolver, ImageResolver};
 #[path = "agent_lifecycle_validation.rs"]
 pub(crate) mod validation;
@@ -63,15 +65,7 @@ use validation::{
     workspace_error,
 };
 
-/// Use the same defaults for explicit inline creation and credential-free preparation.
-pub(crate) fn prepared_default_agent_profile(
-) -> Result<layer2_core::profiles::AgentProfileContent, String> {
-    validation::agent_content(&guidance::profile_with_instructions(
-        layer1_public::rest::AgentLifecycleProfile::default(),
-        Some(guidance::managed_v3()),
-    ))
-    .map_err(|error| format!("default Agent preparation profile is invalid: {error:?}"))
-}
+pub(crate) use profiles::prepared_default_agent_profile;
 
 pub(crate) struct InlineAgentLifecycle {
     sandbox: Arc<SandboxService>,
@@ -85,6 +79,7 @@ pub(crate) struct InlineAgentLifecycle {
     native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
     self_ref: OnceLock<Weak<Self>>,
+    task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
     worker_slots: Arc<tokio::sync::Semaphore>,
 }
 
@@ -130,6 +125,7 @@ impl InlineAgentLifecycle {
             native_prepared,
             desktop,
             self_ref: OnceLock::new(),
+            task_experience: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
         });
         let _ = instance.self_ref.set(Arc::downgrade(&instance));
@@ -408,6 +404,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
                 status: "provisioning".into(),
             });
         }
+        self.require_task_experience(caller, &request)?;
         if request.sandbox_id.is_some() {
             self.contextual_sandbox(caller, context.map(|context| &context.actor), &request)
                 .await?;

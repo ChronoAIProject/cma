@@ -47,7 +47,7 @@ async function chooseEffort(user: UserEvent, label: string) {
 function draw(client: ReturnType<typeof agentClient>, busy = false) {
   return (
     <CmaClientProvider client={client}>
-      <SessionSettings agentId="agent-one" active busy={busy} />
+      <SessionSettings agentId="agent-one" active runtimeReady busy={busy} />
     </CmaClientProvider>
   );
 }

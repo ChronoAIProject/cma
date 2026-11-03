@@ -8,6 +8,7 @@ import { WIRE_AGENT, WIRE_SANDBOX_DETAIL } from '../test/rest';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import { AgentSidePanel } from '../agent/AgentSidePanel';
 import { TaskHome } from './TaskHome';
+import { taskExperience } from '../test/taskExperience';
 
 afterEach(() => {
   sessionStorage.clear();
@@ -47,7 +48,10 @@ it('lets an unsupported retained draft clear desktop without changing its task o
     });
   };
   vi.stubGlobal('fetch', transport);
-  const client = createRestWebClient(createClient({ fetch: transport }));
+  const client = {
+    ...createRestWebClient(createClient({ fetch: transport })),
+    taskExperience: taskExperience('owner'),
+  };
   render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={() => {}} />);
   await screen.findByText(/retained runtime requires an explicit upgrade/);
   expect(writes).toHaveLength(0);
@@ -157,7 +161,10 @@ it('recovers a lost desktop creation receipt after reload into the same task Age
     throw new Error(`Unexpected request ${path}`);
   };
   vi.stubGlobal('fetch', transport);
-  const client = createRestWebClient(createClient({ fetch: transport }));
+  const client = {
+    ...createRestWebClient(createClient({ fetch: transport })),
+    taskExperience: taskExperience('owner'),
+  };
   const opened = vi.fn();
   function Journey() {
     const [agent, setAgent] = useState<string>();
