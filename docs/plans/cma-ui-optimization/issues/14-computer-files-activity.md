@@ -1,5 +1,11 @@
 # 14：常驻 Agent 电脑面板展示文件与操作输出
 
+集成修复交接：见 [INTEGRATION-REPAIRS](../INTEGRATION-REPAIRS.md)。本票 CSS
+重复声明已归并为文件组件拥有的 embedded modifier；public path / home mutation
+guards 原样提取，保留 07 的 read check。环境 GET 已补共享 JSON inventory、10 个
+真实 handler cases 及两个 typed SDK 的共享 corpus dispatch；全局 inventory 的 07
+四条交付路由缺项单独记录，不把文档 inventory 通过等同共享契约完整。
+
 **What to build:** 用户在对话旁持续查看 Agent 的文件和真实命令活动，切换面板时不丢失会话或未保存内容。
 
 **Blocked by:** None（复用现有文件侧栏和工具事件）。

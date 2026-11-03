@@ -175,6 +175,7 @@ async fn scenario_with_runtime_boot(
         "foreign",
         "anonymous",
         "not_ready",
+        "paused",
         "unsupported",
         "runtime_unsupported",
         "runtime_conflict",
@@ -214,6 +215,9 @@ async fn scenario_with_runtime_boot(
         sandbox.lifecycle.home = Some(Box::new(runtime::persistent_home()));
     }
     sandbox.revision += 1;
+    if kind == "paused" {
+        sandbox.status = layer2_core::sandbox::SandboxStatus::Paused;
+    }
     fixture.store.save_sandbox(revision, sandbox).await.unwrap();
     let subject = if matches!(kind, "viewer" | "writer" | "revoked") {
         "link-recipient"
