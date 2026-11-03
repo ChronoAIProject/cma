@@ -215,6 +215,13 @@ test('real Web input exclusively controls the native Agent browser through publi
   await page.getByRole('button', { name: 'Check original operation' }).click();
   await expect(page.getByText('You are controlling', { exact: true })).toBeVisible();
   expect((await rpc({ t: 'form_state' })).values.at(-1)).toBe('USER-17-ONCE');
+  const inputObservedAt = Date.now();
+  await expect
+    .poll(async () =>
+      Date.parse((await page.locator('.agent-browser time').getAttribute('datetime'))!),
+    )
+    .toBeGreaterThan(inputObservedAt);
+  await expect(image).toHaveJSProperty('naturalWidth', 1280);
   await page.getByText('Control log', { exact: true }).click();
   await page.screenshot({ path: info.outputPath('user-control-audit.png'), fullPage: true });
   const imageData = (await image.getAttribute('src'))!.split(',')[1]!;
@@ -306,6 +313,8 @@ test('real Web input exclusively controls the native Agent browser through publi
     'Keep this conversation draft',
   );
   expect(taskInputs).toBe(0);
+  await page.unrouteAll({ behavior: 'wait' });
+  await page.close();
   await writeFile(
     join(directory, 'web-chain-result.json'),
     JSON.stringify(
