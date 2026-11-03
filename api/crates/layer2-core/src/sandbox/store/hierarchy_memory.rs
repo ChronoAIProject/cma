@@ -117,6 +117,27 @@ impl HierarchyReadStore for InMemorySandboxStore {
             return Ok(None);
         };
         Ok(Some(WorkspaceHierarchyRecord {
+            task_statuses: state
+                .agents
+                .values()
+                .filter(|agent| &agent.workspace_id == id)
+                .map(|agent| {
+                    let latest = state.agent_logs.get(&agent.id).and_then(|entries| {
+                        entries
+                            .iter()
+                            .rev()
+                            .find(|entry| crate::sandbox::AgentTaskStatus::relevant(&entry.kind))
+                    });
+                    let pending_work = state.agent_commands.values().any(|command| {
+                        command.receipt.envelope.agent_id == agent.id
+                            && !command.status.is_terminal()
+                    });
+                    (
+                        agent.id.clone(),
+                        crate::sandbox::AgentTaskStatus::from_latest(agent, latest, pending_work),
+                    )
+                })
+                .collect(),
             workspace,
             worktrees: state
                 .worktrees

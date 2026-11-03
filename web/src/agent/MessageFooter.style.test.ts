@@ -26,7 +26,7 @@ it('reveals them on hover and keyboard focus, and keeps a set vote visible', () 
 });
 
 it('shows them at all times on devices that cannot hover', () => {
-  const touch = block(/@media \(hover: none\) \{[^}]*\}/);
+  const touch = block(/@media \(hover: none\)[^{]*\{[^}]*\}/);
   for (const selector of quiet) expect(touch).toContain(selector);
   expect(touch).toMatch(/opacity: 1/);
 });
