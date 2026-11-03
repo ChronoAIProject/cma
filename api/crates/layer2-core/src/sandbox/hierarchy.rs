@@ -50,6 +50,7 @@ pub struct SandboxHierarchyRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceHierarchyRecord {
+    pub task_statuses: std::collections::HashMap<AgentId, super::AgentTaskStatus>,
     pub workspace: Workspace,
     pub worktrees: Vec<Worktree>,
     pub agents: Vec<Agent>,
@@ -123,6 +124,8 @@ pub struct WorktreeHierarchySummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHierarchySummary {
+    #[serde(default)]
+    pub task_status: super::AgentTaskStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

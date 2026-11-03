@@ -389,6 +389,9 @@ mod authority_tests;
 #[path = "supervisor_checkpoint_http_tests.rs"]
 mod checkpoint_http_tests;
 #[cfg(test)]
+#[path = "supervisor_filesystem_http_tests.rs"]
+mod filesystem_http_tests;
+#[cfg(test)]
 #[path = "supervisor_mutation_tests.rs"]
 mod mutation_tests;
 #[cfg(test)]

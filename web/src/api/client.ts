@@ -46,12 +46,14 @@ export interface CommandOptions extends ReadOptions {
 }
 
 export interface AgentStreamOptions extends ReadOptions {
+  readonly idempotencyKey?: string;
   readonly after?: number;
   readonly onEvent: (event: AgentLiveEvent) => void;
 }
 
 export interface AgentLifecycleCreateInput {
   readonly name: string;
+  readonly initial_message?: string;
   readonly workspace_id?: string;
   readonly sandbox_id?: string;
   readonly image?: { readonly id: string; readonly version?: string };
@@ -192,6 +194,7 @@ export interface CmaWebClient {
   readonly agentTransport?: ReturnType<typeof createAgentTransport>;
   readonly resourceViews?: ResourceViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
+  readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
     options: CommandOptions,

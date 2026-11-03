@@ -17,7 +17,7 @@ import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
-import { presentAgent } from './presentation';
+import { presentAgent, presentRetainedInputs } from './presentation';
 import { useAgentSummary } from './useAgentSummary';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
 export type {
@@ -430,7 +430,7 @@ export function useAgentController(
     state.status === 'ready'
       ? currentAgentStatus(state.detail, state.conversation, summary)
       : undefined;
-  const retained = v2?.pending();
+  const legacy = client.agentTransport?.legacySession(agentId, options.viewerId);
   const controlNotice = useControlStatus(v2, onIdentityChange);
   const queuedInputs = useQueuedInputs(
     v2,
@@ -440,19 +440,15 @@ export function useAgentController(
     onIdentityChange,
   );
   return {
+    ...presentRetainedInputs(v2, legacy),
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
-    pendingMessage: retained?.input,
-    acceptedMessage: retained?.accepted,
-    acceptedSteeringMessage: retained?.acceptedSteering,
-    acceptedInterruptionMessage: retained?.acceptedInterruption,
-    pendingControl: retained?.control,
     controlNotice,
     controlsUnavailable:
       suspended ||
       (v2 !== undefined &&
         state.status === 'ready' &&
         state.conversation.responseBinding === undefined),
-    recoverPending: v2 === undefined ? undefined : recoverPending,
+    recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
     state: presentAgent(state, displayedStatus),
     inputAvailability: suspended
       ? {
@@ -473,8 +469,8 @@ export function useAgentController(
       setActionError(undefined);
       setReplayError(undefined);
     },
-    send: (content, onAccepted, onReceiptObserved, onRefused) =>
-      run(content, onAccepted, onReceiptObserved, onRefused),
+    send: (content, onAccepted, onReceiptObserved, onRefused, answerContext) =>
+      run(content, onAccepted, onReceiptObserved, onRefused, 'send', undefined, answerContext),
     steer:
       v2 === undefined
         ? undefined

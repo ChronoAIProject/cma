@@ -140,6 +140,11 @@ export function MessageStream({
               approvalReadOnly={approvalReadOnly}
               onApproval={onApproval}
               activeRunId={conversation.activeRunId}
+              planOutcome={
+                entry.kind === 'plan' && entry.item.runId !== undefined
+                  ? conversation.turnOutcomes?.[entry.item.runId]
+                  : undefined
+              }
               user={user}
               unknownUserName={unknownUserName}
               feedback={feedback}

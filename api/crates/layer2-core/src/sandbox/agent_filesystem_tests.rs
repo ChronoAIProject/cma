@@ -82,6 +82,33 @@ async fn fixture_with_authority(
 }
 
 pub(super) struct OrganizationAdmin;
+
+#[tokio::test]
+async fn computer_environment_reports_authorized_scope_without_runtime_addresses() {
+    let (files, _, owner) = fixture().await;
+    let environment = files
+        .environment(&owner.caller, Some(&owner), None, &agent().id)
+        .await
+        .unwrap();
+    let value = serde_json::to_value(environment).unwrap();
+    assert_eq!(value["agent_id"], agent().id.as_str());
+    assert_eq!(value["files"]["scope"], "mounted_home");
+    assert_eq!(value["files"]["state"], "available");
+    assert_eq!(value["files"]["writable"], true);
+    assert_eq!(value["operation_output"]["scope"], "agent_turn_history");
+    assert_eq!(value["operation_output"]["state"], "available");
+    for feature in ["browser", "replay", "control"] {
+        assert_eq!(value[feature]["state"], "unsupported");
+    }
+    for secret in ["runtime-test", &"b".repeat(32)] {
+        assert!(!value.to_string().contains(secret));
+    }
+    let outsider = context("outsider");
+    assert!(files
+        .environment(&outsider.caller, Some(&outsider), None, &agent().id)
+        .await
+        .is_err());
+}
 #[async_trait::async_trait]
 impl OrganizationAuthority for OrganizationAdmin {
     async fn organization_context(

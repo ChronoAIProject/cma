@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ApiError, ProtocolError } from '@chronoai/cma-sdk';
 import { AgentLifecycleCreateError } from '../api/client';
+import { requireTaskStorage } from './taskIdentity';
 import type {
   AgentLifecycleCreateInput,
   AgentLifecycleCreateReceipt,
@@ -23,6 +24,7 @@ function load(
   sandboxId?: string,
 ): { intent?: Intent; error?: string } {
   try {
+    requireTaskStorage();
     if (!owner) throw new Error();
     const raw = sessionStorage.getItem(lifecycleStorageKey(owner, workspaceId, sandboxId));
     if (raw === null) return {};
@@ -34,6 +36,8 @@ function load(
       !/^[a-zA-Z0-9-]{1,200}$/.test(intent.key) ||
       typeof intent.body?.name !== 'string' ||
       !intent.body.name ||
+      (intent.body.initial_message !== undefined &&
+        typeof intent.body.initial_message !== 'string') ||
       intent.body.workspace_id !== workspaceId ||
       intent.body.sandbox_id !== sandboxId ||
       (intent.agentId !== undefined && (typeof intent.agentId !== 'string' || !intent.agentId)) ||
@@ -53,6 +57,7 @@ function load(
 /** Find only a validated creation already bound to this viewer's admitted Agent. */
 export function lifecycleScopeForAgent(owner: string, agentId: string) {
   try {
+    requireTaskStorage();
     for (let index = 0; index < sessionStorage.length; index += 1) {
       const key = sessionStorage.key(index);
       if (!key?.startsWith('cma:agent-creation:')) continue;
@@ -110,6 +115,7 @@ export function useLifecycleIntent(
   useEffect(() => () => active.current?.abort(), [scope]);
   const retain = (intent?: Intent) => {
     try {
+      requireTaskStorage();
       if (!owner) throw new Error();
       if (intent)
         sessionStorage.setItem(
@@ -154,7 +160,7 @@ export function useLifecycleIntent(
         setOperation(value);
         setFailure(undefined);
         retryDelay = 500;
-        if (value.status === 'waiting_for_connection') setConnection(value.connection);
+        setConnection(value.status === 'waiting_for_connection' ? value.connection : undefined);
         if (value.status === 'queued' || value.status === 'running') {
           // A slow earlier phase must not add a full second to observing Agent readiness.
           // Count the read itself toward the cadence without overlapping requests.

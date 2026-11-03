@@ -10,11 +10,15 @@ mod capabilities;
 mod events;
 mod launch_companion;
 mod live;
+#[cfg(test)]
+mod plan_tests;
 mod replay;
 mod run;
 mod sandbox_companion;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod completion_tests;
 
 pub use launch_companion::{launch_companion_router, LaunchCompanionState};
 
