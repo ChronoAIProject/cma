@@ -139,6 +139,49 @@ pub(in crate::store) async fn apply(
     if waiting >= u64::from(request.queue_capacity) {
         return Err(CommandLedgerError::QueueFull.into());
     }
+    if let Some(expected) =
+        layer2_core::sandbox::agent_io::AnswerContext::from_command(&request.envelope.command)?
+    {
+        if store
+            .agent_commands
+            .find_one(doc! {
+                "agent_id": agent.id.as_str(),
+                "record.receipt.event_cursor": { "$gte": expected.answer_sequence as i64 },
+                "record.receipt.envelope.command.type": "message",
+            })
+            .session(&mut *session)
+            .await?
+            .is_some()
+        {
+            return Err(CommandLedgerError::NotAdmissible.into());
+        }
+        let mut entries = Vec::new();
+        super::super::agent_log::scan_complete_log_with_session(
+            store,
+            &agent.id,
+            agent.conversation.last_seq,
+            session,
+            |entry| {
+                entries.push(entry);
+                Ok(())
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            super::super::agent_log_integrity::TransactionLogError::Driver(error) => {
+                ApplyError::Driver(error)
+            }
+            super::super::agent_log_integrity::TransactionLogError::Domain(_) => {
+                ApplyError::Domain(CommandLedgerError::Corrupt)
+            }
+        })?;
+        layer2_core::sandbox::agent_io::require_answer_context(
+            request,
+            &agent,
+            waiting,
+            layer2_core::sandbox::agent_io::answer_context_for_log(&agent, &entries)?,
+        )?;
+    }
     if store
         .agent_commands
         .find_one(doc! { "_id": request.envelope.command_id.as_str() })
