@@ -13,6 +13,24 @@ impl AgentService {
         workspace_id: &WorkspaceId,
         request: CreateAgent,
     ) -> Result<Agent, AgentServiceError> {
+        self.create_for_lifecycle_with_purpose(
+            caller,
+            actor,
+            workspace_id,
+            request,
+            super::super::FirstMessagePurpose::Setup,
+        )
+        .await
+    }
+
+    pub async fn create_for_lifecycle_with_purpose(
+        &self,
+        caller: &Caller,
+        actor: Option<&ResourceActor>,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+        purpose: super::super::FirstMessagePurpose,
+    ) -> Result<Agent, AgentServiceError> {
         require(caller)?;
         if actor.is_some_and(|actor| actor.ordinary_subject() != Some(&caller.subject)) {
             return Err(AgentServiceError::Forbidden);
@@ -31,7 +49,7 @@ impl AgentService {
             CreationAttribution {
                 actor: actor.cloned(),
                 initiation: None,
-                first_message_purpose: super::super::FirstMessagePurpose::Setup,
+                first_message_purpose: purpose,
             },
         )
         .await
