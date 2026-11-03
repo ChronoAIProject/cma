@@ -3876,3 +3876,44 @@ the state dot and keep the last known state word alongside the refresh warning.
 | 2026-11-03 | Make task navigation the default, move Sandbox browsing under Settings, display authorized last-turn state with visible words, and preserve navigation position and lifecycle barriers. |
 
 | 2026-11-03 | Distinguish completed setup from completed tasks using recorded first-message purpose and turn identity; leave unknown legacy first-turn purpose unavailable. |
+
+### Compact input settings and confirmed completion time (2026-11-03)
+
+The composer defaults to one **Agent settings** disclosure, summarizing the
+model catalog label, reasoning effort and permission mode separated by middle
+dots. Reuse the quiet composer chip, 12/18 secondary ink, 8px radius and 4px gap.
+The summary truncates on one line and exposes the full text as its accessible
+name and title. It occupies the flexible space between attachment/steering and
+context/send/stop controls. Opening it reveals the existing model/effort and
+permission controls in a wrapping row inside the composer, with 4px gaps and
+8px top spacing. This supersedes the always-visible separate settings chips.
+The disclosure announces its expanded state and controls its named settings
+region. It never replaces the composer, draft, attachments or selected transport.
+Closing it retains unapplied changes. Apply, recovery, pending confirmation and
+errors stay visible below the controls even when the settings row is collapsed.
+Existing capability checks, idle-only application and exact request recovery
+remain authoritative. Settings changes never send a conversation message.
+Below 30rem, the summary gets its own full-width row above the action row;
+settings and sending controls retain 44px touch targets and keyboard focus rings.
+Long labels cannot displace Send or Stop. Reduced-motion behavior stays unchanged.
+
+Only Responses tabs offer Queue and Interrupt during a running turn. **Queue**
+says **Process after the current turn finishes.** **Interrupt** says **Stop the
+current turn, then start a new turn with this message.** Acceptance or delivery
+is not completion. AG-UI retains ordinary idle Send and active Stop; it must not
+advertise unsupported queue or interruption-with-message actions. Existing
+approval, uncertain send and control recovery remain independently actionable.
+
+The header has a separate completion slot, independent of plan/activity progress.
+It displays **Completed in 4 minutes** for a recorded start at 10:00 and successful
+end at 10:04. Use 12/18 caption ink and tabular numerals, with a polite atomic
+status announcement. Durations below one second read **Completed in less than
+1 second**. Longer durations show whole minutes and remaining whole seconds.
+Missing, invalid or reversed timestamps omit the duration; zero is valid only
+when both recorded timestamps exist. Never use mount time, last-updated time or
+the current clock to fill missing history. A new active turn, failure or
+interruption removes the previous completion duration. Loading incomplete history
+cannot claim completion. The slot wraps within the header at narrow widths and
+does not duplicate task status, plan progress or the active Thinking clock.
+
+| 2026-11-03 | Collapse model, reasoning and permission into one reversible settings disclosure; preserve all input/recovery controls, describe transport-specific queue/interruption truthfully, and show only confirmed successful last-turn elapsed time in an independent header slot for ticket 02. |
