@@ -61,7 +61,7 @@
 15. [15 浏览器实时画面](issues/15-browser-live.md) — Blocked by：14。支持的环境提供真实浏览器帧、Live 状态与断线恢复。
 16. [16 首页桌面选项](issues/16-desktop-creation.md) — Blocked by：03、15。选项进入创建与恢复契约，创建出的浏览器环境可以实际观察。
 17. [17 接管与归还浏览器](issues/17-browser-takeover.md) — Blocked by：15。显式控制权交接、互斥、断线处理和真实输入证明。
-18. [18 按操作记录回放](issues/18-operation-replay.md) — Blocked by：14。按 turn/事件游标检视历史操作并返回 Live，不重执行历史指令。
+18. [18 按操作记录回放](issues/18-operation-replay.md) — done，依赖 14 已满足。按 turn/事件游标检视历史操作并返回 Live，不重执行历史指令；[U/A/R 证据](18-EVIDENCE.md)。
 19. [19 整套体验验收与分批发布](issues/19-integrated-release.md) — Blocked by：01、02、04、05、06、08、10、12、13、16、17、18。完成跨功能场景、兼容性和回滚验证。
 
 ## 功能依赖图

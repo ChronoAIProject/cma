@@ -215,3 +215,14 @@
 - `git diff --check f793a41518fa969af068d7913ff6310dee7e040b HEAD` 和记录提交前的 worktree/cached diff check 通过。已断言 MessageFooter、StreamEntry 与 MessageStream performance tests 相对合并前完全未变，保留既有 finalAnswer、10 reasons 和交付展示；共享编辑仍使用 12 的 editor、普通消息协议与既有选择/恢复身份。
 - 本次只合入实现与机器证据，13 仍为 **in-progress / 尚未完整验收**。逐字核对原始 AC 文本未变，恰好一个 literal independent human quality criterion 未勾选；parent AI review 通过五个 v3 样本不等于人审，不将其改为完成。实际 billed cost 继续为 null/unknown，无零值替代、估算或虚构 native/model availability；实际样本日志与环境边界保留在既有外部证据中。
 - shared JSON inventory 235 actual / 230 declared 的 07/14 缺口仍由 parent repair worker `01a19fd8-0df5-7730-92e2-cefbe954f9b4` 处理；未重复 CSS/size/inventory/task-status/AppPublic 等集成修复。它们与原始 skill/Core/format/508-line Agent service/LocalAgentV2 head-404 问题分别记录，不宣称全仓或部署绿色。仅写集成 worktree，无原工作区或其他 worker 源码修改，无 push、PR 或部署。
+
+
+## Ticket 18 完成与交接（2026-11-03）
+
+- 分支 `codex/cma-ui-18`，独立 `ticket-18` worktree，自 `d19c225bd` 开始；`1dd75c6f4` 合并最新集成 `a2965df09`，实现与 shared-corpus 验证提交 `bb139fbf8`。未改原验收文本，8 项原 AC 均有证据；见 [18-EVIDENCE](18-EVIDENCE.md) 和精确 [18-FILE-SCOPE](18-FILE-SCOPE.md)。
+- 复用已有 public v2 event snapshot/head/finite tail、类型化 SDK 和 14 panel/observation。按 Agent incarnation、实际 turn、tool id、durable cursor 回放已记录命令/输出/状态/时间与当时计划；50 条窗口、公开有界分页、缺口/到期/截断明示。键盘 Previous/Next/Return Live；历史停留不受 live 新事件拖动，刷新按当前授权重读，账号/权限切换取消旧请求。06 plan 与 completed answer 定位同一实际 turn，无计划也可回放。
+- 首个 red/green 覆盖停在操作 2、新操作 4 到达仍在 2、Return Live 到 4 且无额外执行。最终 focused U 20 passed，合并 Console/shared seam 34 passed，public v2 26 passed（native 单独显式运行），core 权限 4 named tests passed。types/build/目标 lint/format 通过；memo/performance 保留。
+- shared JSON inventory 已补充复用 route 的 replay 语义；新增六个 shared corpus case，经真实 public handler、TS typed dispatch（6 cases + 1 coverage）、Rust typed dispatch（6 HTTP cases）通过。SDK dispatch 显式使用 typed toolOutput。Markdown API 文档及 standalone SDK 103 TS / 10 Rust tests 为独立证据；不引入 private API、新 Chat model 或 inventory 豁免。07/14 缺项由 parent repair worker 独立处理，保留最新合并 entries。
+- 实际 Codex 0.147 / patched ACP 1.4 在已固定 ticket04+14 测试镜像内执行四个无害命令，真实输出经过 recorder/public HTTP/Chrome reload，执行计数 **4→4**，无额外 API 写请求；native、public-native、Chrome 均显式 1 passed。镜像为最小测试包装，模型边界受控，HTTP 使用测试 owner/in-memory store；不称 production/Mongo restart/录像证据。没有 L4 修改或 Linux build，无视频/PTY/Browser private context/control。
+- 仅 ticket18 路径符合 500 source / 2000 test gate；全仓三个超限文件与 `a2965df09` 字节一致（508-line Agent service、503-line conversation、556-line feedback test 的现有 gate 分类），既有 skill/format/LocalAgentV2 head-404 问题单独保留，不宣称全仓绿色。最新 integration 保留 07/10/12/13 交付、反馈、编辑和建议逻辑，13 的待人工验收状态未改。
+- 自有 preview/native/public 服务已停止；shared Colima/Mongo 保持运行。保留 worktree/private target/proof artifacts，交由 parent cleanup 和独立 merger；无 push、PR、部署，未写原工作区、integration 或其他 worker 源码。
