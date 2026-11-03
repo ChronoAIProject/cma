@@ -41,6 +41,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
@@ -129,7 +130,8 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
-            .with_managed_documents(config.managed_documents_enabled),
+            .with_managed_documents(config.managed_documents_enabled)
+            .with_access_transport_migration(config.access_transport_migration),
         );
         let sandbox_worker = SandboxWorker::new(
             SandboxWorkerDependencies {

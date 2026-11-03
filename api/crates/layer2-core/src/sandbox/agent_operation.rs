@@ -53,6 +53,8 @@ pub enum AgentOperationDelivery {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentOperationIntent {
     RefreshContext {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        service_origin: Option<String>,
         revision: u64,
         readiness_receipt: String,
         guidance: String,
@@ -116,6 +118,7 @@ impl AgentOperationIntent {
     fn validate(&self) -> Result<(), SandboxModelError> {
         let valid = match self {
             Self::RefreshContext {
+                service_origin,
                 revision,
                 readiness_receipt,
                 guidance,
@@ -124,6 +127,9 @@ impl AgentOperationIntent {
                 working_directory,
             } => {
                 *revision > 0
+                    && service_origin
+                        .as_ref()
+                        .is_none_or(|origin| valid_service_origin(origin))
                     && valid_sha256(readiness_receipt)
                     && !guidance.is_empty()
                     && guidance.len() <= 16 * 1024
@@ -389,4 +395,18 @@ fn valid_sha256(value: &str) -> bool {
 
 fn hex_sha256(value: &[u8]) -> String {
     format!("{:x}", Sha256::digest(value))
+}
+
+fn valid_service_origin(origin: &str) -> bool {
+    url::Url::parse(origin).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && origin.len() <= 2048
+            && origin.trim() == origin
+    })
 }

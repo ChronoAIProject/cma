@@ -5,24 +5,23 @@ use super::acp::Bridge;
 use crate::{AdapterError, PermissionLevel, ReasoningEffort};
 
 impl Bridge {
-    pub(super) async fn context_readiness_receipt(&self, sequence: u64) -> Option<String> {
+    pub(super) async fn context_readiness_receipt(
+        &self,
+        sequence: u64,
+        transport: bool,
+    ) -> Option<String> {
         let session = self.session().await.ok()?;
-        if sequence == 0
-            || self.context_busy().await
-            || !self
-                .context_goal
-                .lock()
-                .await
-                .as_ref()
-                .is_some_and(|(id, safe)| id == &session && *safe)
-        {
+        if sequence == 0 || self.context_busy().await {
             return None;
         }
-        self.context_refresh
-            .as_ref()?
-            .readiness_receipt(&session, sequence)
-            .await
-            .ok()
+        let binding = self.context_refresh.as_ref()?;
+        let observed = self.context_goal.lock().await.clone();
+        match observed {
+            Some((id, true)) if id == session => {}
+            None if transport && binding.transport_goal_absent(&session).await.is_ok() => {}
+            _ => return None,
+        }
+        binding.readiness_receipt(&session, sequence).await.ok()
     }
 
     pub(super) async fn context_busy(&self) -> bool {
@@ -69,6 +68,7 @@ impl Bridge {
         effort: ReasoningEffort,
         permission: PermissionLevel,
         working_directory: Option<&str>,
+        service_origin: Option<&str>,
     ) -> crate::Result<()> {
         if self.context_busy().await
             || self
@@ -91,6 +91,13 @@ impl Bridge {
                 "retained context identity is invalid".into(),
             ));
         }
+        let transport = binding
+            .prepare_transport(session, operation_sequence, service_origin)
+            .await?;
+        if service_origin.is_some() && self.context_goal.lock().await.is_none() {
+            binding.transport_goal_absent(session).await?;
+        }
+        let tools = binding.tools_for_transport(transport.as_ref())?;
         binding
             .append_guidance(
                 session,
@@ -104,12 +111,24 @@ impl Bridge {
         // Unsubscribe first, then load its persisted ID. This neither stops the
         // sandbox process nor creates a new conversation or home.
         let refreshed = async {
+            if self.context_busy().await
+                || self
+                    .context_goal
+                    .lock()
+                    .await
+                    .as_ref()
+                    .is_some_and(|(id, safe)| id != session || !safe)
+            {
+                return Err(AdapterError::OperationIdentityConflict(
+                    "conversation became busy before managed context reload".into(),
+                ));
+            }
             self.call("session/close", serde_json::json!({"sessionId":session}))
                 .await?;
             let loaded = self
                 .call(
                     "session/load",
-                    serde_json::json!({"sessionId":session,"cwd":cwd,"mcpServers":binding.tools()}),
+                    serde_json::json!({"sessionId":session,"cwd":cwd,"mcpServers":tools}),
                 )
                 .await?;
             if loaded
@@ -128,11 +147,17 @@ impl Bridge {
                     "managed refresh changed conversation identity".into(),
                 ));
             }
+            if let Some(transport) = &transport {
+                binding
+                    .confirm_transport(transport, session, operation_sequence)
+                    .await?;
+            }
             Ok(())
         }
         .await;
-        refreshed.map_err(|error: AdapterError| {
-            AdapterError::Unavailable(format!("managed context refresh is not confirmed: {error}"))
+        refreshed.map_err(|_error: AdapterError| {
+            // Native MCP failures can echo descriptors carrying credentials.
+            AdapterError::Unavailable("managed context refresh is not confirmed".into())
         })
     }
 }
