@@ -20,7 +20,7 @@
 - 已确认 19 张票及 22 条依赖，无循环；初始 frontier：01、02、03、05、06、07、09、11、14。
 - 已隔离并保存原工作区内容；原文件哈希清单保存在工作区外，交付时复核。
 - 首批任务 01、03、07、09、11、14 已在独立 worktree 启动；共享回答区域的改动合并时逐项检查。
-- 09 已验收合入，完成 worker 的 worktree 已清理；06 已从含 09 的最新集成状态启动。当前实施：01、03、06、07、11、14；其余票依赖满足后排入可用执行槽。
+- 01、09 已验收合入，两个已完成 worker 的 worktree 已清理；02 已从含 01、09 的集成状态启动。当前实施：02、03、06、07、11、14；其余票依赖满足后排入可用执行槽。
 
 ## 基线验证
 
@@ -37,6 +37,8 @@
 - Linux 隔离镜像中的原生观测/工具测试 3/3 通过，覆盖原生工具调用、密钥轮换、会话重载、名称来源和用量。该镜像包含 Node 24.19.0、Codex 0.147.0、固定 ACP 修补字节及 Chromium 156.0.8078.79；未修改生产镜像或部署。
 - 已在不含任何 ticket 功能的独立基线 `60fc98ee5`、私有 Cargo target 中复现技能契约失败：`agent-skills-install-version-conflict` 期望 `agent_operation_in_flight`，实际为 `agent_skill_version_upgrade_unsupported`。真实执行 1 个 corpus 测试并失败，400 个被筛除；日志为工作区外 `baseline-skill-contract.log`。该既有期望不在页面票内修改，也不把完整 corpus 宣称通过。
 - 09 合入前后的新增提交已通过带脱敏输出的 Gitleaks 检查。基线 fixture Vite 服务已停止，截图与测试记录保留在工作区外。
+- 01 的新增提交同样通过 Gitleaks 脱敏检查（6 commits，73.61 KB，无泄漏）。集成态源码行数检查发现 `agent_operation_service.rs` 为 508 行，超过 500 行限制；该文件与基线 `c9e2d7b91` 的 SHA-256 完全相同，属于原有工作，未混入无关拆分。
+- 隔离镜像中的 Chromium 156.0.8078.79 已通过私有 DevTools pipe 导航两个本地页面并产生不同截图，记录位于工作区外 `runtime-proof/browser-prerequisite.json`。这是浏览器基础条件验证，尚不证明 CMA 授权、Agent 工具接入、实时画面或接管能力；仅测试容器使用禁用 Chromium sandbox 的参数，不能作为生产安全配置依据。
 
 ## Ticket 09 集成（2026-11-03）
 
@@ -57,3 +59,21 @@
 - `npm --prefix web run typecheck` 通过；`git diff --check 09b8174d370d41887ccbc6be9c3640d6e99a50f4 HEAD` 与记录提交前的 `git diff --check` 通过。未重复 worker 的广泛 Web、SDK、公共 API、真实 handler、Clippy 或桌面/移动浏览器验证；本次没有 Rust 运行。
 - worker 的 Rust 证据使用私有 target、`--cfg cma_ui_ticket01` 和实际非零测试数。已确认无关的基线 skill-error fixture mismatch 保持原样：parent 在 `60fc98ee5` 使用私有 target 独立复现，见 `baseline-skill-contract.log`；不宣称完整 aggregate corpus 通过。
 - 01 已验收合入，可供后续票从本集成分支启动。本次仅写入集成 worktree；无其他修复、原工作区或其他 worker 源码编辑，无生产操作、远端 PR 或推送。
+
+## Ticket 03 集成（2026-11-03）
+
+- 合并前 `codex/cma-ui-optimization` 工作区干净，HEAD 为 `c7452a7edaf43f2c4fc94bfae43447cb82ce8db7`；票分支通过 `056263735` 包含该集成状态。37 文件 diff 与 `evidence/ticket-03/changed-paths.txt` 完全匹配。
+- 使用普通 `--no-ff` merge 合入 `codex/cma-ui-03` 的 `af254b8365db7eec58c709e4d454f47f31147b0e`，merge commit 为 `d0d085c90dbf0a3b2bf34b2d02434211dc660d7a`。无冲突、无集成代码修正；合并树与票分支完全一致，保留基线及 01、09。
+- 已检查票文档列明的 App/Console/CreationFlow、认证及生命周期恢复共享补丁；全局 New agent 进入 Home，上下文创建保留原权限及路由，准备中的 Agent 通过确切 owner 校验进入会话。`docs/Web_Style.md` 合并前内容完整保留为原样前缀，票 03 仅追加 30 行及其 changelog。
+- 合并态检查（集成工作区执行）：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/create/TaskHome.test.tsx src/create/AgentLifecycle src/create/lifecycle` 通过，8 文件 / 95 tests；`npm --prefix web run typecheck` 通过。
+- `git diff --check c7452a7edaf43f2c4fc94bfae43447cb82ce8db7 HEAD` 与记录提交前的 `git diff --check` 通过。未重复 worker 的广泛 U/A/R、Mongo 或固定 native provider 验证；本次没有 Rust 运行，原有基线限制及完整部署链路的证据边界保持票文档所述。
+- 本次仅写入集成 worktree；无其他修复、原工作区或其他 worker 源码编辑，无推送、部署或生产操作。
+
+## Ticket 06 集成（2026-11-03）
+
+- 先完成 03 的独立 merge 及记录提交，再从干净的 `3ceaac7e9558a8cd171ad931453a98764036f736` 合入 `codex/cma-ui-06` 的 `164835afc809b7a3af7eca7364772fd19700fb44`。共同基线为 `c7452a7ed`；28 文件 diff 与 `ticket06-evidence/changed-paths.txt` 去除绝对 worktree 前缀后的 manifest 完全匹配。
+- 普通 `--no-ff` merge commit 为 `c484d209b858cd8920f8d0000097659d89ae23e6`。唯一实际冲突是 `docs/Web_Style.md` 的追加区域；保留含 01、09、03 的全部原文字节，再原样追加 06 的 49 行及两条 changelog，已断言结果等于合并前全文加票 06 的完整增量。无源代码冲突或额外修正。
+- 已检查 AgentSurface/Header 的 `progress?: ReactNode` 交接及 conversation/transcript/StreamEntry 共享补丁；09 的 `finalAnswer` 标记和评价 eligibility 保留，03 的全部非样式路径与合并前完全一致。02 可继续复用 progress 插槽，避免重复活动摘要。
+- 合并态检查（集成工作区执行）：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/PlanProgress.test.tsx` 通过，1 文件 / 13 tests；`npm --prefix web run typecheck` 通过。
+- `git diff --check 3ceaac7e9558a8cd171ad931453a98764036f736 HEAD`、冲突解决后的 `git diff --cached --check` 及记录提交前的 `git diff --check` 通过。仅样式文档冲突，不扩大检查；未重复 worker 的广泛 U/A/R、Chrome 或 native provider 验证，本次没有 Rust 运行。
+- worker 的 Rust 证据使用独立 `--cfg cma_ui_ticket06` 和实际 23/23 测试数；原有格式、skill-error corpus、源文件行数及生产完整链路证据限制保持原状。本次仅写入集成 worktree，无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。

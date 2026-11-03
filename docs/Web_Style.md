@@ -3877,6 +3877,85 @@ the state dot and keep the last known state word alongside the refresh warning.
 
 | 2026-11-03 | Distinguish completed setup from completed tasks using recorded first-message purpose and turn identity; leave unknown legacy first-turn purpose unavailable. |
 
+### Task home and durable initial task (2026-11-03)
+
+Signed-in Home and ordinary New agent actions open a task composer. Use one
+20/28 heading, a labeled multiline field, a primary **Start task** action and
+editable Research, Spreadsheet, Document, Website and Code templates. Templates
+only replace the unsent draft. Preserve the existing anonymous sign-in surface.
+Use existing field, button, secondary text and status tokens; the task column is
+at most 48rem wide, with 24px inset and 16px gaps, reduced to 16px inset below
+600px. The textarea has a 160px minimum height; template and action hit areas
+are at least 44px. Contextual creation names its fixed Workspace or Sandbox.
+
+Freeze exact task text and creation context before sending. Retain a separate
+editable next draft, scoped to authenticated viewer, origin and creation context
+in tab session storage. Refresh restores it without submitting. Sign-out/account
+change clears task drafts and creation intents. Unavailable storage blocks a
+new submission with a visible explanation and leaves selectable task text.
+Whitespace-only input and text above 262144 UTF-8 bytes are visible errors.
+
+Show the retained task separately from the next draft. Receipt means accepted,
+not completed; its identity is an operation, never an Agent. Uncertain requests
+offer **Recover original task** with the original body and key. Accepted requests
+read public status; only a verified Agent identity opens the preparing conversation.
+Preparation, required connections, task delivery failure and uncertain recovery
+retain distinct states. A user initial task uses the durable first-message task
+purpose after environment preparation; it replaces the automatic readiness turn.
+Clients omitting a task retain setup behavior. Unsupported services show a clear
+unavailable explanation and never fall back to an unrecorded send.
+
+| 2026-11-03 | Define task-first Home and contextual creation, editable templates, exact durable initial-task admission, tab draft isolation and honest recovery states. |
+
+### Reported plan progress and turn outcomes (2026-11-03)
+
+The existing turn-scoped Plan card also shows **Completed 1/3 steps** and
+**Current step 2: <reported title>**. Count only exact `completed` entries and
+choose the first exact `in_progress` entry. A known plan with at most one current
+step has an accessible progress bar labelled **Reported plan progress**, with
+the completed count, total and equivalent text. Unknown or malformed statuses
+and multiple current steps keep their reported text, say **Progress unknown**,
+and omit the determinate bar. Empty reports clear the card. A replacement plan
+uses its new order, without inventing stable step identities. No plan means the
+existing Thinking/current tool activity, with no denominator or estimate.
+
+Use the existing card ground, hairline, radius 8 and padding 12; gaps are 8px.
+The summary and current step use 13/20 primary/secondary ink. The bar is 4px high,
+radius 8, on bg-layer-3 with business-primary fill; it has no animation. Each
+step has a decorative existing check, running, waiting or question glyph beside
+its explicit status word. The plan disclosure uses a chevron and a 44px target,
+inherits typography, and has the existing hover wash and focus outline. Titles
+wrap at mobile widths. Do not announce token-by-token updates as plan changes.
+
+On a recorded successful turn, fold the step list behind **View plan and
+operations**. Say **Completed all N steps** only if every reported step completed;
+otherwise say **Response finished · Plan completion not fully reported**. Failed
+and cancelled turns say **Response failed** and **Response cancelled** and retain
+the reported step states. Missing terminal evidence says **Outcome unknown**.
+The disclosure reopens the plan; adjacent operation disclosures retain their
+counts and visible failure summaries. A single operation also starts folded.
+Approvals and recovery notices remain independent and visible. Never mark
+pending work complete because a response ended.
+
+The compact toolbar has one optional progress slot between identity and actions,
+using 12/18 secondary ink, minimum width zero and a 44px link target. It describes
+only the active turn (**1/3 steps · Step 2**, or **Progress unknown**), links to that
+turn's Plan card, and disappears when the turn has no plan or ends. At narrow
+widths it may wrap onto its own row. Ticket 02 owns elapsed time and settings;
+its timer may share this slot without repeating plan or activity summaries.
+Plan changes never override the conversation's existing unpinned scroll position.
+Current activity remains the existing safe tool title/Thinking and never claims
+association with a plan step. There is no reliable ETA in the current public
+contract, so no estimated remaining time is rendered.
+
+| 2026-11-03 | Add factual turn-scoped plan counts, accessible progress, ambiguous-state fallback, terminal process disclosure and the shared compact header slot for ticket 06; keep approvals visible and omit unsupported ETA. |
+
+Plan counts, current-step text and terminal summaries share one atomic polite
+status region, using the card's existing 8px column gap. Only plan or turn-state
+changes update it; streamed message tokens do not rerender this region.
+
+| 2026-11-03 | Make reported plan updates and terminal summaries one atomic polite status announcement for ticket 06. |
+
 ### Compact input settings and confirmed completion time (2026-11-03)
 
 The composer defaults to one **Agent settings** disclosure, summarizing the
@@ -3917,3 +3996,10 @@ cannot claim completion. The slot wraps within the header at narrow widths and
 does not duplicate task status, plan progress or the active Thinking clock.
 
 | 2026-11-03 | Collapse model, reasoning and permission into one reversible settings disclosure; preserve all input/recovery controls, describe transport-specific queue/interruption truthfully, and show only confirmed successful last-turn elapsed time in an independent header slot for ticket 02. |
+
+The completion display shares the header's existing **progress** slot with the
+current-turn plan link. The plan link stays memoized and available while a turn
+is active; completion occupies that same space only after confirmed success.
+No second activity summary or independent timing authority is introduced.
+
+| 2026-11-03 | Combine ticket 02 elapsed time with ticket 06's existing header progress slot, preserve its current-plan link and reuse recorded turn outcomes. |

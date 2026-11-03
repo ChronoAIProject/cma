@@ -14,7 +14,6 @@ import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
 import './Agent.css';
 import { OwnerAgentHeader } from './OwnerAgentHeader';
-import { TurnCompletion } from './TurnCompletion';
 import { Alert } from '../ui/Alert';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { agentBreadcrumb, agentHeaderMenu } from './headerActions';
@@ -39,6 +38,7 @@ import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
+import { AgentHeaderProgress } from './AgentHeaderProgress';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -185,13 +185,7 @@ export function AgentSurface({
     <section className="agent-surface">
       {connections.dialog}
       <OwnerAgentHeader
-        completion={
-          historyIncomplete ||
-          starting ||
-          ['stopped', 'failed', 'deleted'].includes(status) ? undefined : (
-            <TurnCompletion conversation={conversation} />
-          )
-        }
+        progress={<AgentHeaderProgress state={state} starting={starting} />}
         onTitleUpdated={controller.applyAgentTitle}
         detail={detail}
         availability={controller.resourceAvailability}
