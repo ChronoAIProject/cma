@@ -22,6 +22,7 @@ async fn opening() -> (Open, Agent) {
             cursor: 5,
             sequence: 0,
             pending: Default::default(),
+            tools: Default::default(),
             announced: true,
             output_count: 0,
             next_output_index: 0,
