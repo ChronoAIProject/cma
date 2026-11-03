@@ -1,4 +1,8 @@
-use std::{collections::VecDeque, convert::Infallible, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    convert::Infallible,
+    time::Duration,
+};
 
 use axum::response::{
     sse::{Event, KeepAlive},
@@ -58,6 +62,7 @@ fn open_inner(
         cursor: turn.saturating_sub(1),
         sequence: 0,
         pending: VecDeque::new(),
+        tools: HashMap::new(),
         announced: false,
         output_count: 0,
         next_output_index: 0,
@@ -110,20 +115,47 @@ fn open_inner(
                 }
                 open.cursor = entry.seq;
                 match &entry.kind {
-                    AgentLogKind::AgentMessage { .. } => open.append_output(&response, message_count),
-                    AgentLogKind::ToolCallStarted { call_id, title, kind, status } => open.push("response.cma_chat.tool_activity", json!({
-                        "response_id": response.id,
-                        "item": {"id": format!("tool_{}_{}", agent.id, entry.seq), "type": "cma_chat.tool_activity",
-                            "call_id": call_id, "kind": kind, "target": title, "status": status, "duration_ms": null}
-                    })),
-                    AgentLogKind::ToolOutputReported { call_id, output } => open.push("response.cma_chat.tool_activity", json!({
-                        "call_id": call_id, "output": output,
-                    })),
-                    AgentLogKind::ToolCallUpdated { call_id, title, status, output } => open.push("response.cma_chat.tool_activity", json!({
-                        "response_id": response.id,
-                        "item": {"id": format!("tool_{}_{}", agent.id, entry.seq), "type": "cma_chat.tool_activity",
-                            "call_id": call_id, "kind": "unknown", "target": title, "status": status, "duration_ms": null, "output": output}
-                    })),
+                    AgentLogKind::AgentMessage { .. } => {
+                        open.append_output(&response, message_count)
+                    }
+                    AgentLogKind::ToolCallStarted {
+                        call_id,
+                        title,
+                        kind,
+                        status,
+                    } => {
+                        let item = json!({"id": format!("tool_{}_{}", agent.id, entry.seq), "type": "cma_chat.tool_activity",
+                            "call_id": call_id, "kind": kind, "target": title, "status": status, "duration_ms": null});
+                        open.tools.insert(call_id.clone(), item.clone());
+                        open.push_tool(&response.id, item);
+                    }
+                    AgentLogKind::ToolOutputReported { call_id, output } => {
+                        if let Some(item) = open.tools.get_mut(call_id) {
+                            item["output"] = json!(output);
+                            let item = item.clone();
+                            open.push_tool(&response.id, item);
+                        }
+                    }
+                    AgentLogKind::ToolCallUpdated {
+                        call_id,
+                        title,
+                        status,
+                        output,
+                    } => {
+                        let item = open.tools.entry(call_id.clone()).or_insert_with(|| json!({
+                            "id": format!("tool_{}_{}", agent.id, entry.seq), "type": "cma_chat.tool_activity",
+                            "call_id": call_id, "kind": "unknown", "target": null, "duration_ms": null
+                        }));
+                        item["status"] = json!(status);
+                        if let Some(title) = title {
+                            item["target"] = json!(title);
+                        }
+                        if let Some(output) = output {
+                            item["output"] = json!(output);
+                        }
+                        let item = item.clone();
+                        open.push_tool(&response.id, item);
+                    }
                     _ => {}
                 }
             }
@@ -159,6 +191,7 @@ struct Open {
     cursor: u64,
     sequence: u64,
     pending: VecDeque<Value>,
+    tools: HashMap<String, Value>,
     announced: bool,
     output_count: usize,
     next_output_index: usize,
@@ -168,6 +201,13 @@ struct Open {
 }
 
 impl Open {
+    fn push_tool(&mut self, response_id: &str, item: Value) {
+        self.push(
+            "response.cma_chat.tool_activity",
+            json!({"response_id": response_id, "item": item}),
+        );
+    }
+
     fn announce(&mut self, response: &ResponseObject) {
         if self.announced {
             return;
