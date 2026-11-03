@@ -69,7 +69,7 @@ async fn private_response(
         .insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
     response
 }
-fn share_token(headers: &HeaderMap) -> Result<Option<&str>, DocumentProblem> {
+pub(super) fn share_token(headers: &HeaderMap) -> Result<Option<&str>, DocumentProblem> {
     let mut values = headers.get_all("x-cma-document-share-token").iter();
     let value = values
         .next()

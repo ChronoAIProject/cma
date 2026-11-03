@@ -136,7 +136,60 @@ pub struct StoredAgentArtifact {
     pub content_base64: String,
     pub authorization: ResourceAuthorizationAudit,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoredAgentArtifactMetadata {
+    pub metadata: AgentArtifactMetadata,
+    pub binding: ArtifactBinding,
+    pub authorization: ResourceAuthorizationAudit,
+}
+
+impl StoredAgentArtifactMetadata {
+    pub fn validate(&self) -> Result<(), ResourceAccessStoreError> {
+        self.authorization.validate()?;
+        PublishAgentArtifact {
+            name: self.metadata.name.clone(),
+            media_type: self.metadata.media_type.clone(),
+            content_base64: "eA==".into(),
+        }
+        .content()
+        .map_err(|_| ResourceAccessStoreError::Corrupt)?;
+        if !valid_artifact_id(&self.metadata.id)
+            || self.metadata.agent_id != self.binding.agent_id
+            || !(1..=MAX_ARTIFACT_BYTES as u64).contains(&self.metadata.size_bytes)
+            || self.metadata.sha256.len() != 64
+            || !self
+                .metadata
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || crate::seconds_from_rfc3339(&self.metadata.created_at).is_none()
+            || self.authorization.target
+                != (ResourceTarget::Agent {
+                    agent_id: self.binding.agent_id.clone(),
+                })
+            || self.authorization.owner != self.binding.owner
+            || self.authorization.sandbox_id != self.binding.sandbox_id
+            || self.authorization.sandbox_created_at != self.binding.sandbox_created_at
+            || self.authorization.capability != ResourceCapability::ManageSharing
+            || self.authorization.captured_at != self.metadata.created_at
+        {
+            return Err(ResourceAccessStoreError::Corrupt);
+        }
+        Ok(())
+    }
+}
+
 impl StoredAgentArtifact {
+    pub fn metadata_record(&self) -> StoredAgentArtifactMetadata {
+        StoredAgentArtifactMetadata {
+            metadata: self.metadata.clone(),
+            binding: self.binding.clone(),
+            authorization: self.authorization.clone(),
+        }
+    }
+
     pub fn content(&self) -> Result<Vec<u8>, ResourceAccessStoreError> {
         self.authorization.validate()?;
         let bytes = PublishAgentArtifact {
@@ -201,6 +254,17 @@ pub(super) fn digest(bytes: &[u8]) -> String {
 
 #[async_trait::async_trait]
 pub trait AgentArtifactStore: Send + Sync {
+    async fn agent_artifact_metadata(
+        &self,
+        binding: &ArtifactBinding,
+        id: &str,
+    ) -> Result<Option<StoredAgentArtifactMetadata>, ResourceAccessStoreError> {
+        Ok(self
+            .agent_artifact(binding, id)
+            .await?
+            .map(|record| record.metadata_record()))
+    }
+
     /// Verify the opaque live publication fence in the same transaction as the
     /// immutable insert and capacity check. Replays also require current access.
     async fn publish_artifact(

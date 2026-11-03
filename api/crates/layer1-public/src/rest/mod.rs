@@ -20,6 +20,10 @@ pub use agent_access_requests::agent_access_requests_router;
 #[cfg(test)]
 mod agent_access_requests_tests;
 mod agent_artifacts;
+mod answer_deliverables;
+#[cfg(test)]
+mod answer_deliverables_tests;
+pub use answer_deliverables::answer_deliverables_router;
 mod agent_attachments;
 pub use agent_attachments::agent_attachments_router;
 mod agent_filesystem;

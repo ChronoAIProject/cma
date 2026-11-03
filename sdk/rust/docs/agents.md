@@ -547,3 +547,27 @@ Use `SnapshotOptions { tool_output: true, ..Default::default() }` and
 output is a bounded `{text, truncated}` replacement snapshot. Output-only events
 do not carry a status. Responses v2 `ActivityItem.recorded_output` reads the
 additive `cma:output` extension while the standard `output` remains absent.
+
+### Answer deliverables
+
+`agents().answer_deliverables(agent_id, "event:42", None)` reads the explicitly
+referenced resources in one completed final answer. Each item keeps its original
+Agent, answer, turn, resource kind and version evidence. A live home file remains
+a mutable file; an approved artifact and a document source revision retain their
+independent identities. Ordinary filenames in prose do not create deliveries.
+
+`describe_deliverable(agent_id, &DeliverableResource::LiveFile { path:
+"report.csv".into() }, None)` verifies an explicit resource and returns a marker
+for inclusion as a standalone line in the final answer. It does not publish files.
+Document references use an explicit positive source revision. Agent runtime tools
+return the same verified markers with publication receipts.
+
+`read_answer_deliverable(agent_id, answer_id, delivery_id, true, None)` verifies
+one item's bytes on an explicit retry. Metadata listing does not eagerly read
+file bodies. `download_answer_deliverable(agent_id, answer_id, &item, None)`
+returns opaque bytes only after checking the size, SHA-256 and current independent
+resource authorization, including another authorization read after buffering.
+Dropping the future cancels the operation; all download steps share one deadline.
+Saving the bytes is the caller's choice. Changed live files cannot substitute for
+the answer's original bytes; changed documents can still deliver their original
+source revision. Pass a document share token only when independently authorized.
