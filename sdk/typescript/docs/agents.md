@@ -556,3 +556,53 @@ server contents; retain the local draft and reread before explicitly retrying.
 need no command key and are never retried automatically. The owner or a current
 view-write link may write; view links may browse and download. An old runtime
 returns `file_runtime_unsupported` until it is updated while idle.
+
+### Answer deliverables
+
+`agents.answerDeliverables(agentId, 'event:5', options)` reads structured results
+belonging to that completed final answer. Request it only for visible answers
+containing explicit delivery markers. The response preserves Agent, turn and
+answer identities and up to 32 distinct items. Each item keeps its original
+resource selector, safe name, media type, size and SHA-256.
+
+Published `agent_artifact` identities, independent `document` source revisions
+and `live_file` paths remain different resource kinds. Lists use authorized
+metadata; a live file initially reports `unchecked` (Verify on download).
+`readAnswerDeliverable(agentId, answerId, deliveryId, { verify: true })` checks
+only that selected item's actual bytes for an explicit retry. A newer document
+revision reports `version_changed` while retaining the original source download.
+Changed/deleted files, unavailable runtimes and withdrawn access have separate
+statuses. Sharing a conversation does not grant file/document access.
+
+`downloadAnswerDeliverable` takes the selected item as its expected version. It
+checks current metadata, bounds the opaque response by that version's size,
+verifies SHA-256, and rechecks current access before returning bytes. It does not
+render, save, publish or execute them. One deadline and AbortSignal cover the
+entire operation; abort on viewer, Agent or authorization changes. Document token
+links use `shareToken` in these options, never a query parameter.
+
+```ts
+import type { Cma } from '@chronoai/cma-sdk';
+
+export async function readFirstDeliverable(
+  client: Cma,
+  agentId: string,
+  answerId: string,
+  signal: AbortSignal,
+) {
+  const answer = await client.agents.answerDeliverables(agentId, answerId, { signal });
+  const item = answer.items[0];
+  if (item === undefined) return undefined;
+  const bytes = await client.agents.downloadAnswerDeliverable(agentId, answerId, item, { signal });
+  return { name: item.reference.name, bytes };
+}
+```
+
+`describeDeliverable(agentId, selector, options)` explicitly verifies a selected
+resource and returns `{reference, marker}`. Only the server-generated marker,
+unchanged on its own line in the durable final answer, establishes association.
+The SDK rejects a marker that differs from its verified metadata. Ordinary file
+names and code spans never establish association; this operation does not
+publish private files. Runtime tools also return these verified descriptors.
+Backend answer verification is bounded to 128 subsequent events and a 512-event
+turn within 4 MiB/15 seconds, failing closed rather than reconstructing history.
