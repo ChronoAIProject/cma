@@ -55,6 +55,7 @@ export interface AgentStreamOptions extends ReadOptions {
 export interface AgentLifecycleCreateInput {
   readonly name: string;
   readonly initial_message?: string;
+  readonly desktop?: boolean;
   readonly workspace_id?: string;
   readonly sandbox_id?: string;
   readonly image?: { readonly id: string; readonly version?: string };
@@ -219,6 +220,10 @@ export interface CmaWebClient {
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly readDesktopCapability?: (
+    scope: { readonly workspace_id?: string; readonly sandbox_id?: string },
+    options?: ReadOptions,
+  ) => Promise<import('@chronoai/cma-sdk').DesktopCapability>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
     options: CommandOptions,

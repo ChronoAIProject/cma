@@ -14,6 +14,7 @@ mod agent_managed_context;
 mod agent_operation;
 mod agent_preferences;
 mod agent_settings;
+pub mod desktop_creation;
 pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};
 mod agent_settings_authority;
 pub use agent_live_skills::{AgentSkillInstallStatus, AgentSkillInstallation};
@@ -208,8 +209,8 @@ pub use event::{
 };
 pub use execution::ProvisioningExecution;
 pub use first_message::{
-    FirstMessageDelivery, FirstMessageFailure, FirstMessagePurpose, FirstMessageRecord,
-    MAX_FIRST_MESSAGE_BYTES,
+    FirstMessageDelivery, FirstMessageFailure, FirstMessagePreparation, FirstMessagePurpose,
+    FirstMessageRecord, MAX_FIRST_MESSAGE_BYTES,
 };
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
