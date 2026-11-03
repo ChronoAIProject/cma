@@ -1373,6 +1373,23 @@ Paths are relative to the runtime's persistent `/home/` directory. Reading
 requires current file-view authority; creating, editing and deleting require
 owner authority or an accepted, active typed `view_write` sharing link. Each
 operation rechecks access, and protected credential paths remain unavailable.
+The mounted home intentionally includes shared Workspace source and Worktree
+files; the Agent route is not a per-Agent filesystem grant. Public file operations
+exclude supervisor control roots `.cma` and `cma/.cma`, including every private
+Agent home and its instructions, credentials, sessions and retained state.
+Those roots are omitted from listings and refused for direct reads, downloads,
+writes, directory creation and deletion, including deletion of their ancestors.
+The runtime also protects its configured state and checkpoint roots if they lie
+within the mounted home. Descriptor-relative no-follow and single-link checks
+continue to reject symlink/hardlink aliases.
+
+Uploads live at `/home/attachments/{agent_id}/...`. A file route exposes only its
+authorized Agent's upload namespace, including to the Sandbox owner; listing
+`attachments` filters other Agents, and deleting that common root is refused.
+Authorized ordinary Sandbox files, hidden workspace files, versioned edits,
+downloads and typed shared writers retain their existing behavior. Trusted
+runtime settings/recovery operations still access the selected Agent's managed
+home through their separate internal contract; public file routes cannot do so.
 Reads, downloads and writes are bounded to 32 MiB. A write's `expected_sha256`
 protects an edit against intervening changes; omit it when creating a new file.
 Directory creation uses `directory: true`. File operations do not require an

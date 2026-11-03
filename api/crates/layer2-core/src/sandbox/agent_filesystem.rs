@@ -96,7 +96,9 @@ impl AgentFileService {
         } else if sandbox.status != SandboxStatus::Active {
             (State::NotEnabled, "runtime_not_active")
         } else {
-            match runtime_request(sandbox, "", |sandbox, _| generation(sandbox)) {
+            match runtime_request(sandbox, agent_id, "", false, |sandbox, _| {
+                generation(sandbox)
+            }) {
                 Ok(_) => (State::Available, "authorized_mounted_home"),
                 Err(AgentFileError::Unsupported) => {
                     (State::Unsupported, "mounted_home_unsupported")
@@ -169,7 +171,9 @@ impl AgentFileService {
             .await?;
         let request = runtime_request(
             &authorized.snapshot.lineage.sandbox,
+            agent_id,
             path,
+            false,
             |sandbox, boot_id| {
                 Ok(AgentFileListRequest {
                     owner_access: authorized
@@ -183,7 +187,7 @@ impl AgentFileService {
                 })
             },
         )?;
-        let response = self
+        let mut response = self
             .adapter
             .list_agent_files(
                 &RuntimeHandle(runtime(&authorized.snapshot.lineage.sandbox)?),
@@ -192,6 +196,9 @@ impl AgentFileService {
             .await?;
         self.finish(&authorized, agent_id, ResourceCapability::ViewFiles)
             .await?;
+        response
+            .entries
+            .retain(|entry| public_path(agent_id, &entry.path, false).is_ok());
         Ok(response)
     }
 
@@ -216,7 +223,9 @@ impl AgentFileService {
             .await?;
         let request = runtime_request(
             &authorized.snapshot.lineage.sandbox,
+            agent_id,
             path,
+            false,
             |sandbox, boot_id| {
                 Ok(AgentFileReadRequest {
                     owner_access: authorized
@@ -269,7 +278,9 @@ impl AgentFileService {
             .await?;
         let request = runtime_request(
             &authorized.snapshot.lineage.sandbox,
+            agent_id,
             path,
+            false,
             |sandbox, boot_id| {
                 Ok(AgentFileWriteRequest {
                     owner_access: authorized
@@ -323,7 +334,9 @@ impl AgentFileService {
             .await?;
         let request = runtime_request(
             &authorized.snapshot.lineage.sandbox,
+            agent_id,
             path,
+            true,
             |sandbox, boot_id| {
                 Ok(AgentFileDeleteRequest {
                     owner_access: authorized
@@ -456,12 +469,12 @@ fn generation(sandbox: &Sandbox) -> Result<u64, AgentFileError> {
 }
 fn runtime_request<T>(
     sandbox: &Sandbox,
+    agent_id: &AgentId,
     path: &str,
+    remove: bool,
     build: impl FnOnce(&Sandbox, String) -> Result<T, AgentFileError>,
 ) -> Result<T, AgentFileError> {
-    if !layer3_adapter::valid_agent_file_path(path) {
-        return Err(AgentFileError::Invalid);
-    }
+    public_path(agent_id, path, remove)?;
     if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.operation.is_some() {
         return Err(AgentFileError::NotReady);
     }
@@ -479,4 +492,24 @@ fn runtime_request<T>(
         .and_then(|r| r.boot_id.clone())
         .ok_or(AgentFileError::NotReady)?;
     build(sandbox, boot_id)
+}
+
+fn public_path(agent_id: &AgentId, path: &str, remove: bool) -> Result<(), AgentFileError> {
+    if !layer3_adapter::valid_agent_file_path(path)
+        || [".cma", "cma/.cma"].iter().any(|protected| {
+            path == *protected
+                || path.starts_with(&format!("{protected}/"))
+                || (remove && (path.is_empty() || protected.starts_with(&format!("{path}/"))))
+        })
+    {
+        return Err(AgentFileError::Invalid);
+    }
+    if (remove && path == "attachments")
+        || path
+            .strip_prefix("attachments/")
+            .is_some_and(|suffix| suffix.split('/').next() != Some(agent_id.0.as_str()))
+    {
+        return Err(AgentFileError::Invalid);
+    }
+    Ok(())
 }
