@@ -156,3 +156,11 @@
 - 07 完成，08 可从记录提交启动，沿用独立资源种类、精确 answer/delivery/revision/digest、当前授权、metadata-only 列表与有界 body 下载；不把 live file 当不可变快照。
 - parent 的独立 integration-repair worker 继续处理本轮重复 `.agent-files-panel` CSS、filesystem/conversation 行数超限、environment shared JSON inventory、AppPublic/TaskHome/URL 断言及 task-status 查询成本；本 merger 不重复。07 后 filesystem 为 517 行（增加模块声明），此前 515；原始 508 行 Agent service、skill/Core/格式/LocalAgentV2 head-404 仍独立记录，不称全仓绿色。
 - 仅写集成 worktree；无原工作区或其他 worker 源码修改，无推送或部署。
+
+## Ticket 12 集成（2026-11-03）
+
+- 完成 07 后从干净的 `a752868183d220dddc98412d253cd69eeaf21b93` 开始；已读取 12 票和 `12-EVIDENCE.md`，16 路径 manifest 与候选相对共同基线 `d19c225bd` 的 diff 完全匹配。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-12` 的 `a977d65b90b74c29d6f6e11675b4630ce8b3e04c`，merge commit 为 `510c175f7b351f6ab418190c9c6fdf75d416be3f`。唯一冲突为 Web Style 末尾同时追加；保留已集成 07 全文，再原样追加 12，已断言严格前缀和增量完全一致。AgentSurface 自动合并，无源代码冲突或额外修正。
+- 保留 07 delivery context、既有 finalAnswer、plan/completion/computer，以及正常 composer/transport。编辑复用建议身份，保留附件、明确追加/替换/取消与撤回，未确认请求仍保留原 body/key，失效来源转普通草稿；不新增发送协议。
+- 合并态：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/AgentSurface.suggestionEditing.test.tsx src/agent/AgentSurface.suggestions.test.tsx` 通过，2 文件 / 29 tests；`npm --prefix web run typecheck`、`git diff --check a752868183d220dddc98412d253cd69eeaf21b93 HEAD`、冲突解决后的 `git diff --cached --check` 及记录提交前的 `git diff --check` 通过。
+- 无广泛/native/Rust 重复验证。07 记录的独立 integration-repair 任务和原始基线问题仍分开保留；未修复、跳过或弱化这些检查。仅写集成 worktree，无其他 worker/原工作区源码编辑，无推送或部署。
