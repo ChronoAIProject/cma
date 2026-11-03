@@ -279,6 +279,51 @@ range secret scan passes (`gitleaks-deliveries-final.log`); `git diff --check`
 passes. The repair-only manifest is also saved as `repair-manifest.txt` alongside
 the logs.
 
+## Ticket 18 integration delta
+
+Merge `743a1732d` incorporates the requested integration
+`eab5011c02d32959512ddd2ed09f7af618e46526` without conflicts, retaining ticket 08's
+preview and all existing repairs. Ticket 18 adds six shared cases and replay
+semantics to existing v2 head/snapshot/tail operations; it does **not** introduce
+an additional HTTP operation. The unchanged exact inventory remains **235/235**.
+
+The real environment replay exposed one stale corpus expectation
+(`ticket18-environment-red.log`, one failed named test). Ticket 18 now advertises
+authorized read-only replay as `available` / `operation_records_only` /
+`agent_turn_history`. Only those three fields in the six successful environment
+cases change; `writable: false`, browser/control availability, file scope,
+incarnation, authority failures and timestamp captures remain intact. Recording
+mode was not used. This is the only additional repair-code delta after
+`a1d0685c9`; the other edited file is this handoff.
+
+While finishing, the integration branch also received the independent legacy
+Responses compatibility repair. Merge `8fbe79bef` includes its code at
+`1440a107b`; merge `0b1ed6b54` includes its documentation tip
+`134c27aa0892ec2422fb775b69bf93c24ec76def`. The latter adds only an IMPLEMENTATION
+handoff, so the preceding code checks remain applicable. No UI conflict or local
+frontend change occurred; the prior Web evidence is retained without rerunning
+the full suite. All prior repair evidence above remains historical evidence.
+
+| Latest affected check | Actual result | Log in `/tmp/cma-integration-repairs/` |
+| --- | --- | --- |
+| Exact shared inventory on latest code | 1 passed; **235 operations, 2,798 cases, 1,599 named HTTP problem pairs, 23 protocol failure pairs** | `ticket18-inventory-final.log` |
+| Replay shared real handlers | 1 passed / **6 cases** | `ticket18-operation-replay-public.log` |
+| Environment shared real handlers after the expectation repair | 1 passed / **10 cases** | `ticket18-environment-green.log` |
+| Delivery shared real handlers | 1 passed / **44 cases** | `ticket18-answer-deliverables-public.log` |
+| Public replay boundary/no-command regression | **1 passed**, exact named test | `ticket18-public-replay-regression.log` |
+| Core environment/filesystem authority regressions | **4 passed**, registered `sandbox::tests::filesystem::` filter | `ticket18-filesystem-core.log` |
+| Complete TypeScript shared typed corpus and typecheck | **2,803 tests passed**; typecheck passed | `ticket18-sdk-ts-final.log`, `ticket18-sdk-ts-types-final.log` |
+| Complete Rust shared typed corpus | 1 passed; **2,354 typed HTTP, 176 typed preflight, 241 unrepresentable wire shapes, 27 browser-owned cases** | `ticket18-sdk-rust-final.log` |
+| Incoming Responses compatibility public regressions | **2 passed**; existing loopback serving fixture ignored, not claimed as rerun | `ticket18-latest-compat-regressions.log` |
+| Unchanged size gate on latest code | Only untouched baseline `agent_operation_service.rs`, **508 lines; 1 / 4,487 files**; merged `agent_filesystem.rs` is 448 lines | `ticket18-latest-file-size.log` |
+
+The repair-only manifest remains **40 paths** against the latest integration tip.
+`git diff --check` passes. Merge logs are `merge-ticket18.log`,
+`merge-response-compat-tip.log`, and `merge-ticket18-final-tip.log`; final audit
+logs are `ticket18-final-tip-confirmation.log` and `ticket18-gitleaks.log`.
+No worker-owned service was started; the shared Mongo/VM and original/integration
+worktrees remain untouched.
+
 The query-probe database and the failed-red fixture database
 `cma_804_shared_provenance_corrupt_5560_0` were dropped after verifying the unique
 fixture marker (`mongo-cleanup.json`). The green Mongo test drops its own
@@ -304,7 +349,7 @@ occurred.
 
 ## Repair manifest
 
-40 paths differ from integration `7cd701d0fe6c2496256a01eca59919ee8d899c82`.
+40 paths differ from integration `134c27aa0892ec2422fb775b69bf93c24ec76def`.
 Incoming feature changes are excluded from this repair-only manifest.
 
 ```text
