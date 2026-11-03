@@ -81,7 +81,15 @@ impl AgentOperationService {
             .map_err(|error| AgentOperationError::InvalidRequest(error.to_string()))?;
         let mut next = current.clone();
         next.conversation.queued_messages.push(message);
-        let logs = vec![AgentLogKind::OwnerMessage { content: text }];
+        let mut logs = vec![AgentLogKind::OwnerMessage {
+            content: text.clone(),
+        }];
+        logs.extend(
+            next.conversation
+                .observations
+                .metadata
+                .record_task_preview(&text),
+        );
         let agent = self
             .commit_admission(&current, next, logs, at, parent)
             .await?
@@ -145,6 +153,12 @@ impl AgentOperationService {
                 metadata,
             });
         }
+        logs.extend(
+            next.conversation
+                .observations
+                .metadata
+                .record_task_preview(&text),
+        );
         if let Some(authority) = &self.trigger_authority {
             super::agent_io::trigger::fence_first(
                 authority,
