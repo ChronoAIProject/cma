@@ -17,6 +17,9 @@ use std::sync::Arc;
 #[path = "filesystem_runtime.rs"]
 mod runtime;
 
+#[path = "filesystem_scope_tests.rs"]
+mod scope_tests;
+
 #[tokio::test]
 async fn computer_environment_public_route_preserves_file_scope_and_denies_foreign_readers() {
     use crate::rest::agents_tests::request;
@@ -64,6 +67,14 @@ async fn computer_environment_public_route_preserves_file_scope_and_denies_forei
 }
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    let kind = name.strip_prefix("filesystem_")?;
+    scenario_with_runtime(name, Arc::new(runtime::Files::new(kind))).await
+}
+
+async fn scenario_with_runtime(
+    name: &str,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Option<Scenario> {
     let kind = name.strip_prefix("filesystem_")?;
     assert!([
         "owner",
@@ -169,7 +180,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         }
     }
     let caller = context(subject);
-    let service = AgentFileService::new(access, Arc::new(runtime::Files::new(kind)));
+    let service = AgentFileService::new(access, adapter);
     let mut router = super::super::agent_filesystem_router(service);
     if kind != "anonymous" {
         router = router.layer(Extension(caller.clone())).layer(Extension(

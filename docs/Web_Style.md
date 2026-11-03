@@ -4055,3 +4055,13 @@ actions never submit suggestions. Editing and contextual generation are separate
 extensions of the same viewer/Agent/turn/answer/source-version/item contract.
 
 | 2026-11-03 | Specify bounded comparison-template suggestions, exact-text sending, retained manual drafts, group pending/recovery states, answer scoping and accessible wrapping controls for ticket 11. |
+
+The computer Files scope reads **Authorized Sandbox files (/home); private runtime
+state excluded.** Workspace source and worktree files remain intentionally shared
+within the authorized Sandbox file surface. The tree omits supervisor control
+state and other Agents' upload namespaces; the selected Agent's uploaded files
+retain preview, download and authorized edit behavior. An Agent route does not
+make the Sandbox workspace an Agent-private filesystem. File-operation errors
+retain the existing draft and retry behavior.
+
+| 2026-11-03 | Distinguish authorized shared Sandbox files from protected runtime state and Agent-scoped uploads in the computer panel. |
