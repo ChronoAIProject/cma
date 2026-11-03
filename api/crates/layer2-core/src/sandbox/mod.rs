@@ -42,6 +42,7 @@ mod conversation_fold;
 mod conversation_observation;
 mod conversation_observation_fold;
 pub mod message_feedback;
+pub mod suggestions;
 pub use conversation_observation::{
     AgentDescriptionSource, AgentObservations, AgentRuntimeMetadata, AgentTurnUsage,
     AgentUsageCheckpoint,
