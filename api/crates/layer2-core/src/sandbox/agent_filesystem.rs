@@ -17,6 +17,8 @@ use layer3_adapter::{
 use std::sync::Arc;
 use std::time::SystemTime;
 
+mod read_check;
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentFileError {
     #[error(transparent)]

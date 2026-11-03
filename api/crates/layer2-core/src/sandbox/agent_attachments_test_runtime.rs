@@ -2,6 +2,7 @@ use super::*;
 use tokio::sync::mpsc;
 pub(crate) struct UnusedRuntime {
     pub(crate) status: Option<RuntimeStatus>,
+    pub(crate) file_root: Option<(std::path::PathBuf, Arc<std::sync::atomic::AtomicUsize>)>,
 }
 #[async_trait::async_trait]
 impl SandboxAdapter for UnusedRuntime {
@@ -20,6 +21,26 @@ impl SandboxAdapter for UnusedRuntime {
         _: &RuntimeHandle,
         request: &AgentFileReadRequest,
     ) -> Result<AgentFileReadReceipt> {
+        if let Some((root, reads)) = &self.file_root {
+            reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            use base64::Engine as _;
+            use sha2::{Digest as _, Sha256};
+            let path = root.join(&request.path);
+            let metadata = std::fs::metadata(&path)
+                .map_err(|_| AdapterError::Rejected("file_not_found: fixture file".into()))?;
+            if metadata.len() > request.max_bytes {
+                return Err(AdapterError::Rejected(
+                    "file_too_large: fixture file".into(),
+                ));
+            }
+            let bytes = std::fs::read(path).unwrap();
+            return Ok(AgentFileReadReceipt {
+                path: request.path.clone(),
+                size_bytes: bytes.len() as u64,
+                sha256: format!("{:x}", Sha256::digest(&bytes)),
+                content_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+            });
+        }
         Ok(AgentFileReadReceipt {
             path: request.path.clone(),
             size_bytes: 4,

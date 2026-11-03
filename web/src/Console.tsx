@@ -227,6 +227,7 @@ function ConsoleContent({
     ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
       <SharedAgent
         key={shared.id}
+        viewerId={user.id}
         client={client.resourceViews}
         web={client}
         computerObservation={computerObservation}
@@ -257,7 +258,7 @@ function ConsoleContent({
       </section>
     ) : route.kind === 'agent' ? (
       <AgentSurface
-        computerObservation={computerObservation}
+        computerObservation={client.operationReplay ? computerObservation : undefined}
         key={route.agentId}
         user={user}
         lifecycleClient={client}

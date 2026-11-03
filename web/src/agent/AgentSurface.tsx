@@ -1,5 +1,6 @@
 import { SuggestedReplies } from './SuggestedReplies';
-import { useSuggestedReplies, type SuggestedReplySet } from './suggestions';
+import type { SuggestedReplySet } from './suggestions';
+import { useAgentSuggestions } from './useAgentSuggestions';
 import { Presence } from '../ui/Presence';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
@@ -116,12 +117,6 @@ export function AgentSurface({
     !readOnly && (state.status === 'ready' || (accessAuthorized && state.status !== 'error')),
   );
   const verified = connection.verified;
-  const suggestions = useSuggestedReplies(
-    state.status === 'ready' ? state.conversation : undefined,
-    viewerId ?? verified?.owner ?? '',
-    agentId,
-    suggestedReplies,
-  );
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
   const optimistic = useOptimisticMessages(
@@ -134,6 +129,16 @@ export function AgentSurface({
     controller.readSuggestionRequest,
   );
   const discardPrepared = connection.discardPrepared;
+  const editing = useAgentSuggestions({
+    conversation: state.status === 'ready' ? state.conversation : undefined,
+    viewerId: viewerId ?? verified?.owner ?? '',
+    agentId,
+    enabled: !readOnly && verified !== undefined,
+    acceptedInput: optimistic.messages.some((message) => message.state === 'accepted'),
+    provided: suggestedReplies,
+    controller,
+  });
+  const suggestions = editing.source;
   useLayoutEffect(() => {
     discardPrepared();
   }, [detailsOpen, discardPrepared]);
@@ -349,8 +354,11 @@ export function AgentSurface({
           />
         ) : null}
         <MessageStream
-          onReplay={
-            lifecycleClient?.operationReplay ? computerObservation?.selectReplay : undefined
+          onReplay={computerObservation?.selectReplay}
+          deliverables={
+            lifecycleClient?.deliverables && viewerId && !accessUncertain && accessAuthorized
+              ? { agentId, viewerId, client: lifecycleClient.deliverables }
+              : undefined
           }
           media={
             lifecycleClient?.files && !accessUncertain && accessAuthorized
@@ -373,6 +381,7 @@ export function AgentSurface({
         >
           {suggestions && !readOnly && verified && !historyIncomplete ? (
             <SuggestedReplies
+              onEdit={editing.edit}
               key={suggestions.id}
               suggestions={suggestions}
               controller={controller}
@@ -415,6 +424,10 @@ export function AgentSurface({
       </div>
       <div className="agent-surface__input">
         <Composer
+          editorRef={editing.editorRef}
+          suggestionScope={
+            !readOnly && verified && !historyIncomplete ? suggestions?.id : undefined
+          }
           settings={
             readOnly ? undefined : (
               <SessionSettings
@@ -468,7 +481,7 @@ export function AgentSurface({
             connections.pending ||
             (controller.pending !== undefined && controller.pending !== 'send')
           }
-          onSend={submitMessage}
+          onSend={(content, accepted) => editing.send(submitMessage, content, accepted)}
           onStop={controller.interrupt}
         />
       </div>
