@@ -33,7 +33,7 @@ it('copies actual content, acknowledges success, and handles clipboard failure w
   await actor.click(button);
   expect(copy).toHaveBeenCalledWith('**Exact**\nmessage');
   expect(screen.getByRole('status')).toHaveTextContent('Copied');
-  expect(screen.getByRole('button', { name: 'Upvote message' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
   copy.mockRejectedValueOnce(new Error('Permission denied'));
   await actor.click(button);
   expect(screen.getByRole('status')).toHaveTextContent('Copy failed.');
@@ -88,39 +88,33 @@ it('persists exact-message votes, switches/toggles them, and restores votes on r
   const first = within(screen.getByRole('article', { name: 'event:12' }));
   const second = within(screen.getByRole('article', { name: 'event:16' }));
   await waitFor(() =>
-    expect(first.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    ),
+    expect(first.getByRole('button', { name: 'Helpful' })).toHaveAttribute('aria-pressed', 'true'),
   );
-  await userEvent.click(first.getByRole('button', { name: 'Downvote message' }));
+  await userEvent.click(first.getByRole('button', { name: 'Needs improvement' }));
   expect(set).toHaveBeenLastCalledWith(
     'agent',
     'event:12',
     'down',
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
-  expect(first.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
-    'aria-pressed',
-    'false',
-  );
-  expect(first.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+  expect(first.getByRole('button', { name: 'Helpful' })).toHaveAttribute('aria-pressed', 'false');
+  expect(first.getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  expect(second.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+  expect(second.getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
     'aria-pressed',
     'false',
   );
-  await userEvent.click(first.getByRole('button', { name: 'Downvote message' }));
+  await userEvent.click(first.getByRole('button', { name: 'Needs improvement' }));
   expect(set).toHaveBeenLastCalledWith('agent', 'event:12', null, expect.anything());
-  await userEvent.click(second.getByRole('button', { name: 'Upvote message' }));
+  await userEvent.click(second.getByRole('button', { name: 'Helpful' }));
   view.unmount();
   render(wrapped(client));
   await waitFor(() =>
     expect(
       within(screen.getByRole('article', { name: 'event:16' })).getByRole('button', {
-        name: 'Upvote message',
+        name: 'Helpful',
       }),
     ).toHaveAttribute('aria-pressed', 'true'),
   );
@@ -139,20 +133,17 @@ it('retains the confirmed vote after failure and retries the same requested valu
   render(wrapped(client));
   const first = within(screen.getByRole('article', { name: 'event:12' }));
   await waitFor(() =>
-    expect(first.getByRole('button', { name: 'Downvote message' })).toBeEnabled(),
+    expect(first.getByRole('button', { name: 'Needs improvement' })).toBeEnabled(),
   );
-  await userEvent.click(first.getByRole('button', { name: 'Downvote message' }));
-  expect(first.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await userEvent.click(first.getByRole('button', { name: 'Needs improvement' }));
+  expect(first.getByRole('button', { name: 'Helpful' })).toHaveAttribute('aria-pressed', 'true');
   expect(first.getByRole('status')).toHaveTextContent('Unavailable');
   expect(
     within(screen.getByRole('article', { name: 'event:16' })).queryByRole('status'),
   ).toBeNull();
   await userEvent.click(first.getByRole('button', { name: 'Retry vote' }));
   expect(set.mock.calls[1]?.slice(0, 3)).toEqual(set.mock.calls[0]?.slice(0, 3));
-  expect(first.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+  expect(first.getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
@@ -174,21 +165,18 @@ it('aborts old-account writes, hides old votes immediately, and refuses feedback
   const view = render(wrapped(client));
   const first = within(screen.getByRole('article', { name: 'event:12' }));
   await waitFor(() =>
-    expect(first.getByRole('button', { name: 'Downvote message' })).toBeEnabled(),
+    expect(first.getByRole('button', { name: 'Needs improvement' })).toBeEnabled(),
   );
-  await userEvent.click(first.getByRole('button', { name: 'Downvote message' }));
+  await userEvent.click(first.getByRole('button', { name: 'Needs improvement' }));
   view.rerender(wrapped(client, 'other'));
-  expect(first.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
-    'aria-pressed',
-    'false',
-  );
+  expect(first.getByRole('button', { name: 'Helpful' })).toHaveAttribute('aria-pressed', 'false');
   expect(set.mock.calls[0]?.[3].signal.aborted).toBe(true);
   await act(async () => finish({ message_id: 'event:12', vote: 'down' }));
-  expect(first.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+  expect(first.getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
     'aria-pressed',
     'false',
   );
   view.rerender(wrapped(client, 'other', false));
-  expect(first.getByRole('button', { name: 'Upvote message' })).toBeDisabled();
+  expect(first.queryByRole('button', { name: 'Helpful' })).toBeNull();
   expect(first.getByRole('button', { name: 'Copy content' })).toBeEnabled();
 });
