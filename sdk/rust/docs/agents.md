@@ -496,6 +496,19 @@ the greatest durable sequence in a successfully completed turn. Other targets
 return 404; historical votes remain readable, and the up/down/null request and
 response shapes remain unchanged.
 
+`agents().feedback_details(agent_id, "event:42")` returns `FeedbackDetails` with
+viewer/Agent/answer identities, `version`, `reasons`, `comment`, `updated_at`,
+and `request_id`. After confirming down, call `set_feedback_reasons(agent_id,
+"event:42", &FeedbackReasonRequest { expected_version, request_id, reasons,
+comment })`. `FeedbackReason` has six variants: `Inaccurate`, `Unanswered`,
+`UnusableSteps`, `Incomplete`, `Unclear`, `Other`; selections must be distinct.
+Use an empty optional comment or at most 500 Unicode code points, and a stable
+ASCII request ID (1–128 letters/digits or `_.:-`). Exact retries recover the same
+durable result; stale versions or changed request reuse return 409
+`feedback_version_conflict`. Reread after an uncertain outcome. Up/null atomically
+clears saved details for all clients, while retaining a version fence. No Agent
+input or training operation is created.
+
 ### Agent session share links
 
 `resource_access().create_agent_share_link(agent_id, &CreateAgentShareLinkRequest,
