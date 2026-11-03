@@ -244,7 +244,6 @@ export function AgentSurface({
         state.v2?.owner === (viewerId ?? verified.owner) &&
         controller.resourceAvailability.state === 'live'
       ) {
-        // Transport still rechecks identity before admission and acceptance.
         send();
       } else {
         void connections.checkAndRun(
