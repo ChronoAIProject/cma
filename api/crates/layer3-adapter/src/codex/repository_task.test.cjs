@@ -69,6 +69,7 @@ test('candidate runtime pins repository ref and native first task reads that che
   let boundaryError;
   let checkoutCommit;
   let sourceBehavior = 'ready';
+  let partialArchiveRequested = false;
   const task = 'Read proof.txt and HEAD, then write first-task.txt with TASK_EXECUTED_04.';
   const server = createServer(async (request, response) => {
     try {
@@ -86,11 +87,12 @@ test('candidate runtime pins repository ref and native first task reads that che
           assert.equal(url.searchParams.get('sha'), 'proof/fixed');
           resolutions += 1;
           response.setHeader('content-type', 'application/json');
-          response.end(JSON.stringify([{ sha: sourceBehavior === 'unsafe' ? unsafeCommit : resolutions === 1 ? sourceCommit : movedCommit }]));
+          response.end(JSON.stringify([{ sha: sourceBehavior === 'unsafe' ? unsafeCommit : sourceBehavior === 'partial' || resolutions === 1 ? sourceCommit : movedCommit }]));
         } else if (url.pathname.endsWith('/zipball/' + unsafeCommit)) {
           response.setHeader('content-type', 'application/zip');
           response.end(unsafeArchive);
         } else if (url.pathname.endsWith('/zipball/' + sourceCommit)) {
+          if (sourceBehavior === 'partial') { partialArchiveRequested = true; return; }
           archives += 1;
           response.setHeader('content-type', 'application/zip');
           response.end(archive);
@@ -218,6 +220,24 @@ test('candidate runtime pins repository ref and native first task reads that che
       assert.equal(readFileSync(join(cwd, 'proof.txt'), 'utf8'), 'FIXED_SOURCE_04\n');
       assert.equal((await control(request)).resolved_commit, checkoutCommit);
     }
+    sourceBehavior = 'partial';
+    const partial = prepareRequest('workspace:wks_partial:prepare:v1', 'wks_partial', 'partial');
+    const interrupted = control(partial).catch(() => undefined);
+    for (let attempt = 0; !partialArchiveRequested; attempt++) {
+      assert(attempt < 100, 'runtime did not request the pinned archive');
+      await delay(20);
+    }
+    const resolutionsBeforeRestart = resolutions;
+    await stop(runtime);
+    await interrupted;
+    await start();
+    const recovery = await control(partial);
+    assert.equal(recovery.t, 'failure');
+    assert.equal(recovery.code, 'workspace_prepare_outcome_unknown');
+    assert.equal(resolutions, resolutionsBeforeRestart);
+    assert.deepEqual(await control(request), prepared);
+    assert.equal(readFileSync(join(home, 'existing.txt'), 'utf8'), 'PRESERVE_EXISTING_04');
+    console.log(JSON.stringify({ interruptedPreparation: recovery.code, reResolvedAfterRestart: false }));
   } finally {
     await bridge?.close();
     await stop(runtime);
