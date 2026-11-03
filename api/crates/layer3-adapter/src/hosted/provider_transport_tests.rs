@@ -435,6 +435,7 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
                 provider_tool: None,
                 access_tool: None,
                 recovered_prompt: None,
+                recovered_context_sequence: None,
             },
             updates,
         )

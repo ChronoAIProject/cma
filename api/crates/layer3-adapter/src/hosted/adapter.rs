@@ -32,6 +32,8 @@ mod attachment;
 mod checkpoint;
 #[path = "adapter_context.rs"]
 mod context;
+#[path = "adapter_credential.rs"]
+mod credential;
 #[path = "adapter_exchange.rs"]
 mod exchange;
 #[path = "adapter_filesystem.rs"]

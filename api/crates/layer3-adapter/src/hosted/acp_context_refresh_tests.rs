@@ -175,6 +175,15 @@ async fn managed_context_null_goal_loads_exact_thread_and_settings_after_file_ac
 
 #[tokio::test]
 async fn transport_reattachment_confirmation_follows_exact_reload_and_settings_acknowledgements() {
+    transport_recovery(false).await;
+}
+
+#[tokio::test]
+async fn closed_context_reconnect_loads_same_conversation_before_settings_and_unlocks_input() {
+    transport_recovery(true).await;
+}
+
+async fn transport_recovery(recovering: bool) {
     use crate::hosted::{HostedAccessToolBinding, HostedAccessToolSource};
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Source {
@@ -249,21 +258,27 @@ async fn transport_reattachment_confirmation_follows_exact_reload_and_settings_a
         0,
         vec![old.acp_server(), unchanged_tool.clone()],
     );
-    let context = context.with_access(source.clone(), old);
+    let context = context.with_access(source.clone(), old.clone());
     let retained_context = context.clone();
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
     let confirmation = source.clone();
     let serving = tokio::spawn(async move {
         let initialize = receive_json(&mut server).await;
-        respond(&mut server, &initialize, serde_json::json!({})).await;
-        let open = receive_json(&mut server).await;
-        respond(
-            &mut server,
-            &open,
-            serde_json::json!({"sessionId":"retained-session"}),
-        )
-        .await;
+        if recovering {
+            // The native bridge survived, but the previous refresh already
+            // closed its session. A mode request before load would be rejected.
+            reject(&mut server, &initialize).await;
+        } else {
+            respond(&mut server, &initialize, serde_json::json!({})).await;
+            let open = receive_json(&mut server).await;
+            respond(
+                &mut server,
+                &open,
+                serde_json::json!({"sessionId":"retained-session"}),
+            )
+            .await;
+        }
         for method in [
             "session/close",
             "session/load",
@@ -290,15 +305,19 @@ async fn transport_reattachment_confirmation_follows_exact_reload_and_settings_a
         }
         while server.next().await.is_some() {}
     });
-    let mut config = settings(None, false);
+    let mut config = settings(recovering.then_some("agent-full-access"), false);
     config.context_refresh = Some(context);
+    if recovering {
+        config.recovered_context_sequence = Some(1);
+        config.access_tool = Some(old);
+    }
     let (updates, _receiver) = tokio::sync::mpsc::channel(8);
     let opened = Bridge::open(
         client,
         "agent-1",
         "/workspace".into(),
         config,
-        None,
+        recovering.then(|| "retained-session".into()),
         updates,
     )
     .await
@@ -316,22 +335,50 @@ async fn transport_reattachment_confirmation_follows_exact_reload_and_settings_a
         .managed_transport_receipt(1)
         .await
         .unwrap();
-    opened
-        .channel
-        .input
-        .send(ConversationInput::RefreshContext {
-            service_origin: Some("https://new.example".into()),
-            operation_sequence: 1,
-            readiness_receipt: receipt,
-            guidance: "New managed".into(),
-            previous_guidance: vec!["Old managed".into()],
-            model: "gpt-6".into(),
-            reasoning_effort: crate::ReasoningEffort::High,
-            permission: crate::PermissionLevel::Autonomous,
-            working_directory: None,
-        })
-        .await
-        .unwrap();
+    let refresh = ConversationInput::RefreshContext {
+        service_origin: Some("https://new.example".into()),
+        operation_sequence: 1,
+        readiness_receipt: receipt,
+        guidance: "New managed".into(),
+        previous_guidance: vec!["Old managed".into()],
+        model: "gpt-6".into(),
+        reasoning_effort: crate::ReasoningEffort::High,
+        permission: crate::PermissionLevel::Autonomous,
+        working_directory: None,
+    };
+    if recovering {
+        let mut different = refresh.clone();
+        if let ConversationInput::RefreshContext {
+            operation_sequence, ..
+        } = &mut different
+        {
+            *operation_sequence = 2;
+        }
+        for refused in [
+            ConversationInput::Prompt(Vec::new()),
+            ConversationInput::Cancel,
+            ConversationInput::Configure {
+                model: "gpt-6".into(),
+                reasoning_effort: crate::ReasoningEffort::High,
+                permission: crate::PermissionLevel::Autonomous,
+                system_prompt: None,
+            },
+            different,
+        ] {
+            assert!(matches!(
+                opened
+                    .bridge
+                    .drive(
+                        refused,
+                        &crate::hosted::update_relay::UpdateRelay::capture().0
+                    )
+                    .await,
+                Err(crate::AdapterError::OperationIdentityConflict(_))
+            ));
+        }
+    }
+    opened.channel.input.send(refresh).await.unwrap();
+    assert_eq!(opened.bridge.recovering_context.load(Ordering::SeqCst), 0);
     assert_eq!(source.confirmed.load(Ordering::SeqCst), 1);
     assert_eq!(files.goal_probes.load(Ordering::SeqCst), 2);
     assert_eq!(
@@ -411,6 +458,45 @@ async fn transport_readiness_requires_exact_stable_absence_and_retains_native_go
         }
         assert_eq!(files.writes.load(Ordering::SeqCst), 0);
         stop(opened).await;
+        serving.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn context_recovery_requires_retained_identity_and_control_plane_writer() {
+    for fault in [
+        "missing_conversation",
+        "missing_writer",
+        "zero_sequence",
+        "active_prompt",
+    ] {
+        let (client, mut server) = socket_pair().await;
+        send_ready(&mut server, "agent-1").await;
+        let serving = tokio::spawn(async move {
+            while let Some(Ok(frame)) = server.next().await {
+                assert!(!matches!(frame, Message::Binary(_)));
+            }
+        });
+        let mut config = settings(Some("read-only"), false);
+        config.recovered_context_sequence = Some(if fault == "zero_sequence" { 0 } else { 1 });
+        if fault != "missing_writer" {
+            config.context_refresh =
+                Some(crate::hosted::managed_context::writer_tests::binding(0).0);
+        }
+        if fault == "active_prompt" {
+            config.recovered_prompt = Some(crate::PromptIdentity::new("retained-session", 1, 1));
+        }
+        let (updates, _receiver) = tokio::sync::mpsc::channel(8);
+        let result = Bridge::open(
+            client,
+            "agent-1",
+            "/workspace".into(),
+            config,
+            (fault != "missing_conversation").then(|| "retained-session".into()),
+            updates,
+        )
+        .await;
+        assert!(matches!(result, Err(crate::AdapterError::Rejected(_))));
         serving.await.unwrap();
     }
 }
