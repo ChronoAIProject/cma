@@ -48,4 +48,5 @@ async fn saved_suggestions_use_only_a_scoped_get_and_refuse_a_different_answer()
         }
     }
     server.assert_drained();
+    assert_eq!(server.request_count(), 2);
 }

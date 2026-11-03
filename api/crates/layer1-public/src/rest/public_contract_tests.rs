@@ -28,6 +28,7 @@ mod event_worker_cases;
 mod experience_cases;
 mod fault_cases;
 mod filesystem_cases;
+mod filesystem_runtime;
 mod gateway_cases;
 mod gateway_interaction_cases;
 mod inventory;

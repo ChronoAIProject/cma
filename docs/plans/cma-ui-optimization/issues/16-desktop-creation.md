@@ -4,7 +4,7 @@
 
 **Blocked by:** 03（可恢复的首页创建）；15（已证实的浏览器观察能力）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **优先级:** P3
 
