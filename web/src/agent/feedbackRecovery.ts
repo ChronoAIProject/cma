@@ -1,4 +1,36 @@
 import type { MessageVote } from '../api/client';
+import type { FeedbackReason, FeedbackReasonRequest } from '../api/feedbackTypes';
+
+export interface ReasonDraft {
+  readonly reasons: readonly FeedbackReason[];
+  readonly comment: string;
+  readonly pending?: FeedbackReasonRequest;
+}
+const drafts = new Map<string, Record<string, ReasonDraft>>();
+let draftViewer: string | undefined;
+
+export function feedbackAuthority(viewer: string | undefined, enabled: boolean) {
+  if (draftViewer !== viewer || !enabled) drafts.clear();
+  draftViewer = viewer;
+}
+
+export function reasonDraft(agent: string, viewer: string, message: string) {
+  return drafts.get(key(agent, viewer))?.[message];
+}
+
+export function retainReasonDraft(
+  agent: string,
+  viewer: string,
+  message: string,
+  draft: ReasonDraft | undefined,
+) {
+  const scope = key(agent, viewer);
+  const entries = { ...drafts.get(scope) };
+  if (draft) entries[message] = draft;
+  else delete entries[message];
+  if (Object.keys(entries).length) drafts.set(scope, entries);
+  else drafts.delete(scope);
+}
 
 const fallback = new Map<string, Record<string, MessageVote>>();
 

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 227,
+  "openapi_operations": 230,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2855,6 +2855,17 @@
         "runtime_update_not_available"
       ]
     },
+    "GET /api/v1/agents/{id}/suggestions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/suggestions.rs# Owner-scoped saved contextual suggestions; reads do not generate or send input.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_instance_query"
+      ]
+    },
     "GET /api/v1/agents/{id}/message-feedback": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/message_feedback.rs# Owner message metadata, separate from Agent conversation commands.",
@@ -3230,6 +3241,30 @@
         "not_authenticated",
         "sandbox_checkpoint_in_progress",
         "store_failed"
+      ]
+    },
+    "GET /api/v1/agents/{id}/messages/{message_id}/feedback": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback_reasons.rs# Conditional owner feedback metadata.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_agent_request"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback_reasons.rs# Conditional owner feedback metadata.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "feedback_version_conflict",
+        "invalid_json"
       ]
     }
   }
