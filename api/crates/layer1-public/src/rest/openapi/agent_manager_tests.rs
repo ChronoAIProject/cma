@@ -1,4 +1,27 @@
 use super::*;
+
+#[test]
+fn message_feedback_reason_schema_is_in_focused_agent_manager_contract() {
+    let contract = document();
+    assert!(
+        contract["paths"]["/api/v1/agents/{id}/messages/{message_id}/feedback"]["get"].is_object()
+    );
+    assert!(
+        contract["paths"]["/api/v1/agents/{id}/messages/{message_id}/feedback/reasons"]["put"]
+            .is_object()
+    );
+    assert_eq!(
+        contract["components"]["schemas"]["FeedbackReasonView"]["enum"],
+        json!([
+            "inaccurate",
+            "unanswered",
+            "unusable_steps",
+            "incomplete",
+            "unclear",
+            "other"
+        ])
+    );
+}
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
