@@ -51,6 +51,8 @@ mod worker;
 #[path = "agent_lifecycle_workspace.rs"]
 mod workspace;
 
+#[path = "agent_lifecycle_desktop.rs"]
+mod desktop;
 #[path = "agent_lifecycle_image.rs"]
 mod image;
 pub(crate) use image::{ImageManagerResolver, ImageResolver};
@@ -81,6 +83,7 @@ pub(crate) struct InlineAgentLifecycle {
     capacity: layer3_adapter::SandboxCapacity,
     operations: Arc<MongoAgentLifecycleStore>,
     native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
+    desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
     self_ref: OnceLock<Weak<Self>>,
     worker_slots: Arc<tokio::sync::Semaphore>,
 }
@@ -113,6 +116,7 @@ impl InlineAgentLifecycle {
         scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
         operations: Arc<MongoAgentLifecycleStore>,
         native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
+        desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
     ) -> Arc<Self> {
         let instance = Arc::new(Self {
             sandbox,
@@ -124,6 +128,7 @@ impl InlineAgentLifecycle {
             capacity,
             operations,
             native_prepared,
+            desktop,
             self_ref: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
         });
@@ -289,7 +294,7 @@ impl InlineAgentLifecycle {
         } else {
             let agent = self
                 .agents
-                .create_for_lifecycle_with_purpose(
+                .create_for_lifecycle_with_preparation(
                     caller,
                     actor.as_ref(),
                     &workspace_id,
@@ -304,7 +309,10 @@ impl InlineAgentLifecycle {
                             operation_id: lease.id.clone(),
                         },
                     },
-                    validation::first_message_purpose(&request),
+                    layer2_core::sandbox::FirstMessagePreparation {
+                        purpose: validation::first_message_purpose(&request),
+                        desktop: request.desktop,
+                    },
                 )
                 .await
                 .map_err(|error| match error {
@@ -341,7 +349,8 @@ impl InlineAgentLifecycle {
             ("agent_startup", "running", "Starting your Agent"),
         )
         .await?;
-        self.wait_for_agent_ready(caller, &agent_id).await?;
+        self.wait_for_prepared_agent(caller, &agent_id, &lease, request.desktop)
+            .await?;
         self.progress(&lease, "agent_startup", "ready", "Your Agent is ready")
             .await?;
         Ok(agent_id.to_string())
@@ -350,6 +359,18 @@ impl InlineAgentLifecycle {
 
 #[async_trait]
 impl AgentLifecycleProvisioner for InlineAgentLifecycle {
+    async fn desktop_capability(
+        &self,
+        caller: &Caller,
+        context: Option<&CallerContext>,
+        scope: layer1_public::rest::DesktopCreationScope,
+    ) -> Result<
+        layer2_core::sandbox::desktop_creation::DesktopCapability,
+        AgentLifecycleProvisioningError,
+    > {
+        self.read_desktop_capability(caller, context, scope).await
+    }
+
     async fn create(
         &self,
         caller: &Caller,
@@ -403,7 +424,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         services(&profile.permissions)?;
         // Resolve the delegated Image Manager reference before persisting the
         // operation. The durable worker then needs no secret after admission.
-        let resolved_image = match &request.image {
+        let mut resolved_image = match &request.image {
             Some(image) => Some(
                 self.image_resolver
                     .resolve(delegated_credential, image)
@@ -411,6 +432,22 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             ),
             None => None,
         };
+        if request.desktop {
+            let capability = self
+                .inspect_desktop(caller, context, &request, resolved_image.as_deref())
+                .await?;
+            if !capability.available() {
+                if capability.state == layer2_core::sandbox::desktop_creation::DesktopAvailability::TemporarilyUnavailable {
+                    return Err(AgentLifecycleProvisioningError::Unavailable);
+                }
+                return Err(AgentLifecycleProvisioningError::DesktopUnsupported(
+                    capability.reason,
+                ));
+            }
+            if request.workspace_id.is_none() && request.sandbox_id.is_none() {
+                resolved_image = capability.runtime_image;
+            }
+        }
         let input = LifecycleInput {
             behavior: LifecycleBehavior::PromptRepository,
             managed_agent_instructions: Some(guidance::managed_v3().into()),

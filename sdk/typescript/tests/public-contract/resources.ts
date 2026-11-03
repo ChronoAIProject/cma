@@ -111,6 +111,11 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.agents.createLifecycle(body, command),
   'GET /api/v1/agent-lifecycle/{id}': ({ client, param }) =>
     client.agents.readLifecycle(param('id')),
+  'GET /api/v1/desktop-capability': ({ client, query }) =>
+    client.agents.desktopCapability({
+      workspace_id: query.get('workspace_id') ?? undefined,
+      sandbox_id: query.get('sandbox_id') ?? undefined,
+    }),
   'POST /api/v1/sandboxes/{id}/workspaces/inline': ({ client, param, body, command }) =>
     client.workspaces.createInline(param('id'), body, command),
   'PUT /api/v1/cmaeg/bindings/{binding_id}': ({ client, param, body }) =>

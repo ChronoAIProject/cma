@@ -1,0 +1,356 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "desktop-capability-owner-200",
+      "operation": "GET /api/v1/desktop-capability",
+      "scenario": "lifecycle_contract_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "state": "unsupported",
+          "reason": "This deployment has no verified desktop runtime.",
+          "runtime_contract": 3,
+          "min_memory_mib": 2048,
+          "min_cpu_millis": 1000
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-capability-desktop_available-200",
+      "operation": "GET /api/v1/desktop-capability",
+      "scenario": "lifecycle_contract_desktop_available",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "state": "available",
+          "reason": "Verified desktop runtime.",
+          "runtime_contract": 3,
+          "min_memory_mib": 2048,
+          "min_cpu_millis": 1000,
+          "runtime_image": "proof.invalid/runtime@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-capability-desktop_pending-200",
+      "operation": "GET /api/v1/desktop-capability",
+      "scenario": "lifecycle_contract_desktop_pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "state": "temporarily_unavailable",
+          "reason": "Runtime capability could not be verified. Retry the same request.",
+          "runtime_contract": 3,
+          "min_memory_mib": 2048,
+          "min_cpu_millis": 1000
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-capability-anonymous-401",
+      "operation": "GET /api/v1/desktop-capability",
+      "scenario": "lifecycle_contract_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-capability-forbidden-403",
+      "operation": "GET /api/v1/desktop-capability",
+      "scenario": "lifecycle_contract_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-forbidden",
+          "title": "agent manager forbidden",
+          "status": 403,
+          "detail": "the authenticated caller cannot create an Agent",
+          "code": "permission_denied"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-capability-foreign-403",
+      "operation": "GET /api/v1/desktop-capability",
+      "scenario": "lifecycle_contract_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability?workspace_id=foreign",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-forbidden",
+          "title": "agent manager forbidden",
+          "status": 403,
+          "detail": "the authenticated caller cannot create an Agent",
+          "code": "permission_denied"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-capability-unavailable-503",
+      "operation": "GET /api/v1/desktop-capability",
+      "scenario": "lifecycle_contract_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-unavailable",
+          "title": "agent manager unavailable",
+          "status": 503,
+          "detail": "the Agent Manager lifecycle implementation is unavailable",
+          "code": "temporarily_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-capability-owner-400",
+      "operation": "GET /api/v1/desktop-capability",
+      "scenario": "lifecycle_contract_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability?unexpected=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-capability-owner-422",
+      "operation": "GET /api/v1/desktop-capability",
+      "scenario": "lifecycle_contract_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability?workspace_id=workspace&sandbox_id=sandbox",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-invalid-request",
+          "title": "agent manager invalid request",
+          "status": 422,
+          "detail": "invalid Agent lifecycle request: workspace_id and sandbox_id are mutually exclusive",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-create-false",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "New task",
+          "initial_message": "Exact original task",
+          "desktop": false
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "operation-contract",
+          "status": "provisioning"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-create-true",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "New task",
+          "initial_message": "Exact original task",
+          "desktop": true
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "operation-contract",
+          "status": "provisioning"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-create-unsupported",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_desktop_unsupported",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "New task",
+          "initial_message": "Exact original task",
+          "desktop": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-desktop-unsupported",
+          "title": "agent manager desktop unsupported",
+          "status": 422,
+          "detail": "desktop is unavailable: This deployment has no verified desktop runtime.",
+          "code": "desktop_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-create-missing-task",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "New task",
+          "desktop": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-invalid-request",
+          "title": "agent manager invalid request",
+          "status": 422,
+          "detail": "invalid Agent lifecycle request: desktop creation requires initial_message",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

@@ -142,7 +142,7 @@ impl InlineAgentLifecycle {
             // transactional admission preserves one Agent/worktree per origin.
             let agent = self
                 .agents
-                .create_for_lifecycle_with_purpose(
+                .create_for_lifecycle_with_preparation(
                     caller,
                     input.actor.as_ref(),
                     &workspace.id,
@@ -157,7 +157,10 @@ impl InlineAgentLifecycle {
                             operation_id: input.lease.id.clone(),
                         },
                     },
-                    validation::first_message_purpose(&input.request),
+                    layer2_core::sandbox::FirstMessagePreparation {
+                        purpose: validation::first_message_purpose(&input.request),
+                        desktop: input.request.desktop,
+                    },
                 )
                 .await
                 .map_err(|error| contextual_error(error, workspace.id.as_str()))?;
@@ -167,7 +170,8 @@ impl InlineAgentLifecycle {
                 .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
             agent.id
         };
-        self.wait_for_agent_ready(caller, &agent_id).await?;
+        self.wait_for_prepared_agent(caller, &agent_id, &input.lease, input.request.desktop)
+            .await?;
         self.progress(
             &input.lease,
             "agent_startup",

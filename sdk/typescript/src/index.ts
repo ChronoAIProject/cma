@@ -36,6 +36,7 @@ export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
 export type * from './agents/lifecycle.js';
+export type * from './agents/desktop.js';
 export type * from './agents/models.js';
 export type * from './agents/skills.js';
 export type * from './agents/access-requests.js';
