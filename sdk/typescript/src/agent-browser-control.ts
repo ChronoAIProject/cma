@@ -93,7 +93,7 @@ export class AgentBrowserControl implements AgentBrowserControlClient {
   ) {
     const path = `/api/v1/agents/${segment(agent)}/browser/control`;
     const { client_key, ...selection } = scope;
-    const body = input ? (({ client_key: _key, ...value }) => value)(input) : undefined;
+    const body = input ? selection : undefined;
     const headers = new Headers();
     headers.set('x-cma-browser-client', client_key);
     const bytes = await requestBytes(
