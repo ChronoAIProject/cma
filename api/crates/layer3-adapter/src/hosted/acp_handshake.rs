@@ -374,6 +374,7 @@ fn protected_setup_failure(error: AdapterError) -> AdapterError {
         AdapterError::InputAuthorityUnavailable(_) => {
             AdapterError::InputAuthorityUnavailable(detail)
         }
+        AdapterError::PromptNotWritten(_) => AdapterError::PromptNotWritten(detail),
         AdapterError::Unavailable(_) => AdapterError::Unavailable(detail),
         AdapterError::Rejected(_) => AdapterError::Rejected(detail),
         AdapterError::OperationIdentityConflict(_) => {

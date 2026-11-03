@@ -13,6 +13,9 @@ pub struct RuntimeContractMismatch {
 /// A provider-neutral adapter failure.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AdapterError {
+    /// A prompt was refused before its frame reached the transport writer.
+    #[error("runtime prompt was not written: {0}")]
+    PromptNotWritten(String),
     #[error("input authority temporarily unavailable: {0}")]
     InputAuthorityUnavailable(String),
     #[error("runtime unavailable: {0}")]
@@ -34,6 +37,9 @@ impl AdapterError {
     #[must_use]
     pub fn context(self, context: &str) -> Self {
         match self {
+            Self::PromptNotWritten(message) => {
+                Self::PromptNotWritten(format!("{context}: {message}"))
+            }
             Self::InputAuthorityUnavailable(message) => {
                 Self::InputAuthorityUnavailable(format!("{context}: {message}"))
             }
