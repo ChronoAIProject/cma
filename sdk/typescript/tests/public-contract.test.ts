@@ -22,6 +22,7 @@ import { operatorDispatch } from './public-contract/operator.js';
 import { triggerDispatch } from './public-contract/triggers.js';
 import { experienceDispatch } from './public-contract/experience.js';
 import { agentEventsV2Dispatch } from './public-contract/agent-events-v2.js';
+import { agentBrowserDispatch } from './public-contract/agent-browser.js';
 import {
   expectation,
   expectedProjection,
@@ -41,6 +42,7 @@ const dispatch = {
   ...triggerDispatch,
   ...experienceDispatch,
   ...agentEventsV2Dispatch,
+  ...agentBrowserDispatch,
 };
 const corpus = loadCorpus();
 

@@ -78,7 +78,7 @@ fn missing() -> AdapterError {
 #[async_trait::async_trait]
 impl SandboxAdapter for Files {
     fn browser(&self) -> Option<&dyn BrowserAdapter> {
-        (self.kind == "browser").then_some(self)
+        self.kind.starts_with("browser").then_some(self)
     }
     async fn list_agent_files(
         &self,

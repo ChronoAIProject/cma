@@ -584,3 +584,19 @@ Dropping the future cancels the operation; all download steps share one deadline
 Saving the bytes is the caller's choice. Changed live files cannot substitute for
 the answer's original bytes; changed documents can still deliver their original
 source revision. Pass a document share token only when independently authorized.
+
+### Browser observation
+
+Read `agent_files().environment(agent_id)` for the current opaque
+`runtime_incarnation` and browser availability. The owner explicitly calls
+`agent_browser().configure(agent_id, incarnation, true)` to enable that Agent's
+browser in that runtime incarnation. Observation defaults off. Inspect the
+returned state: a successful HTTP response can truthfully report `unsupported`.
+
+`agent_browser().read(agent_id, incarnation, Some(observer), context)` returns a
+bounded observation under current authorization. Pin the returned context,
+reuse one observer per mounted viewer and stop reads on Agent, account or access
+changes. Dropping the future cancels the read. Real frames expire after 3000 ms;
+duplicates never renew freshness. Poll no faster than 1000 ms and call
+`agent_browser().release(agent_id, incarnation, observer)` when hidden or closed.
+Release preserves the page. The browser API exposes no input or takeover.
