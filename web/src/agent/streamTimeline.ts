@@ -85,7 +85,7 @@ export function createStreamTimeline() {
         .map((item) => entry('tool', item)),
       ...conversation.approvals.map((item) => entry('approval', item)),
       ...conversation.plans
-        .filter((item) => item.entries.length > 0)
+        .filter((item) => item.entries.length > 0 || item.incomplete)
         .map((item) => entry('plan', item)),
       ...conversation.recovery.map((item) => entry('recovery', item)),
     ];
