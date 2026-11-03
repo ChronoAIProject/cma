@@ -12,8 +12,8 @@ pub struct AgentFinalAnswer {
 }
 
 enum AnswerAuthority {
-    Shared(AgentEventStreamAuthorization),
-    Personal(Caller, AgentLineage),
+    Shared(Box<AgentEventStreamAuthorization>),
+    Personal(Caller, Box<AgentLineage>),
 }
 
 impl AgentReadService {
@@ -39,12 +39,12 @@ impl AgentReadService {
                         .lineage
                         .agent
                         .ok_or(AgentReadError::NotFound)?;
-                    (AnswerAuthority::Shared(held), agent)
+                    (AnswerAuthority::Shared(Box::new(held)), agent)
                 } else {
                     require(caller)?;
                     let lineage = self.owned_lineage(caller, id).await?;
                     (
-                        AnswerAuthority::Personal(caller.clone(), lineage.clone()),
+                        AnswerAuthority::Personal(caller.clone(), Box::new(lineage.clone())),
                         lineage.agent,
                     )
                 };
