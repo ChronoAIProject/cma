@@ -91,6 +91,7 @@ pub struct ToolsState {
     pub tracker: Arc<TurnTracker>,
     pub public_origin: String,
     pub public_api_url: String,
+    pub public_api_aliases: Vec<String>,
     pub advertise_public_api_url: bool,
     /// The media service turns share, or `None` while inbound media is
     /// disabled; attachment reads are then refused.

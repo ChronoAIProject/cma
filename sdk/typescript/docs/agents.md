@@ -627,7 +627,7 @@ its exact Agent; restart pagination when a fresh complete traversal is needed.
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
-const client = createClient({ baseUrl: 'https://bot.chrono-ai.fun', credential: () => 'token' });
+const client = createClient({ baseUrl: 'https://cma.nyxid.ai', credential: () => 'token' });
 const first = await client.agents.providerAssociations('agt_example', { limit: 50 });
 for (const item of first.items) {
   console.log(item.relationship, item.binding_id, item.conversation_state);

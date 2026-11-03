@@ -205,7 +205,7 @@ export const publishedButton = (
 `label` is `open_in_cma`, `chat_with_this`, `run_with_cma`, or `try_it`; `theme`
 is `auto`, `light`, or `dark`. Their defaults are `open_in_cma` and `auto`.
 `baseUrl` must be an absolute HTTP(S) origin with no credentials, path, query or
-fragment; its default is `https://bot.chrono-ai.fun`. Prefer the exact supplied
+fragment; its default is `https://cma.nyxid.ai`. Prefer the exact supplied
 descriptor props for non-production deployments. Package checks compile and
 render the backend-generated snippet against the packed SDK.
 

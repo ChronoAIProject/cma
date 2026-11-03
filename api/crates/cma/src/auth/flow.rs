@@ -6,7 +6,7 @@ use std::{
 };
 
 use axum::{
-    extract::{Query, State},
+    extract::{OriginalUri, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
     routing::get,
@@ -94,7 +94,15 @@ pub(super) async fn actor_login(auth: Arc<AuthState>, link_id: &str) -> Response
     .await
 }
 
-async fn login(State(auth): State<Arc<AuthState>>, Query(params): Query<LoginParams>) -> Response {
+async fn login(
+    State(auth): State<Arc<AuthState>>,
+    Query(params): Query<LoginParams>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(redirect) = auth.canonical_login_redirect(&headers, &uri) {
+        return redirect;
+    }
     let return_to = match params.return_to {
         Some(value) => match app_return_target(&value) {
             Ok(value) => Some(value),

@@ -121,11 +121,11 @@ fn advertised_document(source: &str, base: &str, advertise_canonical: bool) -> S
         source.to_owned()
     } else {
         source.replace(
-            "https://bot.chrono-ai.fun/event-gateway/legacy-console",
+            "https://cma.nyxid.ai/event-gateway/legacy-console",
             &format!("{base}/console"),
         )
     };
-    source.replace("https://bot.chrono-ai.fun/event-gateway", base)
+    source.replace("https://cma.nyxid.ai/event-gateway", base)
 }
 fn markdown(body: String) -> axum::routing::MethodRouter {
     let body = Arc::new(body);
@@ -182,7 +182,7 @@ fn page() -> String {
 fn download_markdown() -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
     use std::collections::HashMap;
-    let mut output = String::from("# Agent Event Gateway\n\nIntegration guide, architecture and protocol reference.\n\nOpenAPI: https://bot.chrono-ai.fun/event-gateway/openapi.json\n\n");
+    let mut output = String::from("# Agent Event Gateway\n\nIntegration guide, architecture and protocol reference.\n\nOpenAPI: https://cma.nyxid.ai/event-gateway/openapi.json\n\n");
     for (section, _, markdown) in SECTIONS {
         output.push_str(&format!("<a id=\"{section}\"></a>\n\n"));
         let events: Vec<_> = Parser::new_ext(markdown, Options::ENABLE_TABLES)

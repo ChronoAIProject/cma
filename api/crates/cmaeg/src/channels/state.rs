@@ -33,6 +33,7 @@ pub struct ManagementState {
     pub master_keys: Arc<MasterKeyRing>,
     pub public_url: String,
     pub public_api_url: String,
+    pub public_api_aliases: Vec<String>,
     pub advertise_public_api_url: bool,
     pub cma_base_url: String,
     pub tools_nyxid_slug: String,
@@ -124,6 +125,12 @@ impl ManagementState {
         }
     }
 
+    pub(crate) fn public_api_bases(&self) -> impl Iterator<Item = &str> {
+        [self.public_api_url.as_str(), self.public_url.as_str()]
+            .into_iter()
+            .chain(self.public_api_aliases.iter().map(String::as_str))
+    }
+
     pub fn advertised_api_url(&self) -> &str {
         if self.advertise_public_api_url {
             &self.public_api_url
@@ -177,6 +184,7 @@ impl ManagementState {
             master_keys: config.master_keys,
             public_url: config.public_url,
             public_api_url: config.public_api_url,
+            public_api_aliases: config.public_api_aliases,
             advertise_public_api_url: config.advertise_public_api_url,
             cma_base_url: config.cma_base_url,
             tools_nyxid_slug: config.tools_nyxid_slug,

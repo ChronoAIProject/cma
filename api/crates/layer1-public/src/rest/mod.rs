@@ -72,7 +72,7 @@ mod badge_mark;
 mod badge_tests;
 mod defaults;
 mod desktop;
-pub use desktop::desktop_router;
+pub use desktop::{desktop_router, desktop_router_with_origins};
 mod documents;
 pub use documents::documents_router;
 mod embed;
@@ -121,6 +121,7 @@ pub mod worker_credentials;
 pub use bindings::{
     binding_router, binding_router_with_native_tools, binding_router_with_native_tools_alias,
     binding_router_with_native_tools_alias_and_preparation,
+    binding_router_with_native_tools_aliases_and_preparation,
 };
 mod gateway_connections;
 mod gateway_interactions;

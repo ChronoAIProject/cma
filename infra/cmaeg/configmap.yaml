@@ -146,7 +146,9 @@ data:
   CMAEG_LISTEN: "0.0.0.0:8090"
   CMAEG_METRICS_LISTEN: "0.0.0.0:9091"
   CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
-  CMAEG_PUBLIC_API_URL: "https://bot.chrono-ai.fun/event-gateway"
+  CMAEG_PUBLIC_API_URL: "https://cma.nyxid.ai/event-gateway"
+  # Deploy compatibility readers before switching the advertised public API base.
+  CMAEG_PUBLIC_API_ALIASES: "https://bot.chrono-ai.fun/event-gateway"
   # First upgrade uses a reviewed temporary false override until all old Pods drain.
   CMAEG_ADVERTISE_PUBLIC_API_URL: "true"
   # Existing Nyx ChannelPointers and sealed records bind this exact authority.

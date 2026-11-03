@@ -5,6 +5,10 @@ The current runtime contract is **3**, not the contract-2 image named in the
 original #832 plan. Product semantics are defined in [CMA Model](CMA_Model.md);
 public routes are in [REST](API_REST.md).
 
+For the staged move to `cma.nyxid.ai`, including additive HTTPRoutes, the URL
+inventory, application cutover gates and rollback, see
+[CMA domain migration](CMA_Domain_Migration.md).
+
 ## CMAEG
 
 CMAEG (CMA Event Gateway) is a separate stateless service that receives
@@ -777,7 +781,8 @@ longer reserves buffers for CMA archive transfers.
 CMA uses two independent origins. `CHRONO_NYXID_BASE_URL` is the API/OAuth
 origin; `CHRONO_NYXID_PUBLIC_URL` is the browser registration/connect origin and
 must be one canonical HTTPS origin. Production configuration names
-`https://nyx-api.chrono-ai.fun` and `https://nyx.chrono-ai.fun` respectively.
+`https://nyx-api.chrono-ai.fun` (retained issuer/back-channel identity) and
+`https://nyxid.ai` respectively.
 `CHRONO_SERVER_PUBLIC_URL` remains the CMA browser origin so its host-only cookie
 and callback return to the same application.
 
@@ -884,7 +889,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 |---|---|
 | `CHRONO_SERVER_BIND` | Listen address, default `0.0.0.0:8080` |
 | `CHRONO_SERVER_PUBLIC_URL` | CMA browser origin; default local `http://localhost:8080`, production explicit |
-| `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed origins; default local `http://localhost:5173` |
+| `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed browser origins; default local `http://localhost:5173`. Cookie-authenticated Event Gateway writes and actor-link consent accept these origins plus `CHRONO_SERVER_PUBLIC_URL`; Desktop WebSockets use the same explicit origin set; duplicate, missing cookie-auth Origin and unlisted origins remain refused. Retain both CMA domains during migration. |
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
 | `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the integrated v2 browser transport; false code default, true in the production ConfigMap for new Agent tabs (including durable Starting input). Existing tabs retain their selected transport. Deploy with the matching API/Web release, ConfigMap compare-and-set, and API rollout; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
@@ -894,7 +899,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_CMAEG_BINDING_PREPARATION_ENABLED` | Strict boolean, default `false`. Allows management-authenticated reservation/replay for an explicitly retired and released binding hierarchy; inspection stays read-only. Enable only after compatible serving and rollback readers plus Gateway enrollment. See [fresh-event preparation](CMAEG_Fresh_Event_Binding_Preparation.md). |
 | `CHRONO_CMAEG_BASE_URL` | CMAEG management HTTP(S) origin; production `http://cma-event-gateway`. Set together with its public origin; omitting both disables Bot routes/workers. |
 | `CHRONO_CMAEG_PUBLIC_URL` | Retained CMAEG public HTTP(S) origin accepted for exact legacy callbacks; production `https://bot-gateway.chrono-ai.fun`. |
-| `CHRONO_CMAEG_PUBLIC_API_URL` | Canonical CMAEG public API base, defaulting to `CHRONO_CMAEG_PUBLIC_URL`; production `https://bot.chrono-ai.fun/event-gateway`. HTTPS with clean optional path segments, no credentials/query/fragment/trailing slash (loopback HTTP allowed for tests). Returned callback and event endpoints must match one exact canonical or legacy base for the same channel. |
+| `CHRONO_CMAEG_PUBLIC_API_URL` | Canonical CMAEG public API base, defaulting to `CHRONO_CMAEG_PUBLIC_URL`; production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments, no credentials/query/fragment/trailing slash (loopback HTTP allowed for tests). Returned callback and event endpoints must match one exact canonical or legacy base for the same channel. |
 | `CHRONO_NYXID_PUBLIC_URL` | Required exact canonical HTTPS browser origin in provider mode |
 | `CHRONO_NYXID_CLIENT_ID` | Provider-issued OAuth client id, not a chosen display name |
 | `CHRONO_NYXID_CLIENT_SECRET` | Required OAuth client secret reference |
@@ -1682,8 +1687,12 @@ production manifest enables the existing NyxID service identity protocol:
 Configure `CHRONO_NYXID_PROXY_ISSUER` to the exact discovery issuer and
 `CHRONO_NYXID_PROXY_JWKS_URL` to its trusted HTTPS signing-key endpoint. The
 production issuer is `https://nyx-api.chrono-ai.fun`, not the login frontend.
-CMA requires the exact `CHRONO_NYXID_SERVICE_ID` and an audience equal to
-`CHRONO_SERVER_PUBLIC_URL` without its trailing slash. It never follows a
+CMA requires the exact `CHRONO_NYXID_SERVICE_ID` and the exact optional
+`CHRONO_NYXID_PROXY_AUDIENCE`. When absent, the audience defaults to
+`CHRONO_SERVER_PUBLIC_URL` without its trailing slash. Production explicitly pins
+`https://bot.chrono-ai.fun` as the retained service identity, independent of the
+browser domain; migrating the browser does not invalidate existing per-user
+NyxID connection audiences. It never follows a
 signing-key URL supplied by a token. Invalid or duplicate identity headers
 cannot fall back to a browser cookie or unrelated bearer token.
 
@@ -1892,3 +1901,28 @@ collection. CMA does not deserialize platform setup state or platform
 credentials. The gateway alone encrypts and interprets these records. The
 existing `cma:gateway:records` capability covers the namespace; no new shared
 credential, Secret Manager dependency or user credential store is introduced.
+
+
+### Retained Event Gateway public bases
+
+`CHRONO_CMAEG_PUBLIC_API_ALIASES` and `CMAEG_PUBLIC_API_ALIASES` are optional
+comma-separated lists of at most eight exact HTTPS API bases (loopback HTTP is
+allowed for local tests). Empty means no extra bases. Each base follows the same
+canonical, clean-path validation as the primary public API URL: no userinfo,
+query, fragment, empty path segment or trailing slash. These aliases do not
+change the primary advertised URL or the retained legacy console origin.
+
+Deploy both services with the new base listed as an alias first. Their readers
+then accept coherent callback/event pairs, setup links, original Telegram webhook
+activation/retirement and native MCP advertisements from all exact configured
+bases. Webhook setup preserves an already installed recognized URL. Binding
+runtime proxy authority remains the original legacy MCP endpoint. Setup pages
+keep their original path and host-only capability cookie; form Origins must
+match a configured base with that exact path prefix. MCP accepts only the exact
+configured origins. The browser request never supplies a trusted base.
+
+After every serving and rollback reader is compatible, change both public API
+URLs to `https://cma.nyxid.ai/event-gateway` and retain
+`https://bot.chrono-ai.fun/event-gateway` in both alias lists. Keep
+`https://bot-gateway.chrono-ai.fun` as the legacy public origin. On rollback retain
+readers and all three reachable bases for links and webhooks already issued.

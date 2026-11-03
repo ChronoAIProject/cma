@@ -40,7 +40,7 @@ describe('SSR-safe React Trigger button', () => {
     const markup = renderToStaticMarkup(
       createElement(CmaTriggerButton, { triggerId: 'pub_example' }),
     );
-    expect(markup).toContain('href="https://bot.chrono-ai.fun/t/pub_example"');
+    expect(markup).toContain('href="https://cma.nyxid.ai/t/pub_example"');
     expect(markup).not.toContain('placement=');
     expect(markup).toContain('label=open_in_cma&amp;theme=auto');
   });

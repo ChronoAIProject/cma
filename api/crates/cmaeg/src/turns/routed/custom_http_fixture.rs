@@ -234,6 +234,7 @@ impl App {
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
             public_api_url: "https://gateway.example".into(),
+            public_api_aliases: vec![],
             advertise_public_api_url: true,
             media: media.clone(),
             downloads: Default::default(),
