@@ -43,6 +43,41 @@ impl From<super::ReadError> for ArtifactStoreFailure {
 
 #[async_trait::async_trait]
 impl AgentArtifactStore for MongoSandboxStore {
+    async fn agent_artifact_metadata(
+        &self,
+        binding: &ArtifactBinding,
+        id: &str,
+    ) -> Result<Option<StoredAgentArtifactMetadata>, ResourceAccessStoreError> {
+        let mut filter = binding_filter(binding)?;
+        filter.insert("_id", id);
+        let stored = self
+            .agent_artifacts
+            .find_one(filter)
+            .projection(doc! {
+                "_id":1, "agent_id":1, "binding":1, "document_schema_version":1,
+                "record.metadata":1, "record.binding":1, "record.authorization":1,
+            })
+            .await
+            .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+        stored
+            .map(|stored| {
+                let record: StoredAgentArtifactMetadata =
+                    read_record(&stored).map_err(|_| ResourceAccessStoreError::Corrupt)?;
+                record.validate()?;
+                let mut expected = binding_filter(&record.binding)?;
+                expected.insert("_id", &record.metadata.id);
+                expected.insert("document_schema_version", DOCUMENT_SCHEMA_VERSION);
+                if expected
+                    .iter()
+                    .any(|(key, value)| stored.get(key) != Some(value))
+                {
+                    return Err(ResourceAccessStoreError::Corrupt);
+                }
+                Ok(record)
+            })
+            .transpose()
+    }
+
     async fn publish_artifact(
         &self,
         request: &ArtifactPublication,

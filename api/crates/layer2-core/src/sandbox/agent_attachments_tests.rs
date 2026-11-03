@@ -46,7 +46,10 @@ async fn fixture() -> (
             store.clone(),
             Arc::new(NoOrganizations),
         )),
-        Arc::new(UnusedRuntime { status: None }),
+        Arc::new(UnusedRuntime {
+            status: None,
+            file_root: None,
+        }),
     );
     (
         store,
@@ -120,7 +123,10 @@ async fn attachment_admission_does_not_survive_owner_or_runtime_changes() {
                 changing.clone(),
                 Arc::new(NoOrganizations),
             )),
-            Arc::new(UnusedRuntime { status: None }),
+            Arc::new(UnusedRuntime {
+                status: None,
+                file_root: None,
+            }),
         );
         let admission = service
             .admit(&owner, None, None, &AgentId("agt_test".into()), meta())
@@ -401,6 +407,7 @@ async fn attachment_runtime_writer_requires_actual_capability_and_exact_boot() {
             Arc::new(ResourceAccessService::new(store, Arc::new(NoOrganizations))),
             Arc::new(UnusedRuntime {
                 status: Some(status),
+                file_root: None,
             }),
         );
         let owner = Caller::new(

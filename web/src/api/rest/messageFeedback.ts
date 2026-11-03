@@ -1,5 +1,6 @@
 import { ProtocolError } from '@chronoai/cma-sdk';
 import type { CmaWebClient, MessageFeedback } from '../client';
+import { feedbackReasonsClient } from './feedbackReasons';
 
 function feedback(value: unknown): value is MessageFeedback {
   return Boolean(
@@ -26,9 +27,10 @@ async function request(path: string, init: RequestInit): Promise<unknown> {
 
 export function messageFeedbackClient(): Pick<
   CmaWebClient,
-  'readMessageFeedback' | 'setMessageFeedback'
+  'readMessageFeedback' | 'setMessageFeedback' | 'readFeedbackDetails' | 'setFeedbackReasons'
 > {
   return {
+    ...feedbackReasonsClient(),
     readMessageFeedback: async (agentId, options) => {
       const result: MessageFeedback[] = [];
       const seen = new Set<string>();

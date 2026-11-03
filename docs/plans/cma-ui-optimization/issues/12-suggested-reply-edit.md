@@ -4,19 +4,19 @@
 
 **Blocked by:** 11（建议身份、资格校验和正常发送集成）。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **优先级:** P1
 
 ## Acceptance criteria
 
-- [ ] 每条建议提供可区分的“编辑后发送”动作；动作只编辑并聚焦输入框，不自动提交。
-- [ ] 输入框为空时填入建议完整文案；已有草稿时显示保留原文追加、明确替换文字或取消的选择，取消不改变任何输入。
-- [ ] 追加保留原文与换行；明确替换保留可撤回的旧文字，附件不因替换文字被静默删除；未决发送的原请求快照不被编辑动作覆盖。
-- [ ] 用户修改后的正文作为普通消息发送，使用 11 复用的实际 admission 和 recovery；确认后才收起建议，不以放入 composer 作为发送成功。
-- [ ] 发送失败保留实际编辑后的内容，晚到回执不能清空随后新输入；切 Agent/账号不会把建议或旧草稿注入另一个会话。
-- [ ] 编辑期间来源回答失效时撤下建议关联，已输入文本保留为普通草稿；下次发送仍重新校验权限。
-- [ ] 桌面/移动端的空草稿、有文字、有附件、冲突选择、发送失败都有清楚焦点路径和可访问状态。
+- [x] 每条建议提供可区分的“编辑后发送”动作；动作只编辑并聚焦输入框，不自动提交。
+- [x] 输入框为空时填入建议完整文案；已有草稿时显示保留原文追加、明确替换文字或取消的选择，取消不改变任何输入。
+- [x] 追加保留原文与换行；明确替换保留可撤回的旧文字，附件不因替换文字被静默删除；未决发送的原请求快照不被编辑动作覆盖。
+- [x] 用户修改后的正文作为普通消息发送，使用 11 复用的实际 admission 和 recovery；确认后才收起建议，不以放入 composer 作为发送成功。
+- [x] 发送失败保留实际编辑后的内容，晚到回执不能清空随后新输入；切 Agent/账号不会把建议或旧草稿注入另一个会话。
+- [x] 编辑期间来源回答失效时撤下建议关联，已输入文本保留为普通草稿；下次发送仍重新校验权限。
+- [x] 桌面/移动端的空草稿、有文字、有附件、冲突选择、发送失败都有清楚焦点路径和可访问状态。
 
 ## Testing boundaries（2026-11-03 已确认）
 
@@ -27,3 +27,24 @@
 ## 范围与依赖说明
 
 不等待动态生成，模板与动态建议共用同一编辑行为。原因表单草稿与 composer 草稿分开，不互相覆盖。
+
+## Implementation checkpoint
+
+2026-11-03: `codex/cma-ui-12`, isolated worktree `ticket-12`, starts at
+integration `ef5e20c1f`. Approved seams are U (real AgentSurface and composer),
+A (existing public normal admission/history/recovery), and browser interaction.
+Ticket 13 owns generation/fetching; ticket 12 adds only the shared set's edit action
+and composer draft handling. No new suggestion identity or analytics path.
+
+## Delivery
+
+2026-11-03: implementation `fe057a6cb`, public/browser proof `a3e625f89`,
+post-merge browser selector `c8d3c5d08`. Merged integration through `d19c225bd`
+(including 04 and 14) into this ticket branch; separate merger owns integration.
+
+[Acceptance evidence, commands, limits and 16-path manifest](../12-EVIDENCE.md).
+Final scope checks: 946 Web tests, 4 actual named public Rust tests, six final
+Chrome cases at 1440/390/320px in both themes; types, lint and build pass.
+Unrelated merged CSS and file-size gate failures are explicitly recorded in the
+evidence. No gate was weakened; no original/integration/other-worker source was
+edited, and no deployment, push or PR was performed.
