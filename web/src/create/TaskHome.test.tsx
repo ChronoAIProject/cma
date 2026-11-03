@@ -16,37 +16,47 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-it('keeps a damaged retained task unavailable without crashing or sending a replacement', async () => {
-  sessionStorage.setItem(
-    `cma:agent-creation:${JSON.stringify([location.origin, 'owner'])}`,
-    JSON.stringify({
-      version: 1,
-      intent: {
-        key: 'retained-task',
-        body: {
-          name: 'New task',
-          initial_message: { damaged: true },
+it.each([
+  { initial_message: { damaged: true } },
+  { initial_message: 'Retained task', repository: { url: { damaged: true }, ref: 'main' } },
+  {
+    initial_message: 'Retained task',
+    repository: { url: 'https://github.com/example/project', ref: [] },
+  },
+])(
+  'keeps a damaged retained task unavailable without crashing or sending a replacement: %j',
+  async (damaged) => {
+    sessionStorage.setItem(
+      `cma:agent-creation:${JSON.stringify([location.origin, 'owner'])}`,
+      JSON.stringify({
+        version: 1,
+        intent: {
+          key: 'retained-task',
+          body: {
+            name: 'New task',
+            ...damaged,
+          },
         },
-      },
-    }),
-  );
-  const transport = vi.fn<typeof fetch>();
-  render(
-    <TaskHome
-      client={taskClient(transport)}
-      viewerId="owner"
-      canCreateSandbox
-      onCreated={() => {}}
-    />,
-  );
-  expect(await screen.findByText(/The saved Agent request could not be read/)).toBeVisible();
-  fireEvent.change(screen.getByLabelText('Your task'), {
-    target: { value: 'Keep the next draft' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  expect(transport).not.toHaveBeenCalled();
-  expect(screen.getByLabelText('Your task')).toHaveValue('Keep the next draft');
-});
+      }),
+    );
+    const transport = vi.fn<typeof fetch>();
+    render(
+      <TaskHome
+        client={taskClient(transport)}
+        viewerId="owner"
+        canCreateSandbox
+        onCreated={() => {}}
+      />,
+    );
+    expect(await screen.findByText(/The saved Agent request could not be read/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText('Your task'), {
+      target: { value: 'Keep the next draft' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+    expect(transport).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Your task')).toHaveValue('Keep the next draft');
+  },
+);
 
 it('keeps authenticated task text copyable and sends nothing when session storage is unavailable', async () => {
   const storage = sessionStorage;
@@ -84,13 +94,14 @@ it('keeps authenticated task text copyable and sends nothing when session storag
   expect(await screen.findByLabelText('Your task')).toHaveValue('');
 });
 
-function taskClient(transport: typeof fetch) {
+function taskClient(transport: typeof fetch, repositorySupport = true) {
   const boundary: typeof fetch = async (input, options) =>
     String(input).endsWith('/openapi.json')
       ? Response.json({
           openapi: '3.1.0',
           info: { title: 'CMA', version: '1' },
           paths: {},
+          'x-cma-task-repository': repositorySupport,
           components: {
             schemas: {
               AgentLifecycleCreateRequest: {
@@ -103,6 +114,54 @@ function taskClient(transport: typeof fetch) {
   vi.stubGlobal('fetch', boundary);
   return createRestWebClient(createClient({ fetch: boundary }));
 }
+
+it('keeps ordinary tasks available when the service does not support repository tasks', async () => {
+  render(
+    <TaskHome
+      client={taskClient(vi.fn(), false)}
+      viewerId="owner"
+      canCreateSandbox
+      onCreated={() => {}}
+    />,
+  );
+  expect(
+    await screen.findByText('Repository tasks are unavailable on this service.'),
+  ).toBeVisible();
+  expect(screen.queryByLabelText('GitHub repository')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+});
+
+it('restores repository drafts and clears only their optional context before starting an empty workspace', async () => {
+  const writes: unknown[] = [];
+  const client = taskClient(async (_, options) => {
+    if (options?.method === 'POST') writes.push(JSON.parse(String(options.body)));
+    throw new Error('Lost response');
+  });
+  const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
+  const first = render(<TaskHome {...props} />);
+  await screen.findByLabelText('GitHub repository');
+  fireEvent.change(screen.getByLabelText('Your task'), {
+    target: { value: 'Keep this exact draft\n ' },
+  });
+  fireEvent.change(screen.getByLabelText('GitHub repository'), {
+    target: { value: 'https://github.com/example/project' },
+  });
+  fireEvent.change(screen.getByLabelText('Repository ref'), { target: { value: 'proof/fixed' } });
+  first.unmount();
+  render(<TaskHome {...props} />);
+  expect(await screen.findByLabelText('GitHub repository')).toHaveValue(
+    'https://github.com/example/project',
+  );
+  expect(screen.getByLabelText('Repository ref')).toHaveValue('proof/fixed');
+  expect(screen.getByLabelText('Your task')).toHaveValue('Keep this exact draft\n ');
+  fireEvent.click(screen.getByRole('button', { name: 'Clear repository' }));
+  expect(screen.getByLabelText('Your task')).toHaveValue('Keep this exact draft\n ');
+  expect(screen.getByLabelText('Repository ref')).toHaveValue('');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await screen.findByRole('button', { name: 'Recover original task' });
+  expect(writes).toEqual([{ name: 'New task', initial_message: 'Keep this exact draft\n ' }]);
+});
 
 function AuthenticatedTask({ client }: { readonly client: CmaWebClient }) {
   const { state, signOut } = useAuth();
@@ -396,18 +455,27 @@ it('verifies the Agent even when the first status read already reports preparati
   );
 });
 
-it('resumes a connection-blocked task only on explicit action with its frozen body and key after refresh', async () => {
+it('resumes a repository task only on explicit connection action with its frozen ref, body and key after refresh', async () => {
   const writes: { body: unknown; key: string | null }[] = [];
   let checks = 0;
+  let authorized = false;
   const transport: typeof fetch = async (input, options) => {
     const path = String(input);
     if (path === '/auth/connections/check') {
       checks += 1;
       return Response.json({
         owner: 'owner',
-        ready: true,
+        ready: authorized,
         checked_at: '2026-11-03T00:00:00Z',
-        services: [],
+        services: [
+          {
+            service: 'api-github',
+            display_name: 'GitHub',
+            kind: 'nyxid',
+            state: authorized ? 'satisfied' : 'missing',
+            connection_mode: 'hosted',
+          },
+        ],
       });
     }
     if (options?.method === 'POST') {
@@ -423,8 +491,8 @@ it('resumes a connection-blocked task only on explicit action with its frozen bo
         status: 'waiting_for_connection',
         phase: 'key_scope_ready',
         connection: {
-          services: ['chrono-llm-public'],
-          target: { type: 'workspace', id: 'workspace-owned' },
+          services: ['api-github'],
+          target: { type: 'sandbox_profile', profile: { id: 'profile-owned', revision: 1 } },
         },
         events: [],
       });
@@ -437,18 +505,36 @@ it('resumes a connection-blocked task only on explicit action with its frozen bo
   fireEvent.change(screen.getByLabelText('Your task'), {
     target: { value: '  Original task\nwith whitespace  ' },
   });
+  fireEvent.change(screen.getByLabelText('GitHub repository'), {
+    target: { value: 'https://github.com/example/project' },
+  });
+  fireEvent.change(screen.getByLabelText('Repository ref'), {
+    target: { value: 'proof/fixed' },
+  });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByRole('button', { name: 'Continue original task' });
+  expect(checks).toBe(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Continue original task' }));
+  await screen.findByRole('dialog', { name: 'Connect your accounts' });
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  expect(writes).toHaveLength(1);
+  const checksBeforeRefresh = checks;
   first.unmount();
+  authorized = true;
   render(<TaskHome {...props} />);
   await screen.findByRole('button', { name: 'Continue original task' });
   expect(writes).toHaveLength(1);
-  expect(checks).toBe(0);
+  expect(checks).toBe(checksBeforeRefresh);
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Next task draft' } });
   fireEvent.click(screen.getByRole('button', { name: 'Continue original task' }));
   await waitFor(() => expect(writes).toHaveLength(2));
   expect(writes[1]).toEqual(writes[0]);
-  expect(checks).toBe(1);
+  expect(writes[0]?.body).toMatchObject({
+    initial_message: '  Original task\nwith whitespace  ',
+    repository: { url: 'https://github.com/example/project', ref: 'proof/fixed' },
+  });
+  expect(checks).toBe(checksBeforeRefresh + 1);
   expect(screen.getByLabelText('Your task')).toHaveValue('Next task draft');
 });
 

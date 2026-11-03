@@ -80,20 +80,27 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           id,
           runId: next.activeRunId,
           title: text(kind.title) ?? 'Tool call',
+          sequence: event.seq,
           kind: text(kind.kind),
           status: text(kind.status) ?? 'running',
         },
         true,
       );
     }
+    case 'tool_output_reported':
     case 'tool_call_updated': {
       const id = text(kind.call_id);
       const current = next.toolCalls.find((tool) => tool.id === id);
       if (id === undefined || current === undefined) return next;
+      const output = object(kind.output);
       return updateTool(next, {
         ...current,
         title: text(kind.title) ?? current.title,
         status: text(kind.status) ?? current.status,
+        output:
+          typeof output?.text === 'string' && typeof output.truncated === 'boolean'
+            ? { text: output.text, truncated: output.truncated }
+            : current.output,
       });
     }
     case 'approval_requested': {
@@ -439,6 +446,10 @@ function foldLive(
   if (event.type === 'STATE_DELTA' && cursor !== undefined && cursor <= state.cursor) return state;
   const next = cursor === undefined || cursor <= state.cursor ? state : { ...state, cursor };
   if (event.type.startsWith('TEXT_MESSAGE_')) return liveMessage(next, event);
+  if (event.type === 'CUSTOM' && event.name === 'cma.tool_output_reported') {
+    const value = object(event.value);
+    return liveTool(next, { ...event, toolCallId: value?.toolCallId, 'cma:output': value?.output });
+  }
   if (event.type.startsWith('TOOL_CALL_')) return liveTool(next, event);
   if (event.type.includes('REASONING') || event.type.startsWith('THINKING_')) {
     return liveReasoning(next, event);

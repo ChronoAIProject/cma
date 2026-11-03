@@ -91,10 +91,17 @@ pub(super) fn project(entry: &AgentLogEntry, turn: u64) -> Vec<AguiEvent> {
             json!({"toolCallId": call_id, "toolCallName": title, "cma:toolKind": kind}),
         )],
         AgentLogKind::ToolCallUpdated {
-            call_id, status, ..
+            call_id,
+            status,
+            output,
+            ..
         } => vec![make(
             "TOOL_CALL_END",
-            json!({"toolCallId": call_id, "cma:status": status}),
+            json!({"toolCallId": call_id, "cma:status": status, "cma:output": output}),
+        )],
+        AgentLogKind::ToolOutputReported { call_id, output } => vec![make(
+            "CUSTOM",
+            json!({"name": "cma.tool_output_reported", "value": {"toolCallId": call_id, "output": output}}),
         )],
         AgentLogKind::ApprovalRequested {
             approval_id,

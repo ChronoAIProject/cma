@@ -217,6 +217,22 @@ bounded to 15 seconds and to any earlier membership deadline.
 
 ## Cursors and failures
 
+`Prefer: cma-tool-output` enables the optional `output: {text, truncated}` field
+on `tool_updated`, and the `tool_output_reported` event with `call_id` and
+`output` only. It composes with the existing preference tokens. Output-only ACP
+updates do not invent a status. Values are bounded reported text snapshots,
+not deltas to concatenate, terminal input, stdout/stderr channels or exit codes.
+The core retains at most 16 KiB of valid UTF-8 per output record. It extracts
+ACP text content or the adapter's explicitly reported formatted output;
+metadata-only transport deltas do not create one durable record per byte chunk.
+
+Without this preference, output fields are omitted and output-only entries have
+`kind: null`, preserving their cursor positions. Existing history authorization,
+Agent incarnation and turn boundaries apply. Old logs without output remain
+valid. Once new output records are written, older core binaries that reject the
+new durable variant/fields cannot read them: downgrade requires a compatible
+reader or restoring pre-upgrade data. There is no automatic rollback migration.
+
 Cursors are opaque incarnation-bound coordinates, never authorization.
 Current encoding uses `ag1.<digest>.<sequence>`; snapshot page tokens use the
 distinct `ags1.<digest>.<through>.<after>` family. The digest binds Agent ID and
