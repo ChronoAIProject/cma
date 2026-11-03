@@ -49,27 +49,29 @@ export function PlanCard({
       <span className="plan-card__eyebrow" aria-hidden="true">
         Plan
       </span>
-      {active ? null : (
-        <span className="plan-card__summary">
-          {outcome === 'completed'
-            ? known && completed === plan.entries.length && plan.entries.length > 0
-              ? `Completed all ${completed} steps`
-              : 'Response finished · Plan completion not fully reported'
-            : outcome === 'failed'
-              ? 'Response failed'
-              : outcome === 'interrupted'
-                ? 'Response cancelled'
-                : 'Outcome unknown'}
-        </span>
-      )}
-      <span className="plan-card__summary">{summary}</span>
-      {known ? null : <span className="plan-card__current">Progress unknown</span>}
-      {multiple ? <span className="plan-card__current">Multiple steps in progress</span> : null}
-      {!active || currentIndex < 0 ? null : (
-        <span className="plan-card__current">
-          Current step {currentIndex + 1}: {plan.entries[currentIndex]!.title}
-        </span>
-      )}
+      <div className="plan-card__status" role="status" aria-live="polite" aria-atomic="true">
+        {active ? null : (
+          <span className="plan-card__summary">
+            {outcome === 'completed'
+              ? known && completed === plan.entries.length && plan.entries.length > 0
+                ? `Completed all ${completed} steps`
+                : 'Response finished · Plan completion not fully reported'
+              : outcome === 'failed'
+                ? 'Response failed'
+                : outcome === 'interrupted'
+                  ? 'Response cancelled'
+                  : 'Outcome unknown'}
+          </span>
+        )}
+        <span className="plan-card__summary">{summary}</span>
+        {known ? null : <span className="plan-card__current">Progress unknown</span>}
+        {multiple ? <span className="plan-card__current">Multiple steps in progress</span> : null}
+        {!active || currentIndex < 0 ? null : (
+          <span className="plan-card__current">
+            Current step {currentIndex + 1}: {plan.entries[currentIndex]!.title}
+          </span>
+        )}
+      </div>
       {known ? (
         <div
           className="plan-card__progress"
