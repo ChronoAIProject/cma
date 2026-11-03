@@ -33,6 +33,11 @@ pub(in crate::sandbox) async fn prepare_step(
             .map_err(|_| invalid("invalid warm workspace name"))?;
         if workspace.resolved_commit.is_none() {
             let source = match &plan.profile.content.location {
+                WorkspaceLocation::RepositorySnapshot { .. } => {
+                    return Err(invalid(
+                        "repository snapshots require owner credentials after admission",
+                    ))
+                }
                 WorkspaceLocation::GitRepository { url, reference } => WorkspaceSource::Clone {
                     url: url.clone(),
                     reference: reference.clone(),
