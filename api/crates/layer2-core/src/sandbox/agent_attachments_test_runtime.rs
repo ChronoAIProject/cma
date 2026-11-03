@@ -2,7 +2,7 @@ use super::*;
 use tokio::sync::mpsc;
 pub(crate) struct UnusedRuntime {
     pub(crate) status: Option<RuntimeStatus>,
-    pub(crate) file_root: Option<(std::path::PathBuf, Arc<std::sync::atomic::AtomicUsize>)>,
+    pub(crate) file_root: Option<(std::path::PathBuf, Arc<std::sync::Mutex<Vec<u64>>>)>,
 }
 #[async_trait::async_trait]
 impl SandboxAdapter for UnusedRuntime {
@@ -22,7 +22,7 @@ impl SandboxAdapter for UnusedRuntime {
         request: &AgentFileReadRequest,
     ) -> Result<AgentFileReadReceipt> {
         if let Some((root, reads)) = &self.file_root {
-            reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            reads.lock().unwrap().push(request.max_bytes);
             use base64::Engine as _;
             use sha2::{Digest as _, Sha256};
             let path = root.join(&request.path);
