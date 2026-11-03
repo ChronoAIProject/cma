@@ -94,6 +94,7 @@ impl App {
             Arc::new(RecordClient::new(&cma.base_url, "cma-service").unwrap()),
             Arc::new(CreatorAuthenticator::new(&identity.base).unwrap()),
             ManagementConfig {
+                console_public_url: None,
                 master_keys: keys.clone(),
                 public_url: "http://127.0.0.1:8090".into(),
                 public_api_url: "http://127.0.0.1:8090".into(),
