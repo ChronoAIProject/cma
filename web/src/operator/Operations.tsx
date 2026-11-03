@@ -7,7 +7,7 @@ import { Sandboxes } from './Sandboxes';
 import { PlatformSettings } from './PlatformSettings';
 import { WarmPools } from './WarmPools';
 import { Activity } from './Activity';
-import { SandboxUsagePanel } from '../usage/SandboxUsagePanel';
+import { AdminSandboxUsage } from '../usage/AdminSandboxUsage';
 import { operatorViews } from './capabilities';
 import './Operations.css';
 
@@ -81,7 +81,7 @@ export function Operations({
           <Sandboxes client={client} canControl={canControl} />
         ) : null}
         {selectedView.id === 'settings' ? <PlatformSettings client={client} /> : null}
-        {selectedView.id === 'usage' ? <SandboxUsagePanel client={client.usage} admin /> : null}
+        {selectedView.id === 'usage' ? <AdminSandboxUsage client={client} /> : null}
         {selectedView.id === 'warm_pools' ? <WarmPools client={client} /> : null}
         {selectedView.id === 'activity' ? <Activity client={client} /> : null}
       </div>
