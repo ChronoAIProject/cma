@@ -75,7 +75,15 @@ function ConsoleContent({
 }: ConsoleProps) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [panel, setPanel] = useState<AgentPanel>();
+  const [wide, setWide] = useState(() => window.matchMedia('(min-width: 1284px)').matches);
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1284px)');
+    const changed = () => setWide(query.matches);
+    query.addEventListener('change', changed);
+    return () => query.removeEventListener('change', changed);
+  }, []);
+  const [selection, setPanel] = useState<AgentPanel | 'auto'>('auto');
+  const panel = selection === 'auto' ? (wide ? 'files' : undefined) : selection;
   const detailsOpen = panel === 'details';
   const setDetailsOpen = (open: boolean) => setPanel(open ? 'details' : undefined);
   const [positions] = useState(() => new AgentViewPositions());
@@ -385,6 +393,8 @@ function ConsoleContent({
             shared={shared !== undefined}
             detail={ready?.detail}
             panel={panel}
+            onSelect={setPanel}
+            conversation={ready?.conversation}
             onClose={() => setPanel(undefined)}
             onAccessChanged={agentAccess.reload}
             publicationScope={artifactPublicationScope}
