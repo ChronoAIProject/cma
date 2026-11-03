@@ -13,6 +13,7 @@ export interface ConversationMessage {
   readonly liveOnly?: boolean;
   /** Exact durable Responses command that owns this message, when available. */
   readonly commandId?: string;
+  readonly finalAnswer?: boolean;
 }
 
 export interface ToolCall {
