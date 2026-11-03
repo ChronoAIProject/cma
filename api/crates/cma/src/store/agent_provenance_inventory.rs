@@ -174,7 +174,7 @@ async fn read_snapshot(
     id: &layer2_core::AgentId,
     session: &mut ClientSession,
 ) -> Result<AgentChannelUsageSnapshot, ReadError> {
-    super::agent_channel_usage::read_inventory_snapshot(store, id, session)
+    let mut snapshot = super::agent_channel_usage::read_inventory_snapshot(store, id, session)
         .await
         .map_err(|error| match error {
             super::agent_channel_usage::UsageError::Driver(error) => ReadError::Driver(error),
@@ -186,5 +186,16 @@ async fn read_snapshot(
                     _ => ResourceAccessStoreError::Corrupt,
                 })
             }
-        })
+        })?;
+    let agent = snapshot
+        .provenance
+        .resource
+        .lineage
+        .agent
+        .as_ref()
+        .ok_or(ResourceAccessStoreError::Corrupt)?;
+    snapshot.task_status = super::agent_task_status::read(store, agent, session)
+        .await
+        .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+    Ok(snapshot)
 }
