@@ -40,6 +40,7 @@ import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
+import { messageSubmission } from './messageSubmission';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -185,77 +186,19 @@ export function AgentSurface({
   const running = conversation.activeRunId !== undefined;
   const starting = controller.pending === 'send' && !running;
   const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
-  const submitMessage = (
-    content: string,
-    onAccepted: () => void,
-    answerContext?: import('@chronoai/cma-sdk').AnswerContext,
-    onRefused?: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
-  ) => {
-    if (readOnly || verified === undefined) return;
-    const message = optimistic.begin(
-      content,
-      running ? (steeringMode === 'queue' ? 'queue' : 'interrupt') : undefined,
-      controller.queuedInputs?.items.map((item) => item.commandId),
-    );
-    return new Promise<void>((resolve) => {
-      const settled = () => {
-        message.settled();
-        resolve();
-      };
-      const cancelled = (reason?: 'answer_changed' | 'suggestions_unavailable') => {
-        message.cancelled();
-        onRefused?.(reason);
-        resolve();
-      };
-      const send = () => {
-        const submit =
-          running && steeringMode === 'interrupt'
-            ? controller.interruptWithMessage
-            : controller.send;
-        if (submit === undefined) {
-          cancelled();
-          return;
-        }
-        const args: Parameters<AgentController['send']> = [
-          content,
-          (receipt) => {
-            if (message.accepted(receipt)) onAccepted();
-            resolve();
-          },
-          message.observed,
-          cancelled,
-          answerContext,
-        ];
-        const request =
-          running && steeringMode === 'interrupt'
-            ? controller.interruptWithMessage!(
-                args[0],
-                args[1],
-                args[2],
-                args[3],
-                message.ordinaryInput,
-              )
-            : answerContext === undefined
-              ? controller.send(args[0], args[1], args[2], args[3])
-              : controller.send(...args);
-        void request.then(settled, settled);
-      };
-      if (
-        state.v2?.owner === (viewerId ?? verified.owner) &&
-        controller.resourceAvailability.state === 'live'
-      ) {
-        send();
-      } else {
-        void connections.checkAndRun(
-          { type: 'agent', id: agentId },
-          viewerId ?? verified.owner,
-          send,
-          state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
-          cancelled,
-        );
-      }
-    });
-  };
+  const submitMessage = messageSubmission({
+    controller,
+    optimistic,
+    connection,
+    connections,
+    agentId,
+    viewerId,
+    readOnly,
+    running,
+    steeringMode,
+    detailsOpen,
+    v2: state.v2,
+  });
   const approvalBusy =
     controller.pending === 'approval' ||
     historyIncomplete ||
