@@ -42,6 +42,7 @@ import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
 import { AgentHeaderProgress } from './AgentHeaderProgress';
 import { messageSubmission } from './messageSubmission';
+import { useSuggestionEditing } from './useSuggestionEditing';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -113,12 +114,14 @@ export function AgentSurface({
     !readOnly && (state.status === 'ready' || (accessAuthorized && state.status !== 'error')),
   );
   const verified = connection.verified;
-  const suggestions = useSuggestedReplies(
+  const selectedSuggestions = useSuggestedReplies(
     state.status === 'ready' ? state.conversation : undefined,
     viewerId ?? verified?.owner ?? '',
     agentId,
     suggestedReplies,
   );
+  const editing = useSuggestionEditing(selectedSuggestions, controller);
+  const suggestions = editing.source;
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
   const optimistic = useOptimisticMessages(
@@ -367,6 +370,7 @@ export function AgentSurface({
         >
           {suggestions && !readOnly && verified && !historyIncomplete ? (
             <SuggestedReplies
+              onEdit={editing.edit}
               key={suggestions.id}
               suggestions={suggestions}
               controller={controller}
@@ -409,6 +413,10 @@ export function AgentSurface({
       </div>
       <div className="agent-surface__input">
         <Composer
+          editorRef={editing.editorRef}
+          suggestionScope={
+            !readOnly && verified && !historyIncomplete ? suggestions?.id : undefined
+          }
           settings={
             readOnly ? undefined : (
               <SessionSettings
@@ -462,7 +470,7 @@ export function AgentSurface({
             connections.pending ||
             (controller.pending !== undefined && controller.pending !== 'send')
           }
-          onSend={submitMessage}
+          onSend={(content, accepted) => editing.send(submitMessage, content, accepted)}
           onStop={controller.interrupt}
         />
       </div>
