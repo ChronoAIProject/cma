@@ -60,7 +60,15 @@ pub(super) async fn create_profiles(
                 revision: workspace_revision.revision,
             };
 
-            let permissions = validation::services_for(&profile.permissions, behavior)?;
+            let mut permissions = validation::services_for(&profile.permissions, behavior)?;
+            if request.initial_message.is_some()
+                && request.repository.is_some()
+                && !permissions
+                    .iter()
+                    .any(|service| service.as_str() == "api-github")
+            {
+                permissions.push(layer2_core::ServiceId::new("api-github"));
+            }
             let sandbox_content = SandboxProfileContent {
                 runtime_image,
                 cpu_millis: capacity.cpu_millis,
