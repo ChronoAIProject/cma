@@ -36,6 +36,22 @@ const step = (name: string) => within(screen.getByText(name).closest('li')!);
 
 afterEach(() => vi.useRealTimers());
 
+it('reports desktop preparation separately and never infers a live frame from readiness', () => {
+  const view = render(progress(operation([event(1, 'desktop_preparation', 'running', 0)])));
+  expect(step('Desktop preparation').getByText('In progress')).toBeInTheDocument();
+  expect(screen.queryByText('Live')).not.toBeInTheDocument();
+  view.rerender(
+    progress(
+      operation([
+        event(1, 'desktop_preparation', 'running', 0),
+        event(2, 'desktop_preparation', 'ready', 4),
+      ]),
+    ),
+  );
+  expect(step('Desktop preparation').getByText('Ready')).toBeInTheDocument();
+  expect(screen.queryByText('Live')).not.toBeInTheDocument();
+});
+
 it('waits for reported stages and preserves concurrent completion without inventing ordered progress', () => {
   const view = render(progress());
   expect(screen.getAllByText('Waiting')).toHaveLength(4);

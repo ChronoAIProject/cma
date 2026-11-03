@@ -5,6 +5,15 @@ use super::*;
 async fn initial_task_public_recovery_rejects_changed_body_and_other_owner() {
     let (client, database, harness) = isolated_environment().await;
     let service = router(&harness, &database, &client).await;
+    let (refused, problem) = create(
+        &service,
+        &json!({"name":"Desktop task", "workspace_id":harness.workspace.id,
+            "initial_message":"Open the page", "desktop":true}),
+        "unverified-desktop",
+    )
+    .await;
+    assert_eq!(refused, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    assert_eq!(problem["code"], "desktop_unsupported", "{problem}");
     let input = json!({"name":"New task", "workspace_id":harness.workspace.id, "initial_message":"  Exact task  "});
     let (status, receipt) = create(&service, &input, "owned-task").await;
     assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
