@@ -29,6 +29,12 @@ pub(super) fn valid_prepare_receipt(
         && receipt.name == request.name
         && receipt.path == expected_path
         && valid_commit(&receipt.resolved_commit)
+        && match &request.source {
+            layer3_adapter::WorkspaceSource::RepositorySnapshot { .. } => {
+                receipt.source_commit.as_deref().is_some_and(valid_commit)
+            }
+            _ => receipt.source_commit.is_none(),
+        }
 }
 
 pub(super) fn valid_setup_receipt(request: &WorkspaceSetupRequest, receipt: &SetupReceipt) -> bool {
@@ -96,6 +102,18 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
             "workspace_resource_quota",
             "workspace runtime has no available capacity",
         ),
+        AdapterError::Rejected(detail) if detail.starts_with("repository_ref_not_found:") => WorkerFailure::terminal(
+            "repository_ref_not_found", "The requested repository ref could not be found. Start another task to change the ref.",
+        ),
+        AdapterError::Rejected(detail) if detail.starts_with("repository_unavailable:") => WorkerFailure::terminal(
+            "repository_unavailable", "The repository is unavailable to the connected account. Check repository access before starting another task.",
+        ),
+        AdapterError::Rejected(detail) if detail.starts_with("repository_connection_required:") => WorkerFailure::terminal(
+            "repository_connection_required", "GitHub authorization does not allow repository preparation. Check the existing GitHub connection before starting another task.",
+        ),
+        AdapterError::Rejected(detail) if detail.starts_with("repository_source_invalid:") => WorkerFailure::terminal(
+            "repository_source_invalid", "Repository files could not be safely prepared. The task has not run. Check source contents before starting another task.",
+        ),
         AdapterError::Rejected(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::Unsupported(_) => WorkerFailure::terminal(
@@ -134,6 +152,7 @@ mod tests {
             name: request.name.clone(),
             path: "/home/cma/project".into(),
             resolved_commit: "a".repeat(40),
+            source_commit: None,
         };
         assert!(valid_prepare_receipt(
             &request,

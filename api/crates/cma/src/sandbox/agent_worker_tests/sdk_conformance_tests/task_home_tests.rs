@@ -90,6 +90,27 @@ async fn router_components(
     owner: &str,
     can_create: bool,
 ) -> Router {
+    router_with_connections(
+        store,
+        registry,
+        database,
+        database_client,
+        owner,
+        can_create,
+        Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    )
+    .await
+}
+
+async fn router_with_connections(
+    store: Arc<MongoSandboxStore>,
+    registry: Arc<LiveAgentRegistry>,
+    database: &mongodb::Database,
+    database_client: &mongodb::Client,
+    owner: &str,
+    can_create: bool,
+    connections: Arc<dyn layer2_core::sandbox::SandboxCredentialPrerequisite>,
+) -> Router {
     let profiles = Arc::new(
         MongoProfileStore::open(database_client, database.name())
             .await
@@ -111,7 +132,7 @@ async fn router_components(
             store.clone(),
             profiles.clone(),
             SandboxPolicy::default(),
-            Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+            connections,
         ),
         WorkspaceService::new(store, profiles.clone()),
         services.agents(),
@@ -380,16 +401,31 @@ async fn initial_task_public_validation_rejects_invalid_text_before_retaining_a_
             "{problem}"
         );
     }
-    let repository_task = json!({"name":"New task", "repository":{"url":"https://github.com/example/project"}, "initial_message":"Inspect repository"});
+    let repository_task = json!({"name":"New task", "workspace_id":harness.workspace.id, "repository":{"url":"https://github.com/example/project"}, "initial_message":"Inspect repository"});
     let (status, problem) = create(&service, &repository_task, "validation-key").await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
     assert!(
         problem["detail"]
             .as_str()
             .unwrap()
-            .contains("initial_message"),
+            .contains("existing Workspace"),
         "{problem}"
     );
+    for invalid_context in [
+        json!({"sandbox_id":harness.workspace.sandbox_id, "repository":{"url":"https://github.com/example/project"}}),
+        json!({"repository":{"url":"https://github.com/example/project", "ref":"bad ref"}}),
+        json!({"repository":{"url":"https://github.com/example/project", "ref":"--unsafe"}}),
+        json!({"repository":{"url":"https://github.com/example/project", "ref":"main..other"}}),
+        json!({"repository":{"url":"https://github.com/example/%2e%2e"}}),
+    ] {
+        let mut invalid = json!({"name":"New task", "initial_message":"Inspect repository"});
+        invalid
+            .as_object_mut()
+            .unwrap()
+            .extend(invalid_context.as_object().unwrap().clone());
+        let (status, problem) = create(&service, &invalid, "validation-key").await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    }
     let valid = json!({"name":"New task", "workspace_id":harness.workspace.id, "initial_message":"A valid task"});
     let (status, receipt) = create(&service, &valid, "validation-key").await;
     assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
