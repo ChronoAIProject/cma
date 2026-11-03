@@ -94,7 +94,8 @@ test('NATIVE Agent navigation reaches authorized public browser observations and
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_shared_read');
   await page.getByRole('textbox', { name: 'Message' }).fill('Preserve the browser conversation');
-  await page.getByRole('button', { name: 'Computer', exact: true }).click();
+  const openComputer = page.getByRole('button', { name: 'Show Agent computer', exact: true });
+  if (await openComputer.isVisible()) await openComputer.click();
   await page.getByRole('tab', { name: 'Browser', exact: true }).click();
   await page.getByRole('button', { name: 'Enable browser', exact: true }).click();
   await expect(page.getByText('Live', { exact: true })).toBeVisible({ timeout: 15000 });
@@ -164,7 +165,7 @@ test('NATIVE Agent navigation reaches authorized public browser observations and
   const closedReads = reads;
   await page.waitForTimeout(1500);
   expect(reads).toBe(closedReads);
-  await page.getByRole('button', { name: 'Computer', exact: true }).click();
+  await openComputer.click();
   await expect(page.getByRole('tab', { name: 'Browser', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
@@ -177,6 +178,19 @@ test('NATIVE Agent navigation reaches authorized public browser observations and
       true,
     );
     await expect(image).toBeVisible();
+    await expect
+      .poll(() =>
+        image.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          return (
+            bounds.left >= 0 &&
+            bounds.right <= innerWidth &&
+            bounds.top >= 0 &&
+            bounds.bottom <= innerHeight
+          );
+        }),
+      )
+      .toBe(true);
     await page.screenshot({ path: info.outputPath(`native-mobile-${width}.png`), fullPage: true });
   }
   await page.getByRole('button', { name: 'Back to conversation' }).click();
