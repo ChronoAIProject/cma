@@ -2,14 +2,43 @@ use std::collections::BTreeMap;
 
 use super::*;
 use crate::sandbox::message_feedback::{
-    MessageFeedback, MessageFeedbackService, MessageFeedbackStore, MessageVote,
+    FeedbackDetails, FeedbackReasonError, FeedbackReasonRequest, MessageFeedback,
+    MessageFeedbackService, MessageFeedbackStore, MessageVote,
 };
 
 #[derive(Default)]
-struct FeedbackStore(Mutex<BTreeMap<(SubjectId, AgentId, u64), MessageVote>>);
+struct FeedbackStore(Mutex<BTreeMap<(SubjectId, AgentId, u64), FeedbackDetails>>);
 
 #[async_trait]
 impl MessageFeedbackStore for FeedbackStore {
+    async fn get(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+    ) -> Result<FeedbackDetails, AgentReadError> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .get(&(owner.clone(), agent.clone(), sequence))
+            .cloned()
+            .unwrap_or_default())
+    }
+    async fn set_reasons(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        sequence: u64,
+        request: &FeedbackReasonRequest,
+    ) -> Result<FeedbackDetails, FeedbackReasonError> {
+        let mut rows = self.0.lock().unwrap();
+        let current = rows
+            .entry((owner.clone(), agent.clone(), sequence))
+            .or_default();
+        *current = current.with_reasons(request)?;
+        Ok(current.clone())
+    }
     async fn list(
         &self,
         owner: &SubjectId,
@@ -23,13 +52,17 @@ impl MessageFeedbackStore for FeedbackStore {
             .lock()
             .unwrap()
             .iter()
-            .filter(|((subject, agent_id, sequence), _)| {
-                subject == owner && agent_id == agent && *sequence > after && *sequence <= through
+            .filter(|((subject, agent_id, sequence), state)| {
+                subject == owner
+                    && agent_id == agent
+                    && *sequence > after
+                    && *sequence <= through
+                    && state.vote.is_some()
             })
             .take(usize::from(limit))
-            .map(|((_, _, sequence), vote)| MessageFeedback {
+            .map(|((_, _, sequence), state)| MessageFeedback {
                 sequence: *sequence,
-                vote: *vote,
+                vote: state.vote.unwrap(),
             })
             .collect())
     }
@@ -43,11 +76,8 @@ impl MessageFeedbackStore for FeedbackStore {
     ) -> Result<(), AgentReadError> {
         let key = (owner.clone(), agent.clone(), sequence);
         let mut rows = self.0.lock().unwrap();
-        if let Some(vote) = vote {
-            rows.insert(key, vote);
-        } else {
-            rows.remove(&key);
-        }
+        let current = rows.entry(key).or_default();
+        *current = current.with_vote(vote)?;
         Ok(())
     }
 }
