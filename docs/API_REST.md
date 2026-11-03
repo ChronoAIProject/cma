@@ -1064,7 +1064,10 @@ Message feedback is private, durable metadata for the Agent owner.
 and `limit` (1–200, default 200). `PUT
 /api/v1/agents/{id}/messages/{message_id}/feedback` sets or clears a vote with
 `{"vote":"up"}`, `{"vote":"down"}`, or `{"vote":null}`. The message ID must be
-`event:<sequence>` for a committed owner or assistant message. This idempotent
+`event:<sequence>` for the nonempty Assistant message with the greatest message
+sequence in a successfully completed turn. Intermediate replies, user messages
+and unfinished/failed/interrupted turns reject new writes; historical saved votes
+remain readable. This idempotent
 metadata update requires no `Idempotency-Key` and never starts or interrupts
 Agent work. See [Agent Manager feedback](API_Agent_Manager.md#message-feedback)
 for ownership, pagination, persistence and concurrent-update behavior.

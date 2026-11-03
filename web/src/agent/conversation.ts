@@ -152,6 +152,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'conversation_gap':
       return recover(next, {
         id: `gap:${String(event.seq)}`,
+        runId: next.activeRunId,
         title: 'Incomplete conversation output',
         detail: `${String(number(kind.frames) ?? 0)} live frame(s) were lost. Stored messages remain available, but the output may be incomplete.`,
       });
@@ -177,7 +178,33 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         agentStatus: text(kind.to) as AgentStatus | undefined,
         agentStatusAt: event.appendedAt,
       };
-    case 'turn_completed':
+    case 'turn_completed': {
+      const runId = number(kind.turn_sequence)?.toString() ?? next.activeRunId;
+      const finalMessage = next.messages.reduce<ConversationState['messages'][number] | undefined>(
+        (latest, message) =>
+          message.runId === runId &&
+          !message.liveOnly &&
+          message.sequence !== undefined &&
+          (latest === undefined || message.sequence > latest.sequence!)
+            ? message
+            : latest,
+        undefined,
+      );
+      return {
+        ...finishTurn(next, runId, event.appendedAt),
+        messages: next.messages.map((message) =>
+          message === finalMessage &&
+          message.role === 'assistant' &&
+          message.content.trim() !== '' &&
+          !next.recovery.some((notice) => notice.runId === runId && notice.id.startsWith('gap:'))
+            ? { ...message, finalAnswer: true }
+            : message,
+        ),
+        activeRunId: undefined,
+        activeRunStartedAt: undefined,
+        reasoning: [],
+      };
+    }
     case 'turn_interrupted':
       return {
         ...finishTurn(
