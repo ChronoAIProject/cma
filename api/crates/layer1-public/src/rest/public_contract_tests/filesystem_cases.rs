@@ -25,6 +25,8 @@ mod scope_tests;
 
 #[path = "browser_cases.rs"]
 mod browser_cases;
+#[path = "native_browser_chain.rs"]
+mod native_browser_chain;
 
 #[tokio::test]
 async fn browser_public_contract_requires_explicit_owner_enablement_and_current_incarnation() {
@@ -156,6 +158,14 @@ async fn scenario_with_runtime(
     name: &str,
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
 ) -> Option<Scenario> {
+    scenario_with_runtime_boot(name, adapter, &"b".repeat(32)).await
+}
+
+async fn scenario_with_runtime_boot(
+    name: &str,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+    boot: &str,
+) -> Option<Scenario> {
     let kind = name.strip_prefix("filesystem_")?;
     assert!([
         "owner",
@@ -196,7 +206,7 @@ async fn scenario_with_runtime(
         .unwrap()
         .unwrap();
     let revision = sandbox.revision;
-    sandbox.runtime.as_mut().unwrap().boot_id = Some("b".repeat(32));
+    sandbox.runtime.as_mut().unwrap().boot_id = Some(boot.into());
     if matches!(kind, "not_ready" | "unsupported") {
         sandbox.runtime.as_mut().unwrap().boot_id = None;
     }

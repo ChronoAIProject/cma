@@ -15,6 +15,9 @@ impl BrowserAdapter for super::runtime::Files {
         handle: &RuntimeHandle,
         request: &BrowserRequest,
     ) -> Result<BrowserReceipt> {
+        if let Some(directory) = &self.browser_relay {
+            return super::native_browser_chain::forward(directory, request).await;
+        }
         if self.kind == "browser_unavailable" {
             return Err(AdapterError::Unavailable("browser unavailable".into()));
         }
