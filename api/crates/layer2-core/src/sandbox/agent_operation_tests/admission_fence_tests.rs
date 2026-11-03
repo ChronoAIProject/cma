@@ -167,7 +167,12 @@ async fn parent_pause_between_policy_read_and_commit_queues_without_runtime_disp
         SandboxStatus::Pausing
     );
     let logs = store.agent_log(&ready.id, 0, 100).await.unwrap();
-    assert_eq!(logs.len(), 1);
+    assert_eq!(
+        logs.iter()
+            .filter(|entry| matches!(entry.kind, AgentLogKind::OwnerMessage { .. }))
+            .count(),
+        1
+    );
     assert!(
         matches!(&logs[0].kind, AgentLogKind::OwnerMessage { content } if content == "Preserve this request")
     );

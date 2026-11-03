@@ -25,8 +25,10 @@ export function FileExplorer({
   onClose,
   onAccessChanged,
   panel = false,
+  embedded = false,
 }: {
   readonly panel?: boolean;
+  readonly embedded?: boolean;
   readonly client: AgentFilesClient;
   readonly agentId: string;
   readonly readOnly: boolean;
@@ -301,7 +303,12 @@ export function FileExplorer({
   };
 
   return (
-    <FileExplorerFrame panel={panel} busy={busy} onClose={() => guardDraft(onClose)}>
+    <FileExplorerFrame
+      panel={panel}
+      embedded={embedded}
+      busy={busy}
+      onClose={() => guardDraft(onClose)}
+    >
       <FileToolbar
         hidden={hidden}
         onHidden={setHidden}

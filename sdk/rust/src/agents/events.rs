@@ -5,6 +5,15 @@ use crate::instances::{AgentStatus, Failure};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
+#[doc = "Bounded plain text reported for one tool operation."]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RecordedToolOutput {
+    #[doc = "Reported text, never reconstructed from the operation title."]
+    pub text: String,
+    #[doc = "Whether the retained text was bounded."]
+    pub truncated: bool,
+}
+
 string_enum! { /// Durable Agent worker step.
     pub enum AgentWorkStep {
         WaitForWorkspace => "wait_for_workspace",
@@ -78,7 +87,8 @@ event_enum! { "type";
         TurnFailed => "turn_failed" { turn_sequence: u64, failure: Failure },
         TurnInterrupted => "turn_interrupted" { turn_sequence: u64 },
         ToolCallStarted => "tool_call_started" { call_id: String, title: String, kind: String, status: String },
-        ToolCallUpdated => "tool_call_updated" { call_id: String, status: String, title: Option<String> },
+        ToolCallUpdated => "tool_call_updated" { call_id: String, status: String, title: Option<String>, output: Option<RecordedToolOutput> },
+        ToolOutputReported => "tool_output_reported" { call_id: String, output: RecordedToolOutput },
         ApprovalRequested => "approval_requested" { approval_id: String, action: Option<String>, detail: Option<String> },
         ApprovalResolved => "approval_resolved" { approval_id: String, decision: String },
         OperationDeliveryChanged => "operation_delivery_changed" { operation_sequence: u64, operation: AgentOperationKind, state: AgentOperationDelivery },

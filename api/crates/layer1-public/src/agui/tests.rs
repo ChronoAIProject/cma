@@ -3,8 +3,8 @@ use layer2_core::sandbox::{AgentLogKind, AgentStatus};
 use serde_json::{json, Value};
 
 use crate::rest::agents_tests::{
-    conversation_fixture, insert_agent, json_response, request, response, seeded_agent,
-    seeded_worktree,
+    authorized_conversation_fixture, conversation_fixture, insert_agent, json_response, request,
+    response, seeded_agent, seeded_worktree,
 };
 
 struct SuggestionRuntime;
@@ -150,6 +150,188 @@ async fn suggested_reply_recovers_one_exact_message_after_the_receipt_is_lost() 
             1
         );
     }
+}
+
+#[tokio::test]
+#[ignore = "requires output captured from the isolated pinned native command proof"]
+async fn native_output_roundtrips_through_durable_storage_and_public_agui() {
+    use crate::agent_v2::fixtures::request;
+    use layer2_core::sandbox::{
+        AgentMessageAssembly, AgentRuntimeUpdate, AgentUpdateRecorder, DurableAgentUpdateRecorder,
+    };
+    let updates: Vec<Value> = serde_json::from_slice(
+        &std::fs::read(std::env::var("CMA_NATIVE_OUTPUT_FILE").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let (state, store) = authorized_conversation_fixture().await;
+    let agent = insert_agent(
+        &store,
+        seeded_agent("agt_contract", AgentStatus::Working, 4, Some(3)),
+        vec![
+            AgentLogKind::TurnStarted {
+                model: None,
+                turn_sequence: 3,
+                origin_key: None,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "Run the harmless output proof".into(),
+            },
+        ],
+    )
+    .await;
+    let recorder = DurableAgentUpdateRecorder::new(store);
+    let mut assembly = AgentMessageAssembly::default();
+    for update in updates.into_iter().filter(|value| {
+        matches!(
+            value["sessionUpdate"].as_str(),
+            Some("tool_call" | "tool_call_update")
+        )
+    }) {
+        recorder
+            .record_update(
+                &agent.id,
+                1,
+                &mut assembly,
+                AgentRuntimeUpdate::Said(serde_json::from_value(update).unwrap()),
+                layer2_core::now_rfc3339(),
+            )
+            .await
+            .unwrap();
+    }
+    let router = super::router(state.clone()).merge(crate::responses::router(state));
+    let (status, body) = response(
+        &router,
+        request(
+            Method::GET,
+            "/api/v1/agui/events?thread_id=agt_contract&follow=false",
+            "owner-a",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let frames: Vec<Value> = std::str::from_utf8(&body)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(frames.iter().any(|frame| frame["cma:output"]
+        == json!({"text":"native-computer-proof\n", "truncated":false})
+        && frame["cma:status"] == "completed"));
+    let (status, items) = json_response(
+        &router,
+        request(
+            Method::GET,
+            "/api/v1/conversations/agt_contract/items",
+            "owner-a",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{items}");
+    assert!(
+        items["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["output"]
+                == json!({"text":"native-computer-proof\n", "truncated":false}))
+    );
+    std::fs::write(
+        std::env::var("CMA_PUBLIC_OUTPUT_PROOF_FILE").unwrap(),
+        &body,
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn recorded_tool_output_is_readable_only_in_the_authorized_agent_stream() {
+    use crate::agent_v2::fixtures::request;
+    let (state, store) = authorized_conversation_fixture().await;
+    let output: AgentLogKind = serde_json::from_value(json!({
+        "type": "tool_call_updated", "call_id": "proof", "status": "completed",
+        "output": { "text": "computer-proof", "truncated": false }
+    }))
+    .unwrap();
+    insert_agent(
+        &store,
+        seeded_agent("agt_output", AgentStatus::Ready, 8, None),
+        vec![
+            AgentLogKind::TurnStarted {
+                model: None,
+                turn_sequence: 3,
+                origin_key: None,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "Report the output".into(),
+            },
+            AgentLogKind::ToolCallStarted {
+                call_id: "proof".into(),
+                title: "printf computer-proof".into(),
+                kind: "execute".into(),
+                status: "in_progress".into(),
+            },
+            AgentLogKind::ToolOutputReported {
+                call_id: "proof".into(),
+                output: layer2_core::sandbox::RecordedToolOutput {
+                    text: "partial proof".into(),
+                    truncated: false,
+                },
+            },
+            output,
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        ],
+    )
+    .await;
+    let router = super::router(state);
+    let (status, body) = response(
+        &router,
+        request(
+            Method::GET,
+            "/api/v1/agui/events?thread_id=agt_output&follow=false",
+            "owner-a",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let frames: Vec<Value> = std::str::from_utf8(&body)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(frames.iter().any(|frame| frame["cma:output"]
+        == json!({"text":"computer-proof", "truncated":false})
+        && frame["runId"] == "3"));
+    let partial = frames
+        .iter()
+        .find(|frame| frame["name"] == "cma.tool_output_reported")
+        .unwrap();
+    assert_eq!(
+        partial["value"],
+        json!({"toolCallId":"proof", "output":{"text":"partial proof", "truncated":false}})
+    );
+    assert!(partial.get("cma:status").is_none());
+    let (status, body) = response(
+        &router,
+        request(
+            Method::GET,
+            "/api/v1/agui/events?thread_id=agt_output&follow=false",
+            "owner-b",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK);
+    assert!(!std::str::from_utf8(&body)
+        .unwrap()
+        .contains("computer-proof"));
 }
 
 #[tokio::test]

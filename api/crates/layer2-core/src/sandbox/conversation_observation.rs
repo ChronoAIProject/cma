@@ -15,6 +15,31 @@ pub struct AgentRuntimeMetadata {
     pub description_is_setup_preview: bool,
 }
 
+impl AgentRuntimeMetadata {
+    pub(super) fn record_task_preview(&mut self, text: &str) -> Option<super::AgentLogKind> {
+        if self
+            .description
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
+            && (self.description_source == Some(AgentDescriptionSource::ProviderTitle)
+                || (self.description_source == Some(AgentDescriptionSource::PromptPreview)
+                    && !self.description_is_setup_preview))
+        {
+            return None;
+        }
+        self.description = Some(
+            super::AgentTitle::fallback(Some(text.trim()))
+                .as_str()
+                .to_owned(),
+        );
+        self.description_source = Some(AgentDescriptionSource::PromptPreview);
+        self.description_is_setup_preview = false;
+        Some(super::AgentLogKind::RuntimeMetadataChanged {
+            metadata: self.clone(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentTurnUsage {

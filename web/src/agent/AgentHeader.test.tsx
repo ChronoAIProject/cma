@@ -74,13 +74,13 @@ it('places Files after Share and reports its actual expanded state', async () =>
     screen
       .getAllByRole('button')
       .map((item) => item.getAttribute('aria-label') ?? item.textContent),
-  ).toEqual(['More Agent actions', 'Share', 'Show files']);
+  ).toEqual(['More Agent actions', 'Share', 'Show Agent computer']);
   await user.click(screen.getByRole('button', { name: 'Share' }));
   expect(onShare).toHaveBeenCalledOnce();
-  await user.click(screen.getByRole('button', { name: 'Show files' }));
+  await user.click(screen.getByRole('button', { name: 'Show Agent computer' }));
   expect(onFilesOpenChange).toHaveBeenCalledWith(true);
   rerender(draw({ filesOpen: true, onFilesOpenChange }));
-  expect(screen.getByRole('button', { name: 'Hide files' })).toHaveAttribute(
+  expect(screen.getByRole('button', { name: 'Hide Agent computer' })).toHaveAttribute(
     'aria-expanded',
     'true',
   );
