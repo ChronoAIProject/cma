@@ -5,8 +5,10 @@ import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDelive
 import { Button } from '../ui/Button';
 import { IconPaperclipOutline16 } from '../ui/icons';
 import './AnswerDeliverables.css';
+import { DeliverablePreviewContext } from './previewSelection';
+import { saveDelivery } from './saveDelivery';
 
-const statusText: Record<AnswerDeliverable['status'], string> = {
+export const statusText: Record<AnswerDeliverable['status'], string> = {
   ready: 'Ready to download',
   unchecked: 'Verify on download',
   changed: 'File changed since this answer',
@@ -18,7 +20,7 @@ const statusText: Record<AnswerDeliverable['status'], string> = {
   unavailable: 'Download unavailable; retry',
 };
 
-function downloadFailureStatus(error: unknown): AnswerDeliverable['status'] | undefined {
+export function downloadFailureStatus(error: unknown): AnswerDeliverable['status'] | undefined {
   if (error instanceof DeliverableUnavailable) return error.status;
   if (!(error instanceof ApiError)) return;
   const statuses: Readonly<Record<string, AnswerDeliverable['status']>> = {
@@ -67,6 +69,7 @@ function DeliveryRow({
   readonly answerId: string;
   readonly initial: AnswerDeliverable;
 }) {
+  const preview = useContext(DeliverablePreviewContext);
   const [item, setItem] = useState(initial);
   const [busy, setBusy] = useState<'download' | 'retry'>();
   const [error, setError] = useState<string>();
@@ -83,17 +86,7 @@ function DeliveryRow({
         signal: abort.signal,
       });
       if (abort.signal.aborted) return;
-      const url = URL.createObjectURL(
-        new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }),
-      );
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = item.reference.name;
-      link.rel = 'noreferrer';
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      saveDelivery(bytes, item.reference.name);
     } catch (error) {
       if (!abort.signal.aborted) {
         const status = downloadFailureStatus(error);
@@ -132,7 +125,25 @@ function DeliveryRow({
     <li className="answer-deliveries__row">
       <IconPaperclipOutline16 aria-hidden="true" />
       <div className="answer-deliveries__detail">
-        <span className="answer-deliveries__name">{item.reference.name}</span>
+        {preview ? (
+          <button
+            type="button"
+            className="answer-deliveries__name"
+            aria-label={`Preview ${item.reference.name}`}
+            aria-pressed={
+              preview.selected?.access === access &&
+              preview.selected.answerId === answerId &&
+              preview.selected.item.id === item.id
+            }
+            onClick={(event) =>
+              preview.open({ access, answerId, item, trigger: event.currentTarget })
+            }
+          >
+            {item.reference.name}
+          </button>
+        ) : (
+          <span className="answer-deliveries__name">{item.reference.name}</span>
+        )}
         <span className="answer-deliveries__metadata">
           {item.reference.resource.kind === 'live_file'
             ? 'Live file'
@@ -183,6 +194,13 @@ export function AnswerDeliverables({
   readonly references: number;
 }) {
   const access = useContext(AnswerDeliveryContext);
+  const invalidate = useContext(DeliverablePreviewContext)?.invalidate;
+  useEffect(
+    () => () => {
+      if (access) invalidate?.(access);
+    },
+    [access, invalidate],
+  );
   const container = useRef<HTMLDivElement>(null);
   const restorePosition = useRef<(() => void) | undefined>(undefined);
   const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined');
