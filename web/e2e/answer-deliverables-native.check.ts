@@ -1,7 +1,7 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
-import { LocalStartup } from './agent-startup-fixtures';
+import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 test('NATIVE receipts reach answer cards and authenticated public downloads without invented associations', async ({
   page,
@@ -37,6 +37,11 @@ test('NATIVE receipts reach answer cards and authenticated public downloads with
       },
     }),
   );
+  await page.route('**/auth/connections/check', (route) =>
+    route.fulfill({
+      json: { owner: 'owner-a', ready: true, checked_at: localTime, services: [] },
+    }),
+  );
   await page.route(`**${root}/answers/**`, async (route) => {
     const url = new URL(route.request().url());
     const response = await request.get(origin + url.pathname + url.search);
@@ -47,6 +52,7 @@ test('NATIVE receipts reach answer cards and authenticated public downloads with
     .getByRole('article')
     .filter({ hasText: 'Delivered the file and persistent document.' });
   await expect(answer.getByRole('list', { name: 'Answer deliverables' })).toBeVisible();
+  await expect(page.getByText('Your CMA account changed.', { exact: false })).toHaveCount(0);
   for (const [name, digest] of [
     ['report.txt', 'f6c042409c945c141af65759a07055f9589a486941a285d38d361db0bf3f8400'],
     ['Native document.md', '6f09a58c411f877c6926b5f4d711df6fb6c8229335bd77d3de54b95021130e92'],
