@@ -15,6 +15,7 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
   await boundary.route(page, baseURL!);
   const writes: { body: unknown; key: string | undefined; receipt: unknown }[] = [];
   const observations: BrowserObservation[] = [];
+  let submittedAt = 0;
   await page.route('**/auth/session', (route) =>
     route.fulfill({
       json: {
@@ -41,6 +42,8 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
       const outgoing = route.request();
       const url = new URL(outgoing.url());
       const path = url.pathname.replace('/api/agent-manager/v1/', '/api/v1/');
+      if (path === '/api/v1/agents' && outgoing.method() === 'POST' && !submittedAt)
+        submittedAt = Date.now();
       const response = await route.fetch({
         url: publicServer.origin + path + url.search,
         headers: { ...outgoing.headers(), authorization: 'Bearer local-sdk-conformance' },
@@ -88,12 +91,14 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
   await expect(page.getByRole('checkbox', { name: 'Enable desktop' })).toBeChecked();
   await page.getByRole('button', { name: 'Recover original task' }).click();
   await expect(page).toHaveURL(/\/agents\/agt_/);
+  const agentVisibleAt = Date.now();
   const agentId = new URL(page.url()).pathname.split('/').at(-1)!;
   const open = page.getByRole('button', { name: 'Show Agent computer', exact: true });
   if (await open.isVisible()) await open.click();
   await page.getByRole('tab', { name: 'Browser', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Enable browser', exact: true })).not.toBeVisible();
   await expect(page.getByText('Live', { exact: true })).toBeVisible({ timeout: 90000 });
+  const firstLiveAt = Date.now();
   const image = page.getByAltText('Agent browser page');
   await expect(image).toHaveJSProperty('naturalWidth', 1280);
   await expect(image).toHaveJSProperty('naturalHeight', 720);
@@ -131,6 +136,11 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
   expect(writes).toHaveLength(2);
   const result = {
     passed: true,
+    submittedAt,
+    agentVisibleAt,
+    firstLiveAt,
+    agentVisibleAfterMs: agentVisibleAt - submittedAt,
+    firstLiveAfterMs: firstLiveAt - submittedAt,
     agentId,
     creation: writes[0],
     replays: writes.length - 1,
