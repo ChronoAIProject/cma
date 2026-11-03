@@ -208,13 +208,12 @@ impl AgentBrowserControl<'_> {
         if input.is_none() {
             request.query = &query;
         }
-        request.headers.insert(
-            "x-cma-browser-client",
-            scope
-                .client_key
-                .parse()
-                .map_err(|_| Error::protocol("Invalid browser client key"))?,
-        );
+        let mut client_key = scope
+            .client_key
+            .parse::<reqwest::header::HeaderValue>()
+            .map_err(|_| Error::protocol("Invalid browser client key"))?;
+        client_key.set_sensitive(true);
+        request.headers.insert("x-cma-browser-client", client_key);
         let bytes = receive_bounded(&self.client.inner, request, 65536).await?;
         let value: BrowserControl = serde_json::from_slice(&bytes.body)
             .map_err(|_| Error::protocol("Invalid control receipt"))?;

@@ -27,6 +27,7 @@ const keys = new Set([
 
 export function BrowserControl({
   client,
+  accountId,
   agentId,
   incarnation,
   contextId,
@@ -34,6 +35,7 @@ export function BrowserControl({
   children,
 }: {
   readonly client: AgentBrowserControlClient;
+  readonly accountId: string;
   readonly agentId: string;
   readonly incarnation: string;
   readonly contextId: string;
@@ -50,9 +52,9 @@ export function BrowserControl({
         client_id: crypto.randomUUID(),
         client_key: crypto.randomUUID(),
       },
-      recovery: controlRecovery(agentId, incarnation, contextId),
+      recovery: controlRecovery(accountId, agentId, incarnation, contextId),
     }),
-    [client, agentId, incarnation, contextId],
+    [client, accountId, agentId, incarnation, contextId],
   );
   const { scope, recovery } = binding;
   const lifetime = useRef({ alive: true });
