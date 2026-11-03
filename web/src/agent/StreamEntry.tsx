@@ -14,8 +14,10 @@ import { MessageFooter } from './MessageFooter';
 import type { MessageFeedbackControls } from './useMessageFeedback';
 import type { Entry } from './timeline';
 import type { ConversationState } from './model';
+import { Button } from '../ui/Button';
 
 function StreamEntryView({
+  onReplay,
   entry,
   approvalBusy,
   approvalReadOnly = false,
@@ -30,6 +32,7 @@ function StreamEntryView({
   feedback,
   continued = false,
 }: {
+  readonly onReplay?: (turn: string) => void;
   readonly entry: Entry;
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
@@ -87,6 +90,11 @@ function StreamEntryView({
             }
             feedback={feedback}
           />
+          {onReplay && message.finalAnswer && message.runId ? (
+            <Button size="sm" onClick={() => onReplay(message.runId!)}>
+              View plan and replay
+            </Button>
+          ) : null}
         </div>
       </article>
     );
@@ -107,6 +115,7 @@ function StreamEntryView({
   if (entry.kind === 'plan')
     return (
       <PlanCard
+        onReplay={onReplay}
         plan={entry.item}
         active={entry.item.runId !== undefined && entry.item.runId === activeRunId}
         outcome={planOutcome}
@@ -151,6 +160,7 @@ function StreamEntryView({
 }
 
 export const StreamEntry = memo(StreamEntryView, (previous, next) => {
+  if (previous.onReplay !== next.onReplay) return false;
   if (previous.entry.kind !== next.entry.kind || previous.entry.item !== next.entry.item)
     return false;
   if (next.entry.kind === 'message')

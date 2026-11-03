@@ -18,6 +18,7 @@ import { workedFor } from './turnTiming';
 import { MessageMediaContext, type MessageMediaAccess } from './mediaSources';
 
 interface MessageStreamProps {
+  readonly onReplay?: (turn: string) => void;
   readonly conversation: ConversationState;
   readonly approvalBusy?: boolean;
   readonly approvalReadOnly?: boolean;
@@ -34,6 +35,7 @@ interface MessageStreamProps {
 }
 
 export function MessageStream({
+  onReplay,
   conversation,
   approvalBusy = false,
   approvalReadOnly = false,
@@ -118,6 +120,7 @@ export function MessageStream({
             <ToolCallGroup key={entry.id} group={entry} activeRunId={conversation.activeRunId} />
           ) : (
             <StreamEntry
+              onReplay={onReplay}
               key={`${entry.kind}:${entry.item.id}`}
               entry={entry}
               approvalBusy={approvalBusy}
