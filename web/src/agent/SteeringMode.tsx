@@ -28,9 +28,9 @@ export function SteeringModePicker({
         {
           id: 'interrupt',
           label: 'Interrupt',
-          reason: 'Stop the current turn and start a new turn with this message.',
+          reason: 'Stop the current turn, then start a new turn with this message.',
         },
-        { id: 'queue', label: 'Queue', reason: 'Wait until the current turn finishes.' },
+        { id: 'queue', label: 'Queue', reason: 'Process after the current turn finishes.' },
       ]}
       onClose={() => setOpen(false)}
       onSelect={(mode) => {
@@ -46,8 +46,8 @@ export function SteeringModePicker({
           aria-expanded={open && !disabled}
           title={
             value === 'queue'
-              ? 'Queue new messages until the turn finishes'
-              : 'Stop the current turn and send this message in a new turn'
+              ? 'Process after the current turn finishes.'
+              : 'Stop the current turn, then start a new turn with this message.'
           }
           disabled={disabled}
           onClick={() => setOpen((current) => !current)}

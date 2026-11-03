@@ -1,6 +1,22 @@
 import type { AgentResourceState } from './controllerTypes';
 import type { AgentDetail, AgentStatus } from '../api/types';
 import { mergeRuntimeMetadata } from './runtimeMetadata';
+import type { AgentV2Session } from './transport/client';
+
+export function presentRetainedInputs(v2?: AgentV2Session, legacy?: AgentV2Session) {
+  const retained = v2?.pending();
+  const legacyInput = legacy?.journal.legacySuggestion.read();
+  return {
+    readSuggestionRequest: () => v2?.journal.read() ?? legacy?.journal.legacySuggestion.read(),
+    pendingMessage:
+      retained?.input ?? (legacyInput?.state === 'pending' ? legacyInput.input : undefined),
+    acceptedMessage:
+      retained?.accepted ?? (legacyInput?.state === 'accepted' ? legacyInput.input : undefined),
+    acceptedSteeringMessage: retained?.acceptedSteering,
+    acceptedInterruptionMessage: retained?.acceptedInterruption,
+    pendingControl: retained?.control,
+  };
+}
 
 /** The same label is used by the header, document title and hierarchy. */
 export function agentDisplayTitle(
