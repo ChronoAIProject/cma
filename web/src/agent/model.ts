@@ -16,6 +16,7 @@ export interface ConversationMessage {
 }
 
 export interface ToolCall {
+  readonly output?: { readonly text: string; readonly truncated: boolean };
   readonly order?: number;
   readonly sequence?: number;
   readonly id: string;
