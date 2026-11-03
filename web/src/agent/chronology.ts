@@ -223,6 +223,7 @@ export function mergeTranscriptSnapshot(
   const activeRunId = useSnapshotState ? snapshot.activeRunId : current.activeRunId;
   return {
     ...result,
+    lastTurn: useSnapshotState ? snapshot.lastTurn : current.lastTurn,
     turnTiming: Object.fromEntries(
       [
         ...new Set([

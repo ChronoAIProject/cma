@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
@@ -7,8 +7,12 @@ import { agentClient } from '../test/agent';
 import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
 import { accessRequests } from './accessRequests';
+import { binding, harness } from './transport/controller.fixture';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  sessionStorage.clear();
+});
 
 it('preserves the same draft and uploaded attachment through settings disclosure and sends them unchanged', async () => {
   const user = userEvent.setup();
@@ -88,4 +92,74 @@ it('preserves the same draft and uploaded attachment through settings disclosure
   ]);
   expect(upload).toHaveBeenCalledOnce();
   expect(client.updateAgentSettings).not.toHaveBeenCalled();
+});
+
+it('keeps Responses selected after applying compact settings and describes queue and interruption accurately', async () => {
+  const user = userEvent.setup();
+  vi.spyOn(connectionClient, 'check').mockResolvedValue({
+    owner: 'alice',
+    ready: true,
+    checked_at: '2026-11-03T10:00:00Z',
+    services: [],
+  });
+  vi.spyOn(accessRequests, 'list').mockResolvedValue([]);
+  const transport = harness();
+  const settings = {
+    model: 'gpt-6',
+    reasoning_effort: 'high',
+    permission_mode: 'autonomous',
+  } as const;
+  const update = vi.fn().mockResolvedValue({ ...settings, permission_mode: 'guarded' });
+  const client = {
+    ...transport.client,
+    readAgentSettings: async () => settings,
+    readAgentModels: async () => [{ id: 'gpt-6', label: 'GPT-6', available: true }],
+    updateAgentSettings: update,
+  };
+  function Agent() {
+    const controller = useAgentController(client, 'agt_1', { viewerId: 'alice' });
+    return (
+      <CmaClientProvider client={client}>
+        <AgentSurface
+          agentId="agt_1"
+          viewerId="alice"
+          controller={controller}
+          detailsOpen={false}
+          onDetailsOpenChange={() => undefined}
+          onNavigate={() => undefined}
+        />
+      </CmaClientProvider>
+    );
+  }
+  render(<Agent />);
+  await waitFor(() => expect(transport.streaming).toBe(true));
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(field, { target: { value: 'Next message stays on Responses' } });
+  const summary = await screen.findByRole('button', { name: /^Agent settings:/ });
+  await user.click(summary);
+  await user.click(screen.getByRole('button', { name: 'Permission mode' }));
+  await user.click(screen.getByRole('menuitemradio', { name: 'Guarded' }));
+  await user.click(summary);
+  await user.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText('Settings applied to this Agent.');
+  expect(update).toHaveBeenCalledWith(
+    'agt_1',
+    { ...settings, permission_mode: 'guarded' },
+    expect.any(Object),
+  );
+  await act(async () => transport.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding));
+  await user.click(screen.getByRole('button', { name: 'Steering mode: Queue' }));
+  expect(screen.getByText('Process after the current turn finishes.')).toBeVisible();
+  expect(
+    screen.getByText('Stop the current turn, then start a new turn with this message.'),
+  ).toBeVisible();
+  await user.keyboard('{Escape}');
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: 'Queue message' }));
+  await waitFor(() => expect(transport.post).toHaveBeenCalledOnce());
+  expect(JSON.parse(String(transport.post.mock.calls[0]![0]?.body)).input).toBe(
+    'Next message stays on Responses',
+  );
+  expect(transport.client.runAgent).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(field);
 });
