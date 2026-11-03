@@ -11,9 +11,10 @@ export interface SuggestedReplySet {
 }
 
 export function scenarioSuggestions(
-  conversation: ConversationState,
+  conversation: Pick<ConversationState, 'messages' | 'activeRunId' | 'latestTurnId'>,
   viewerId: string,
   agentId: string,
+  provided?: SuggestedReplySet | null,
 ): SuggestedReplySet | undefined {
   const answer = conversation.messages.at(-1);
   if (
@@ -30,6 +31,39 @@ export function scenarioSuggestions(
   )
     return undefined;
   const scope = { turn_sequence: Number(answer.runId), answer_sequence: answer.sequence };
+  if (provided !== undefined) {
+    if (
+      !provided ||
+      provided.viewerId !== viewerId ||
+      provided.agentId !== agentId ||
+      provided.answerId !== answer.id ||
+      provided.scope?.turn_sequence !== scope.turn_sequence ||
+      provided.scope?.answer_sequence !== scope.answer_sequence ||
+      typeof provided.id !== 'string' ||
+      !provided.id.trim() ||
+      typeof provided.source?.version !== 'string' ||
+      !provided.source.version.trim() ||
+      !['template', 'generated'].includes(provided.source.kind) ||
+      !Array.isArray(provided.items) ||
+      provided.items.length === 0 ||
+      provided.items.length > 3 ||
+      provided.items.some(
+        (item, index) =>
+          !item ||
+          typeof item.id !== 'string' ||
+          !item.id.trim() ||
+          typeof item.text !== 'string' ||
+          !item.text.trim() ||
+          new TextEncoder().encode(item.text).length > 256 * 1024 ||
+          !Number.isSafeInteger(item.rank) ||
+          item.rank < 0 ||
+          (index > 0 && item.rank <= provided.items[index - 1]!.rank),
+      ) ||
+      new Set(provided.items.map((item) => item.id)).size !== provided.items.length
+    )
+      return undefined;
+    return provided;
+  }
   const prompt = conversation.messages.find(
     (message) => message.runId === answer.runId && message.role === 'user',
   );

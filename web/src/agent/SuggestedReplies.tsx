@@ -36,6 +36,14 @@ export function SuggestedReplies({
     retained?.answerContext?.answer_sequence === suggestions.scope.answer_sequence;
   const effectiveState =
     state === 'unconfirmed' && requestKey !== undefined && !retained ? 'failed' : state;
+  const status =
+    effectiveState === 'sending'
+      ? 'Sending suggestion…'
+      : effectiveState === 'unconfirmed' || (scopedRequest && retained.state === 'pending')
+        ? 'Awaiting confirmation — recover the pending request.'
+        : effectiveState === 'failed'
+          ? 'Suggestion not sent. Try again.'
+          : undefined;
   if (
     state === 'accepted' ||
     state === 'expired' ||
@@ -45,7 +53,14 @@ export function SuggestedReplies({
   return (
     <section className="suggested-replies" aria-label="Next you can ask">
       <span>Next you can ask</span>
-      <span className="suggested-replies__source">Scenario templates</span>
+      <span className="suggested-replies__source">
+        {suggestions.source.kind === 'template' ? 'Scenario templates' : 'Suggested follow-ups'}
+      </span>
+      {status && (
+        <span role="status" aria-live="polite">
+          {status}
+        </span>
+      )}
       {suggestions.items.map((item) => (
         <button
           type="button"
