@@ -11,7 +11,7 @@ import {
   wire,
 } from './responses-v2-fixtures.js';
 
-function activityEvents(status = 'completed') {
+function activityEvents(status = 'completed', recorded?: { text: string; truncated: boolean }) {
   const activity = {
     type: 'mcp_call',
     id: 'mcp_call_1',
@@ -22,7 +22,7 @@ function activityEvents(status = 'completed') {
     error: null,
     status: 'in_progress',
   };
-  const output = { ...activity, status };
+  const output = { ...activity, status, ...(recorded ? { 'cma:output': recorded } : {}) };
   const base = events();
   return [
     ...base.slice(0, 2),
@@ -34,6 +34,18 @@ function activityEvents(status = 'completed') {
     { type: 'response.completed', response: { ...completed, output: [output, item] } },
   ].map((event, sequence_number) => ({ ...event, sequence_number }));
 }
+it('retains bounded recorded output without changing the activity lifecycle', async () => {
+  const recorded = { text: 'native-computer-proof\n', truncated: false };
+  const frames = activityEvents('completed', recorded);
+  const fixture = harness();
+  fixture.fetch.mockResolvedValueOnce(sse(wire(frames)));
+  const result = await fixture.client.responsesV2.create(request, { onEvent: fixture.onEvent });
+  expect(result.output[0]).toMatchObject({
+    status: 'completed',
+    output: null,
+    'cma:output': recorded,
+  });
+});
 it.each(['completed', 'failed'])(
   'accepts %s activity interleaved with text and every replay cursor',
   async (status) => {

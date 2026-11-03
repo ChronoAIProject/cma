@@ -263,6 +263,16 @@ impl Agents<'_> {
         identity(&value.agent_id, id)?;
         Ok(value)
     }
+    #[doc = "Read durable events including bounded reported tool output when supported."]
+    pub async fn events_with_output(
+        &self,
+        id: &str,
+        options: EventOptions,
+    ) -> Result<ResourcePage<AgentEvent, u64>> {
+        let mut query = options.query();
+        query.push(("tool_output", "true".into()));
+        self.client.get(&["agents", id, "events"], &query).await
+    }
     /// Read durably recorded model token usage.
     pub async fn usage(&self, id: &str) -> Result<AgentUsage> {
         let value: AgentUsage = self.client.get(&["agents", id, "usage"], &[]).await?;
