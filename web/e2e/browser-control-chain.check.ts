@@ -77,7 +77,7 @@ test('real Web input exclusively controls the native Agent browser through publi
       }
       const response = await route.fetch({ url: origins[access] + url.pathname + url.search });
       if (control && response.ok()) receipts.push(await response.json());
-      if (command?.command === drop) {
+      if (command && command.command === drop) {
         drop = undefined;
         await route.abort();
         return;
