@@ -81,7 +81,8 @@ impl GatewayBots {
                 &config.base_url,
                 &config.public_url,
             )?
-            .with_public_api(&config.public_api_url)?,
+            .with_public_api(&config.public_api_url)?
+            .with_public_api_aliases(&config.public_api_aliases)?,
             issuer: KeyIssuer::new(http, nyxid_url, deployment),
             public: config.public_api_url.trim_end_matches('/').into(),
         }))

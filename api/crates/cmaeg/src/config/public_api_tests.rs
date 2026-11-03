@@ -31,3 +31,29 @@ fn public_api_base_requires_a_clean_canonical_namespace() {
         assert!(validate_public_api_url(invalid).is_err(), "{invalid}");
     }
 }
+
+#[test]
+fn domain_aliases_are_bounded_exact_clean_bases() {
+    assert!(super::origins::parse_public_api_aliases("")
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        super::origins::parse_public_api_aliases(
+            "https://old.example/event-gateway,https://new.example/event-gateway"
+        )
+        .unwrap()
+        .len(),
+        2
+    );
+    for invalid in [
+        "https://old.example/event-gateway,",
+        "https://old.example/event-gateway,*",
+        "https://new.example/path?query=1",
+        "http://public.example",
+    ] {
+        assert!(super::origins::parse_public_api_aliases(invalid).is_err());
+    }
+    assert!(
+        super::origins::parse_public_api_aliases(&["https://old.example"; 9].join(",")).is_err()
+    );
+}
