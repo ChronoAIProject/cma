@@ -239,6 +239,7 @@ export function agentDetail(value: Wire.Agent): AgentDetail {
       status: value.workspace.status,
       profile: value.workspace.profile,
       resolvedCommit: value.workspace.resolved_commit,
+      source: value.workspace.source,
     },
     sandbox: value.sandbox,
     conformsTo: value.conforms_to,

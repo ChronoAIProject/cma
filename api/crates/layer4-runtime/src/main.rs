@@ -30,6 +30,7 @@ mod mutation_scope;
 mod paths;
 mod persistent_home;
 mod pool_bootstrap;
+mod repository_snapshot;
 mod resource_cgroup;
 mod resource_network;
 mod resources;
