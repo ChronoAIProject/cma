@@ -16,6 +16,54 @@ use tower::ServiceExt as _;
 
 const ROOT: &str = "/api/v1/agents/agt_delivery";
 
+#[tokio::test]
+async fn answer_deliverables_report_bounded_turn_reads_as_unavailable() {
+    let fixture = agents_tests::fixture().await;
+    let mut kinds = vec![AgentLogKind::TurnStarted {
+        model: None,
+        turn_sequence: 3,
+        origin_key: None,
+    }];
+    for _ in 0..514 {
+        kinds.push(AgentLogKind::OwnerMessage {
+            content: "Follow-up".into(),
+        });
+    }
+    kinds.push(AgentLogKind::AgentMessage {
+        content: "Final answer".into(),
+    });
+    kinds.push(AgentLogKind::TurnCompleted { turn_sequence: 3 });
+    agents_tests::insert_agent(
+        &fixture.store,
+        agents_tests::seeded_agent("agt_delivery", AgentStatus::Ready, 519, None),
+        kinds,
+    )
+    .await;
+    let access = Arc::new(ResourceAccessService::new(
+        fixture.store.clone(),
+        Arc::new(shared_agent_tests::Authority(Mutex::new(
+            shared_agent_tests::Reply::Member,
+        ))),
+    ));
+    let service = AnswerDeliverableService::new(
+        fixture.reads(),
+        AgentArtifactService::new(fixture.store.clone(), access),
+    );
+    let router = super::answer_deliverables_router(service);
+    let (status, value) = agents_tests::json_response(
+        &router,
+        agents_tests::request(
+            Method::GET,
+            &format!("{ROOT}/answers/event:518/deliverables"),
+            "owner-a",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{value}");
+}
+
 async fn read(router: &Router, path: &str) -> Value {
     let (status, value) = agents_tests::json_response(
         router,
@@ -24,6 +72,122 @@ async fn read(router: &Router, path: &str) -> Value {
     .await;
     assert_eq!(status, StatusCode::OK, "{value}");
     value
+}
+
+#[tokio::test]
+async fn answer_deliverables_keep_explicit_repeats_but_reject_examples_and_nonfinal_messages() {
+    let fixture = agents_tests::fixture().await;
+    let agent = agents_tests::insert_agent(
+        &fixture.store,
+        agents_tests::seeded_agent("agt_delivery", AgentStatus::Ready, 27, None),
+        vec![],
+    )
+    .await;
+    let access = Arc::new(ResourceAccessService::new(
+        fixture.store.clone(),
+        Arc::new(shared_agent_tests::Authority(Mutex::new(
+            shared_agent_tests::Reply::Member,
+        ))),
+    ));
+    let artifacts = AgentArtifactService::new(fixture.store.clone(), access);
+    let service = AnswerDeliverableService::new(fixture.reads(), artifacts.clone());
+    let router =
+        super::answer_deliverables_router(service).merge(super::agent_artifacts_router(artifacts));
+    let (status, published) = agents_tests::json_response(
+        &router,
+        agents_tests::request(
+            Method::POST,
+            &format!("{ROOT}/artifacts"),
+            "owner-a",
+            Some("explicit-result"),
+            Some(json!({"name":"result.txt","media_type":"text/plain","content_base64":"YWJj"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, described) = agents_tests::json_response(
+        &router,
+        agents_tests::request(
+            Method::POST,
+            &format!("{ROOT}/deliverable-references"),
+            "owner-a",
+            None,
+            Some(json!({"kind":"agent_artifact","id":published["id"]})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let marker = described["marker"].as_str().unwrap();
+    let start = |turn_sequence| AgentLogKind::TurnStarted {
+        model: None,
+        turn_sequence,
+        origin_key: None,
+    };
+    let owner = || AgentLogKind::OwnerMessage {
+        content: "A question".into(),
+    };
+    let reply = |content: String| AgentLogKind::AgentMessage { content };
+    for kind in [
+        start(3),
+        owner(),
+        reply(marker.into()),
+        reply(format!("Final\n{marker}\n{marker}")),
+        AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        start(8),
+        owner(),
+        reply(format!(
+            "An ordinary `result.txt` and a quoted example:\n```html\n{marker}\n```"
+        )),
+        AgentLogKind::TurnCompleted { turn_sequence: 8 },
+        start(12),
+        owner(),
+        reply(marker.into()),
+        owner(),
+        AgentLogKind::TurnCompleted { turn_sequence: 12 },
+        start(17),
+        owner(),
+        reply(marker.into()),
+        AgentLogKind::TurnInterrupted { turn_sequence: 17 },
+        start(21),
+        owner(),
+        reply(marker.into()),
+        start(24),
+        owner(),
+        reply(marker.into()),
+        AgentLogKind::TurnCompleted { turn_sequence: 24 },
+    ] {
+        fixture
+            .store
+            .append_agent_log(&agent.id, "2026-09-05T00:00:00Z".into(), kind)
+            .await
+            .unwrap();
+    }
+    let first = read(&router, &format!("{ROOT}/answers/event:6/deliverables")).await;
+    assert_eq!(first["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["turn_sequence"], 3);
+    assert!(
+        read(&router, &format!("{ROOT}/answers/event:10/deliverables")).await["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    for sequence in [5, 14, 19, 23] {
+        let (status, _) = agents_tests::json_response(
+            &router,
+            agents_tests::request(
+                Method::GET,
+                &format!("{ROOT}/answers/event:{sequence}/deliverables"),
+                "owner-a",
+                None,
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "nonfinal message {sequence}");
+    }
+    let repeated = read(&router, &format!("{ROOT}/answers/event:26/deliverables")).await;
+    assert_eq!(repeated["turn_sequence"], 24);
+    assert_eq!(repeated["items"], first["items"]);
 }
 
 #[tokio::test]
