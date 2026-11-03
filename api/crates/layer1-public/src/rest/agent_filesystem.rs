@@ -20,6 +20,8 @@ use std::sync::Arc;
 const MAX_AGENT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 #[path = "agent_browser.rs"]
 pub(crate) mod browser;
+#[path = "agent_browser_control.rs"]
+pub(crate) mod browser_control;
 #[path = "agent_environment.rs"]
 pub(crate) mod environment;
 use utoipa::ToSchema;
@@ -77,6 +79,12 @@ pub(crate) struct FileMutationView {
 pub fn agent_filesystem_router(service: Arc<AgentFileService>) -> Router {
     Router::new()
         .route("/api/v1/agents/{id}/environment", get(environment::read))
+        .route(
+            "/api/v1/agents/{id}/browser/control",
+            get(browser_control::read)
+                .post(browser_control::change)
+                .layer(axum::extract::DefaultBodyLimit::max(16384)),
+        )
         .route(
             "/api/v1/agents/{id}/browser",
             get(browser::read)

@@ -8,6 +8,7 @@ pub(super) fn compose(mut document: utoipa::openapi::OpenApi) -> utoipa::openapi
     document.merge(super::super::documents::document());
     document.merge(super::super::desktop_creation::document());
     document.merge(super::super::agent_filesystem::browser::document());
+    document.merge(super::super::agent_filesystem::browser_control::document());
     document.merge(super::super::answer_deliverables::AnswerDeliverablesApi::openapi());
     document.merge(super::super::message_feedback::document());
     document.merge(crate::responses::document());

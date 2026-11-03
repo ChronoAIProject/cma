@@ -226,6 +226,7 @@ impl HostedBackend for InMemoryHostedBackend {
         }
         let response = match request {
             RequestFrame::Browser(_) => return refused(operation, "browser_unsupported"),
+            RequestFrame::BrowserControl(_) => return refused(operation, "browser_unsupported"),
             RequestFrame::UploadAgentAttachment(_) => {
                 return refused(operation, "attachment_upload_unsupported")
             }
