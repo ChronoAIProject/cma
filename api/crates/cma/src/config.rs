@@ -10,6 +10,7 @@ use layer2_core::ServiceId;
 
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
+mod access_origins;
 mod agent_sandbox;
 mod execution;
 mod gateway;
@@ -140,6 +141,8 @@ impl TrustedProxyConfig {
 pub struct Config {
     pub bind: SocketAddr,
     pub public_url: String,
+    /// Explicit prior authorities for credentials already installed in live Agents.
+    pub agent_access_retained_origins: Vec<String>,
     /// Base URL for the independently deployed Image Manager service.  CMA
     /// only uses it with the request's delegated user credential.
     pub image_manager_base_url: String,
@@ -176,6 +179,10 @@ impl std::fmt::Debug for Config {
             .debug_struct("Config")
             .field("bind", &self.bind)
             .field("public_url", &self.public_url)
+            .field(
+                "agent_access_retained_origins",
+                &self.agent_access_retained_origins,
+            )
             .field("image_manager_base_url", &self.image_manager_base_url)
             .field("nyxid_public_url", &self.nyxid_public_url)
             .field("cors_origins", &self.cors_origins)
@@ -215,6 +222,7 @@ impl Config {
             .map_err(|error| format!("CHRONO_SERVER_BIND is not a socket address: {error}"))?;
         let public_url = value_or(&mut lookup, "CHRONO_SERVER_PUBLIC_URL", DEFAULT_PUBLIC_URL)?;
         validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
+        let agent_access_retained_origins = access_origins::retained(&mut lookup)?;
         let image_manager_base_url = parse_service_base_url(
             "CHRONO_IMAGE_MANAGER_BASE_URL",
             &value_or(
@@ -332,6 +340,7 @@ impl Config {
         Ok(Self {
             bind,
             public_url,
+            agent_access_retained_origins,
             image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),

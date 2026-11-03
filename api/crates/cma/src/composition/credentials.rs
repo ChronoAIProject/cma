@@ -4,6 +4,19 @@ use crate::{
     config::Config,
 };
 use std::sync::Arc;
+
+pub(super) fn agent_access_tools(
+    config: &Config,
+    stores: &crate::store::MongoStores,
+) -> Result<Arc<crate::store::MongoAgentAccessToolSource>, String> {
+    crate::store::MongoAgentAccessToolSource::with_retained_origins(
+        stores.sandbox_model.clone(),
+        &config.public_url,
+        &config.agent_access_retained_origins,
+        &config.auth_encryption_key,
+    )
+}
+
 pub(super) fn key_issuer(config: &Config) -> Option<Arc<KeyIssuer>> {
     let AuthMode::Provider { base_url, .. } = &config.auth_mode else {
         return None;

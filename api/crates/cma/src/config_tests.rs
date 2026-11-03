@@ -360,6 +360,20 @@ fn provider_mode_requires_all_identity_configuration() {
 }
 
 #[test]
+fn retained_agent_access_origins_are_explicit_and_do_not_change_browser_callbacks() {
+    assert!(configured(&[]).unwrap().agent_access_retained_origins.is_empty());
+    let config = configured(&[
+        ("CHRONO_SERVER_PUBLIC_URL", "https://new.example"),
+        ("CHRONO_AGENT_ACCESS_RETAINED_ORIGINS", "https://old.example, https://old.example"),
+    ]).unwrap();
+    assert_eq!(config.public_url, "https://new.example");
+    assert_eq!(config.agent_access_retained_origins, ["https://old.example"]);
+    for value in ["http://old.example", "https://user@old.example", "https://old.example/api", "https://old.example,", "*", "https://old.example/", "https://Old.example", "https://a.example,https://b.example,https://c.example,https://d.example,https://e.example"] {
+        assert!(configured(&[("CHRONO_AGENT_ACCESS_RETAINED_ORIGINS", value)]).is_err(), "{value}");
+    }
+}
+
+#[test]
 fn nyxid_browser_origin_is_canonical_https() {
     for value in [
         "http://nyx.example",
