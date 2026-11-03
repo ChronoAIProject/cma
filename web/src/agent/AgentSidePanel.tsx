@@ -197,8 +197,21 @@ export function AgentSidePanel({
           className="agent-computer__page agent-computer__output"
           hidden={panel !== 'activity'}
         >
-          {shared && authorized && !authorized.capabilities.includes('view_history') ? (
-            <p role="status">Operation output access is not permitted.</p>
+          {shared && authorized?.capabilities.includes('view_history') !== true ? (
+            <>
+              <p role="status">
+                {access.state.status === 'loading'
+                  ? 'Checking operation output access…'
+                  : access.state.status === 'error'
+                    ? 'Operation output access could not be checked. Try again.'
+                    : 'Operation output access is not permitted.'}
+              </p>
+              {access.state.status === 'error' ? (
+                <Button size="sm" onClick={access.reload}>
+                  Check output access again
+                </Button>
+              ) : null}
+            </>
           ) : features?.operation_output.state === 'forbidden' ? (
             <FeatureAvailability name="Operation output" feature={features.operation_output} />
           ) : (
