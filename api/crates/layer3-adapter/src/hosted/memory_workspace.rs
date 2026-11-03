@@ -35,7 +35,8 @@ pub(super) fn prepare(
         return refused(operation, "invalid_or_existing_workspace");
     }
     let source = match &request.source {
-        WorkspaceSource::Clone { url, reference } => {
+        WorkspaceSource::Clone { url, reference }
+        | WorkspaceSource::RepositorySnapshot { url, reference } => {
             format!("{url}:{}", reference.as_deref().unwrap_or("default"))
         }
         WorkspaceSource::Init => format!("init:{}", request.name),
@@ -47,6 +48,8 @@ pub(super) fn prepare(
         name: request.name.clone(),
         path: format!("{}/{}", runtime_home(runtime), request.name),
         resolved_commit: super::state::digest(source.as_bytes()),
+        source_commit: matches!(request.source, WorkspaceSource::RepositorySnapshot { .. })
+            .then(|| "a".repeat(40)),
     };
     runtime.workspaces.insert(request.name, receipt.clone());
     finish(
