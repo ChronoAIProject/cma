@@ -312,6 +312,8 @@ jobs:
         run: cargo fmt --all --check
       - name: Native recovery persistence and process fences
         run: python3 crates/layer3-adapter/src/codex/recovery_test.py
+      - name: Retained transport native goal read-only proof
+        run: python3 crates/layer3-adapter/src/hosted/managed_context/transport_goal_test.py
       - name: Lint
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Build

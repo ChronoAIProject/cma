@@ -2,6 +2,7 @@
 use std::sync::Arc;
 
 mod transport;
+mod transport_goal;
 
 use base64::Engine as _;
 use sha2::{Digest as _, Sha256};
