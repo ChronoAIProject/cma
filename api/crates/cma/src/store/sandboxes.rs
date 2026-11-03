@@ -329,22 +329,4 @@ pub(super) fn sandbox_replacement_fields(sandbox: &Sandbox) -> Result<Document, 
     Ok(fields)
 }
 
-async fn classify_cas_miss(
-    collection: &Collection<Document>,
-    id: &SandboxId,
-) -> Result<SandboxStoreError, SandboxStoreError> {
-    match collection
-        .find_one(doc! { "_id": id.as_str() })
-        .projection(doc! { "document_schema_version": 1 })
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-    {
-        None => Ok(SandboxStoreError::NotFound),
-        Some(document) => {
-            super::sandbox_mongo::require_version(&document).map_err(SandboxStoreError::Corrupt)?;
-            Ok(SandboxStoreError::Conflict)
-        }
-    }
-}
-
 mod implementation;

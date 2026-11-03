@@ -114,6 +114,13 @@ pub(super) async fn apply(
     if advanced.matched_count != 1 {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
+    crate::store::sandbox_usage::save::record_saved(
+        store,
+        session,
+        &mutation.sandbox,
+        current.revision,
+    )
+    .await?;
     let mut events = Vec::with_capacity(mutation.events.len());
     for kind in mutation.events {
         events.push(
