@@ -240,6 +240,29 @@ pub(super) fn reserve(
     if waiting >= usize::from(request.queue_capacity) {
         return Err(CommandLedgerError::QueueFull);
     }
+    if let Some(expected) =
+        crate::sandbox::agent_io::AnswerContext::from_command(&request.envelope.command)?
+    {
+        if state.agent_commands.values().any(|command| {
+            command.receipt.envelope.agent_id == agent.id
+                && command.receipt.event_cursor >= expected.answer_sequence
+                && matches!(
+                    command.receipt.envelope.command,
+                    crate::sandbox::agent_io::AgentCommand::Message { .. }
+                )
+        }) {
+            return Err(CommandLedgerError::NotAdmissible);
+        }
+        let answer = crate::sandbox::agent_io::answer_context_for_log(
+            agent,
+            state
+                .agent_logs
+                .get(&agent.id)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+        )?;
+        crate::sandbox::agent_io::require_answer_context(request, agent, waiting as u64, answer)?;
+    }
     if state
         .agent_commands
         .contains_key(&request.envelope.command_id)
