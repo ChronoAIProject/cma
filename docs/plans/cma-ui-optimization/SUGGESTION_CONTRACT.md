@@ -45,6 +45,11 @@ The condition is part of the canonical command fingerprint. New admissions valid
 the latest successful final answer atomically with queue and permission fencing;
 same-key recovery returns the original authorized receipt before checking staleness.
 Public contract additions are additive; legacy clients omit the condition.
+An older Responses server's explicit `responses_field_unsupported` refusal closes
+the scoped attempt and leaves manual input available. Uncertain errors retain the
+original scope and key. No path silently strips the condition or falls back to an
+unconditional send. Accepted AG-UI scope receipts also suppress the old group after
+refresh when the history read has not caught up.
 
 The suggestions UI is a separate component inserted in AgentSurface's existing
 MessageStream children after the answer/artifacts. It does not change StreamEntry or

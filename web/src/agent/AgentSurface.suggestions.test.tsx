@@ -242,6 +242,37 @@ it('removes a suggestion when another tab has invalidated its answer at admissio
   expect(field).toHaveValue('Keep the budget limit.');
 });
 
+it('leaves manual sending available when the selected server cannot admit scoped suggestions', async () => {
+  const { fixture, field, suggestion } = await setup();
+  fixture.post.mockResolvedValueOnce(
+    json(
+      {
+        error: {
+          type: 'invalid_request_error',
+          code: 'responses_field_unsupported',
+          message: 'This field is outside the streaming Responses subset.',
+          param: 'answer_context',
+        },
+      },
+      422,
+    ),
+  );
+  fireEvent.click(suggestion);
+  await screen.findByText(
+    'Suggested replies are unavailable on this server. Continue in the message composer.',
+  );
+  expect(screen.queryByRole('region', { name: 'Next you can ask' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Recover pending request' })).not.toBeInTheDocument();
+  expect(field).toHaveValue('Keep the budget limit.');
+  fixture.post.mockResolvedValueOnce(accepted());
+  fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+  await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(String(fixture.post.mock.calls[1]![0]!.body))).toEqual({
+    input: 'Keep the budget limit.',
+    stream: true,
+  });
+});
+
 it('does not restore the previous answer suggestions when a newer empty turn fails', async () => {
   const { fixture, field } = await setup();
   await act(async () => {
@@ -307,6 +338,29 @@ it('keeps the accepted answer suggestion collapsed after refreshing the conversa
   );
   remount();
   await screen.findByText('PostgreSQL supports concurrent writers; SQLite suits local storage.');
+  expect(screen.queryByRole('region', { name: 'Next you can ask' })).not.toBeInTheDocument();
+});
+
+it('keeps an accepted AG-UI suggestion collapsed while refreshed history still shows its old answer', async () => {
+  const { fixture, suggestion, remount } = await setup(true);
+  fixture.post.mockResolvedValueOnce(
+    new Response(
+      [
+        { type: 'RUN_STARTED', threadId: 'agt_1', runId: '5' },
+        { type: 'RUN_FINISHED', threadId: 'agt_1', runId: '5' },
+      ]
+        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+        .join(''),
+      { headers: { 'content-type': 'text/event-stream' } },
+    ),
+  );
+  fireEvent.click(suggestion);
+  await waitFor(() =>
+    expect(screen.queryByRole('region', { name: 'Next you can ask' })).not.toBeInTheDocument(),
+  );
+  remount();
+  await screen.findByText('The comparison is complete.');
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled());
   expect(screen.queryByRole('region', { name: 'Next you can ask' })).not.toBeInTheDocument();
 });
 
