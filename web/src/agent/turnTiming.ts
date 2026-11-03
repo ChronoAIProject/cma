@@ -36,9 +36,10 @@ export function finishTurn(
     !Number.isFinite(Date.parse(finishedAt)) ||
     Date.parse(finishedAt) < Date.parse(startedAt)
   )
-    return state;
+    return { ...state, latestTurnId: runId };
   return {
     ...state,
+    latestTurnId: runId,
     turnTiming: {
       ...state.turnTiming,
       [runId]: { startedAt, finishedAt: previous?.finishedAt ?? finishedAt },
