@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+mod contextual_suggestions;
 mod conversation_fixtures;
 mod creation_delegation;
 mod lifecycle;
