@@ -61,7 +61,7 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   expect(screen.getByRole('button', { name: /^Thinking/ })).toBe(toggle);
   expect(within(dock).getAllByRole('listitem')).toHaveLength(1);
   expect(within(dock).queryByText(/Read package/)).not.toBeInTheDocument();
-  const completed = screen.getByRole('button', { name: '1 tool call', exact: true });
+  const completed = screen.getByRole('button', { name: /^1 tool call$/ });
   expect(completed).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(completed);
   expect(screen.getByRole('article', { name: 'Tool call: Read package' })).toHaveTextContent(
@@ -152,7 +152,7 @@ it.each(['RUN_FINISHED', 'RUN_ERROR'])(
     });
     render(draw(live(pending, end)));
     expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
-    const process = screen.getByRole('button', { name: '1 tool call', exact: true });
+    const process = screen.getByRole('button', { name: /^1 tool call$/ });
     expect(process).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(process);
     expect(screen.getByRole('article', { name: 'Tool call: Long task' })).toHaveTextContent(
@@ -206,7 +206,7 @@ it('reconciles terminal tools without duplicates or pending regression during re
   expect(state.toolCalls).toHaveLength(1);
   expect(state.toolCalls[0]).toMatchObject({ status: 'completed', order: position });
   render(draw(state));
-  const process = screen.getByRole('button', { name: '1 tool call', exact: true });
+  const process = screen.getByRole('button', { name: /^1 tool call$/ });
   expect(process).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(process);
   expect(screen.getAllByRole('article', { name: 'Tool call: Read file' })).toHaveLength(1);
