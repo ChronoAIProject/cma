@@ -134,7 +134,7 @@ function fixture(subject = 'owner') {
       throw new Error(`Unexpected request ${url.pathname}`);
     },
   });
-  const client = createRestWebClient(sdk);
+  const client = { ...createRestWebClient(sdk), taskExperience: taskExperience(subject) };
   const observation = new AgentComputerObservation({ client, subject, agentId: 'agt_1' });
   const element = (extra?: ReactNode) => (
     <CmaClientProvider client={client}>
@@ -425,3 +425,4 @@ it('opens a completed answer actual turn even when it reported no plan', async (
   expect(screen.getByText('Turn 1')).toBeVisible();
   expect(screen.getByText('Plan not recorded at this operation')).toBeVisible();
 });
+import { taskExperience } from '../test/taskExperience';

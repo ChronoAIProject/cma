@@ -110,6 +110,20 @@ it.each(
       if (method === 'GET' && requestPath === '/api/v1/sandboxes') {
         return reply({ items: [] });
       }
+      if (method === 'GET' && requestPath === '/api/v2/ui/task-experience' && !visitor) {
+        return reply({
+          object: 'cma.ui.task_experience',
+          schema_version: 1,
+          account_id: 'unseen-cma-identity',
+          capabilities: {
+            task_home_admission: true,
+            suggested_followup_admission: true,
+            desktop_enable: true,
+            browser_takeover: true,
+            replay_presentation: true,
+          },
+        });
+      }
       if (method === 'GET' && requestPath === '/api/v1/organizations' && !visitor) {
         return reply({ items: [] });
       }

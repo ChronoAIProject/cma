@@ -72,6 +72,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     documents: documentsClient(),
     browser: sdk.agentBrowser,
     browserControl: sdk.agentBrowserControl,
+    taskExperience: sdk.taskExperience,
     files: {
       ...agentFilesClient(),
       environment: (id, options) => sdk.agentFiles.environment(id, options),

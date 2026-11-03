@@ -19,6 +19,7 @@ export function BrowserPanel({
   agentId,
   incarnation,
   active,
+  controlAdmission = false,
   onReload,
 }: {
   readonly client: AgentBrowserClient;
@@ -27,6 +28,7 @@ export function BrowserPanel({
   readonly agentId: string;
   readonly incarnation: string;
   readonly active: boolean;
+  readonly controlAdmission?: boolean;
   readonly onReload: () => void;
 }) {
   const scope = useMemo(() => ({ client, agentId, incarnation }), [client, agentId, incarnation]);
@@ -199,6 +201,7 @@ export function BrowserPanel({
           incarnation={incarnation}
           contextId={current.contextId}
           active={!!live && active}
+          admissionAllowed={controlAdmission}
         >
           {picture}
         </BrowserControl>

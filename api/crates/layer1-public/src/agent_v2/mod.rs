@@ -25,6 +25,9 @@ mod shapes;
 mod snapshot;
 mod stream;
 mod stream_live;
+mod task_experience;
+#[cfg(test)]
+mod task_experience_tests;
 #[cfg(test)]
 mod tests;
 
@@ -37,6 +40,7 @@ pub struct AgentV2State {
     updates: Option<Arc<dyn AgentUpdateRecorder>>,
     ui_flag: bool,
     dependencies: UiTransportDependencies,
+    task_experience: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
 }
 
 impl AgentV2State {
@@ -47,10 +51,18 @@ impl AgentV2State {
             updates: None,
             ui_flag: false,
             dependencies: Default::default(),
+            task_experience: Default::default(),
         }
     }
     pub fn with_updates(mut self, updates: Arc<dyn AgentUpdateRecorder>) -> Self {
         self.updates = Some(updates);
+        self
+    }
+    pub fn with_task_experience(
+        mut self,
+        policy: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+    ) -> Self {
+        self.task_experience = policy;
         self
     }
     pub fn with_ui_transport(
@@ -67,6 +79,7 @@ impl AgentV2State {
 pub fn router(state: AgentV2State) -> Router {
     Router::new()
         .route("/api/v2/ui/transport", get(eligibility::read))
+        .route("/api/v2/ui/task-experience", get(task_experience::read))
         .route("/api/v2/agents/{agent_id}/events/head", get(head::read))
         .route(
             "/api/v2/agents/{agent_id}/events/snapshot",
@@ -80,14 +93,22 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
     use utoipa::OpenApi;
     #[derive(OpenApi)]
     #[openapi(
-        paths(eligibility::read, head::read, snapshot::read, stream::read),
+        paths(
+            eligibility::read,
+            task_experience::read,
+            head::read,
+            snapshot::read,
+            stream::read
+        ),
         components(schemas(
             shapes::EventHead,
             shapes::EventPage,
             shapes::EventItem,
             shapes::ResponseBinding,
             shapes::DurableEvent,
-            eligibility::UiTransportView
+            eligibility::UiTransportView,
+            task_experience::TaskExperienceView,
+            task_experience::TaskExperienceCapabilities
         ))
     )]
     struct Api;

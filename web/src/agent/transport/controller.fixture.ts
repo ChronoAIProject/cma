@@ -154,6 +154,7 @@ export function harness(storage: Storage = sessionStorage) {
   });
   const sdk = createClient({ fetch });
   const client = agentClient({
+    taskExperience: taskExperience('alice'),
     agentTransport: createAgentTransport(sdk, { storage, currentUser }),
     runAgent: vi.fn(),
     interruptAgent: vi.fn(),
@@ -235,3 +236,4 @@ export function harness(storage: Storage = sessionStorage) {
     },
   };
 }
+import { taskExperience } from '../../test/taskExperience';

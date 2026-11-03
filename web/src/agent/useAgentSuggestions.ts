@@ -4,6 +4,8 @@ import type { SuggestedReplySet } from './suggestions';
 import { useContextualSuggestions } from './useContextualSuggestions';
 import { useSuggestionEditing } from './useSuggestionEditing';
 import { useSuggestionOutcomes } from './suggestionMetrics';
+import { useCmaClient } from '../api/context';
+import { useTaskExperience } from '../taskExperience';
 
 export function useAgentSuggestions({
   conversation,
@@ -22,6 +24,7 @@ export function useAgentSuggestions({
   provided?: SuggestedReplySet | null;
   controller: AgentController;
 }) {
+  const policy = useTaskExperience(useCmaClient(), viewerId);
   const selected = useContextualSuggestions(
     conversation,
     viewerId,
@@ -35,5 +38,5 @@ export function useAgentSuggestions({
     agentId,
     enabled ? controller.readSuggestionRequest?.() : null,
   );
-  return useSuggestionEditing(selected, controller);
+  return useSuggestionEditing(selected, controller, policy.suggested_followup_admission);
 }

@@ -9,6 +9,8 @@ import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { DesktopOption } from './DesktopOption';
+import { AgentLifecycleCard } from './AgentLifecycleCard';
+import { useTaskExperience } from '../taskExperience';
 import { useTaskDraft } from './taskDraft';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import '../ui/Input.css';
@@ -42,7 +44,13 @@ export function TaskHome(props: TaskHomeProps) {
     scope.sandboxId !== sandboxId
   )
     setScope({ client, viewerId, workspaceId, sandboxId, generation: scope.generation + 1 });
-  return <TaskComposer key={scope.generation} {...props} />;
+  return (
+    <TaskComposer
+      key={scope.generation}
+      {...props}
+      onRefresh={() => setScope((value) => ({ ...value, generation: value.generation + 1 }))}
+    />
+  );
 }
 
 function TaskComposer({
@@ -52,7 +60,10 @@ function TaskComposer({
   sandboxId,
   canCreateSandbox,
   onCreated,
-}: TaskHomeProps) {
+  onRefresh,
+}: TaskHomeProps & { readonly onRefresh: () => void }) {
+  const policy = useTaskExperience(client, viewerId);
+  const [manual, setManual] = useState(false);
   const inputId = useId();
   const titleId = useId();
   const errorId = useId();
@@ -113,15 +124,43 @@ function TaskComposer({
   return (
     <section className="task-home" aria-labelledby={titleId}>
       <h1 id={titleId}>What would you like to do?</h1>
+      {!policy.task_home_admission && !intent ? (
+        <>
+          <p role="status">
+            Task creation is unavailable. You can create an Agent and start a conversation.
+          </p>
+          <Button disabled={lifecycle.blocked || !canCreate} onClick={() => setManual(true)}>
+            New agent
+          </Button>
+        </>
+      ) : null}
+      {manual ? (
+        <AgentLifecycleCard
+          client={client}
+          viewerId={viewerId}
+          workspaceId={workspaceId}
+          sandboxId={sandboxId}
+          canCreateSandbox={canCreateSandbox}
+          onClose={onRefresh}
+          onCreated={(receipt) => onCreated({ kind: 'agent', agentId: receipt.id })}
+        />
+      ) : null}
       {workspaceId || sandboxId ? (
         <p>Creating in {workspaceId ? `Workspace ${workspaceId}` : `Sandbox ${sandboxId}`}</p>
       ) : null}
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (!canCreate || supported !== true || intent || lifecycle.pending) return;
+          if (
+            !policy.task_home_admission ||
+            !canCreate ||
+            supported !== true ||
+            intent ||
+            lifecycle.pending
+          )
+            return;
           const invalid =
-            draft.desktop && !desktopAvailable
+            draft.desktop && (!desktopAvailable || !policy.desktop_enable)
               ? 'Desktop is unavailable. Keep the task and clear the desktop option, or try again later.'
               : !draft.text.trim()
                 ? 'Describe a task before starting.'
@@ -208,6 +247,7 @@ function TaskComposer({
           </p>
         )}
         <DesktopOption
+          policyAllowed={policy.desktop_enable}
           client={client}
           workspaceId={workspaceId}
           sandboxId={sandboxId}
@@ -219,7 +259,13 @@ function TaskComposer({
         <Button
           type="submit"
           variant="primary"
-          disabled={lifecycle.pending || Boolean(intent) || !canCreate || supported !== true}
+          disabled={
+            !policy.task_home_admission ||
+            lifecycle.pending ||
+            Boolean(intent) ||
+            !canCreate ||
+            supported !== true
+          }
         >
           Start task
         </Button>
