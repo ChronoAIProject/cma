@@ -3,7 +3,7 @@
 The code-derived contract at **`GET /agent-manager/openapi.json`** covers the
 programmatic Agent lifecycle and interaction workflow. Its server is the current
 CMA origin; requests use the existing `/api/v1` and `/api/v2` paths. For example,
-production discovery is `https://bot.chrono-ai.fun/agent-manager/openapi.json`.
+production discovery is `https://cma.nyxid.ai/agent-manager/openapi.json`.
 This is a focused view of the existing API, with the same operation IDs, request
 schemas, responses and authorization. The full compatibility contract remains
 at `/openapi.json`; existing clients and routes remain supported.

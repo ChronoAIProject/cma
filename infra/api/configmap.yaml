@@ -67,21 +67,23 @@ data:
   # Resource server audience for service-scoped NyxID agent key introspection.
   CHRONO_NYXID_SERVICE_ID: "b48c8aff-02a6-43b6-87b5-98d3e66c1a06"
   # Existing NyxID signed service identity; enable the CMA catalog connection's
-  # jwt propagation with audience equal to CHRONO_SERVER_PUBLIC_URL.
+  # jwt propagation with a stable service audience across browser-domain changes.
   CHRONO_NYXID_PROXY_ENABLED: "true"
   CHRONO_NYXID_PROXY_ISSUER: "https://nyx-api.chrono-ai.fun"
   CHRONO_NYXID_PROXY_JWKS_URL: "https://nyx-api.chrono-ai.fun/.well-known/jwks.json"
+  # Retain existing NyxID per-user connection audiences during the browser migration.
+  CHRONO_NYXID_PROXY_AUDIENCE: "https://bot.chrono-ai.fun"
   # Request-bound read proofs require coordinated NyxID issuance activation.
   # Existing browser and ordinary API-key authentication do not use this flag.
   CHRONO_NYXID_RESOURCE_REQUEST_ENABLED: "false"
   CHRONO_TRUSTED_SUBJECT: "local-developer"
   # Browser auth callbacks and host-only cookies use the app origin; the
   # Gateway routes API/auth/discovery paths directly to this control plane.
-  CHRONO_SERVER_PUBLIC_URL: "https://bot.chrono-ai.fun"
+  CHRONO_SERVER_PUBLIC_URL: "https://cma.nyxid.ai"
   # Agent Manager resolves selected immutable versions through the separate
   # Image Manager service using the caller's delegated NyxID credential.
   CHRONO_IMAGE_MANAGER_BASE_URL: "http://cma-image-manager"
-  CHRONO_SERVER_CORS_ORIGIN: "https://bot.chrono-ai.fun"
+  CHRONO_SERVER_CORS_ORIGIN: "https://bot.chrono-ai.fun,https://cma.nyxid.ai"
   # Continuously refilled process-local budgets, also the maximum burst.
   # Admission protects authentication work; health has a separate budget.
   CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE: "6000"
@@ -101,12 +103,14 @@ data:
   # removals/reassignments are security alerts requiring code/config review.
   CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS: "173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32"
   CHRONO_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
-  CHRONO_NYXID_PUBLIC_URL: "https://nyx.chrono-ai.fun"
+  CHRONO_NYXID_PUBLIC_URL: "https://nyxid.ai"
   # Keep generation replacement disabled until compatible serving/rollback readers are deployed.
   CHRONO_CMAEG_BINDING_PREPARATION_ENABLED: "false"
   CHRONO_CMAEG_BASE_URL: "http://cma-event-gateway"
   CHRONO_CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
-  CHRONO_CMAEG_PUBLIC_API_URL: "https://bot.chrono-ai.fun/event-gateway"
+  CHRONO_CMAEG_PUBLIC_API_URL: "https://cma.nyxid.ai/event-gateway"
+  # Deploy compatibility readers before switching the advertised public API base.
+  CHRONO_CMAEG_PUBLIC_API_ALIASES: "https://bot.chrono-ai.fun/event-gateway"
   CHRONO_BOT_FATHER_BINDING_ID: "bnd_77fe02e529054f0086ce5d50a63bfe47"
   CHRONO_BOT_FATHER_TELEGRAM_USERNAME: "CMA_Trureturing_Bot"
   # Provider-issued OAuth client identifier, not a secret or a chosen name.

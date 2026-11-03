@@ -493,7 +493,7 @@ certificate/SSL policy or a separately closed Certificate Manager chain. The
 Gateway status IP, address, and both forwarding-rule IPs must be equal; the
 forwarding rules must terminate at the exact proxies, which must terminate at
 the exact redirect/routing maps with closed TLS, QUIC, and proxy-header settings.
-It must resolve the exact `bot.chrono-ai.fun` and `bot-api.chrono-ai.fun`
+It must resolve the exact `cma.nyxid.ai`, `bot.chrono-ai.fun` and `bot-api.chrono-ai.fun`
 host/path/backend and header actions without relying on generated-name heuristics.
 All host rules must be scanned for CMA overlap and must exclude wildcard overlap,
 weighted backends, or alternate header, rewrite, mirror, and fault actions; the
@@ -748,7 +748,7 @@ attached routes, so this window must freeze creation, deletion, and spec changes
 for every `HTTPRoute` in any namespace allowed to attach to either the HTTP or
 HTTPS listener, not only the three CMA routes. An admission-enforced host-
 ownership policy that categorically rejects any new or changed route overlapping
-`bot.chrono-ai.fun` or `bot-api.chrono-ai.fun` is the only acceptable substitute
+`cma.nyxid.ai`, `bot.chrono-ai.fun` or `bot-api.chrono-ai.fun` is the only acceptable substitute
 for that all-attachable-route freeze. During adoption or restore, no human,
 automation, or service may write directly to the three owned `HTTPRoute`s,
 `HealthCheckPolicy/cma-agent-manager`, the shared `gateway-infra/chronoai-gateway` Gateway,

@@ -137,3 +137,15 @@ it('opens the Event Gateway documentation from the Docs index using application 
     view: 'event_gateway_protocol',
   });
 });
+
+it('rebases canonical Nyxid Gateway document links into the current portal', () => {
+  expect(gatewayDocLink('https://cma.nyxid.ai/event-gateway/openapi.json', 'integration')).toBe(
+    '/event-gateway/openapi.json',
+  );
+  expect(
+    gatewayDocLink(
+      'https://cma.nyxid.ai/event-gateway/docs/protocol#5-management-api',
+      'integration',
+    ),
+  ).toBe('#protocol-5-management-api');
+});

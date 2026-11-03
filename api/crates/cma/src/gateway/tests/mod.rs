@@ -50,6 +50,7 @@ async fn compiled_gateway_accepts_cma_profiles_and_full_lifecycle_after_restart(
             base_url: gateway.base.clone(),
             public_url: gateway.base.clone(),
             public_api_url: gateway.base.clone(),
+            public_api_aliases: vec![],
         },
         "https://nyx.example".into(),
     )

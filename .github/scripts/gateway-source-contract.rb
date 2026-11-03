@@ -64,6 +64,14 @@ module GatewaySourceContract
     value
   end
 
+  def self.nyxid_route(route, name, listener = "https-nyxid")
+    value = Marshal.load(Marshal.dump(route))
+    value["metadata"]["name"] = name
+    value["spec"]["hostnames"] = ["cma.nyxid.ai"]
+    value["spec"]["parentRefs"] = parent(listener)
+    value
+  end
+
   def self.expected
     all = [path("PathPrefix", "/")]
     routes = [
@@ -87,6 +95,8 @@ module GatewaySourceContract
         "rules" => [{ "matches" => all, "filters" => [{ "type" => "RequestRedirect", "requestRedirect" => { "scheme" => "https", "statusCode" => 301 } }] }],
       }),
     ]
+    routes << nyxid_route(routes[1], "cma-web-nyxid")
+    routes << nyxid_route(routes[2], "cma-nyxid-http-redirect", "http")
     health = object("HealthCheckPolicy", "cma-agent-manager", {
       "targetRef" => { "group" => "", "kind" => "Service", "name" => "cma-agent-manager" },
       "default" => { "config" => { "type" => "HTTP", "httpHealthCheck" => { "port" => 8080, "requestPath" => "/ready" } } },
@@ -112,6 +122,8 @@ module GatewaySourceContract
         ],
       }),
     ]
+    gateway_routes = values.fetch("infra/cmaeg/httproute.yaml")
+    gateway_routes << nyxid_route(gateway_routes[2], "cma-event-gateway-public-nyxid")
     values["infra/api/service.yaml"] = [service("cma-agent-manager", "cma-agent-manager"), service("cma-api", "cma-agent-manager")]
     values["infra/cmaeg/service.yaml"] = [service("cma-event-gateway", "cma-event-gateway"), service("cmaeg", "cma-event-gateway")]
     %w[api web].each do |name|

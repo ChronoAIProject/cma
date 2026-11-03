@@ -251,10 +251,8 @@ pub async fn activate(
             return Err(invalid("platform credential identity changed"));
         }
         let expected = format!("{}/v1/telegram/{channel_id}", state.advertised_api_url());
-        let canonical = format!("{}/v1/telegram/{channel_id}", state.public_api_url);
         let current = telegram.get_webhook_url(&token).await.map_err(|_| failed())?;
-        let legacy = format!("{}/v1/telegram/{channel_id}", state.public_url);
-        if !current.is_empty() && current != canonical && current != legacy {
+        if !current.is_empty() && !state.public_api_bases().any(|base| current == format!("{base}/v1/telegram/{channel_id}")) {
             return Err(invalid("this bot already has a webhook; disconnect its previous integration before linking it"));
         }
         if !webhook::may_activate(state, id, channel_id.as_str(), &lease).await.map_err(error)? {

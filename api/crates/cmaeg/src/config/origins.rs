@@ -85,3 +85,16 @@ pub(crate) fn validate_origin(name: &'static str, value: &str) -> Result<String,
     }
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
+
+pub(super) fn parse_public_api_aliases(value: &str) -> Result<Vec<String>, ConfigError> {
+    if value.is_empty() {
+        return Ok(vec![]);
+    }
+    let values = value.split(',').collect::<Vec<_>>();
+    if values.len() > 8 {
+        return Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_PUBLIC_API_ALIASES} allows at most eight exact bases"),
+        });
+    }
+    values.into_iter().map(validate_public_api_url).collect()
+}

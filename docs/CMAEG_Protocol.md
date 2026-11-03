@@ -36,7 +36,7 @@ flowchart TB
 | Downstream agent provider | Implement Agent Card, binding, conversation, Responses SSE, durable idempotency and authenticated event-context reads | [Flow F](#flow-f-implement-a-downstream-agent-provider) and [§9](#9-provider-contract) |
 | Channel owner / operator | Reconcile versions and uncertain mutations; manage credentials and lifecycle within the correct authority | [Flow G](#flow-g-update-policy-rotate-credentials-and-delete), [Flow H](#flow-h-replica-restart-and-recovery-boundaries) and [§5](#5-management-api) |
 
-The REST base is `https://bot.chrono-ai.fun/event-gateway/v1`. Through the globally
+The REST base is `https://cma.nyxid.ai/event-gateway/v1`. Through the globally
 auto-connected NyxID service, use
 `https://nyx-api.chrono-ai.fun/api/v1/proxy/s/cmaeg` and append the same relative
 path, without another `/v1`. Native MCP uses the separate gateway `/mcp` endpoint.

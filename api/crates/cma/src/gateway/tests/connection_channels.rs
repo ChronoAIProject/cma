@@ -86,7 +86,8 @@ async fn generic_channel_creation_and_updates_never_send_native_platform_or_rout
             binding_preparation_enabled: false,
             base_url: base.clone(),
             public_url: base.clone(),
-            public_api_url: "https://bot.example/event-gateway".into(),
+            public_api_url: "https://new-bot.example/event-gateway".into(),
+            public_api_aliases: vec!["https://bot.example/event-gateway".into()],
         },
         "https://identity.example".into(),
     )
@@ -127,7 +128,11 @@ async fn generic_channel_creation_and_updates_never_send_native_platform_or_rout
             "deny"
         );
     }
-    for allowed in [base.as_str(), "https://bot.example/event-gateway"] {
+    for allowed in [
+        base.as_str(),
+        "https://bot.example/event-gateway",
+        "https://new-bot.example/event-gateway",
+    ] {
         let callback = format!("{allowed}/v1/callbacks/native-channel");
         let events = format!("{allowed}/v1/channels/native-channel/events");
         peer.channel.lock().unwrap()["endpoints"] =

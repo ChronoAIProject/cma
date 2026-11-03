@@ -22,6 +22,7 @@ fn proxy_auth(fixture: &ResourceFixture) -> Arc<AuthState> {
         true,
         Some(ISSUER.into()),
         Some(format!("{ISSUER}/.well-known/jwks.json")),
+        None,
     )
     .unwrap()
 }
@@ -558,6 +559,13 @@ struct SignedIngress {
 
 impl SignedIngress {
     async fn new(fixture: &ResourceFixture) -> Self {
+        Self::with_audience(fixture, None, None).await
+    }
+    async fn with_audience(
+        fixture: &ResourceFixture,
+        public_url: Option<&str>,
+        audience: Option<String>,
+    ) -> Self {
         use crate::auth::nyxid_proxy::jwt::Signer;
         let keys = json!({"keys":[Signer::primary().key("proxy-test-key")]}).to_string();
         let app = Router::new().route(
@@ -572,14 +580,21 @@ impl SignedIngress {
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let auth = AuthState::with_store(
-            fixture.identity.auth.mode.clone(),
-            None,
-            fixture.identity.store.clone(),
-        )
-        .with_agent_key_service(Some(SERVICE.into()))
-        .with_identity_proxy(true, Some(ISSUER.into()), Some(jwks_url))
-        .unwrap();
+        let mut mode = fixture.identity.auth.mode.clone();
+        if let (
+            AuthMode::Provider {
+                public_url: current,
+                ..
+            },
+            Some(public_url),
+        ) = (&mut mode, public_url)
+        {
+            *current = public_url.into();
+        }
+        let auth = AuthState::with_store(mode, None, fixture.identity.store.clone())
+            .with_agent_key_service(Some(SERVICE.into()))
+            .with_identity_proxy(true, Some(ISSUER.into()), Some(jwks_url), audience)
+            .unwrap();
         Self { auth, server }
     }
 }
@@ -781,6 +796,43 @@ async fn signed_foreign_subject_and_missing_permissions_cannot_acquire_owner_wri
                 .await
                 .is_err(),
             "{failure}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn browser_domain_migration_preserves_only_the_explicit_proxy_audience() {
+    let fixture = ResourceFixture::with_owner("owner").await;
+    *fixture.identity.control.introspection.write().await =
+        Reply::json(json!({"active":true,"sub":"owner","permissions":["cma:*"]}));
+    let ingress = SignedIngress::with_audience(
+        &fixture,
+        Some("https://new-cma.example.test"),
+        Some("https://cma.example.test".into()),
+    )
+    .await;
+    let claims = signed_claims();
+    assert!(ingress
+        .auth
+        .resolve_request(&signed_headers(&claims))
+        .await
+        .unwrap()
+        .is_some());
+    for rejected in [
+        "https://new-cma.example.test",
+        "https://foreign.example",
+        "https://cma.example.test/",
+    ] {
+        let mut claims = claims.clone();
+        claims["aud"] = json!(rejected);
+        assert!(
+            ingress
+                .auth
+                .resolve_request(&signed_headers(&claims))
+                .await
+                .unwrap()
+                .is_none(),
+            "{rejected}"
         );
     }
 }

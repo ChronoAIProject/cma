@@ -10,6 +10,7 @@ pub(crate) struct ChannelConnections {
     base: Url,
     public: Url,
     public_api: Url,
+    public_api_aliases: Vec<Url>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -37,11 +38,20 @@ impl ChannelConnections {
             base: Url::parse(base).map_err(|_| "invalid gateway origin")?,
             public: Url::parse(public).map_err(|_| "invalid gateway public origin")?,
             public_api: Url::parse(public).map_err(|_| "invalid gateway public origin")?,
+            public_api_aliases: vec![],
         })
     }
 
     pub(crate) fn with_public_api(mut self, base: &str) -> Result<Self, String> {
         self.public_api = Url::parse(base).map_err(|_| "invalid gateway public API base")?;
+        Ok(self)
+    }
+
+    pub(crate) fn with_public_api_aliases(mut self, aliases: &[String]) -> Result<Self, String> {
+        self.public_api_aliases = aliases
+            .iter()
+            .map(|base| Url::parse(base).map_err(|_| "invalid gateway public API alias".to_owned()))
+            .collect::<Result<_, _>>()?;
         Ok(self)
     }
 
@@ -232,15 +242,18 @@ impl ChannelConnections {
         }
         if let Some(value) = &connection.setup_url {
             let url = Url::parse(value).map_err(|_| BotError::Unavailable)?;
-            let allowed = [&self.public_api, &self.public].into_iter().any(|base| {
-                let prefix = format!("{}/connect/start/", base.as_str().trim_end_matches('/'));
-                value.strip_prefix(&prefix).is_some_and(|token| {
-                    !token.is_empty()
-                        && token
-                            .bytes()
-                            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
-                })
-            });
+            let allowed = [&self.public_api, &self.public]
+                .into_iter()
+                .chain(self.public_api_aliases.iter())
+                .any(|base| {
+                    let prefix = format!("{}/connect/start/", base.as_str().trim_end_matches('/'));
+                    value.strip_prefix(&prefix).is_some_and(|token| {
+                        !token.is_empty()
+                            && token
+                                .bytes()
+                                .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+                    })
+                });
             if !allowed
                 || value != url.as_str()
                 || !url.username().is_empty()

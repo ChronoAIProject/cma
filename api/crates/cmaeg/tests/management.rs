@@ -92,6 +92,7 @@ fn management_state(
             master_keys: Arc::new(ring),
             public_url: "http://127.0.0.1:8090".into(),
             public_api_url: "http://127.0.0.1:8090".into(),
+            public_api_aliases: vec![],
             advertise_public_api_url: true,
             cma_base_url: cma.base_url.clone(),
             tools_nyxid_slug: "cmaeg".into(),

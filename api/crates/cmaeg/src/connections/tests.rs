@@ -120,6 +120,7 @@ impl Fixture {
             ManagementConfig {
                 public_url: "https://gateway.example".into(),
                 public_api_url: "https://gateway.example".into(),
+                public_api_aliases: vec![],
                 advertise_public_api_url: true,
                 master_keys: self.keys.clone(),
                 cma_base_url: self.base.clone(),
@@ -145,6 +146,7 @@ impl Fixture {
             tracker: TurnTracker::new(Readiness::initialized()),
             public_origin: management.public_url.clone(),
             public_api_url: management.public_url.clone(),
+            public_api_aliases: vec![],
             advertise_public_api_url: true,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
@@ -1382,6 +1384,7 @@ async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_cs
     for advertise in [false, true] {
         browser_http_exchange("", "https://gateway.example", advertise).await;
         browser_http_exchange("/event-gateway", "https://bot.example", advertise).await;
+        browser_http_exchange("/event-gateway", "https://new-bot.example", advertise).await;
     }
 }
 
@@ -1389,7 +1392,8 @@ async fn browser_http_exchange(prefix: &str, origin: &str, advertise: bool) {
     use axum::http::header;
     let fixture = Fixture::new().await;
     let mut service = fixture.service();
-    service.management.public_api_url = "https://bot.example/event-gateway".into();
+    service.management.public_api_url = "https://new-bot.example/event-gateway".into();
+    service.management.public_api_aliases = vec!["https://bot.example/event-gateway".into()];
     service.management.advertise_public_api_url = advertise;
     let mut record = connection("alice", false);
     record.browser_nonce = None;
@@ -1833,6 +1837,7 @@ async fn public_discovery(advertise: bool) {
     assert!(!html.contains("href=\"/docs"));
     if !advertise {
         assert!(!html.contains("https://bot.chrono-ai.fun/event-gateway"));
+        assert!(!html.contains("https://cma.nyxid.ai/event-gateway"));
         assert!(html.contains("href=\"https://gateway.example/console\""));
     }
     let protocol_destination = format!("{advertised}/docs#protocol");

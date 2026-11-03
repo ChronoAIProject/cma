@@ -50,8 +50,8 @@ loads local SVG images under the gateway's restrictive content security policy.
 The complete Markdown download retains the Mermaid sources and internal links.
 
 Production catalog display name: **Agent Event Gateway**. NyxID slug: `cmaeg`.
-The catalog REST base is `https://bot.chrono-ai.fun/event-gateway/v1`, with OpenAPI at
-`https://bot.chrono-ai.fun/event-gateway/openapi.json`. The `/v1` base is necessary
+The catalog REST base is `https://cma.nyxid.ai/event-gateway/v1`, with OpenAPI at
+`https://cma.nyxid.ai/event-gateway/openapi.json`. The `/v1` base is necessary
 because the NyxID OpenAPI parser discovers paths but does not apply `servers`.
 The public/internal service is auto-connected and forwards caller bearers;
 channel ownership and credential-specific gateway checks remain authoritative.
@@ -239,7 +239,8 @@ applies with all media flags off.**
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Retained console OAuth/CSRF origin and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
-| `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://bot.chrono-ai.fun/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
+| `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
+| `CMAEG_PUBLIC_API_ALIASES` | exact base list | empty | Comma-separated retained public API bases, at most eight; same validation as `CMAEG_PUBLIC_API_URL`. Used for existing webhooks, setup links/form Origins and MCP Origins. Keep all issued bases through rollout and rollback; this does not change advertisement. |
 | `CMAEG_ADVERTISE_PUBLIC_API_URL` | `true` or `false` | `true` | First-rollout switch: `false` keeps generated URLs and discovery on the legacy public origin while canonical routes, exact Origin checks and MCP compatibility remain available. Set `true` only after every serving replica supports the canonical namespace and the public routes have been verified. |
 | `CMAEG_MASTER_KEYS` | secret string | Required unless file source is set | Kubernetes Secret environment value containing `kid:base64key[,kid:base64key]`; each key decodes to 32 bytes and the first key is current. |
 | `CMAEG_MASTER_KEYS_FILE` | file path | Optional alternative | Compatibility file source for the same key ring; mutually exclusive with `CMAEG_MASTER_KEYS`. |
@@ -707,14 +708,16 @@ warm replica from service. A public route must never forward the private scrape 
 `chrono-bot`, matching the maintainer's 2026-09-22 deployment decision. CMA API
 also keeps one replica. The gateway listens on 8090; its private metrics listener
 uses 9091 and is not exposed through the public Service. The HTTPRoute attaches
-to `gateway-infra/chronoai-gateway`. Its canonical route on `bot.chrono-ai.fun`
+to `gateway-infra/chronoai-gateway`. Its canonical route on `cma.nyxid.ai`
 rewrites `/event-gateway/v1`, `/event-gateway/mcp`, `/event-gateway/openapi.json`
 and `/event-gateway/docs` to the service's existing endpoints. It forwards
 `/event-gateway/connect` and `/event-gateway/legacy-console` unchanged so the
 backend can preserve each browser flow's paths and exact Origin checks. The SPA
 at exactly `/event-gateway` remains on web; `/api/event-gateway` remains CMA's
-cookie-custody bridge. The old `bot-gateway.chrono-ai.fun` route stays installed.
-DNS, certificates, Gateway listeners and NyxID registrations are unchanged.
+cookie-custody bridge. The old `bot.chrono-ai.fun/event-gateway` and
+`bot-gateway.chrono-ai.fun` routes stay installed. See
+[CMA domain migration](CMA_Domain_Migration.md) for the additive listener,
+callback registrations and staged compatibility rollout.
 
 Deploy CMA's dual-base validation first. For the first Gateway upgrade, keep the
 canonical `CMAEG_PUBLIC_API_URL` but temporarily override
@@ -728,7 +731,8 @@ only newly issued links differ. The checked-in configmap describes the final
 `true` state. A ConfigMap change alone does not update existing process
 environments: each phase needs an explicit Pod-template change.
 
-CMA accepts native MCP advertisements at exactly either configured public base.
+CMA accepts native MCP advertisements at the configured public bases and exact
+`CHRONO_CMAEG_PUBLIC_API_ALIASES` entries.
 Its binding/runtime proxy destination remains the retained legacy `/mcp`
 authority, so changing the advertisement never rewrites a binding's immutable
 tool endpoint or breaks replay. The configured canonical URL is an exact

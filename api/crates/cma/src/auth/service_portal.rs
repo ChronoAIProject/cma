@@ -23,7 +23,6 @@ const BODY_LIMIT: usize = 1_048_576;
 struct Portal {
     auth: Arc<AuthState>,
     base: String,
-    origin: String,
     http: reqwest::Client,
 }
 
@@ -34,13 +33,9 @@ pub(crate) fn router(
     let Some(gateway) = gateway else {
         return Ok(Router::new());
     };
-    let super::AuthMode::Provider { public_url, .. } = &auth.mode else {
+    if !matches!(auth.mode, super::AuthMode::Provider { .. }) {
         return Ok(Router::new());
-    };
-    let origin = reqwest::Url::parse(public_url)
-        .map_err(|_| "invalid portal origin")?
-        .origin()
-        .ascii_serialization();
+    }
     let http = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(2))
         .timeout(Duration::from_secs(125))
@@ -53,7 +48,6 @@ pub(crate) fn router(
         .with_state(Arc::new(Portal {
             auth,
             base: gateway.base_url.trim_end_matches('/').into(),
-            origin,
             http,
         })))
 }
@@ -122,14 +116,7 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
     }
     let activity_stream = path.ends_with("/activity/stream");
     let mutation = request.method() != Method::GET;
-    if mutation
-        && (request.headers().get_all(header::ORIGIN).iter().count() != 1
-            || request
-                .headers()
-                .get(header::ORIGIN)
-                .and_then(|v| v.to_str().ok())
-                != Some(portal.origin.as_str()))
-    {
+    if mutation && !portal.auth.permits_browser_origin(request.headers()) {
         return Err(StatusCode::FORBIDDEN);
     }
     let custody = credentials::resolve(&portal.auth, request.headers()).await?;
