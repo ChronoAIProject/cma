@@ -6,6 +6,7 @@ import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import { agentClient } from '../test/agent';
 import { AgentSidePanel } from './AgentSidePanel';
 import { AgentComputerObservation } from './environment/observation';
+import { taskExperience } from '../test/taskExperience';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -24,6 +25,7 @@ it('releases hidden and closed observation, reconnects without enablement, and w
   });
   const sdk = createClient({ baseUrl: 'https://fixture.invalid', fetch });
   const client = agentClient({
+    taskExperience: taskExperience('owner'),
     files: {
       ...emptyFiles,
       environment: (agent, options) => sdk.agentFiles.environment(agent, options),
@@ -34,6 +36,7 @@ it('releases hidden and closed observation, reconnects without enablement, and w
   const view = (open: boolean) => (
     <CmaClientProvider client={client}>
       <AgentSidePanel
+        viewerId="owner"
         agentId="agent-a"
         shared={false}
         panel={open ? 'browser' : undefined}
@@ -96,6 +99,7 @@ it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resum
   });
   const sdk = createClient({ baseUrl: 'https://fixture.invalid', fetch });
   const client = agentClient({
+    taskExperience: taskExperience('owner'),
     files: {
       ...emptyFiles,
       environment: (agent, options) => sdk.agentFiles.environment(agent, options),
@@ -106,6 +110,7 @@ it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resum
   const { rerender } = render(
     <CmaClientProvider client={client}>
       <AgentSidePanel
+        viewerId="owner"
         agentId="agent-a"
         shared={false}
         panel="browser"
@@ -153,6 +158,7 @@ it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resum
   rerender(
     <CmaClientProvider client={client}>
       <AgentSidePanel
+        viewerId="owner"
         agentId="agent-b"
         shared={false}
         panel="browser"
@@ -185,6 +191,7 @@ it('enables only after owner action, exposes failure, and defaults an enabled Co
   });
   const sdk = createClient({ baseUrl: 'https://fixture.invalid', fetch });
   const client = agentClient({
+    taskExperience: taskExperience('owner'),
     files: {
       ...emptyFiles,
       environment: (agent, options) => sdk.agentFiles.environment(agent, options),
@@ -196,6 +203,7 @@ it('enables only after owner action, exposes failure, and defaults an enabled Co
   const view = (panel: 'browser' | 'files') => (
     <CmaClientProvider client={client}>
       <AgentSidePanel
+        viewerId="owner"
         agentId="agent-a"
         shared={false}
         panel={panel}
@@ -231,6 +239,7 @@ it('enables only after owner action, exposes failure, and defaults an enabled Co
 it('keeps an explicit operation replay selection when an enabled browser becomes available', async () => {
   vi.useFakeTimers();
   const client = agentClient({
+    taskExperience: taskExperience('owner'),
     files: { ...emptyFiles, environment: async () => environment('available') },
   });
   const selected = new AgentComputerObservation({ client, subject: 'owner', agentId: 'agent-a' });
@@ -239,6 +248,7 @@ it('keeps an explicit operation replay selection when an enabled browser becomes
   const view = (panel: 'activity' | 'files' | undefined) => (
     <CmaClientProvider client={client}>
       <AgentSidePanel
+        viewerId="owner"
         agentId="agent-a"
         shared={false}
         panel={panel}

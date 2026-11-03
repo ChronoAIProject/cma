@@ -20,6 +20,8 @@ import {
   type AgentComputerObservation,
 } from './environment/observation';
 import { BrowserPanel, EnableBrowser } from './environment/BrowserPanel';
+import { useTaskExperience } from '../taskExperience';
+import { agentInitialized } from './modelReadiness';
 
 export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
 
@@ -38,6 +40,7 @@ export function AgentSidePanel({
   conversation,
   onSelect,
   observation,
+  viewerId,
 }: {
   readonly agentId: string;
   readonly shared: boolean;
@@ -52,44 +55,77 @@ export function AgentSidePanel({
   readonly conversation?: ConversationState;
   readonly onSelect?: (panel: AgentPanel) => void;
   readonly observation?: AgentComputerObservation;
+  readonly viewerId?: string;
 }) {
   const client = useCmaClient();
+  const policy = useTaskExperience(client, viewerId ?? observation?.scope.subject);
   const filesOpen = panel === 'files';
   const computerOpen = panel !== undefined && panel !== 'details';
-  const environment = useAgentEnvironment(client.files, agentId, computerOpen);
+  const [visitedScope, setVisitedScope] = useState<{
+    client: typeof client;
+    agentId: string;
+    subject?: string;
+    generation: number;
+  }>();
+  const subject = viewerId ?? observation?.scope.subject;
+  const visited =
+    visitedScope?.client === client &&
+    visitedScope.agentId === agentId &&
+    visitedScope.subject === subject;
+  const environment = useAgentEnvironment(client.files, agentId, computerOpen || visited, subject);
   const features = environment.state.status === 'ready' ? environment.state.value : undefined;
+  const readiness =
+    detail &&
+    (agentInitialized(detail.status, detail.readyAt) ? 'initialized' : detail.sandbox.status);
+  const observedReadiness = useRef(readiness);
+  const reloadEnvironment = environment.reload;
+  useEffect(() => {
+    if (observedReadiness.current === readiness) return;
+    observedReadiness.current = readiness;
+    if (features?.files.state !== 'available') reloadEnvironment();
+  }, [readiness, features?.files.state, reloadEnvironment]);
   const replaySelection = useReplaySelection(observation);
-  const selection = useRef<
+  const [selection, setSelection] = useState<
     { client: typeof client; agentId: string; tab: AgentPanel; open: boolean } | undefined
   >(undefined);
-  useEffect(() => {
-    const chosen =
-      selection.current?.client === client && selection.current.agentId === agentId
-        ? selection.current
-        : undefined;
-    if (!computerOpen) {
-      if (chosen) selection.current = { ...chosen, open: false };
-      return;
-    }
-    if (replaySelection && panel === 'activity') {
-      selection.current = { client, agentId, tab: 'activity', open: true };
-      return;
-    }
-    if (!features || chosen?.open) return;
+  const announcedSelection = useRef<typeof selection>(undefined);
+  const chosen =
+    selection?.client === client && selection.agentId === agentId ? selection : undefined;
+  if (!computerOpen && chosen?.open) setSelection({ ...chosen, open: false });
+  else if (
+    computerOpen &&
+    replaySelection &&
+    panel === 'activity' &&
+    (!chosen?.open || chosen.tab !== 'activity')
+  )
+    setSelection({ client, agentId, tab: 'activity', open: true });
+  else if (computerOpen && features && !chosen?.open) {
     const tab =
       chosen?.tab ??
       (panel === 'files' && features.browser.state === 'available' ? 'browser' : panel);
-    selection.current = { client, agentId, tab, open: true };
-    if (tab !== panel && panel === 'files') onSelect?.(tab);
-  }, [computerOpen, features, client, agentId, panel, onSelect, replaySelection]);
+    setSelection({ client, agentId, tab, open: true });
+  }
+  useEffect(() => {
+    if (
+      computerOpen &&
+      panel === 'files' &&
+      chosen?.open &&
+      chosen.tab !== panel &&
+      onSelect &&
+      announcedSelection.current !== chosen
+    ) {
+      announcedSelection.current = chosen;
+      onSelect(chosen.tab);
+    }
+  }, [computerOpen, chosen, panel, onSelect]);
   const select = (tab: AgentPanel) => {
-    selection.current = { client, agentId, tab, open: computerOpen };
+    const next = { client, agentId, tab, open: computerOpen };
+    announcedSelection.current = next;
+    setSelection(next);
     onSelect?.(tab);
   };
   const observed = useComputerObservation(observation);
   const operations = shared ? observed : (conversation ?? observed);
-  const [visited, setVisited] = useState(false);
-  if (filesOpen && !visited) setVisited(true);
   // Shared file access is independently renewed and never inferred from a visible toolbar.
   const access = useAgentAccess(
     client.resourceViews,
@@ -103,7 +139,26 @@ export function AgentSidePanel({
   }, [reloadAccess, onAccessChanged]);
   const mayRead =
     (!shared || authorized?.capabilities.includes('view_files') === true) &&
-    features?.files.state !== 'forbidden';
+    (!client.files?.environment ||
+      (environment.state.status === 'ready' &&
+        (!features || features.files.state === 'available')));
+  const mayRetain =
+    (!shared ||
+      authorized?.capabilities.includes('view_files') === true ||
+      access.state.status === 'loading' ||
+      (access.state.status === 'error' && access.state.transient)) &&
+    (!client.files?.environment ||
+      environment.state.status === 'loading' ||
+      (environment.state.status === 'error' && environment.state.transient) ||
+      (environment.state.status === 'ready' && features?.files.state !== 'forbidden'));
+  const choosingBrowser = Boolean(
+    onSelect &&
+    filesOpen &&
+    features?.browser.state === 'available' &&
+    !(selection?.client === client && selection.agentId === agentId && selection.tab === 'files'),
+  );
+  if (filesOpen && mayRead && !choosingBrowser && !visited)
+    setVisitedScope({ client, agentId, subject, generation: (visitedScope?.generation ?? 0) + 1 });
   const mayWrite = features
     ? features.files.writable
     : client.files?.environment && environment.state.status === 'loading'
@@ -190,11 +245,12 @@ export function AgentSidePanel({
           {features && features.files.state !== 'available' ? (
             <FeatureAvailability name="Files" feature={features.files} />
           ) : null}
-          {visited && mayRead && client.files ? (
+          {visited && mayRetain && client.files ? (
             <FileExplorer
-              key={`${agentId}:${shared}`}
+              key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
               panel
               embedded
+              active={mayRead}
               client={client.files}
               agentId={agentId}
               readOnly={!mayWrite}
@@ -265,7 +321,8 @@ export function AgentSidePanel({
                 </Button>
               ) : null}
             </>
-          ) : features?.replay.state === 'available' &&
+          ) : policy.replay_presentation &&
+            features?.replay.state === 'available' &&
             client.operationReplay &&
             panel === 'activity' ? (
             <OperationReplay
@@ -308,6 +365,7 @@ export function AgentSidePanel({
               agentId={agentId}
               incarnation={features.runtime_incarnation}
               active={panel === 'browser'}
+              controlAdmission={policy.browser_takeover}
               onReload={environment.reload}
             />
           ) : features ? (
@@ -324,6 +382,7 @@ export function AgentSidePanel({
             </p>
           )}
           {!shared &&
+          policy.desktop_enable &&
           features?.browser.state === 'not_enabled' &&
           features.runtime_incarnation &&
           client.browser ? (

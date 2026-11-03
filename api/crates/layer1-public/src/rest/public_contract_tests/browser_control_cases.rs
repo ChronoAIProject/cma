@@ -7,6 +7,33 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt as _;
 
+#[tokio::test]
+async fn task_experience_default_off_refuses_new_browser_control() {
+    let fixture = super::scenario_with_runtime(
+        "filesystem_policy_off",
+        Arc::new(super::runtime::Files::new("browser_control")),
+    )
+    .await
+    .unwrap();
+    let mut request = crate::rest::agents_tests::request(
+        Method::POST,
+        "/api/v1/agents/agt_shared_read/browser/control",
+        "owner-a",
+        None,
+        Some(
+            json!({"runtime_incarnation":"72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+            "context_id":"e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24", "client_id":"policy-client", "command":"acquire",
+            "operation_id":"78af4405-b644-44ab-b58d-53ce4d62acc0", "expected_revision":0}),
+        ),
+    );
+    request.headers_mut().insert(
+        "x-cma-browser-client",
+        "b2f66e8e-5ddd-4e96-b2e9-84eb55195664".parse().unwrap(),
+    );
+    let response = fixture.router.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
 pub(super) async fn scenario(name: &str) -> Option<super::Scenario> {
     let kind = name.strip_prefix("browser_control_")?;
     let access = match kind {
@@ -25,8 +52,33 @@ pub(super) async fn runtime_reply(
     runtime: &super::runtime::Files,
     request: &BrowserControlRequest,
 ) -> Result<BrowserControlReceipt> {
+    if runtime.kind == "browser_control_policy" {
+        let receipts = runtime.control_receipts.lock().unwrap();
+        if let Some(operation) = &request.operation_id {
+            if let Some((original, receipt)) = receipts.get(operation) {
+                if original.actor != request.actor
+                    || original.client_id != request.client_id
+                    || (request.command != BrowserControlCommand::Status && original != request)
+                {
+                    return Err(AdapterError::Rejected(
+                        "conflicting original operation".into(),
+                    ));
+                }
+                return Ok(receipt.clone());
+            }
+            if request.command == BrowserControlCommand::Status {
+                return Err(AdapterError::Rejected("unaccepted operation".into()));
+            }
+        }
+    }
     if !runtime.kind.starts_with("browser_control") || runtime.kind.ends_with("unsupported") {
         return Err(AdapterError::Unsupported("control unsupported".into()));
+    }
+    if request.command == BrowserControlCommand::Status
+        && request.operation_id.is_some()
+        && runtime.kind == "browser_control"
+    {
+        return Err(AdapterError::Rejected("unaccepted operation".into()));
     }
     if runtime.kind.ends_with("conflict") {
         return Err(AdapterError::Rejected("browser_control_conflict".into()));
@@ -53,7 +105,7 @@ pub(super) async fn runtime_reply(
         "lease_token":if user {Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")} else {None},
         "expires_at":if user {Some("2026-11-03T15:00:15Z")} else {None}, "lease_duration_ms":15000,
         "operation_id":request.operation_id, "operation_revision":if receipt {Some(revision)} else {None}, "audit":audit, "audit_truncated_before":null})).unwrap();
-    Ok(BrowserControlReceipt {
+    let result = BrowserControlReceipt {
         agent_id: request.agent_id.clone(),
         boot_id: request.boot_id.clone(),
         context_id: if runtime.kind.ends_with("mismatch") {
@@ -65,7 +117,106 @@ pub(super) async fn runtime_reply(
                 .unwrap_or("e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24".into())
         },
         control,
-    })
+    };
+    if runtime.kind == "browser_control_policy" && request.command != BrowserControlCommand::Status
+    {
+        runtime.control_receipts.lock().unwrap().insert(
+            request.operation_id.clone().unwrap(),
+            (request.clone(), result.clone()),
+        );
+    }
+    Ok(result)
+}
+
+#[tokio::test]
+async fn task_experience_control_closure_keeps_exact_receipt_and_return_but_blocks_new_input_and_renewal(
+) {
+    let runtime = Arc::new(super::runtime::Files::new("browser_control_policy"));
+    let enabled = super::scenario_with_runtime("filesystem_owner", runtime.clone())
+        .await
+        .unwrap();
+    let closed = super::scenario_with_runtime("filesystem_policy_off", runtime)
+        .await
+        .unwrap();
+    let original = json!({"runtime_incarnation":"72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+        "context_id":"e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24", "client_id":"policy-client", "command":"acquire",
+        "operation_id":"78af4405-b644-44ab-b58d-53ce4d62acc0", "expected_revision":0});
+    let request = |body: Value, owner: &str| {
+        let mut request = crate::rest::agents_tests::request(
+            Method::POST,
+            "/api/v1/agents/agt_shared_read/browser/control",
+            owner,
+            None,
+            Some(body),
+        );
+        request.headers_mut().insert(
+            "x-cma-browser-client",
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".parse().unwrap(),
+        );
+        request
+    };
+    let admitted = enabled
+        .router
+        .oneshot(request(original.clone(), "owner-a"))
+        .await
+        .unwrap();
+    assert_eq!(admitted.status(), StatusCode::OK);
+    let accepted: Value =
+        serde_json::from_slice(&to_bytes(admitted.into_body(), 65536).await.unwrap()).unwrap();
+    let recovered = closed
+        .router
+        .clone()
+        .oneshot(request(original.clone(), "owner-a"))
+        .await
+        .unwrap();
+    assert_eq!(recovered.status(), StatusCode::OK);
+    let receipt: Value =
+        serde_json::from_slice(&to_bytes(recovered.into_body(), 65536).await.unwrap()).unwrap();
+    assert_eq!(receipt, accepted);
+    let forbidden = closed
+        .router
+        .clone()
+        .oneshot(request(original.clone(), "owner-b"))
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::UNAUTHORIZED);
+    for command in ["acquire", "input", "renew", "return"] {
+        let mut body = original.clone();
+        body["command"] = json!(command);
+        body["operation_id"] = json!(uuid::Uuid::new_v4().to_string());
+        body["expected_revision"] = json!(1);
+        if command != "acquire" {
+            body["lease_token"] = accepted["lease_token"].clone();
+        }
+        if command == "input" {
+            body["input"] = json!({"kind":"text","text":"No new input"});
+        }
+        let response = closed
+            .router
+            .clone()
+            .oneshot(request(body, "owner-a"))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if command == "return" {
+                StatusCode::OK
+            } else {
+                StatusCode::FORBIDDEN
+            },
+            "{command}"
+        );
+    }
+    let mut changed = original;
+    changed["command"] = json!("input");
+    changed["lease_token"] = accepted["lease_token"].clone();
+    changed["input"] = json!({"kind":"text","text":"Changed intent"});
+    let response = closed
+        .router
+        .oneshot(request(changed, "owner-a"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]
