@@ -85,6 +85,21 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
+    readTaskCreationSupport: async (options) => {
+      const document = await sdk.readOpenApi(options);
+      const components = document.components as
+        | {
+            schemas?: {
+              AgentLifecycleCreateRequest?: {
+                properties?: { initial_message?: { type?: unknown } };
+              };
+            };
+          }
+        | undefined;
+      const type =
+        components?.schemas?.AgentLifecycleCreateRequest?.properties?.initial_message?.type;
+      return type === 'string' || (Array.isArray(type) && type.includes('string'));
+    },
     createAgentLifecycle: async (input: AgentLifecycleCreateInput, options) => {
       const response = await fetch('/api/agent-manager/v1/agents', {
         method: 'POST',

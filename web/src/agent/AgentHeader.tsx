@@ -22,10 +22,10 @@ export function AgentHeader({
   moreActions = [],
   onMoreAction,
   sandbox,
-  completion,
   filesOpen = false,
   onFilesOpenChange,
   onShare,
+  progress,
 }: {
   readonly title: string;
   readonly status: AgentStatus;
@@ -41,10 +41,10 @@ export function AgentHeader({
   readonly moreActions?: readonly MenuEntry[];
   readonly onMoreAction?: (id: string) => void;
   readonly sandbox?: ReactNode;
-  readonly completion?: ReactNode;
   readonly filesOpen?: boolean;
   readonly onFilesOpenChange?: (open: boolean) => void;
   readonly onShare?: () => void;
+  readonly progress?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const items: MenuEntry[] = [
@@ -96,7 +96,7 @@ export function AgentHeader({
         </h1>
         {sandbox}
       </div>
-      {completion}
+      {progress}
       <div className="agent-toolbar__actions">
         {onShare ? (
           <Button size="sm" variant="ghost" icon={<IconShareOutline16 />} onClick={onShare}>
