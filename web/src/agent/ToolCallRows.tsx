@@ -57,9 +57,15 @@ export function ToolCallRow({
   readonly activeRunId: string | undefined;
 }) {
   return (
-    <div className="tool-calls">
-      <ToolCallLine tool={tool} activeRunId={activeRunId} />
-    </div>
+    <ToolCallGroup
+      group={{
+        kind: 'tools',
+        id: `tools:${tool.id}`,
+        items: [tool],
+        failed: toolOutcome(tool, activeRunId) === 'failed',
+      }}
+      activeRunId={activeRunId}
+    />
   );
 }
 
@@ -91,7 +97,9 @@ export const ToolCallGroup = memo(function ToolCallGroup({
         <span className="tool-calls__chevron" aria-hidden="true">
           {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
         </span>
-        <span className="tool-calls__count">{group.items.length} tool calls</span>
+        <span className="tool-calls__count">
+          {group.items.length} tool call{group.items.length === 1 ? '' : 's'}
+        </span>
         {/* Spaces between the parts keep the accessible name readable; flex drops them visually. */}
         {running === undefined ? null : (
           <>
