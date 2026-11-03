@@ -1,7 +1,12 @@
 import type { BrowserControlScope } from '@chronoai/cma-sdk';
 
-export function controlRecovery(agentId: string, incarnation: string, contextId: string) {
-  const key = `cma-browser-control:${agentId}:${incarnation}:${contextId}`;
+export function controlRecovery(
+  accountId: string,
+  agentId: string,
+  incarnation: string,
+  contextId: string,
+) {
+  const key = `cma-browser-control:${JSON.stringify([accountId, agentId, incarnation, contextId])}`;
   const read = (): BrowserControlScope | undefined => {
     try {
       const saved = sessionStorage.getItem(key);

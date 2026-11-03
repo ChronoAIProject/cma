@@ -63,7 +63,8 @@ input after runtime acquisition. A lost return receipt does not keep an old
 user token valid. The UI shows unknown/transitioning and sends no user input
 until a correlated receipt or current-state query resolves uncertainty.
 
-The Web keeps an exact pending request in memory. Session storage retains only
+The Web keeps an exact pending request in memory. Session storage is scoped to
+the authenticated account, Agent, incarnation and browser context, and retains only
 its scope, private client key and operation id, never entered text or the lease
 token. After reload a new controlling client identity queries the old operation
 without adopting that old lease; it waits for return or expiry. Closing an idle
