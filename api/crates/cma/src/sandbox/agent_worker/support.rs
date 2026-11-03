@@ -44,7 +44,7 @@ pub(in crate::sandbox) struct WorkerFailure {
 }
 
 impl WorkerFailure {
-    pub(super) fn retryable(class: &'static str, detail: impl Into<String>) -> Self {
+    pub(in crate::sandbox) fn retryable(class: &'static str, detail: impl Into<String>) -> Self {
         Self {
             class,
             detail: detail.into(),
@@ -116,13 +116,15 @@ impl AgentWorker {
             .await
     }
 
-    pub(super) async fn handle_failure(
+    pub(in crate::sandbox) async fn handle_failure(
         &self,
         agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if failure.retryable || agent.status != AgentStatus::Starting {
+        if agent.work.step == AgentWorkStep::PublishConnection {
+            self.retry_connection_failure(&agent, failure, now).await
+        } else if failure.retryable || agent.status != AgentStatus::Starting {
             self.retry(agent, failure, now).await
         } else {
             self.fail_startup(agent, failure, now).await
