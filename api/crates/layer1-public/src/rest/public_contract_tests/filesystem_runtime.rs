@@ -14,6 +14,7 @@ pub(super) struct Files {
     pub entries: Mutex<BTreeMap<String, Option<Vec<u8>>>>,
     pub browser_reply: Mutex<BrowserObservation>,
     pub root: Option<std::path::PathBuf>,
+    pub browser_relay: Option<std::path::PathBuf>,
 }
 impl Files {
     pub fn new(kind: &str) -> Self {
@@ -21,6 +22,7 @@ impl Files {
             kind: kind.into(),
             browser_reply: Mutex::new(BrowserObservation::idle(BrowserState::NotEnabled)),
             root: None,
+            browser_relay: None,
             entries: Mutex::new(BTreeMap::from([
                 ("cma".into(), None),
                 (
