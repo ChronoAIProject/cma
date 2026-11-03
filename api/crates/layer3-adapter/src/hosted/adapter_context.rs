@@ -126,9 +126,15 @@ impl HostedAdapter {
             tools,
         )
         .map(|context| {
-            Some(match (&self.access_tools, &settings.access_tool) {
+            let context = match (&self.access_tools, &settings.access_tool) {
                 (Some(source), Some(binding)) => {
                     context.with_access(source.clone(), binding.clone())
+                }
+                _ => context,
+            };
+            Some(match (&self.provider_tools, &settings.provider_tool) {
+                (Some(source), Some(binding)) => {
+                    context.with_provider(source.clone(), binding.clone())
                 }
                 _ => context,
             })
