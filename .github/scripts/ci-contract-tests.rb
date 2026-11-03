@@ -166,7 +166,7 @@ if mode == "release"
   end
   %w[direct-gateway stripped-prefix].each do |mutation|
     candidate = GatewaySourceContract.expected
-    route = candidate["infra/api/httproute.yaml"].find { |value| value.dig("metadata", "name") == "cma-web" }
+    route = candidate["infra/api/httproute.yaml"].find { |value| value.dig("metadata", "name") == "cma-web-nyxid" }
     bridge = route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/api/event-gateway" } }
     if mutation == "direct-gateway"
       bridge["backendRefs"] = GatewaySourceContract.backend("cma-event-gateway")
@@ -181,10 +181,10 @@ if mode == "release"
     end
     raise "Gateway contract accepted a bypass of the shared login bridge: #{mutation}"
   end
-  %w[portal-capture wrong-protocol-target stripped-connect removed-legacy-host wrong-openapi-target unsupported-full-path-rewrite].each do |mutation|
+  %w[portal-capture wrong-protocol-target stripped-connect removed-independent-gateway-host wrong-openapi-target unsupported-full-path-rewrite].each do |mutation|
     candidate = GatewaySourceContract.expected
     routes = candidate.fetch("infra/cmaeg/httproute.yaml")
-    public_route = routes.find { |value| value.dig("metadata", "name") == "cma-event-gateway-public" }
+    public_route = routes.find { |value| value.dig("metadata", "name") == "cma-event-gateway-public-nyxid" }
     case mutation
     when "portal-capture"
       public_route["spec"]["rules"][0]["matches"][0]["path"]["value"] = "/event-gateway"
@@ -192,10 +192,10 @@ if mode == "release"
       public_route["spec"]["rules"][0]["backendRefs"] = GatewaySourceContract.backend("cma-agent-manager")
     when "stripped-connect"
       public_route["spec"]["rules"][-1]["filters"] = GatewaySourceContract.gateway_public_route("PathPrefix", "connect", "/connect")["filters"]
-    when "removed-legacy-host"
+    when "removed-independent-gateway-host"
       routes.delete_at(0)
     when "wrong-openapi-target"
-      api_route = candidate.fetch("infra/api/httproute.yaml").find { |value| value.dig("metadata", "name") == "cma-web" }
+      api_route = candidate.fetch("infra/api/httproute.yaml").find { |value| value.dig("metadata", "name") == "cma-web-nyxid" }
       discovery = api_route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/agent-manager/openapi.json" } }
       discovery["backendRefs"] = GatewaySourceContract.backend("cma-web")
     when "unsupported-full-path-rewrite"
@@ -236,6 +236,22 @@ if mode == "release"
         raise "Gateway contract accepted unsafe Nyxid route: #{name}: #{mutation}"
       end
     end
+  end
+  %w[bot.chrono-ai.fun bot-api.chrono-ai.fun].each do |hostname|
+    candidate = GatewaySourceContract.expected
+    routes = candidate.fetch("infra/api/httproute.yaml")
+    legacy = Marshal.load(Marshal.dump(routes.first))
+    legacy["metadata"]["name"] = "retired-host-route"
+    legacy["spec"]["hostnames"] = [hostname]
+    legacy["spec"]["parentRefs"] = GatewaySourceContract.parent("https")
+    routes << legacy
+    begin
+      GatewaySourceContract.validate(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted a reintroduced retired host: #{hostname}"
   end
   config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
   GatewaySourceContract.validate_provider_origin(config)
