@@ -31,7 +31,7 @@ export function CmaTriggerButton({
   placementId,
   label = 'open_in_cma',
   theme = 'auto',
-  baseUrl = 'https://bot.chrono-ai.fun',
+  baseUrl = 'https://cma.nyxid.ai',
 }: CmaTriggerButtonProps): ReactElement {
   const identifier = (value: string) => {
     if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value))

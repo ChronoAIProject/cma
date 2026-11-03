@@ -155,11 +155,11 @@ it('shows granted service names for a paused Sandbox without relying on Agent re
   fireEvent.click(await screen.findByRole('tab', { name: 'Access' }));
   expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
     'href',
-    'https://nyx.chrono-ai.fun/services/catalog-storage',
+    'https://nyxid.ai/services/catalog-storage',
   );
   expect(screen.getByRole('link', { name: 'GitHub' })).toHaveAttribute(
     'href',
-    'https://nyx.chrono-ai.fun/services/catalog-github',
+    'https://nyxid.ai/services/catalog-github',
   );
   expect(screen.queryByText('Access not yet confirmed')).not.toBeInTheDocument();
   expect(screen.queryByText('Requested services')).not.toBeInTheDocument();
