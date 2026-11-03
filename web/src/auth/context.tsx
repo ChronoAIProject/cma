@@ -4,6 +4,7 @@ import type { AuthProvider, AuthState, SignInOptions } from './types';
 import { parseRoute, routePath } from '../routing/routes';
 import { retainDocumentShareToken } from '../documents/shareToken';
 import { retainAgentShareForSignIn } from '../resources/agentShareToken';
+import { retainTaskViewer } from '../create/taskIdentity';
 
 /**
  * Wires an AuthProvider into React. Components consume `useAuth()` and never
@@ -36,6 +37,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
       .current()
       .then((next) => {
         if (live) {
+          if (next.status === 'authenticated') retainTaskViewer(next.user.id);
+          if (next.status === 'anonymous') retainTaskViewer();
           setState(next);
         }
       })
@@ -69,7 +72,10 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
           returnTo = routePath(current);
         }
         await provider.signIn(returnTo, options);
-        setState(await provider.current());
+        const next = await provider.current();
+        if (next.status === 'authenticated') retainTaskViewer(next.user.id);
+        if (next.status === 'anonymous') retainTaskViewer();
+        setState(next);
       } catch (error: unknown) {
         setState({
           status: 'error',
@@ -83,6 +89,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   const signOut = useCallback(async () => {
     try {
       await provider.signOut();
+      retainTaskViewer();
       setState({ status: 'anonymous' });
     } catch (error: unknown) {
       setState({

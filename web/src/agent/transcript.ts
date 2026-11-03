@@ -52,6 +52,15 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
     ];
   });
   return {
+    turnOutcomes: Object.fromEntries(
+      transcript.turns.flatMap((turn) =>
+        turn.outcome.type === 'completed' ||
+        turn.outcome.type === 'failed' ||
+        turn.outcome.type === 'interrupted'
+          ? [[String(turn.turnSequence), turn.outcome.type]]
+          : [],
+      ),
+    ),
     messages: [...messages.values()].sort((left, right) => left.order! - right.order!),
     toolCalls: [],
     reasoning: [],
