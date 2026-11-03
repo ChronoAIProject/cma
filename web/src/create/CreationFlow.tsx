@@ -7,7 +7,8 @@ import type { CreationClient } from './client';
 import { NewAgentCard } from './NewAgentCard';
 import { NewSandboxCard } from './NewSandboxCard';
 import { NewWorkspaceCard } from './NewWorkspaceCard';
-import { AgentLifecycleCard } from './AgentLifecycleCard';
+import { TaskHome } from './TaskHome';
+import { Modal } from '../ui/Modal';
 import { InlineWorkspaceCard } from './InlineWorkspaceCard';
 
 export type CreationRequest =
@@ -33,24 +34,18 @@ export function CreationFlow({
   readonly canCreateSandbox: boolean;
 }) {
   const initial = request.kind === 'profile_use' ? fromProfileUse(request.selection) : undefined;
-  if (request.kind === 'new_agent' && client.createAgentLifecycle !== undefined) {
+  if (request.kind === 'new_agent') {
     return (
-      <AgentLifecycleCard
-        key={
-          'sandboxId' in request
-            ? request.sandboxId
-            : 'workspaceId' in request
-              ? request.workspaceId
-              : 'new-sandbox'
-        }
-        client={client}
-        viewerId={viewerId}
-        workspaceId={'workspaceId' in request ? request.workspaceId : undefined}
-        sandboxId={'sandboxId' in request ? request.sandboxId : undefined}
-        canCreateSandbox={canCreateSandbox}
-        onClose={onClose}
-        onCreated={(receipt) => onCreated({ kind: 'agent', agentId: receipt.id })}
-      />
+      <Modal open title="New task" onClose={onClose}>
+        <TaskHome
+          client={client}
+          viewerId={viewerId}
+          workspaceId={'workspaceId' in request ? request.workspaceId : undefined}
+          sandboxId={'sandboxId' in request ? request.sandboxId : undefined}
+          canCreateSandbox={canCreateSandbox}
+          onCreated={onCreated}
+        />
+      </Modal>
     );
   }
   const props = { client, catalog, onClose, initial };
@@ -84,7 +79,7 @@ export function CreationFlow({
     <NewAgentCard
       {...props}
       canCreateSandbox={canCreateSandbox}
-      workspaceId={'workspaceId' in request ? request.workspaceId : undefined}
+      workspaceId={undefined}
       onChanged={onChanged}
       onCreated={(agent) => onCreated({ kind: 'agent', agentId: agent.id })}
     />
