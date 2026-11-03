@@ -13,9 +13,16 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("desktop-capability-owner-400", Classification::QueryShape),
     ("deliverables-owner-invalid-revision", Classification::Local),
-    ("deliverables-owner-invalid-answer-list", Classification::Local),
-    ("deliverables-owner-invalid-answer-read", Classification::Local),
+    (
+        "deliverables-owner-invalid-answer-list",
+        Classification::Local,
+    ),
+    (
+        "deliverables-owner-invalid-answer-read",
+        Classification::Local,
+    ),
     ("suggestions-invalid_query", Classification::TypedShape),
     ("feedback-reasons-invalid-comment", Classification::Local),
     ("feedback-reasons-invalid-message", Classification::Local),
@@ -1120,6 +1127,7 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 return;
             }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v1/desktop-capability" => &["workspace_id", "sandbox_id"],
                 "GET /api/v1/agents/{id}/files/tree"
                 | "GET /api/v1/agents/{id}/files/content"
                 | "GET /api/v1/agents/{id}/files/download"

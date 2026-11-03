@@ -1,9 +1,9 @@
 //! Agent REST commands and durable read projections, without live subscriptions.
 
 use crate::{
-    Client, EventOptions, IdempotencyKey, PageOptions, ResourcePage, Result,
     instances::AgentStatus,
     resources::{identity, positive},
+    Client, EventOptions, IdempotencyKey, PageOptions, ResourcePage, Result,
 };
 use reqwest::{Method, StatusCode};
 
@@ -14,9 +14,11 @@ mod attachments;
 pub use attachments::*;
 mod channel_usage;
 mod deliverables;
+mod desktop;
 mod events;
 mod feedback_reasons;
 mod lifecycle;
+pub use desktop::*;
 mod message_feedback;
 mod suggestions;
 pub use suggestions::*;

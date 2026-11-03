@@ -14,6 +14,53 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('lets an unsupported retained draft clear desktop without changing its task or creating resources', async () => {
+  sessionStorage.setItem(
+    `cma:task-draft:${JSON.stringify([location.origin, 'owner', null, null])}`,
+    JSON.stringify({ version: 1, text: 'Retain my draft', desktop: true }),
+  );
+  const writes: unknown[] = [];
+  const transport: typeof fetch = async (input, options) => {
+    if (options?.method === 'POST') {
+      writes.push(JSON.parse(String(options.body)));
+      throw new TypeError('Receipt unavailable');
+    }
+    if (String(input).endsWith('/openapi.json'))
+      return Response.json({
+        openapi: '3.1.0',
+        info: { title: 'CMA', version: '1' },
+        paths: {},
+        components: {
+          schemas: {
+            AgentLifecycleCreateRequest: {
+              properties: { initial_message: { type: 'string' }, desktop: { type: 'boolean' } },
+            },
+          },
+        },
+      });
+    return Response.json({
+      state: 'unsupported',
+      reason: 'The retained runtime requires an explicit upgrade.',
+      runtime_contract: 3,
+      min_memory_mib: 2048,
+      min_cpu_millis: 1000,
+    });
+  };
+  vi.stubGlobal('fetch', transport);
+  const client = createRestWebClient(createClient({ fetch: transport }));
+  render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={() => {}} />);
+  await screen.findByText(/retained runtime requires an explicit upgrade/);
+  expect(writes).toHaveLength(0);
+  const checkbox = screen.getByRole('checkbox', { name: 'Enable desktop' });
+  expect(checkbox).toBeChecked();
+  expect(checkbox).toBeEnabled();
+  fireEvent.click(checkbox);
+  expect(screen.getByLabelText('Your task')).toHaveValue('Retain my draft');
+  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await screen.findByText('Receipt unavailable');
+  expect(writes).toEqual([{ name: 'New task', initial_message: 'Retain my draft' }]);
+});
+
 it('recovers a lost desktop creation receipt after reload into the same task Agent and browser', async () => {
   const task = '  Open the research page\nkeep this exact task  ';
   const requests: { body: unknown; key: string | null }[] = [];
