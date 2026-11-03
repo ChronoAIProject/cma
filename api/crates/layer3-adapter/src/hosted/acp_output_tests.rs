@@ -121,7 +121,15 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         }
     }
     // Enqueueing and parsing all 302 frames did not acknowledge anything.
+    use crate::ConversationSettingsSupport;
+    let mut progress = opened.bridge.managed_context_progress().await.unwrap();
+    assert_eq!(*progress.borrow(), 0);
     first_receipt.unwrap().acknowledge().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), progress.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(*progress.borrow(), 1);
     server_task.await.unwrap();
     stop(opened).await;
 }
