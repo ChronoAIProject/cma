@@ -90,4 +90,3 @@ The capability seam remains Agent-scoped environment + browser GET/PUT/DELETE. R
 - `web/src/agent/environment/availability.tsx`
 - `web/src/api/client.ts`
 - `web/src/api/rest.ts`
-
