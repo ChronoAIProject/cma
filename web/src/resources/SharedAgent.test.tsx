@@ -11,6 +11,44 @@ import type { AgentEvent, AgentLiveEvent, AgentTranscript, ResourcePage } from '
 
 afterEach(() => vi.useRealTimers());
 
+it('retains an unsaved file draft when write access is withdrawn but read access remains', async () => {
+  const test = fixture(['view_details', 'view_history', 'view_files', 'operate_agent'], {
+    files: {
+      list: async () => [
+        { path: 'notes.txt', name: 'notes.txt', kind: 'file', size_bytes: 5, hidden: false },
+      ],
+      read: async () => ({
+        path: 'notes.txt',
+        size_bytes: 5,
+        sha256: 'a'.repeat(64),
+        content_base64: btoa('Notes'),
+      }),
+      download: async () => new Blob(['Notes']),
+      write: async () => {
+        throw new Error('No save is requested');
+      },
+      remove: async () => {
+        throw new Error('No deletion is requested');
+      },
+    },
+  });
+  test.show();
+  await userEvent.click(await screen.findByRole('button', { name: 'Show files', exact: true }));
+  await userEvent.click(await screen.findByRole('button', { name: 'notes.txt', exact: true }));
+  const editor = await screen.findByRole('textbox', { name: 'Contents of notes.txt' });
+  fireEvent.change(editor, { target: { value: 'Keep this unsaved draft' } });
+  test.state.capabilities = ['view_details', 'view_history', 'view_files'];
+  test.state.policy += 1;
+  fireEvent.focus(window);
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: 'Save', exact: true })).not.toBeInTheDocument(),
+  );
+  expect(await screen.findByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
+    'Keep this unsaved draft',
+  );
+  expect(editor).toHaveAttribute('readonly');
+});
+
 const detail = {
   access: 'shared',
   id: 'agt_1',
