@@ -808,14 +808,29 @@ Explicit channel binding and accepted-command history is available through the
 separate channel-usage routes below.
 The web provides authorized organization hierarchy navigation and owner share management.
 
+Task navigation adds `task_status` to personal Workspace Agent summaries and the
+authorized provenance inventory. It is separate from lifecycle `status` and is
+one of `not_started`, `completed`, `working`, `waiting_approval`, `starting`,
+`paused`, `stopped`, `failed`, or `unknown`. The projection reads the most recent
+durable turn boundary (or original creation), including failure, interruption
+and recorded gaps. Only explicit success with no pending work yields completed.
+The existing owner/share checks and disclosure fences apply to this field;
+clients never need to open each Agent's conversation to populate navigation.
+Older servers may omit it; clients must show unavailable task evidence rather
+than infer completion from ready. This is a read projection over existing
+records, with no new stored schema or backfill and no runtime side effects.
+The provenance inventory accepts `task_status` independently of lifecycle
+`status`; filtering follows authorization and preserves the bounded scan cursor,
+including continuation after an empty filtered page.
+
 `GET /api/v1/agents/provenance` lists safe creation summaries in stable Agent-ID
 order. Omit `organization` and `shared` for personal ownership; explicit organization scope
 requires current membership and selects organization-owned or shared Agents.
-Rows contain only `agent_id`, optional `title`, `status`, `created_at`,
-`updated_at`, and `creation_origin`. Private source/creator details and hierarchy
+Rows contain only `agent_id`, optional `title`, `status`, `task_status`, `created_at`,
+`updated_at`, `creation_origin`, and `channel_usage`. Private source/creator details and hierarchy
 IDs are omitted even for managers. The inventory includes retained Agents in
 all lifecycle states, including deleted Agents, unless `status` is supplied.
-Additional filters are `sandbox`, `workspace`, and `creation_origin`; parent
+Additional filters are `sandbox`, `workspace`, `creation_origin`, and `task_status`; parent
 filters require independent visibility of that parent. A narrow Agent grant
 cannot reveal the result of a parent filter.
 
@@ -831,7 +846,7 @@ successful page. Original membership deadlines remain binding through final chec
 
 `limit` defaults to 50 and accepts 1–200; `cursor` resumes after a consumed Agent
 ID. Without a category filter the server reads at most `limit + 1` candidates.
-With `creation_origin` it examines at most 201 candidates per request, so a
+With `creation_origin` or `task_status` it examines at most 201 candidates per request, so a
 successful page can be partial or empty and still have `next`. **Continue until
 `next` is absent, even when `items` is empty.** This cursor may identify a consumed
 authorized Agent excluded by the category filter. All candidates, filtered rows
@@ -1312,7 +1327,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/{id}/message-feedback` | - | after, limit | 200 MessageFeedbackPageView |
 | `PUT /api/v1/agents/{id}/messages/{message_id}/feedback` | SetMessageFeedbackRequest | - | 200 MessageFeedbackView |
-| `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
+| `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `task_status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
 | `PUT /api/v1/agents/{id}/service-access` | ReplaceAgentServiceAccess; key | - | 202 AgentAccessRequestView |
 | `POST /api/v1/agents/{id}/attachments` | Raw binary bytes; key | name* | 201 AgentAttachmentView |
