@@ -1,5 +1,6 @@
 import { SuggestedReplies } from './SuggestedReplies';
-import { useSuggestedReplies, type SuggestedReplySet } from './suggestions';
+import type { SuggestedReplySet } from './suggestions';
+import { useContextualSuggestions } from './useContextualSuggestions';
 import { Presence } from '../ui/Presence';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
@@ -113,12 +114,6 @@ export function AgentSurface({
     !readOnly && (state.status === 'ready' || (accessAuthorized && state.status !== 'error')),
   );
   const verified = connection.verified;
-  const suggestions = useSuggestedReplies(
-    state.status === 'ready' ? state.conversation : undefined,
-    viewerId ?? verified?.owner ?? '',
-    agentId,
-    suggestedReplies,
-  );
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
   const optimistic = useOptimisticMessages(
@@ -131,6 +126,12 @@ export function AgentSurface({
     controller.readSuggestionRequest,
   );
   const discardPrepared = connection.discardPrepared;
+  const suggestions = useContextualSuggestions(
+    state.status === 'ready' ? state.conversation : undefined,
+    viewerId ?? verified?.owner ?? '', agentId,
+    !readOnly && verified !== undefined && !optimistic.messages.some((message) => message.state === 'accepted'),
+    suggestedReplies,
+  );
   useLayoutEffect(() => {
     discardPrepared();
   }, [detailsOpen, discardPrepared]);
