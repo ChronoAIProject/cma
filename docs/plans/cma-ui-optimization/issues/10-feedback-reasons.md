@@ -4,7 +4,9 @@
 
 **Blocked by:** 09（最终回答归属与基础 vote 保存）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
+
+实施基线：`7739c431f`，独立 worktree `ticket-10` / `codex/cma-ui-10`。沿用已批准 U/A/R 边界；首条 A 边界测试为延迟原因请求在 up 后拒绝并公开回读无原因。存储修改另以隔离数据库验证真实 Mongo 并发。
 
 **优先级:** P2
 

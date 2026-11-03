@@ -4031,3 +4031,36 @@ is active; completion occupies that same space only after confirmed success.
 No second activity summary or independent timing authority is introduced.
 
 | 2026-11-03 | Combine ticket 02 elapsed time with ticket 06's existing header progress slot, preserve its current-plan link and reuse recorded turn outcomes. |
+
+### Negative feedback reasons (2026-11-03)
+
+Choosing **Needs improvement** immediately saves the vote and opens an inline,
+non-modal **Reasons for improvement** panel below that answer's existing footer.
+Keep the answer and composer usable. Reasons save independently, only after a
+confirmed down vote and a current feedback read. The selected vote key still
+removes the vote; **Edit reasons** reopens the panel without changing the vote.
+
+Offer six native multi-select checkboxes: **Inaccurate content**, **Did not answer
+the question**, **Steps do not work**, **Incomplete answer**, **Unclear wording**,
+and **Other**. **Additional details (optional)** uses a full-width textarea with
+a visible Unicode code-point counter, **0 / 500**. Do not truncate text or use
+UTF-16 maxlength. Over 500 shows an associated error and disables save.
+
+Use **Save reasons**, **Close**, **Retry reasons**, and **Reload feedback** actions.
+Announce **Saving reasons…**, **Reasons saved**, and actionable failures politely.
+Close only collapses; preserve drafts by viewer, Agent and canonical answer in
+page memory, including navigation back. Failed/uncertain saves retain the exact
+request for retry, independently of vote recovery. A version conflict keeps the
+draft and requires a fresh read before a new save. Remove/up atomically clears
+saved reasons; switching back down starts empty. Account or authority changes
+clear prior drafts and hide their controls immediately. Never imply training or
+send input as a feedback side effect.
+
+Use the existing surface/background, border, business-primary and secondary-text
+tokens, 1px border, 8px radius, 12px padding and gap, and 12/18 caption text. Stack
+checkbox labels and textarea in normal flow; controls wrap with an 8px gap.
+Textarea minimum height is 80px, vertically resizable, border-box, with inherited
+font. Below 30rem, all buttons and checkbox labels have at least 44px hit targets.
+Focus uses existing controls' outlines; no animation or overlay is added.
+
+| 2026-11-03 | Add independent, version-bound negative reasons with six choices, a 500-code-point optional note, retained scoped drafts, exact recovery and an accessible inline mobile panel for ticket 10. |
