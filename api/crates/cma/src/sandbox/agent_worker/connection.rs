@@ -94,7 +94,15 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let fence = claimed_fence(&agent, &self.config.holder)?;
+        let started = tokio::time::Instant::now();
         for _ in 0..MAX_PUBLICATION_RETRIES {
+            // Reattachment may confirm settings/context after the original work
+            // claim. A refreshed revision must never be published at an older
+            // timestamp, including on later optimistic retries.
+            let durable_at = layer2_core::seconds_from_rfc3339(&agent.updated_at)
+                .map(|seconds| SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+                .ok_or_else(|| SandboxStoreError::Corrupt("invalid agent update time".into()))?;
+            let at = (now + started.elapsed()).max(durable_at);
             let next =
                 if agent
                     .conversation
@@ -111,7 +119,7 @@ impl AgentWorker {
                     AgentWorkStep::None
                 };
             match self
-                .progress(agent.clone(), next, now, None, Vec::new(), None, None)
+                .progress(agent.clone(), next, at, None, Vec::new(), None, None)
                 .await
             {
                 Ok(()) => {

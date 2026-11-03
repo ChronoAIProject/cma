@@ -80,7 +80,16 @@ impl MongoAgentAccessToolSource {
     }
 
     async fn run(&self, operation: Operation<'_>) -> layer3_adapter::Result<Outcome> {
+        let jitter = uuid::Uuid::new_v4().as_u128() as u64;
         for attempt in 0..TRANSACTION_ATTEMPTS {
+            // Only known-aborted transactions reach another attempt. Give a
+            // concurrent lineage writer time to finish before rereading all
+            // authority; unknown commits and refusals still return immediately.
+            if attempt > 0 {
+                let delay =
+                    (100_u64 << (attempt - 1).min(3)) + (jitter.rotate_left(attempt as u32) & 31);
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
             let mut session = self.store.client.start_session().await.map_err(|error| {
                 operation.diagnostic("start_session", driver_category(&error), attempt);
                 unavailable(())

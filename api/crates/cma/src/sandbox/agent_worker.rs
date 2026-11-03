@@ -11,6 +11,7 @@ use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 
 mod cleanup;
 mod connection;
+mod connection_output;
 mod connection_retry;
 mod first_message;
 mod first_message_publication;
