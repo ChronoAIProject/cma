@@ -9,6 +9,7 @@ import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
 import { useAgentDraft } from './agent/draft';
 import { AgentSidePanel, type AgentPanel } from './agent/AgentSidePanel';
+import { AgentComputerObservation } from './agent/environment/observation';
 import { useAgentController } from './agent/controller';
 import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
@@ -76,7 +77,15 @@ function ConsoleContent({
 }: ConsoleProps) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [panel, setPanel] = useState<AgentPanel>();
+  const [wide, setWide] = useState(() => window.matchMedia('(min-width: 1284px)').matches);
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1284px)');
+    const changed = () => setWide(query.matches);
+    query.addEventListener('change', changed);
+    return () => query.removeEventListener('change', changed);
+  }, []);
+  const [selection, setPanel] = useState<AgentPanel | 'auto'>('auto');
+  const panel = selection === 'auto' ? (wide ? 'files' : undefined) : selection;
   const detailsOpen = panel === 'details';
   const setDetailsOpen = (open: boolean) => setPanel(open ? 'details' : undefined);
   const [positions] = useState(() => new AgentViewPositions());
@@ -85,6 +94,10 @@ function ConsoleContent({
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const computerObservation = useMemo(
+    () => new AgentComputerObservation({ client, subject: user.id, agentId: selectedAgent }),
+    [client, user.id, selectedAgent],
+  );
   const ownerViews = useOwnerViews();
   const scopeClient = user.visitor ? undefined : client.resourceViews;
   const {
@@ -231,9 +244,10 @@ function ConsoleContent({
         key={shared.id}
         client={client.resourceViews}
         web={client}
+        computerObservation={computerObservation}
         detail={shared}
         onAccessChanged={agentAccess.reload}
-        filesOpen={panel === 'files'}
+        filesOpen={panel !== undefined && panel !== 'details'}
         onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
@@ -268,7 +282,7 @@ function ConsoleContent({
         viewPosition={viewPosition}
         accessUncertain={accessUncertain}
         accessAuthorized={agentAccess.personalReady && !accessUncertain}
-        filesOpen={panel === 'files'}
+        filesOpen={panel !== undefined && panel !== 'details'}
         onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
@@ -379,6 +393,7 @@ function ConsoleContent({
         panel !== undefined
       }
       compactDetailsOverlay
+      onDetailsClose={() => setPanel(undefined)}
       details={
         route.kind === 'agent' && !accessUncertain && (personalAgentId || shared) ? (
           <AgentSidePanel
@@ -387,6 +402,9 @@ function ConsoleContent({
             shared={shared !== undefined}
             detail={ready?.detail}
             panel={panel}
+            onSelect={setPanel}
+            conversation={ready?.conversation}
+            observation={computerObservation}
             onClose={() => setPanel(undefined)}
             onAccessChanged={agentAccess.reload}
             publicationScope={artifactPublicationScope}

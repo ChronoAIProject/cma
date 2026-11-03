@@ -20,6 +20,8 @@ pub struct ActivityItem {
     pub name: String,
     pub arguments: String,
     pub output: Option<String>,
+    #[serde(rename = "cma:output", skip_serializing_if = "Option::is_none")]
+    pub recorded_output: Option<Value>,
     pub error: Option<Value>,
     pub status: &'static str,
 }
@@ -53,6 +55,7 @@ impl OutputProjection {
                     name: title.chars().take(200).collect(),
                     arguments: String::new(),
                     output: None,
+                    recorded_output: None,
                     error: None,
                     status: "in_progress",
                 };
@@ -70,10 +73,30 @@ impl OutputProjection {
                 self.tool_update(call_id, status);
             }
             AgentLogKind::ToolCallUpdated {
-                call_id, status, ..
-            } => self.tool_update(call_id, status),
+                call_id,
+                status,
+                output,
+                ..
+            } => {
+                if let Some(output) = output {
+                    self.tool_output(call_id, output);
+                }
+                self.tool_update(call_id, status);
+            }
+            AgentLogKind::ToolOutputReported { call_id, output } => {
+                self.tool_output(call_id, output)
+            }
             _ => {}
         }
+    }
+    fn tool_output(&mut self, call_id: &str, output: &layer2_core::sandbox::RecordedToolOutput) {
+        let Some(&index) = self.tools.get(call_id) else {
+            return;
+        };
+        let V2OutputItem::Activity(item) = &mut self.items[index] else {
+            return;
+        };
+        item.recorded_output = Some(json!(output));
     }
     fn tool_update(&mut self, call_id: &str, status: &str) {
         let status = match status {
