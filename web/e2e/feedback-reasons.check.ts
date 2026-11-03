@@ -31,6 +31,40 @@ for (const width of [1440, 390]) {
       { seq: 5, appended_at: timestamp, kind: { type: 'turn_completed', turn_sequence: 1 } },
     ];
     await boundary.route(page, baseURL!);
+    await page.route('**/api/v1/agents/agt_contract/files/tree**', (route) =>
+      route.fulfill({ json: { path: '', entries: [] } }),
+    );
+    const unsupported = {
+      state: 'unsupported',
+      reason: 'not_supported_by_contract',
+      scope: 'none',
+      writable: false,
+    };
+    await page.route('**/api/v1/agents/agt_contract/environment', (route) =>
+      route.fulfill({
+        json: {
+          agent_id: 'agt_contract',
+          policy_revision: 1,
+          runtime_incarnation: 'b'.repeat(64),
+          revalidate_at: null,
+          files: {
+            state: 'available',
+            reason: 'authorized_mounted_home',
+            scope: 'mounted_home',
+            writable: true,
+          },
+          operation_output: {
+            state: 'available',
+            reason: 'recorded_output_only',
+            scope: 'agent_turn_history',
+            writable: false,
+          },
+          browser: unsupported,
+          replay: unsupported,
+          control: unsupported,
+        },
+      }),
+    );
     let state: FeedbackDetails = {
       viewer_id: 'local-owner',
       agent_id: 'agt_contract',

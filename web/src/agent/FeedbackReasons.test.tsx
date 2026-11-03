@@ -144,6 +144,13 @@ function boundary(viewer: string) {
   return {
     writes,
     state,
+    advance: () =>
+      states.set('reason-agent', {
+        ...state(),
+        version: state().version + 1,
+        comment: 'Another saved edit',
+        request_id: 'another-request',
+      }),
     mode: (value: typeof mode) => {
       mode = value;
     },
@@ -155,6 +162,31 @@ async function openReasons() {
   await userEvent.click(await screen.findByRole('button', { name: 'Edit reasons' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Save reasons' })).toBeEnabled());
 }
+
+it('keeps a conflicting draft and requires reread before a new conditional save', async () => {
+  const server = boundary('conflict-owner');
+  render(draw({ viewer: 'conflict-owner' }));
+  await openReasons();
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Additional details (optional)' }),
+    'My draft',
+  );
+  server.advance();
+  await userEvent.click(screen.getByRole('button', { name: 'Save reasons' }));
+  await screen.findByText('Feedback changed. Reload feedback before saving this draft.');
+  expect(screen.getByRole('button', { name: 'Retry reasons' })).toBeDisabled();
+  expect(server.state().comment).toBe('Another saved edit');
+  await userEvent.click(screen.getByRole('button', { name: 'Reload feedback' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save reasons' })).toBeEnabled());
+  expect(screen.getByRole('textbox', { name: 'Additional details (optional)' })).toHaveValue(
+    'My draft',
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Save reasons' }));
+  await screen.findByText('Reasons saved');
+  expect(server.writes.map((request) => request.expected_version)).toEqual([1, 2]);
+  expect(server.writes[1]!.request_id).not.toBe(server.writes[0]!.request_id);
+  expect(server.state().comment).toBe('My draft');
+});
 
 it('keeps previously saved reasons until an edited replacement is confirmed', async () => {
   const server = boundary('edit-owner');
@@ -170,7 +202,7 @@ it('keeps previously saved reasons until an edited replacement is confirmed', as
   fireEvent.change(details, { target: { value: 'Edited draft' } });
   server.mode('fail');
   await userEvent.click(screen.getByRole('button', { name: 'Save reasons' }));
-  await screen.findByText('Network unavailable');
+  await screen.findByText('Reasons could not be confirmed. Retry the same reasons.');
   expect(server.state().comment).toBe('First saved');
   expect(server.state().reasons).toEqual(['inaccurate']);
   await userEvent.click(screen.getByRole('button', { name: 'Close' }));
@@ -198,7 +230,7 @@ it('retries only the exact failed reasons while preserving the down vote and dra
   );
   server.mode('fail');
   await userEvent.click(screen.getByRole('button', { name: 'Save reasons' }));
-  await screen.findByText('Network unavailable');
+  await screen.findByText('Reasons could not be confirmed. Retry the same reasons.');
   expect(screen.getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
     'aria-pressed',
     'true',
@@ -224,7 +256,7 @@ it('recovers an accepted write with a lost receipt through public reread after n
   );
   server.mode('lost');
   await userEvent.click(screen.getByRole('button', { name: 'Save reasons' }));
-  await screen.findByText('Receipt lost');
+  await screen.findByText('Reasons could not be confirmed. Retry the same reasons.');
   view.unmount();
   render(draw({ viewer: 'lost-owner' }));
   await openReasons();
