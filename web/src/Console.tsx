@@ -19,7 +19,6 @@ import { routePath } from './routing/routes';
 import { useViewArrival } from './ui/arrivalMotion';
 import { AppFrame } from './shell/AppFrame';
 import { Sidebar } from './shell/Sidebar';
-import type { TreePermissions } from './shell/Tree';
 import { ManagerNavigation } from './shell/ManagerNavigation';
 import { useNavigation } from './shell/navigation';
 import { SandboxPage } from './sandbox/SandboxPage';
@@ -29,6 +28,7 @@ import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
 import { NotFoundView, UnavailableView } from './ConsoleViews';
 import { ConsoleLanding } from './ConsoleLanding';
+import { consoleCreationAccess } from './ConsoleCreationAccess';
 import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
@@ -167,20 +167,14 @@ function ConsoleContent({
     onNavigate,
     !accessUncertain,
   );
-  const canUse = !accessUncertain && user.capabilities.includes('use_own_sandboxes');
-  // A new Agent starts in a new Sandbox, so it depends only on the signed-in
-  // person's capability, never on the access check of the Agent being viewed.
-  // Gating it on that check hid the button on every switch between Agents.
-  const canStartNewAgent =
-    !user.visitor && user.capabilities.includes('use_own_sandboxes') && onCreate !== undefined;
-  // Creating inside the viewed hierarchy still waits for that access check.
-  const canCreate = canStartNewAgent && canUse;
-  const canCreateInScope = canStartNewAgent && navigationScope === '' && scopeReady;
-  const newAgentUnavailable = !scopeReady
-    ? 'Checking your access.'
-    : navigationScope !== ''
-      ? 'Switch to Personal to create an Agent.'
-      : undefined;
+  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
+    consoleCreationAccess(
+      user,
+      navigationScope,
+      scopeReady,
+      accessUncertain,
+      onCreate !== undefined,
+    );
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
@@ -194,18 +188,6 @@ function ConsoleContent({
       ? 'inherit'
       : 'product',
   );
-  const permissions: TreePermissions = {
-    createAgent: canCreate,
-    // Workspace creation is an inline Agent Manager operation. The legacy
-    // profile picker remains available only to compatibility handoffs.
-    createWorkspace: canCreate,
-    pauseSandbox: canUse,
-    removeWorkspace: canUse,
-    stopAgent: canUse,
-    deleteAgent: canUse,
-    exportHistory: canUse,
-    deleteSandbox: !accessUncertain && user.capabilities.includes('delete_own_sandbox'),
-  };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content =
     route.kind === 'artifacts' || route.kind === 'document' ? (
