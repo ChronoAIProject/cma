@@ -142,7 +142,7 @@ impl InlineAgentLifecycle {
             // transactional admission preserves one Agent/worktree per origin.
             let agent = self
                 .agents
-                .create_for_lifecycle(
+                .create_for_lifecycle_with_purpose(
                     caller,
                     input.actor.as_ref(),
                     &workspace.id,
@@ -157,6 +157,7 @@ impl InlineAgentLifecycle {
                             operation_id: input.lease.id.clone(),
                         },
                     },
+                    validation::first_message_purpose(&input.request),
                 )
                 .await
                 .map_err(|error| contextual_error(error, workspace.id.as_str()))?;
