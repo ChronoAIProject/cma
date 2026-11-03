@@ -81,8 +81,8 @@ fn focused_contract_preserves_existing_operations_and_identities() {
             operation_count += 1;
         }
     }
-    assert_eq!(focused["paths"].as_object().unwrap().len(), 63);
-    assert_eq!(operation_count, 77);
+    assert_eq!(focused["paths"].as_object().unwrap().len(), 64);
+    assert_eq!(operation_count, 79);
     assert_eq!(focused["servers"][0]["url"], "/");
     assert_eq!(focused["info"]["title"], "CMA Agent Manager API");
     assert!(focused["info"]["description"]
