@@ -83,12 +83,12 @@ fn view(
     }
 }
 
-fn sequence(message_id: &str) -> Result<u64, Response> {
+fn sequence(message_id: &str) -> Result<u64, InstanceProblem> {
     message_id
         .strip_prefix("event:")
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0 && message_id == format!("event:{value}"))
-        .ok_or_else(|| InstanceProblem::InvalidRequest.into_response())
+        .ok_or(InstanceProblem::InvalidRequest)
 }
 
 #[utoipa::path(get, operation_id = "get_message_feedback", path = "/api/v1/agents/{id}/messages/{message_id}/feedback", tag = "agents",
@@ -101,7 +101,7 @@ pub(crate) async fn get(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, message_id)): Path<(String, String)>,
 ) -> Result<Json<FeedbackDetailsView>, Response> {
-    let sequence = sequence(&message_id)?;
+    let sequence = sequence(&message_id).map_err(IntoResponse::into_response)?;
     let service = state
         .message_feedback
         .ok_or_else(|| InstanceProblem::Unavailable.into_response())?;
@@ -138,7 +138,7 @@ pub(crate) async fn set(
         reasons: body.reasons.into_iter().map(Into::into).collect(),
         comment: body.comment,
     };
-    let sequence = sequence(&message_id)?;
+    let sequence = sequence(&message_id).map_err(IntoResponse::into_response)?;
     let service = state
         .message_feedback
         .ok_or_else(|| InstanceProblem::Unavailable.into_response())?;
