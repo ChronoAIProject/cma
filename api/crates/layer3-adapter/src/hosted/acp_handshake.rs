@@ -167,6 +167,8 @@ impl Bridge {
         }
 
         timing.completed("protocol_access_setup");
+        let defer_settings =
+            matches!(greeting, Greeting::Existing) && settings.recovered_context_sequence.is_some();
         let session = match (greeting, resume) {
             (Greeting::Fresh(_), Some(conversation)) => {
                 self.activate_session(conversation.clone(), updates).await?;
@@ -250,7 +252,11 @@ impl Bridge {
         };
         timing.completed("protocol_session");
 
-        if let Some(mode) = settings.permission_mode {
+        // A failed idle refresh can have closed its native session before load
+        // completed. Applying settings here would reject forever before replay
+        // can restore it. The restricted input accepts only the original refresh,
+        // which loads this same ID and acknowledges all settings before publication.
+        if let Some(mode) = settings.permission_mode.filter(|_| !defer_settings) {
             self.call(
                 "session/set_mode",
                 serde_json::json!({ "sessionId": session, "modeId": mode }),
@@ -262,7 +268,7 @@ impl Bridge {
                 ))
             })?;
         }
-        if settings.channel_tool.is_some() {
+        if settings.channel_tool.is_some() && !defer_settings {
             // adapter_agent accepts this opaque binding only from the trusted
             // channel source after durable creation-provenance and exact-open
             // checks. Manual/Trigger Agents cannot opt in through runtime flags.
@@ -398,6 +404,11 @@ fn validate_settings(cwd: &str, settings: &HostedAgentOpenSettings) -> crate::Re
         || !cwd.starts_with('/')
         || cwd.chars().any(char::is_control)
         || !valid_mode
+        || settings
+            .recovered_context_sequence
+            .is_some_and(|sequence| sequence == 0)
+        || settings.recovered_context_sequence.is_some()
+            && (settings.context_refresh.is_none() || settings.recovered_prompt.is_some())
     {
         return Err(AdapterError::Rejected(
             "ACP working directory or permission mode is invalid".into(),
