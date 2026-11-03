@@ -73,8 +73,12 @@ pub(crate) fn validate_origin(name: &'static str, value: &str) -> Result<String,
             && url.host().is_some_and(|host| match host {
                 url::Host::Domain(domain) => {
                     domain.eq_ignore_ascii_case("localhost")
-                        || (!matches!(name, CMAEG_PUBLIC_URL | CMAEG_CONSOLE_PUBLIC_URL)
-                            && domain.ends_with(".svc"))
+                        || (!matches!(
+                            name,
+                            CMAEG_PUBLIC_URL
+                                | CMAEG_CONSOLE_PUBLIC_URL
+                                | CMAEG_CONSOLE_NYXID_PUBLIC_URL
+                        ) && domain.ends_with(".svc"))
                 }
                 url::Host::Ipv4(address) => address.is_loopback(),
                 url::Host::Ipv6(address) => address.is_loopback(),

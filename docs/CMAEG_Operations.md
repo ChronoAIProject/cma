@@ -239,6 +239,7 @@ applies with all media flags off.**
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Retained event identity and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_CONSOLE_NYXID_PUBLIC_URL` | origin URL | `CMAEG_NYXID_BASE_URL` | Console OAuth discovery, authorization, token, revocation and organization-list origin. Production `https://api.nyxid.ai`; HTTPS required except loopback tests. Discovery must advertise endpoints on this exact origin. Does not change shared creator authentication, retained issuer, service audiences or credentials. |
 | `CMAEG_CONSOLE_PUBLIC_URL` | origin URL | `CMAEG_PUBLIC_URL` | Browser console OAuth/CSRF origin. Production `https://cma.nyxid.ai`; register `/console/callback` on the existing OAuth client and route `/console` to CMAEG before enabling. Same strict origin rules as the public origin. Does not change event identities, master keys, or agent credentials. |
 | `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
 | `CMAEG_PUBLIC_API_ALIASES` | exact base list | empty | Comma-separated retained public API bases, at most eight; same validation as `CMAEG_PUBLIC_API_URL`. Used for existing webhooks, setup links/form Origins and MCP Origins. Keep all issued bases through rollout and rollback; this does not change advertisement. |
@@ -961,7 +962,12 @@ services is expected.
 add `https://cma.nyxid.ai/console/callback` through NyxID's supported client update.
 Apply the canonical HTTPRoute's `/console` prefix to the Gateway Service without
 rewriting its path. Deploy readers of `CMAEG_CONSOLE_PUBLIC_URL`, then set that
-key to `https://cma.nyxid.ai` and roll only CMAEG. Verify the legacy-console entry,
+key to `https://cma.nyxid.ai` and roll only CMAEG. Set
+`CMAEG_CONSOLE_NYXID_PUBLIC_URL=https://api.nyxid.ai` once compatible readers
+are deployed: NyxID discovery retains the old issuer while advertising OAuth
+endpoints on the new API origin. Keep `CMAEG_NYXID_BASE_URL` unchanged because
+shared service authentication still derives its issuer and resource audience
+from that value. Verify the legacy-console entry,
 sign-in authorization `redirect_uri`, PKCE/cookie callback and authenticated
 console page on the new host, plus exact new-origin POST/CSRF enforcement.
 Old host-only console cookies cannot move between domains, so users sign in
