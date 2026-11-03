@@ -1,0 +1,453 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "environment-owner",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "policy_revision": 2,
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "revalidate_at": null,
+          "files": {
+            "state": "available",
+            "reason": "authorized_mounted_home",
+            "scope": "mounted_home",
+            "writable": true
+          },
+          "operation_output": {
+            "state": "available",
+            "reason": "recorded_output_only",
+            "scope": "agent_turn_history",
+            "writable": false
+          },
+          "browser": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "replay": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "control": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "environment-viewer",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_viewer",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "policy_revision": 4,
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "revalidate_at": "2030-01-01T00:00:00Z",
+          "files": {
+            "state": "available",
+            "reason": "authorized_mounted_home",
+            "scope": "mounted_home",
+            "writable": false
+          },
+          "operation_output": {
+            "state": "available",
+            "reason": "recorded_output_only",
+            "scope": "agent_turn_history",
+            "writable": false
+          },
+          "browser": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "replay": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "control": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "environment_revalidate_at": "/revalidate_at"
+      }
+    },
+    {
+      "id": "environment-writer",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_writer",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "policy_revision": 4,
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "revalidate_at": "2030-01-01T00:00:00Z",
+          "files": {
+            "state": "available",
+            "reason": "authorized_mounted_home",
+            "scope": "mounted_home",
+            "writable": true
+          },
+          "operation_output": {
+            "state": "available",
+            "reason": "recorded_output_only",
+            "scope": "agent_turn_history",
+            "writable": false
+          },
+          "browser": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "replay": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "control": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "environment_revalidate_at": "/revalidate_at"
+      }
+    },
+    {
+      "id": "environment-not-ready",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_not_ready",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "policy_revision": 2,
+          "runtime_incarnation": null,
+          "revalidate_at": null,
+          "files": {
+            "state": "temporarily_unavailable",
+            "reason": "runtime_not_ready",
+            "scope": "mounted_home",
+            "writable": false
+          },
+          "operation_output": {
+            "state": "available",
+            "reason": "recorded_output_only",
+            "scope": "agent_turn_history",
+            "writable": false
+          },
+          "browser": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "replay": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "control": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "environment-unsupported",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_unsupported",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "policy_revision": 2,
+          "runtime_incarnation": null,
+          "revalidate_at": null,
+          "files": {
+            "state": "unsupported",
+            "reason": "mounted_home_unsupported",
+            "scope": "mounted_home",
+            "writable": false
+          },
+          "operation_output": {
+            "state": "available",
+            "reason": "recorded_output_only",
+            "scope": "agent_turn_history",
+            "writable": false
+          },
+          "browser": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "replay": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "control": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "environment-paused",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_paused",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "policy_revision": 2,
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "revalidate_at": null,
+          "files": {
+            "state": "not_enabled",
+            "reason": "runtime_not_active",
+            "scope": "mounted_home",
+            "writable": false
+          },
+          "operation_output": {
+            "state": "available",
+            "reason": "recorded_output_only",
+            "scope": "agent_turn_history",
+            "writable": false
+          },
+          "browser": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "replay": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          },
+          "control": {
+            "state": "unsupported",
+            "reason": "not_supported_by_contract",
+            "scope": "none",
+            "writable": false
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "environment-foreign",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "environment-revoked",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "environment-anonymous",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "environment-missing",
+      "operation": "GET /api/v1/agents/{id}/environment",
+      "scenario": "filesystem_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/environment",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

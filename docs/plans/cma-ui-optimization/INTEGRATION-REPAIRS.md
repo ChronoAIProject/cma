@@ -63,6 +63,50 @@ before recompilation. The retained cache flag is `--cfg cma_ui_ticket04`; target
 isolation, clean output and compilation paths establish this worktree's binary.
 Zero-test runs never count as evidence.
 
+## Environment shared contract repair
+
+The exact operation is registered with its real authorization problems
+`not_authenticated` and `resource_not_found`. `agent-environment.json` adds ten
+actual handler cases: owner, read-only accepted link, writable accepted link,
+runtime not ready, unsupported mounted home, paused runtime, foreign subject,
+revoked link, anonymous request and missing Agent. Cases retain private/no-store
+headers, exact Agent identity, policy revision, opaque runtime incarnation,
+renewal deadline, file mutation authority and read-only output/browser/replay/
+control facts. Only the live link renewal deadline is captured symbolically.
+
+- `environment-record.log` records the real handlers; an independent non-recording
+  replay in `environment-handler-green.log` passes **1 named test / 10 cases**.
+- TypeScript dispatch initially fails all ten cases and the completeness test
+  (`environment-sdk-ts-red.log`, 11 actual failures). The repaired typed method
+  passes the entire corpus: **2,747 tests**, `sdk-ts-green.log`.
+- Rust initially runs **1 failing test**, reporting the unmapped environment
+  operation (`environment-sdk-rust-red.log`). The typed method and structural
+  equality of the exported environment models give **1 passed / 10 typed HTTP
+  cases**, then the complete corpus gives **1 passed / 2,302 typed HTTP, 173 typed
+  preflight, 240 unrepresentable wire-shape and 27 browser-owned cases**
+  (`environment-sdk-rust-green.log`, `sdk-rust-all.log`). SDK TypeScript typecheck
+  passes. Neither SDK bypasses the typed method with a raw HTTP call.
+- The merged **global** inventory remains separately blocked by ticket 07's four
+  unregistered delivery operations. Before this repair it actually ran **1 failed
+  test**, with **234 actual / 229 listed** (`inventory-merged-red.log`). This repair
+  adds the environment entry and raises the exact listed count to **230**; it does
+  not count absent delivery entries as covered. Those routes and ticket 10's two
+  feedback routes remain intact. This is a new integration gap, not an original
+  skill-fixture failure and not a passing global gate.
+
+## Merged Web result
+
+`web-all.log` passes the complete merged suite: **329 files / 2,963 tests**, no
+committed skips or test exclusions. Web typecheck, eslint and the unchanged CSS
+collision gate pass (`web-typecheck.log`, `web-lint.log`, `css-final.log`). jsdom
+prints its existing cross-Document navigation notices without failing tests.
+
+The source-size gate no longer reports either repaired production source:
+`agent_filesystem.rs` is 473 lines and `conversation.ts` is 469. It reports the
+unchanged original 508-line `agent_operation_service.rs` and the newly merged
+ticket-10 `agents_tests/message_feedback.rs` at 556 lines. The latter file is
+outside this batch's owned source and is a separate new integration handoff.
+
 Environment corpus, Mongo fast path, latest integration merge and final affected
 checks remain in progress. Original skill fixtures, LocalAgentV2 head-404,
 formatter drift and unchanged 508-line `agent_operation_service.rs` are outside
