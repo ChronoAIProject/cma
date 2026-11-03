@@ -4390,3 +4390,33 @@ may precede its completion. Only a fresh decoded browser frame displays Live;
 preparation or observation never repeats the first task or restarts a Sandbox.
 
 | 2026-11-03 | Define default-off Home desktop selection, capability refusal, durable frozen recovery and truthful preparation for ticket 16. |
+
+### Exclusive browser control (2026-11-03)
+
+When the public environment reports verified writable control and the current
+viewer owns the Agent, show **Take control** beside the existing browser status.
+Keep the original real image and its aspect ratio. A receipt is required before
+**You are controlling** appears; pending handoffs say **Transferring control…**.
+Agent control, another client's control, unknown state and expired authority
+remain distinct. Unknown state exposes **Check original operation** and, after
+an unresolved query, **Retry exact operation**. Never infer success from time.
+
+The same image becomes a focusable browser-input surface only under a current
+lease and fresh observation. Clicks use its intrinsic viewport coordinates;
+typing and supported editing keys go through the bounded public browser-input
+contract. Browser chrome shortcuts and terminal input are not offered. Keep
+**Return to Agent** outside that input surface, reachable by normal keyboard
+navigation. Returning is a control operation and never a conversation message.
+Provide a labelled **Text to type in browser** field and **Type text** action for
+composition, paste and mobile use; retain its text after an uncertain response.
+
+Use existing small buttons, secondary caption text, 8px control gaps, 12px/18px
+audit text and the existing focus ring. The control group wraps within the
+panel at mobile widths. A compact **Control log** details element shows bounded
+metadata, timestamps and a visible truncation notice, never typed contents or
+lease tokens. Losing visibility, account, permission, current context or a
+fresh live image immediately disables input. Stop lease renewal while hidden
+or offline; show the runtime-confirmed expiry/return on reconnect. Closing the
+panel attempts exact return without resetting its browser or conversation draft.
+
+| 2026-11-03 | Define receipt-confirmed exclusive browser input, exact recovery, same-context return, bounded control audit and accessible desktop/mobile input for ticket 17. |

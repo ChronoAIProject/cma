@@ -18,6 +18,8 @@ use std::sync::Arc;
 use std::time::SystemTime;
 #[path = "agent_browser_service.rs"]
 mod browser;
+#[path = "agent_browser_control_service.rs"]
+mod browser_control;
 #[path = "agent_environment_service.rs"]
 mod environment;
 

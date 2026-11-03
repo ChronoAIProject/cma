@@ -36,6 +36,8 @@ impl Browser {
         for (name, bytes) in [
             ("mediator.cjs", include_str!("browser/mediator.cjs")),
             ("devtools.cjs", include_str!("browser/devtools.cjs")),
+            ("control.cjs", include_str!("browser/control.cjs")),
+            ("input.cjs", include_str!("browser/input.cjs")),
         ] {
             tokio::fs::write(root.join(name), bytes)
                 .await
@@ -83,9 +85,44 @@ impl Browser {
         &mut self,
         request: &BrowserRequest,
     ) -> Result<BrowserObservation> {
+        let value = self
+            .raw(serde_json::to_value(request).map_err(|_| unavailable())?)
+            .await?;
+        let observation: BrowserObservation =
+            serde_json::from_value(value).map_err(|_| unavailable())?;
+        if !observation.valid() {
+            return Err(unavailable());
+        }
+        Ok(observation)
+    }
+
+    pub(crate) async fn control(
+        &mut self,
+        request: &layer3_adapter::BrowserControlRequest,
+    ) -> Result<layer3_adapter::BrowserControlReceipt> {
+        let mut value = serde_json::to_value(request).map_err(|_| unavailable())?;
+        value["operation"] = serde_json::json!("control");
+        let value = self.raw(value).await?;
+        let context_id = value["context_id"]
+            .as_str()
+            .ok_or_else(unavailable)?
+            .to_owned();
+        let control: layer3_adapter::BrowserControlStatus =
+            serde_json::from_value(value).map_err(|_| unavailable())?;
+        if !control.valid() {
+            return Err(unavailable());
+        }
+        Ok(layer3_adapter::BrowserControlReceipt {
+            agent_id: request.agent_id.clone(),
+            boot_id: request.boot_id.clone(),
+            context_id,
+            control,
+        })
+    }
+
+    async fn raw(&mut self, mut value: serde_json::Value) -> Result<serde_json::Value> {
         let operation = async {
             self.sequence += 1;
-            let mut value = serde_json::to_value(request).map_err(|_| unavailable())?;
             value["id"] = serde_json::json!(self.sequence);
             let mut encoded = serde_json::to_vec(&value).map_err(|_| unavailable())?;
             encoded.push(b'\n');
@@ -109,17 +146,28 @@ impl Browser {
                 if identifier < self.sequence {
                     continue;
                 }
-                if identifier != self.sequence || value.get("error").is_some() {
+                if identifier != self.sequence {
                     return Err(unavailable());
+                }
+                if let Some(error) = value["error"].as_str() {
+                    let code = match error {
+                        "browser_control_conflict" | "browser_operation_unknown" => {
+                            "browser_control_conflict"
+                        }
+                        "browser_identity" => "browser_identity",
+                        "browser_control_invalid" | "browser_input_invalid" => {
+                            "browser_control_invalid"
+                        }
+                        _ => "browser_disconnected",
+                    };
+                    return Err(RuntimeError::rejected(
+                        code,
+                        "Browser control request refused",
+                    ));
                 }
                 break value;
             };
-            let observation: BrowserObservation =
-                serde_json::from_value(value["value"].clone()).map_err(|_| unavailable())?;
-            if !observation.valid() {
-                return Err(unavailable());
-            }
-            Ok(observation)
+            Ok(value["value"].clone())
         };
         tokio::time::timeout(Duration::from_secs(12), operation)
             .await

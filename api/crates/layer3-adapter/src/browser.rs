@@ -130,6 +130,16 @@ pub struct BrowserReceipt {
 
 #[async_trait::async_trait]
 pub trait BrowserAdapter: Send + Sync {
+    async fn browser_control(
+        &self,
+        _handle: &crate::RuntimeHandle,
+        _request: &crate::BrowserControlRequest,
+    ) -> crate::Result<crate::BrowserControlReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "browser control is unavailable".into(),
+        ))
+    }
+
     async fn browser(
         &self,
         handle: &crate::RuntimeHandle,

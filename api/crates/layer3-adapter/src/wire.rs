@@ -127,6 +127,7 @@ pub struct AgentHomeRemoveReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireOperation {
+    BrowserControl,
     Browser,
     UploadAgentAttachment,
     ListAgentFiles,
@@ -193,6 +194,7 @@ pub enum CheckpointUploadResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum RequestFrame {
+    BrowserControl(crate::BrowserControlRequest),
     Browser(crate::BrowserRequest),
     UploadAgentAttachment(crate::AgentAttachmentUpload),
     ListAgentFiles(crate::AgentFileListRequest),
@@ -229,6 +231,7 @@ impl RequestFrame {
     pub const fn operation(&self) -> WireOperation {
         match self {
             Self::Browser(_) => WireOperation::Browser,
+            Self::BrowserControl(_) => WireOperation::BrowserControl,
             Self::UploadAgentAttachment(_) => WireOperation::UploadAgentAttachment,
             Self::ListAgentFiles(_) => WireOperation::ListAgentFiles,
             Self::ReadAgentFile(_) => WireOperation::ReadAgentFile,
@@ -266,6 +269,7 @@ impl RequestFrame {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ResponseFrame {
+    BrowserControl(crate::BrowserControlReceipt),
     Browser(crate::BrowserReceipt),
     UploadAgentAttachment(crate::AgentAttachmentReceipt),
     ListAgentFiles(crate::AgentFileListReceipt),
