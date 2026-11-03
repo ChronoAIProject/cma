@@ -3,10 +3,16 @@ use std::sync::Arc;
 
 use axum::Router;
 use layer2_core::{
+    document_artifacts::DocumentService,
     resource_access::ResourceAccessService,
-    sandbox::{agent_io::AgentCommandService, SandboxPolicySource},
+    sandbox::{
+        agent_artifacts::AgentArtifactService, agent_filesystem::AgentFileService,
+        agent_io::AgentCommandService, answer_deliverables::AnswerDeliverableService,
+        AgentReadService, SandboxPolicySource,
+    },
     trigger_domain::ServiceConnectionBroker,
 };
+use layer3_adapter::SandboxAdapter;
 
 use crate::{
     agent_access::AgentAccessService,
@@ -26,6 +32,21 @@ pub(super) struct ToolServices {
     pub documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
     pub deliverables: Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>,
     pub public_origin: String,
+}
+
+pub(super) fn deliverables(
+    stores: &MongoStores,
+    reads: Arc<AgentReadService>,
+    access: Arc<ResourceAccessService>,
+    documents: Arc<DocumentService>,
+    adapter: Arc<dyn SandboxAdapter>,
+) -> Arc<AnswerDeliverableService> {
+    AnswerDeliverableService::new(
+        reads,
+        AgentArtifactService::new(stores.sandbox_model.clone(), access.clone()),
+    )
+    .with_documents(documents)
+    .with_files(AgentFileService::new(access, adapter))
 }
 
 pub(super) fn compose(

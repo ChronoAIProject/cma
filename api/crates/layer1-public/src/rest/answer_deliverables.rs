@@ -14,6 +14,21 @@ use std::sync::Arc;
 mod shapes;
 pub(crate) use shapes::*;
 
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(describe, list, read_item, download),
+    components(schemas(
+        DeliverableResourceView,
+        DeliverableReferenceView,
+        DeliverableDescriptionView,
+        DeliverableStatusView,
+        AnswerDeliverableView,
+        AnswerDeliverablesView,
+        AnswerDeliverableReadingView,
+    ))
+)]
+pub(super) struct AnswerDeliverablesApi;
+
 pub fn answer_deliverables_router(service: Arc<AnswerDeliverableService>) -> Router {
     Router::new()
         .route("/api/v1/agents/{id}/deliverable-references", post(describe))

@@ -341,21 +341,13 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
         );
-        let deliverables =
-            layer2_core::sandbox::answer_deliverables::AnswerDeliverableService::new(
-                projections.reads(),
-                layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
-                    stores.sandbox_model.clone(),
-                    resource_access.clone(),
-                ),
-            )
-            .with_documents(documents.clone())
-            .with_files(
-                layer2_core::sandbox::agent_filesystem::AgentFileService::new(
-                    resource_access.clone(),
-                    adapter.clone(),
-                ),
-            );
+        let deliverables = access::deliverables(
+            &stores,
+            projections.reads(),
+            resource_access.clone(),
+            documents.clone(),
+            adapter.clone(),
+        );
         let agent_access = access::compose(
             &stores,
             auth.clone(),
