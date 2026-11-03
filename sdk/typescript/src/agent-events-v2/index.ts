@@ -17,12 +17,14 @@ export type { V2AgentEventKind } from './kinds.js';
 export type { V2AgentCursor, V2AgentPageCursor } from './schema.js';
 
 export interface V2AgentSnapshotOptions extends OperationOptions {
+  readonly toolOutput?: boolean;
   /** Opt into authoritative per-message command correlation; older servers may omit it. */
   readonly messageBindings?: boolean;
   readonly limit?: number;
   readonly pageCursor?: string;
 }
 export interface V2AgentEventsOptions extends OperationOptions {
+  readonly toolOutput?: boolean;
   /** Request the server's real live-fragment observation time; older servers may omit it. */
   readonly liveTimestamps?: boolean;
   /** Opt into authoritative per-message command correlation; older servers may omit it. */
@@ -67,7 +69,14 @@ export class AgentEventsV2 {
         page_cursor: previous,
       }),
       options,
-      options.messageBindings ? { Prefer: 'cma-message-bindings' } : undefined,
+      {
+        Prefer: [
+          options.messageBindings ? 'cma-message-bindings' : undefined,
+          options.toolOutput ? 'cma-tool-output' : undefined,
+        ]
+          .filter(Boolean)
+          .join(', '),
+      },
     );
     return v2AgentEventPage(value, id, limit, previous);
   }
@@ -103,11 +112,12 @@ export class AgentEventsV2 {
       undefined,
       {
         ...(headerCursor === undefined ? {} : { 'Last-Event-ID': headerCursor }),
-        ...(options.messageBindings || options.liveTimestamps
+        ...(options.messageBindings || options.liveTimestamps || options.toolOutput
           ? {
               Prefer: [
                 options.messageBindings ? 'cma-message-bindings' : undefined,
                 options.liveTimestamps ? 'cma-live-observed-at' : undefined,
+                options.toolOutput ? 'cma-tool-output' : undefined,
               ]
                 .filter(Boolean)
                 .join(', '),

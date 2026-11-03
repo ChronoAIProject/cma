@@ -663,6 +663,18 @@ to a setup preview. This is title provenance, not a semantic title generator.
 `runtime_metadata_changed` replay events carry the same atomic metadata snapshot.
 Shared conversation reads retain their existing metadata redaction.
 
+Admission of the first owner task persists a bounded 48-character preview in
+these existing metadata fields, with `description_source: prompt_preview` and
+`description_is_setup_preview: false`. An initial message contributes only with
+explicit `purpose: task`; automatic setup does not supply a task name. The preview
+does not wait for provider output or require another turn. Reconnect previews
+and unknown-source observations cannot replace it; a valid provider title can.
+Owner `owner_title` from revisioned preferences remains the display priority and
+supports repeated renames even when an automatic title was already saved. The
+separate legacy title setter retains its write-once compatibility behavior.
+Automatic title generation excludes a recorded setup/unknown first turn and
+uses the first subsequent task; names and sources remain durable across reads.
+
 
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
 Agent preserves readable history; deleting it records cleanup of its Worktree
@@ -1396,6 +1408,23 @@ Paths are relative to the runtime's persistent `/home/` directory. Reading
 requires current file-view authority; creating, editing and deleting require
 owner authority or an accepted, active typed `view_write` sharing link. Each
 operation rechecks access, and protected credential paths remain unavailable.
+The mounted home intentionally includes shared Workspace source and Worktree
+files; the Agent route is not a per-Agent filesystem grant. Public file operations
+exclude supervisor control roots `.cma` and `cma/.cma`, including every private
+Agent home and its instructions, credentials, sessions and retained state.
+Those roots are omitted from listings and refused for direct reads, downloads,
+writes, directory creation and deletion, including deletion of their ancestors.
+The runtime also protects its configured state and checkpoint roots if they lie
+within the mounted home. Descriptor-relative no-follow and single-link checks
+continue to reject symlink/hardlink aliases.
+
+Uploads live at `/home/attachments/{agent_id}/...`. A file route exposes only its
+authorized Agent's upload namespace, including to the Sandbox owner; listing
+`attachments` filters other Agents, and deleting that common root is refused.
+Authorized ordinary Sandbox files, hidden workspace files, versioned edits,
+downloads and typed shared writers retain their existing behavior. Trusted
+runtime settings/recovery operations still access the selected Agent's managed
+home through their separate internal contract; public file routes cannot do so.
 Reads, downloads and writes are bounded to 32 MiB. A write's `expected_sha256`
 protects an edit against intervening changes; omit it when creating a new file.
 Directory creation uses `directory: true`. File operations do not require an
@@ -1408,6 +1437,30 @@ Directory creation uses `directory: true`. File operations do not require an
 | `GET /api/v1/agents/{id}/files/download` | - | path* | 200 application/octet-stream |
 | `POST /api/v1/agents/{id}/files` | WriteFileRequest | - | 200 FileMutationView |
 | `DELETE /api/v1/agents/{id}/files` | - | path*, recursive | 200 FileMutationView |
+
+`GET /api/v1/agents/{id}/environment` returns a read-only capability observation
+under current `view_details` authority. It contains `agent_id`, `policy_revision`,
+an opaque nullable `runtime_incarnation`, nullable `revalidate_at`, and the
+`files`, `operation_output`, `browser`, `replay`, and `control` features. Each
+feature has `state`, `reason`, `scope`, and `writable`. States are `available`,
+`unsupported`, `not_enabled`, `forbidden`, and `temporarily_unavailable`.
+The observation is not a retained grant; every operation still authorizes its
+caller. Responses use the existing private/no-store file-route policy.
+
+Files retain the existing `mounted_home` scope, including `/home/`; this is not
+an Agent-private directory. `writable` requires owner authority or an accepted
+current typed write link. Recorded output has `agent_turn_history` scope and
+requires `view_history`. Browser, replay and control currently report
+`unsupported`, `not_supported_by_contract`, `none`, and `false`. No runtime
+address, boot identifier, browser stream, replay resource or PTY is exposed.
+
+Agent event reads opt into recorded output with `tool_output=true`. A tool update
+may include `output: {text, truncated}`; `tool_output_reported` contains `call_id`
+and `output` without a status. Text is bounded to 16 KiB of valid UTF-8 per
+record, with explicit truncation. Absence means output was not reported. Legacy
+requests omit output and retain the event cursor through redacted output-only
+entries. See [Agent events v2](API_Agent_Events_V2.md) for negotiated snapshots
+and tails, and [AG-UI](API_AGUI.md) for the stream projection.
 
 ### Agent sharing links
 

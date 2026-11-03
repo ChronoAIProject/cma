@@ -577,3 +577,18 @@ server contents; retain the local draft and reread before explicitly retrying.
 need no command key and are never retried automatically. The owner or a current
 view-write link may write; view links may browse and download. An old runtime
 returns `file_runtime_unsupported` until it is updated while idle.
+
+### Computer observation
+
+`client.agentFiles.environment(agentId, { signal })` reads current feature states,
+reasons and scopes for files, operation output, browser, replay and control. It
+validates the returned Agent identity. The observation includes policy revision,
+an opaque runtime incarnation and a renewal deadline; it never grants authority
+to a later operation. Files retain the authorized mounted-home scope. Browser,
+replay and control are currently unsupported.
+
+Pass `{ toolOutput: true }` to `agentEventsV2.snapshot` / `agentEventsV2.events`
+or `agents.events` to read bounded recorded output. `tool_output_reported` has no
+status; preserve the known call status and replace its output snapshot. Missing
+output remains unknown. Responses v2 exposes the same `{text, truncated}` value
+through the optional `cma:output` activity extension, preserving `output: null`.

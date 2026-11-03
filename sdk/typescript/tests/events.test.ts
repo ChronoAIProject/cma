@@ -55,6 +55,11 @@ const agentEvents = {
     action: 'Write',
     detail: 'Update file',
   },
+  tool_output_reported: {
+    type: 'tool_output_reported',
+    call_id: 'call-1',
+    output: { text: 'native-computer-proof\n', truncated: false },
+  },
   approval_resolved: { type: 'approval_resolved', approval_id: 'approval-1', decision: 'allow' },
   operation_delivery_changed: {
     type: 'operation_delivery_changed',

@@ -15,6 +15,8 @@ mod head;
 mod head_tests;
 #[cfg(test)]
 mod message_binding_tests;
+#[cfg(test)]
+mod output_tests;
 mod parse;
 mod projection;
 mod shapes;
