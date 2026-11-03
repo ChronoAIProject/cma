@@ -49,7 +49,11 @@ describe('the shared Agent display title', () => {
       descriptionIsSetupPreview: false,
     },
   ])('preserves an unknown legacy or unconfirmed description: %j', (runtimeMetadata) => {
-    expect(agentDisplayTitle({ title: configuredName, runtimeMetadata })).toBe(setup);
+    expect(agentDisplayTitle({ title: configuredName, runtimeMetadata })).toBe(
+      runtimeMetadata.descriptionSource === 'prompt_preview'
+        ? 'Prepare this empty workspace and wait for the ow'
+        : setup,
+    );
   });
 
   it('does not treat task wording that resembles setup as a setup message', () => {
@@ -59,13 +63,13 @@ describe('the shared Agent display title', () => {
         title: configuredName,
         runtimeMetadata: { description: task, descriptionSource: 'prompt_preview' },
       }),
-    ).toBe(task);
+    ).toBe('Prepare this empty workspace and wait for the ow');
   });
 
   it('falls back to the configured name and then the existing unnamed label', () => {
     expect(agentDisplayTitle({ title: '  Research agent  ' })).toBe(configuredName);
     expect(agentDisplayTitle({ title: ' ', runtimeMetadata: { description: ' ' } })).toBe(
-      'Untitled agent',
+      'Untitled task',
     );
   });
 });

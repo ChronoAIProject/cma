@@ -111,3 +111,13 @@
 - `git diff --check 111530241e88806140685382b53de2134b8a7b79 HEAD` 与记录提交前的 `git diff --check` 通过。未重复 worker 的广泛/native/浏览器验证，本次没有 Rust 运行。
 - 02 发现的 7 个测试失败属于本轮集成回归：ActiveThinking 4 项、MessageIdentity 1 项、SharedAgent 2 项；parent 已交由 14 按 06 的折叠展示契约处理。旧创建/登录后首页浏览器断言由 04 作为 03 集成后续处理；这些均不是原始基线问题，本 merger 不跳过或修正它们，也不宣称全仓绿色。14 仍在独立实施，未合入其未完成文件；原始 skill contract/Core fixture、格式和 508 行 Agent service 问题独立保留。
 - 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。
+
+## Ticket 05 集成（2026-11-03）
+
+- 合并前 `codex/cma-ui-optimization` 工作区干净，HEAD 为 `4e86b3b75b55525736a4f63e147de7e7485f36f3`；该状态已包含于票分支。已读取 `issues/05-task-titles.md`，其中 27 路径 manifest 与实际 diff 完全匹配。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-05` 的 `12d66f92f75245b0b11d07447486463f0f3ae4e5`，merge commit 为 `7841d06c465a8a90c624e10ac071e8a655e27d33`。无 merge 冲突，初始合并树与票分支完全一致。
+- 严格追加检查发现票 05 的 Web Style 块位于 03 与 06 的既有条目之间；独立文档修正提交 `e39903405f18302c354f96822c393e488a1308da` 将完整文字及 changelog 原样移至末尾。已断言既有全文为最终文件的完整原样前缀，仅追加票 05 的 18 行；其他候选源码与票分支完全一致。
+- 01/02/03/06/09/11 保留；owner 手动名称优先、有效 provider 名称及真实任务 preview 回退、setup 排除与 browser label 共用既有选择器。未增加重复命名服务、端点、存储字段或额外用户/model turn；正常 composer、消息及已合入的共享 header/建议路径保留。
+- 合并态检查（集成工作区执行）：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/ConsoleTaskTitle.test.tsx src/ConsoleTitle.test.tsx src/agent/presentation.test.ts` 通过，3 文件 / 24 tests；`npm --prefix web run typecheck` 通过。`git diff --check 4e86b3b75b55525736a4f63e147de7e7485f36f3 HEAD` 与记录提交前的 `git diff --check` 通过。未重复广泛/native/Rust 检查。
+- 待修复的首页/创建及折叠操作测试仍属本轮集成回归，由 04/14 处理，不误记为原始基线。Console 原有 503 行集成超限在本票标题路由补充后为 506 行，继续交由 04 修复；原始 skill contract/Core fixture、格式及 508 行 Agent service 问题独立保留。未合入 14，等待 parent 明确最终 SHA。
+- 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。
