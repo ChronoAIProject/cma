@@ -31,9 +31,11 @@ pub(super) fn validate_request(
                     .into(),
             ));
         }
-        if request.repository.is_some() {
+        if request.repository.is_some()
+            && (request.workspace_id.is_some() || request.sandbox_id.is_some())
+        {
             return Err(AgentLifecycleProvisioningError::Invalid(
-                "initial_message with repository is not supported".into(),
+                "repository tasks require a new Sandbox; existing Workspace and Sandbox context cannot be replaced".into(),
             ));
         }
     }
@@ -77,13 +79,30 @@ pub(super) fn validate_request(
             || parsed.query().is_some()
             || parsed.fragment().is_some()
             || parsed.path().trim_matches('/').split('/').count() != 2
+            || (request.initial_message.is_some()
+                && parsed.path().trim_matches('/').split('/').any(|part| {
+                    part.is_empty()
+                        || matches!(part, "." | ".." | ".git")
+                        || !part.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
+                        })
+                }))
         {
             return Err(AgentLifecycleProvisioningError::Invalid(
                 "repository must be an HTTPS GitHub URL".into(),
             ));
         }
         if repository.reference.as_ref().is_some_and(|reference| {
-            reference.is_empty() || reference.len() > 255 || reference.chars().any(char::is_control)
+            reference.is_empty()
+                || reference.len() > 255
+                || reference.chars().any(char::is_control)
+                || (request.initial_message.is_some()
+                    && (reference.starts_with('-')
+                        || reference.chars().any(|character| {
+                            character.is_whitespace() || "~^:?*[\\".contains(character)
+                        })
+                        || reference.contains("..")
+                        || reference.contains("@{")))
         }) {
             return Err(AgentLifecycleProvisioningError::Invalid(
                 "repository ref is invalid".into(),
@@ -207,6 +226,14 @@ pub(super) fn repository_location(
     request: &AgentLifecycleCreateRequest,
     behavior: LifecycleBehavior,
 ) -> Result<WorkspaceLocation, AgentLifecycleProvisioningError> {
+    if request.initial_message.is_some() {
+        if let Some(repository) = &request.repository {
+            return Ok(WorkspaceLocation::RepositorySnapshot {
+                url: repository.url.clone(),
+                reference: repository.reference.clone(),
+            });
+        }
+    }
     if behavior == LifecycleBehavior::Legacy {
         if let Some(repository) = &request.repository {
             return Ok(WorkspaceLocation::GitRepository {

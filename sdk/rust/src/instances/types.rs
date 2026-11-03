@@ -134,6 +134,13 @@ pub struct SandboxDetail {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceSource {
+    RepositorySnapshot {
+        url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_commit: Option<String>,
+    },
     /// Git repository source.
     GitRepository {
         /// Repository URL.

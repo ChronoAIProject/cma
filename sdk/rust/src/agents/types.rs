@@ -132,6 +132,7 @@ pub struct AgentWorktree {
 /// Workspace details embedded in the Agent resource.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentWorkspace {
+    pub source: Option<crate::instances::WorkspaceSource>,
     /// Workspace identifier.
     pub id: String,
     /// Display name.
