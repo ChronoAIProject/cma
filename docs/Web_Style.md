@@ -4473,3 +4473,51 @@ availability never starts a file read; revoked authority or an identity change
 withdraws that component. A retained draft is not permission to perform file IO.
 
 | 2026-11-03 | Preserve quarantined file drafts through temporary readiness/authority outages without retaining stale read or write authority. |
+
+### Composed task preview and touch controls (2026-11-03)
+
+When an answer preview cannot fit in the right column, place it in a separate
+30dvh row above the conversation, with the remaining height assigned to the
+conversation and composer. This supersedes the narrow modal preview overlay.
+The preview remains a named complementary region; it does not make the center
+inert or trap focus. Keep the existing 48px header, 16px padding, scrollable body,
+layer-1 background and border-l1 separator. Opening focuses Close preview;
+Escape returns focus to the selected answer card. Drafts, uploaded attachments
+and conversation scroll position remain intact.
+
+In this compact preview layout, cap the draft textarea at the smaller of160px
+and20dvh so a long draft retains usable preview and conversation space. Outside
+the layout its existing height limits remain. Attachment item actions have at
+least44px width and height on coarse pointers or below30rem, including Remove
+and Retry. Preserve their labels, keyboard focus rings and reduced-motion rules.
+
+| 2026-11-03 | Keep the composer reachable beside a compact answer preview and expand attachment touch actions, based on ticket19 actual390px coarse-pointer geometry. |
+
+### Browser observation release ordering (2026-11-03)
+
+Closing or hiding the browser withdraws its frame immediately. Serialize its
+observation and observer release requests, including a rapid reopen, so cleanup
+waits for an already running bounded read before using another IO permit. Stale
+responses never restore a closed or different Agent's frame. Keep the existing
+four-second read deadline and public capacity limits.
+
+| 2026-11-03 | Serialize browser observation cleanup with its pending read after the composed close/reload path exposed a third concurrent IO request. |
+
+Environment revalidation and browser control requests for one Agent wait for
+each other in the Web public-client binding. Browser observation retains its
+separate bounded read. Queued canceled requests do not dispatch; an in-flight
+request settles under the SDK deadline before the next one starts, and canceled
+read results stay withdrawn. Control bodies, revisions and operation identifiers
+remain unchanged; every dispatch uses current public authorization.
+
+| 2026-11-03 | Order environment revalidation and control IO so policy focus refresh cannot crowd out explicit Return to Agent under the unchanged two-permit budget. |
+
+Computer request cancellation withdraws the caller immediately, including while
+waiting for an earlier request. A canceled queued mutation never dispatches.
+Already dispatched requests retain their serialization slot until settlement,
+with a four-second SDK deadline; the caller's total wait is also bounded to four
+seconds. A timed-out control mutation remains uncertain and keeps its original
+operation identity for an authorized status read. The next dispatched request
+resolves current SDK authorization.
+
+| 2026-11-03 | Bound queued computer requests and preserve immediate cancellation and exact uncertain-operation recovery under stalled HTTP responses. |
