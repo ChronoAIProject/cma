@@ -8,10 +8,12 @@ export function SuggestedReplies({
   controller,
   disabled,
   onSend,
+  onEdit,
 }: {
   readonly suggestions: SuggestedReplySet;
   readonly controller: AgentController;
   readonly disabled: boolean;
+  readonly onEdit?: (text: string) => void;
   readonly onSend: (
     text: string,
     accepted: () => void,
@@ -61,50 +63,61 @@ export function SuggestedReplies({
           {status}
         </span>
       )}
-      {suggestions.items.map((item) => (
-        <button
-          type="button"
-          key={item.id}
-          disabled={
-            disabled ||
-            (scopedRequest && retained.state === 'pending') ||
-            (effectiveState !== 'ready' && effectiveState !== 'failed')
-          }
-          onClick={() => {
-            if (
-              (locked.current && effectiveState !== 'failed') ||
+      {suggestions.items.map((item, index) => (
+        <div className="suggested-replies__item" key={item.id}>
+          <button
+            type="button"
+            key={item.id}
+            disabled={
               disabled ||
-              (scopedRequest && retained.state === 'pending')
-            )
-              return;
-            locked.current = true;
-            setState('sending');
-            void Promise.resolve(
-              onSend(
-                item.text,
-                () => {
-                  if (active.current) setState('accepted');
-                },
-                (reason) => {
-                  if (!active.current) return;
-                  locked.current = false;
-                  setState(reason === undefined ? 'failed' : 'expired');
-                },
-              ),
-            ).then(() => {
-              if (!active.current) return;
-              const input = controller.readSuggestionRequest?.();
-              setRequestKey(input?.key);
-              setState((current) =>
-                current === 'accepted' || current === 'expired' || current === 'failed'
-                  ? current
-                  : 'unconfirmed',
-              );
-            });
-          }}
-        >
-          {item.text}
-        </button>
+              (scopedRequest && retained.state === 'pending') ||
+              (effectiveState !== 'ready' && effectiveState !== 'failed')
+            }
+            onClick={() => {
+              if (
+                (locked.current && effectiveState !== 'failed') ||
+                disabled ||
+                (scopedRequest && retained.state === 'pending')
+              )
+                return;
+              locked.current = true;
+              setState('sending');
+              void Promise.resolve(
+                onSend(
+                  item.text,
+                  () => {
+                    if (active.current) setState('accepted');
+                  },
+                  (reason) => {
+                    if (!active.current) return;
+                    locked.current = false;
+                    setState(reason === undefined ? 'failed' : 'expired');
+                  },
+                ),
+              ).then(() => {
+                if (!active.current) return;
+                const input = controller.readSuggestionRequest?.();
+                setRequestKey(input?.key);
+                setState((current) =>
+                  current === 'accepted' || current === 'expired' || current === 'failed'
+                    ? current
+                    : 'unconfirmed',
+                );
+              });
+            }}
+          >
+            {item.text}
+          </button>
+          {onEdit && (
+            <button
+              type="button"
+              aria-label={`Edit suggestion ${index + 1} before sending`}
+              onClick={() => onEdit(item.text)}
+            >
+              Edit before sending
+            </button>
+          )}
+        </div>
       ))}
     </section>
   );
