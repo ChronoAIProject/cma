@@ -6,8 +6,11 @@ use std::sync::Arc;
 /// Secrets and origins used by the channel management plane.
 #[derive(Debug, Clone)]
 pub struct ManagementConfig {
-    /// Legacy browser console authority; remains an origin.
+    /// Retained event identity and legacy API origin.
     pub public_url: String,
+    /// Browser console origin, independently movable from retained identities.
+    /// Defaults to `public_url` when absent.
+    pub console_public_url: Option<String>,
     /// Canonical externally reachable API base, optionally with a path prefix.
     pub public_api_url: String,
     /// Retained exact API bases accepted during domain migration.
@@ -24,6 +27,15 @@ pub struct ManagementConfig {
 impl ManagementConfig {
     pub(super) fn from_env() -> Result<Self, ConfigError> {
         let public_url = required_origin(CMAEG_PUBLIC_URL)?;
+        let console_public_url = match env::var(CMAEG_CONSOLE_PUBLIC_URL) {
+            Ok(value) => Some(validate_origin(CMAEG_CONSOLE_PUBLIC_URL, &value)?),
+            Err(env::VarError::NotPresent) => None,
+            Err(_) => {
+                return Err(ConfigError::InvalidManagement {
+                    detail: format!("{CMAEG_CONSOLE_PUBLIC_URL} must contain a valid origin"),
+                })
+            }
+        };
         let public_api_url = env::var(CMAEG_PUBLIC_API_URL)
             .map(|value| validate_public_api_url(&value))
             .unwrap_or_else(|_| Ok(public_url.clone()))?;
@@ -67,6 +79,7 @@ impl ManagementConfig {
         }
         Ok(Self {
             public_url,
+            console_public_url,
             public_api_url,
             public_api_aliases,
             advertise_public_api_url,
@@ -76,5 +89,11 @@ impl ManagementConfig {
             nyxid_base_url,
             tools_nyxid_slug,
         })
+    }
+
+    pub(crate) fn console_origin(&self) -> &str {
+        self.console_public_url
+            .as_deref()
+            .unwrap_or(&self.public_url)
     }
 }

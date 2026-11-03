@@ -146,6 +146,8 @@ data:
   CMAEG_LISTEN: "0.0.0.0:8090"
   CMAEG_METRICS_LISTEN: "0.0.0.0:9091"
   CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
+  # Register the matching OAuth callback and route /console before enabling.
+  CMAEG_CONSOLE_PUBLIC_URL: "https://cma.nyxid.ai"
   CMAEG_PUBLIC_API_URL: "https://cma.nyxid.ai/event-gateway"
   # Deploy compatibility readers before switching the advertised public API base.
   CMAEG_PUBLIC_API_ALIASES: "https://bot.chrono-ai.fun/event-gateway"

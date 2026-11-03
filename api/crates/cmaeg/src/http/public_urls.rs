@@ -1,4 +1,4 @@
-//! Canonical navigation into the retained console OAuth authority.
+//! Canonical navigation into the configured console OAuth authority.
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -17,7 +17,7 @@ pub(crate) fn router(state: &super::ManagementState) -> Router {
             &format!("{prefix}/legacy-console/channels/{{record}}"),
             get(channel),
         )
-        .with_state(state.public_url.clone())
+        .with_state(state.console_public_url.clone())
 }
 async fn index(State(origin): State<String>) -> Response {
     Redirect::temporary(&format!("{origin}/console")).into_response()

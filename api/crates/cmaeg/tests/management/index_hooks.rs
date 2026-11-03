@@ -40,6 +40,7 @@ async fn create_update_rekey_delete_and_restores_are_reported() {
         plain.records.clone(),
         plain.creator_auth.clone(),
         cmaeg::ManagementConfig {
+            console_public_url: None,
             master_keys: plain.master_keys.clone(),
             public_url: plain.public_url.clone(),
             public_api_url: plain.public_url.clone(),
