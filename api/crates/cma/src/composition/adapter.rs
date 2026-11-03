@@ -11,6 +11,7 @@ pub(super) async fn production_adapter(
     store: Arc<crate::store::MongoSandboxStore>,
     subscriptions: Arc<crate::connections::CodexSubscriptions>,
     access_tools: Arc<dyn layer3_adapter::hosted::HostedAccessToolSource>,
+    provider_tools: Arc<crate::store::MongoProviderToolSource>,
 ) -> Result<ProductionAdapters, String> {
     use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
     use layer3_adapter::hosted::{
@@ -19,7 +20,6 @@ pub(super) async fn production_adapter(
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
 
     let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
-    let provider_tools = crate::store::MongoProviderToolSource::new(store.clone());
 
     let routing_client = mongodb::Client::with_uri_str(&config.mongodb_uri)
         .await

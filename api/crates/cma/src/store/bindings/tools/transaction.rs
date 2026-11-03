@@ -8,6 +8,8 @@ use crate::store::sandbox_mongo::{
 pub(super) enum Operation<'a> {
     Resolve(&'a RuntimeHandle, &'a AgentOpenRequest, u64),
     Confirm(&'a HostedProviderToolBinding, &'a str),
+    Transport(&'a HostedProviderToolBinding, Option<&'a str>, &'a str, u64),
+    Authenticate(&'a str, bool),
 }
 
 impl Operation<'_> {
@@ -15,6 +17,8 @@ impl Operation<'_> {
         match self {
             Self::Resolve(_, request, _) => &request.options.slot.0,
             Self::Confirm(binding, _) => &binding.scope().1.options.slot.0,
+            Self::Transport(binding, ..) => &binding.scope().1.options.slot.0,
+            Self::Authenticate(..) => "relay-capability",
         }
     }
 
@@ -22,6 +26,9 @@ impl Operation<'_> {
         match self {
             Self::Resolve(..) => "resolve",
             Self::Confirm(..) => "confirm_open",
+            Self::Transport(_, Some(_), ..) => "prepare_transport",
+            Self::Transport(_, None, ..) => "confirm_transport",
+            Self::Authenticate(..) => "authenticate_relay",
         }
     }
 }
@@ -29,6 +36,7 @@ impl Operation<'_> {
 pub(super) enum Outcome {
     Resolved(Option<Box<HostedProviderToolBinding>>),
     Confirmed,
+    Authenticated(Box<relay_auth::AuthenticatedProviderTool>),
 }
 
 pub(super) enum Error {
@@ -93,6 +101,14 @@ impl MongoProviderToolSource {
                     .confirm_in(binding, conversation, &mut session)
                     .await
                     .map(|()| Outcome::Confirmed),
+                Operation::Transport(binding, origin, conversation, sequence) => self
+                    .relay_transport_in(binding, origin, conversation, sequence, &mut session)
+                    .await
+                    .map(|binding| Outcome::Resolved(Some(Box::new(binding)))),
+                Operation::Authenticate(capability, setup) => self
+                    .relay_auth_in(capability, setup, &mut session)
+                    .await
+                    .map(|value| Outcome::Authenticated(Box::new(value))),
             };
             let outcome = match result {
                 Ok(outcome) => outcome,
