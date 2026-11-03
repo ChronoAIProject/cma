@@ -40,3 +40,20 @@
   command; real bounded frames follow that navigation and observation reconnection
   retains the same browser context. Production sandbox prerequisites are checked
   before claiming the capability.
+- Detailed current evidence and exact immutable candidate identities:
+  [`15-EVIDENCE.md`](../15-EVIDENCE.md). The actual native development navigation
+  is preserved; all Mac CPU values are now explicitly unknown, with the invalid
+  earlier artifact retained as superseded. Aggregate RSS is not browser working
+  memory. Required Linux live-resource acceptance remains pending.
+- 36 shared browser cases run through real public handlers and both typed SDK
+  corpus dispatchers. The three browser operations are registered in the shared
+  JSON inventory. The parent's separate 14/07 inventory repair is still pending
+  integration; no missing operations are exempted.
+- An own immutable Linux 15 runtime binary now proves actual native Agent
+  command refusals through runtime HTTP/ACP with the pinned provider. Docker's
+  available namespace policy is incompatible with Chromium startup; this is not
+  a conclusion about production gVisor. Parent owns the independent runsc probe.
+- Ticket 08 integration is merged, preserving its previews, the single computer
+  panel selection structure, and both style appendices. Ticket remains
+  **in-progress** until the complete Linux/public/Web chain and resource budget
+  pass; no control/takeover capability is claimed.

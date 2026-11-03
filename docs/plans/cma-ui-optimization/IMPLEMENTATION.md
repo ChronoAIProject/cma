@@ -237,3 +237,11 @@
 - 已断言 13 tracker 与合并前逐字一致，仍为 in-progress，唯一 literal human quality AC 未勾选；没有将 parent AI review 变成人工批准，实际 billed cost 仍为 null/unknown。
 - worker 全 Web 的八项已知集成失败以及 CSS/size/shared JSON inventory/task-status/10 helper 等修复仍由 parent repair 负责；其候选尚未合入本次集成，merger 未重复或掩盖这些检查。原始 skill/Core/format/508-line service/LocalAgentV2 head-404 限制仍分别记录。15 的有界环境验证与独立 `response-compat-repair` 工作未触碰；不宣称全仓或部署绿色。
 - 仅写集成 worktree，无原工作区或其他 worker 源码修改，无 push、PR、部署或外部运行环境操作。
+
+## Ticket 15 contract and native runtime checkpoint（2026-11-03）
+
+- Isolated `codex/cma-ui-15` now includes integration `7cd701d0fe6c2496256a01eca59919ee8d899c82`, preserving 08 previews and all earlier style history. Exact own runtime binary, image, source and test provenance are recorded in `15-EVIDENCE.md`.
+- Browser GET/PUT/DELETE are registered in the shared JSON inventory; 36 actual-handler cases and 36 typed HTTP cases in each SDK pass. The global inventory still exposes the five 14/07 entries assigned to the parent repair; no exemptions or invented coverage were added.
+- Mac actual native two-page evidence is preserved. CPU is null/unknown after rejecting process-tree deltas; sampled aggregate RSS is not isolated browser working memory, and five-second windows are not sustained-load measurements.
+- Own immutable Linux runtime HTTP/ACP now proves two actual native browser-helper refusals under Docker namespace denial. No `--no-sandbox` or production-policy weakening is used. This is not a conclusion about production gVisor: the parent owns an independent runsc feasibility probe.
+- 15 remains in progress. Compatible Linux live navigation, the complete authorized-public-service/Web chain and stable Linux resource acceptance are still required before releasing the 16/17 dependency.
