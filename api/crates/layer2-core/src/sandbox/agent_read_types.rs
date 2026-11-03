@@ -58,6 +58,20 @@ pub struct AgentTranscriptTurn {
     pub outcome: AgentTurnOutcome,
 }
 
+impl AgentTranscriptTurn {
+    pub fn final_answer(&self) -> Option<&AgentTranscriptMessage> {
+        if !matches!(self.outcome, AgentTurnOutcome::Completed { .. }) {
+            return None;
+        }
+        self.messages
+            .iter()
+            .max_by_key(|message| message.sequence)
+            .filter(|message| {
+                message.role == AgentTranscriptRole::Agent && !message.content.trim().is_empty()
+            })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentTranscript {
