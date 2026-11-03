@@ -223,6 +223,9 @@ export function mergeTranscriptSnapshot(
   const activeRunId = useSnapshotState ? snapshot.activeRunId : current.activeRunId;
   return {
     ...result,
+    turnOutcomes: useSnapshotState
+      ? { ...current.turnOutcomes, ...snapshot.turnOutcomes }
+      : { ...snapshot.turnOutcomes, ...current.turnOutcomes },
     turnTiming: Object.fromEntries(
       [
         ...new Set([
