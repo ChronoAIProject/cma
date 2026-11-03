@@ -31,6 +31,7 @@ mod agent_reads_usage;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
+pub mod answer_deliverables;
 mod background_checkpoint;
 pub mod binding;
 pub mod channel_usage;
@@ -43,6 +44,7 @@ mod conversation_fold;
 mod conversation_observation;
 mod conversation_observation_fold;
 pub mod message_feedback;
+pub mod suggestions;
 pub use conversation_observation::{
     AgentDescriptionSource, AgentObservations, AgentRuntimeMetadata, AgentTurnUsage,
     AgentUsageCheckpoint,
