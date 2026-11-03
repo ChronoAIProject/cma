@@ -14,6 +14,8 @@ use tower::ServiceExt;
 
 #[path = "document_tests.rs"]
 mod document_tests;
+#[path = "deliverable_tests.rs"]
+mod deliverable_tests;
 
 struct Stub {
     bearer: String,

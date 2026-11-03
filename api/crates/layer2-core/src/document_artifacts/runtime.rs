@@ -39,6 +39,41 @@ impl RuntimeGuard<'_> {
     }
 }
 impl DocumentService {
+    pub async fn deliverable_for_agent(
+        &self,
+        auth: &dyn AgentAccessToolAuthenticator,
+        capability: &str,
+        id: &str,
+        revision: u64,
+    ) -> Result<crate::sandbox::answer_deliverables::DeliverableDescription, DocumentError> {
+        use crate::sandbox::answer_deliverables::{DeliverableDescription, DeliverableReference};
+        let requester = auth
+            .authenticate(capability)
+            .await
+            .map_err(authority_error)?;
+        let guard = RuntimeGuard {
+            auth,
+            capability,
+            requester,
+        };
+        let record = self.authorize(&guard.caller(), id, None, false).await?;
+        guard.validate(Some(&record)).await?;
+        let metadata = record
+            .revisions
+            .iter()
+            .find(|item| item.metadata.revision == revision)
+            .ok_or(DocumentError::NotFound)?;
+        let reference = DeliverableReference::document(
+            guard.requester.agent_id.clone(),
+            id.into(),
+            &metadata.metadata,
+        );
+        let marker = reference.marker().map_err(|_| DocumentError::Invalid)?;
+        let current = self.authorize(&guard.caller(), id, None, false).await?;
+        guard.validate(Some(&current)).await?;
+        Ok(DeliverableDescription { reference, marker })
+    }
+
     /// Publish on behalf of the currently authenticated runtime owner. Caller
     /// supplied provenance is replaced with the exact confirmed Agent identity.
     pub async fn create_for_agent(
