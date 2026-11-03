@@ -255,16 +255,29 @@ or database service changes are needed.
 | Feedback reasons and old vote shared handlers | 1 passed / **26 cases**, then 1 passed / **18 cases** | `feedback-reasons-final-public.log`, `message-feedback-final-public.log` |
 | TypeScript full shared corpus + delivery/feedback SDK regressions | **3 files / 2,809 tests passed**, including 2,797 shared-harness tests | `deliveries-feedback-sdk-ts-final.log` |
 | Rust full shared typed corpus | 1 passed; **2,348 typed HTTP, 176 typed preflight, 241 unrepresentable wire shapes, 27 browser-owned** cases | `deliveries-sdk-rust-final.log` |
-| SDK TypeScript typecheck and changed-test lint | passed | `deliveries-sdk-ts-typecheck-final.log`, `deliveries-sdk-ts-lint.log` |
-| Unchanged source-size gate | Only the original 508-line `agent_operation_service.rs` remains; **1 / 4,472** files reported | `file-size-deliveries-feedback.log` |
+| SDK TypeScript typecheck, changed-test lint and formatting | passed | `deliveries-sdk-ts-typecheck-final.log`, `deliveries-sdk-ts-lint.log`, `deliveries-sdk-ts-format.log` |
+| Unchanged source-size gate before 08 | Only the original 508-line `agent_operation_service.rs` remains; **1 / 4,472** files reported | `file-size-deliveries-feedback.log` |
 
-Latest integration `a2965df09581de5fa0fa35af54b69db56cd83ab9` is already included
-through `afae935e3`; a final merge/check targets the integration branch from this
-worktree only. All incoming 07/10/13 routes and cases remain present. Ticket 15's
-new browser operations remain its worker's responsibility and are not part of
-this integration tip. This follow-up changes no frontend source; the prior full
-Web result **330 files / 2,974 tests** remains the latest Web evidence and was
-not rerun unnecessarily.
+The repair code commit is `5d957af04`. During the final merge, integration advanced
+to `7cd701d0fe6c2496256a01eca59919ee8d899c82` with ticket 08's preview work. Merge
+`bdf59333e` incorporates it cleanly in this worktree (`merge-final-owned.log`),
+also retaining the required `a2965df09` ancestry. All incoming 07/10/13 routes and
+cases remain present. Ticket 15's new browser operations remain its worker's
+responsibility and are not part of this integration tip.
+
+The incoming preview changes received focused composition validation:
+**8 files / 85 Web tests passed**, including preview, delivery, AppPublic, task
+home and REST checks (`preview-merge-web.log`); Web typecheck and the unchanged
+CSS gate passed, now **899 classes / 3 existing exceptions**
+(`preview-merge-typecheck.log`, `preview-merge-css.log`). The exact shared inventory
+passed again at **235/235** (`preview-merge-inventory.log`). The size gate now
+reports only the original service, **1 / 4,480 files**
+(`preview-merge-file-size.log`). This worker changes no additional frontend source;
+the prior complete Web run **330 files / 2,974 tests** plus this focused merge
+check remain the Web evidence. No complete Web rerun was needed. The committed
+range secret scan passes (`gitleaks-deliveries-final.log`); `git diff --check`
+passes. The repair-only manifest is also saved as `repair-manifest.txt` alongside
+the logs.
 
 The query-probe database and the failed-red fixture database
 `cma_804_shared_provenance_corrupt_5560_0` were dropped after verifying the unique
@@ -291,7 +304,7 @@ occurred.
 
 ## Repair manifest
 
-40 paths differ from integration `a2965df09581de5fa0fa35af54b69db56cd83ab9`.
+40 paths differ from integration `7cd701d0fe6c2496256a01eca59919ee8d899c82`.
 Incoming feature changes are excluded from this repair-only manifest.
 
 ```text
