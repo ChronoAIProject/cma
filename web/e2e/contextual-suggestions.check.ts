@@ -123,6 +123,42 @@ for (const width of [1440, 320]) {
   }
 }
 
+test('edits a saved generated result through the existing composer', async ({
+  page,
+  baseURL,
+}, info) => {
+  const fixture = await open(page, baseURL!);
+  await page.route('**/api/v1/agents/agt_contract/suggestions?*', (route) =>
+    route.fulfill({ json: saved }),
+  );
+  try {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.goto('/agents/agt_contract');
+    await expect(page.getByRole('button', { name: text, exact: true })).toBeEnabled();
+    await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
+    await page.getByRole('button', { name: 'Edit suggestion 1 before sending' }).click();
+    const field = page.getByRole('textbox', { name: 'Message', exact: true });
+    await expect(field).toHaveValue(text);
+    await expect(field).toBeFocused();
+    expect(fixture.writes).toEqual([]);
+    const edited = 'Explain a nightly SQLite backup schedule for my offline notes app.';
+    await field.fill(edited);
+    await page.screenshot({ path: info.outputPath('saved-result-edited.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await expect.poll(() => fixture.writes.length).toBe(1);
+    expect(fixture.writes[0]!.body).toEqual({
+      input: edited,
+      stream: true,
+      answer_context: saved.set.scope,
+    });
+    await expect(field).toHaveValue('');
+    await expect(page.getByRole('region', { name: 'Next you can ask' })).toHaveCount(0);
+    expect(fixture.errors).toEqual([]);
+  } finally {
+    await fixture.close(page);
+  }
+});
+
 test('late answer A never reopens after a confirmed manual message', async ({ page, baseURL }) => {
   const fixture = await open(page, baseURL!);
   let release = () => {};
