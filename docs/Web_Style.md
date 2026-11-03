@@ -3834,3 +3834,48 @@ statuses remain visible. At widths up to 30rem or on coarse pointers, keep all
 actions visible with at least 44px targets. Negative-reason details are separate.
 
 | 2026-11-03 | Restrict owner feedback to completed final answers; specify confirmed toggle/undo, exact retry, read recovery, permission isolation and accessible desktop/mobile status controls for ticket 09. |
+
+### Answer deliverables (2026-11-03)
+
+Only a completed turn's final recorded Agent answer may show its explicitly
+referenced deliverables. The public answer query verifies structured references
+against the resource's own authority. Ordinary file names, code spans, directory
+contents and another answer's resources never create cards. The machine reference
+marker is hidden from rendered prose; quoted examples remain ordinary text.
+
+Place a semantic list named **Answer deliverables** immediately after the answer
+body and before its existing duration, usage and footer. Use a vertical stack with
+8px gaps and 12px top margin. Each row has 12px padding, a 1px border-l2 edge,
+radius 8, the layer-1 ground, a wrapping 14/20 medium name and 12/18 caption
+metadata. A 16px existing file glyph is decorative. Metadata names **Published
+artifact**, **Live file** or **Document revision N**, followed by the reported
+media type and actual byte count; an absent count says **Size unknown**. Document
+identity never becomes a file path, and a live file is never called a snapshot.
+
+Use the existing compact outline Button for **Download <name>** and compact ghost
+Button for **Retry <name>**. On screens below 30rem, controls have a 44px minimum
+height and wrap below the name rather than widening the reading axis. A pending
+download disables only that row. Errors remain in the row in caption ink with a
+polite status; they never replace the answer, draft or another card. Distinguish
+**File changed since this answer**, **File deleted**, **Document has a newer
+revision; download keeps this revision**, **Not ready**, **Access unavailable**,
+**Exceeds the resource limit**, and **Download failed; retry**. Changed live bytes
+cannot be downloaded as the old result. Document revision changes retain the
+original revision download if current document permission still allows it.
+
+An answer with no structured references renders no loading box or empty space.
+Known references reserve compact loading rows while their public read is pending.
+Only visible answers with explicit reference markers request delivery metadata.
+Immutable resources use authorized metadata reads. A live-file row initially says
+**Verify on download** beside its answer-time size; listing cards never downloads
+all referenced files. Download verifies that row's actual bytes, and Retry checks
+only the selected resource. Narrow conversation shares remain distinct from the
+existing explicitly accepted full-home file grants.
+Late metadata keeps stable resource keys and the existing conversation scroll
+anchor; there is no focus transfer or scroll-to-result. Reads and downloads abort
+on Agent, viewer, client or authorization changes, and late results are discarded.
+Downloads use opaque bytes, verify bounded size and SHA-256 before saving, and
+recheck current access after buffering. They never render executable content or
+publish a private file. Ticket 08 owns preview; the card has no preview action here.
+
+| 2026-11-03 | Add answer-scoped verified deliverable rows, independent download/retry states, explicit live-file versus immutable-version semantics, and mobile controls while preserving reading position and the existing answer footer. |

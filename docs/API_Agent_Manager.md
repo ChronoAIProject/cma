@@ -140,6 +140,32 @@ subset accepts text and `input_text` parts, not OpenAI file/image content parts.
 Each uploaded file is limited to 20 MiB. Published output artifacts have separate
 list/read/download routes; uploads do not automatically publish private files.
 
+Answer deliverables use the final recorded answer's `event:<sequence>` identity,
+its turn sequence and an explicit resource reference. Read
+`GET /api/v1/agents/{id}/answers/{answer_id}/deliverables` only for visible final
+answers containing a `cma-deliverable:v1` marker. The list contains up to 32
+deduplicated items and reads authorized metadata without downloading their bodies.
+`agent_artifact`, `document` plus source revision, and `live_file` plus exact
+home-relative path/hash are distinct identities. This API never publishes files.
+
+Read one item at `.../deliverables/{delivery_id}`. Set `verify=true` for an explicit
+single-item retry that checks actual bytes. A live file initially reports
+`unchecked` (Verify on download); it retains its answer-time size and digest.
+Download at `.../{delivery_id}/download`, verify size and SHA-256, and re-read that
+item's current authorization before saving. A changed live file returns 409;
+a revised document keeps the referenced immutable source revision. Conversation
+visibility does not grant file or document access. Document token links use the
+existing `X-CMA-Document-Share-Token` header in addition to authentication.
+
+The verification endpoint `POST /api/v1/agents/{id}/deliverable-references` accepts
+an explicit resource selector and returns `{reference, marker}`. The runtime
+descriptor tool and document publication receipts supply the same marker. Only
+an unchanged standalone marker in a successful turn's final nonempty Assistant
+message establishes association. File names, code spans and directories do not.
+The answer projection reads at most 128 records after the requested message and
+512 records in its turn, within 4 MiB/15 seconds; it fails closed beyond these
+bounds instead of rebuilding the full conversation.
+
 Read the Agent's model catalogue before updating model, reasoning effort or
 permission mode. Use the settings endpoint and observe `pending` until runtime
 confirmation. For service access, list access requests and approve or deny the
