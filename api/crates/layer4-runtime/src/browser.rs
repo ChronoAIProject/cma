@@ -36,6 +36,8 @@ impl Browser {
         for (name, bytes) in [
             ("mediator.cjs", include_str!("browser/mediator.cjs")),
             ("devtools.cjs", include_str!("browser/devtools.cjs")),
+            ("control.cjs", include_str!("browser/control.cjs")),
+            ("input.cjs", include_str!("browser/input.cjs")),
         ] {
             tokio::fs::write(root.join(name), bytes)
                 .await
