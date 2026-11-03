@@ -107,11 +107,7 @@ impl ControlPlaneComposition {
         ));
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
-        let access_tools = crate::store::MongoAgentAccessToolSource::new(
-            stores.sandbox_model.clone(),
-            &config.public_url,
-            &config.auth_encryption_key,
-        )?;
+        let access_tools = credentials::agent_access_tools(config, &stores)?;
         let adapters = adapter::production_adapter(
             config,
             stores.sandbox_model.clone(),

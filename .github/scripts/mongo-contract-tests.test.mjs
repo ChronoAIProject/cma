@@ -21,7 +21,7 @@ const requiredPrefixes = [
   'store::auth::api_bearer_tests::',
   'store::agent_conversation_store::checkpoint_tests::',
   'store::agent_conversation_store::admission_tests::',
-  'store::agent_access_tools::tests::',
+  'store::agent_access_tools::',
   'store::agent_access_requests::',
   'agent_access_worker::',
   'owner_service_access::',
