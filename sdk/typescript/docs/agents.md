@@ -674,3 +674,21 @@ names and code spans never establish association; this operation does not
 publish private files. Runtime tools also return these verified descriptors.
 Backend answer verification is bounded to 128 subsequent events and a 512-event
 turn within 4 MiB/15 seconds, failing closed rather than reconstructing history.
+
+### Browser observation
+
+Read `agentFiles.environment(agentId)` to obtain the current opaque
+`runtime_incarnation` and browser availability. Browser observation is disabled
+by default. An owner explicitly calls
+`agentBrowser.configure(agentId, runtimeIncarnation, true)`; successful transport
+does not imply that the runtime supports Chromium. Inspect the returned state.
+Enablement applies only to that Agent and runtime incarnation.
+
+`agentBrowser.read(agentId, { runtime_incarnation, observer, context_id }, { signal })`
+returns a bounded observation under current authorization. Reuse one observer
+identifier per mounted viewer, pin the returned context, and abort on Agent,
+account or authorization changes. A decoded frame is fresh for 3000 ms from its
+actual capture time; repeated sequences do not renew freshness. Poll no faster
+than 1000 ms, and call `agentBrowser.release` when hidden or closed. Release does
+not navigate, close or reset the browser. This API provides observation only;
+there is no public input or takeover operation.

@@ -6,6 +6,24 @@
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
 }
+.agent-browser figure {
+  margin: 0;
+}
+.agent-browser img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+}
+.agent-browser figcaption {
+  padding: 8px 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
 .agent-computer[hidden],
 .agent-computer__page[hidden] {
   display: none;

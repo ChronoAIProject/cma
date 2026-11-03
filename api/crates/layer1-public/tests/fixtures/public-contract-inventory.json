@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 235,
+  "openapi_operations": 238,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3313,6 +3313,45 @@
         "deliverable_unavailable",
         "document_not_found",
         "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
+      "required_problems": [
+        "file_conflict",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "not_authenticated",
+        "resource_not_found",
+        "invalid_file_request"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
+      "required_problems": [
+        "file_conflict",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "not_authenticated",
+        "resource_not_found",
+        "resource_forbidden"
+      ]
+    },
+    "DELETE /api/v1/agents/{id}/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
+      "required_problems": [
+        "file_conflict",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "not_authenticated",
+        "resource_not_found",
+        "invalid_file_request"
       ]
     }
   }

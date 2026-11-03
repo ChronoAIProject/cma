@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import { useCmaClient } from '../api/context';
 import { SharedAgentDetails } from '../resources/SharedAgentDetails';
@@ -19,6 +19,7 @@ import {
   useReplaySelection,
   type AgentComputerObservation,
 } from './environment/observation';
+import { BrowserPanel, EnableBrowser } from './environment/BrowserPanel';
 
 export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
 
@@ -57,8 +58,35 @@ export function AgentSidePanel({
   const computerOpen = panel !== undefined && panel !== 'details';
   const environment = useAgentEnvironment(client.files, agentId, computerOpen);
   const features = environment.state.status === 'ready' ? environment.state.value : undefined;
-  const observed = useComputerObservation(observation);
   const replaySelection = useReplaySelection(observation);
+  const selection = useRef<
+    { client: typeof client; agentId: string; tab: AgentPanel; open: boolean } | undefined
+  >(undefined);
+  useEffect(() => {
+    const chosen =
+      selection.current?.client === client && selection.current.agentId === agentId
+        ? selection.current
+        : undefined;
+    if (!computerOpen) {
+      if (chosen) selection.current = { ...chosen, open: false };
+      return;
+    }
+    if (replaySelection && panel === 'activity') {
+      selection.current = { client, agentId, tab: 'activity', open: true };
+      return;
+    }
+    if (!features || chosen?.open) return;
+    const tab =
+      chosen?.tab ??
+      (panel === 'files' && features.browser.state === 'available' ? 'browser' : panel);
+    selection.current = { client, agentId, tab, open: true };
+    if (tab !== panel && panel === 'files') onSelect?.(tab);
+  }, [computerOpen, features, client, agentId, panel, onSelect, replaySelection]);
+  const select = (tab: AgentPanel) => {
+    selection.current = { client, agentId, tab, open: computerOpen };
+    onSelect?.(tab);
+  };
+  const observed = useComputerObservation(observation);
   const operations = shared ? observed : (conversation ?? observed);
   const [visited, setVisited] = useState(false);
   if (filesOpen && !visited) setVisited(true);
@@ -130,7 +158,7 @@ export function AgentSidePanel({
               aria-controls={`computer-page-${tab}`}
               aria-selected={panel === tab}
               tabIndex={panel === tab ? 0 : -1}
-              onClick={() => onSelect?.(tab)}
+              onClick={() => select(tab)}
               onKeyDown={(event) => {
                 if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
                 event.preventDefault();
@@ -140,7 +168,7 @@ export function AgentSidePanel({
                     : event.key === 'End'
                       ? 2
                       : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
-                onSelect?.(tabs[next]);
+                select(tabs[next]);
                 document.getElementById(`computer-tab-${tabs[next]}`)?.focus();
               }}
             >
@@ -264,7 +292,19 @@ export function AgentSidePanel({
           className="agent-computer__page agent-computer__output"
           hidden={panel !== 'browser'}
         >
-          {features ? (
+          {features?.browser.state === 'available' &&
+          features.runtime_incarnation &&
+          client.browser &&
+          (!shared || authorized?.capabilities.includes('view_history') === true) ? (
+            <BrowserPanel
+              key={`${agentId}:${features.runtime_incarnation}`}
+              client={client.browser}
+              agentId={agentId}
+              incarnation={features.runtime_incarnation}
+              active={panel === 'browser'}
+              onReload={environment.reload}
+            />
+          ) : features ? (
             <FeatureAvailability name="Browser" feature={features.browser} />
           ) : (
             <p role="status">
@@ -277,6 +317,18 @@ export function AgentSidePanel({
                     : 'Environment capabilities are unavailable. Try again.'}
             </p>
           )}
+          {!shared &&
+          features?.browser.state === 'not_enabled' &&
+          features.runtime_incarnation &&
+          client.browser ? (
+            <EnableBrowser
+              key={`${agentId}:${features.runtime_incarnation}`}
+              client={client.browser}
+              agentId={agentId}
+              incarnation={features.runtime_incarnation}
+              onEnabled={environment.reload}
+            />
+          ) : null}
           {environment.state.status === 'error' ? (
             <Button size="sm" onClick={environment.reload}>
               Check environment again

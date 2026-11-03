@@ -2,6 +2,7 @@ use layer3_adapter::wire::WireOperation;
 
 pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
     Some(match tag {
+        "browser" => WireOperation::Browser,
         "list_agent_files" => WireOperation::ListAgentFiles,
         "read_agent_file" => WireOperation::ReadAgentFile,
         "write_agent_file" => WireOperation::WriteAgentFile,

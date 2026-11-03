@@ -17,6 +17,19 @@ use std::sync::Arc;
 #[path = "filesystem_runtime.rs"]
 mod runtime;
 
+#[async_trait::async_trait]
+impl layer3_adapter::BrowserAdapter for runtime::Files {
+    async fn browser(
+        &self,
+        _handle: &layer3_adapter::RuntimeHandle,
+        _request: &layer3_adapter::BrowserRequest,
+    ) -> layer3_adapter::Result<layer3_adapter::BrowserReceipt> {
+        Err(layer3_adapter::AdapterError::Unsupported(
+            "deliverable fixture has no browser".into(),
+        ))
+    }
+}
+
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("deliverable_")?;
     assert!([

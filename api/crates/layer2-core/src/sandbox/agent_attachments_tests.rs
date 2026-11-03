@@ -375,6 +375,7 @@ async fn attachment_runtime_writer_requires_actual_capability_and_exact_boot() {
             agent_attachment_upload: mode != 1,
             agent_skill_install: false,
             agent_model_catalog: false,
+            agent_browser: false,
             sandbox_id: "sbx_test".into(),
             generation: 1,
             home_identity: home.attachment().unwrap().identity().unwrap(),

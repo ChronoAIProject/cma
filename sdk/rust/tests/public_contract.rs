@@ -1,3 +1,5 @@
+#[path = "public_contract/agent_browser.rs"]
+mod agent_browser;
 #[path = "public_contract/agent_events_v2.rs"]
 mod agent_events_v2;
 #[path = "public_contract/bindings.rs"]
@@ -30,7 +32,9 @@ use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.contains("/deliverable-references") || op.contains("/deliverables") {
+    if op.ends_with("/browser") && op.contains("/api/v1/agents/") {
+        agent_browser::dispatch(c).await
+    } else if op.contains("/deliverable-references") || op.contains("/deliverables") {
         deliverables::dispatch(c, corpus).await
     } else if op.contains("/api/v1/documents") {
         documents::dispatch(c).await

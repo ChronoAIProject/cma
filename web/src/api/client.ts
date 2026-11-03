@@ -31,6 +31,7 @@ import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
 import type { AgentFilesClient } from './agentFiles';
+import type { AgentBrowserClient } from '@chronoai/cma-sdk';
 import type { DocumentsClient } from './documents';
 
 export interface ReadOptions {
@@ -191,6 +192,7 @@ export interface CmaWebClient {
   ) => Promise<import('./feedbackTypes').FeedbackDetails>;
   readonly documents?: DocumentsClient;
   readonly files?: AgentFilesClient;
+  readonly browser?: AgentBrowserClient;
   readonly readMessageFeedback?: (
     agentId: string,
     options?: ReadOptions,

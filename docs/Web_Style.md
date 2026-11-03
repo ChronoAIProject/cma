@@ -4346,3 +4346,31 @@ are unavailable in the replay view. Completed turns and plan cards can open
 Permission changes clear the selected content before another authorized read.
 
 | 2026-11-03 | Define durable operation record replay, keyboard navigation, exact Live return, recorded-only snapshots, scoped reload and read-only history for ticket 18. |
+
+### Agent browser observation (2026-11-03)
+
+An explicitly enabled Agent browser selects Browser on the first Computer opening,
+unless the user has selected another tab. The panel remains observation only. Use
+the existing tabs, caption typography, secondary text and semantic state tokens.
+Show the bounded real image at its 16:9 aspect ratio with contained scaling; never
+draw a replacement browser, an illustrative page, or a command field.
+
+The image caption contains the sanitized location and actual capture time. **Live**
+requires a decoded frame captured within three seconds; duplicates never renew its
+age and lower sequences never replace it. A failed read or expired frame changes
+the caption to **Last frame · Reconnecting…**. Loading, not enabled, unsupported,
+paused, forbidden and disconnected remain distinct. Owner-only **Enable browser**
+is an explicit command, with visible pending and failure states. Closing or hiding
+observation releases it without navigating, reopening a task or resetting its page.
+Agent, account, runtime or permission changes remove the old image immediately.
+
+| 2026-11-03 | Define bounded real browser observation, fresh decoded Live state, explicit enablement and scoped withdrawal for ticket 15. |
+
+Reopening Computer for the same Agent retains the selected tab. Explicitly
+choosing Files or Operation output takes precedence over the Browser default.
+
+| 2026-11-03 | Retain the selected Computer tab across closing and reopening observation. |
+
+### 2026-11-03 — Browser default and explicit operation replay
+
+An explicitly selected operation record keeps the Computer on Operation output, including after closing and reopening. The enabled Browser default applies only when no prior selection exists and the generic Computer opens Files. Browser observation and operation history remain independent sources; replay never substitutes a historical browser image.
