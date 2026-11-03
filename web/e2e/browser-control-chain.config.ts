@@ -9,4 +9,11 @@ export default defineConfig({
   testMatch: ['browser-control-chain.check.ts'],
   timeout: 180000,
   outputDir: process.env.CMA_BROWSER_RELAY_DIRECTORY + '/web',
+  use: {
+    ...observation.use,
+    launchOptions: {
+      executablePath: process.env.CMA_E2E_BROWSER_PATH,
+      chromiumSandbox: true,
+    },
+  },
 });
