@@ -56,7 +56,7 @@ async fn serve_actual_runtime_browser_public_chain() {
     let mut servers = Vec::new();
     let mut origins = serde_json::Map::new();
     for kind in ["owner", "foreign", "viewer"] {
-        let mut runtime = super::runtime::Files::new("native_browser_chain");
+        let mut runtime = super::runtime::Files::new("browser_native_chain");
         runtime.browser_relay = Some(directory.clone());
         let fixture = super::scenario_with_runtime_boot(
             &format!("filesystem_{kind}"),
