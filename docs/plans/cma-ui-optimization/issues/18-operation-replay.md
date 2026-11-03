@@ -4,7 +4,7 @@
 
 **Blocked by:** 14（电脑面板及已授权的操作数据范围）。
 
-**Status:** ready-for-agent
+**Status:** in-progress — `codex/cma-ui-18`，基于集成 `d19c225bd`；U/A/R 按原验收条款执行。
 
 **优先级:** P3
 
