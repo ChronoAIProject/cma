@@ -94,7 +94,7 @@ export function useAgentActions({
       approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
       onAccepted?: (receipt?: MessageAcceptance) => void,
       onReceiptObserved?: (receipt: MessageAcceptance) => void,
-      onRefused?: (reason?: 'answer_changed') => void,
+      onRefused?: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
       mode: 'send' | 'steer' | 'interrupt' = 'send',
       onOrdinaryInput?: () => void,
       answerContext?: AnswerContext,
@@ -260,6 +260,22 @@ export function useAgentActions({
         if (
           !controller.signal.aborted &&
           currentContext.current === context &&
+          session !== undefined &&
+          answerContext &&
+          !accepted &&
+          error instanceof ApiError &&
+          error.status === 422 &&
+          error.code === 'responses_field_unsupported'
+        ) {
+          onRefused?.('suggestions_unavailable');
+          setActionError(
+            'Suggested replies are unavailable on this server. Continue in the message composer.',
+          );
+          return;
+        }
+        if (
+          !controller.signal.aborted &&
+          currentContext.current === context &&
           legacyKey &&
           !accepted &&
           error instanceof ApiError &&
@@ -325,6 +341,7 @@ export function useAgentActions({
       actionKindRef,
       errorMessage,
       onIdentityChange,
+      options.viewerId,
       replayAbortRef,
       setActionError,
       setPending,

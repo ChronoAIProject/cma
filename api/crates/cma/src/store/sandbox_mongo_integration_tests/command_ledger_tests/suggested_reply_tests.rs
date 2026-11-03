@@ -7,6 +7,7 @@ async fn suggested_reply_mongo_replicas_admit_one_scope_and_recover_its_original
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let parent = active_sandbox("sbx_suggestion");
     let mut agent = ready_agent(&parent, "agt_suggestion");
+    agent.conversation.last_seq = 0;
     store.create_sandbox(parent.clone()).await.unwrap();
     store.create_agent(agent.clone()).await.unwrap();
     for kind in [

@@ -15,7 +15,7 @@ export function SuggestedReplies({
   readonly onSend: (
     text: string,
     accepted: () => void,
-    refused: (reason?: 'answer_changed') => void,
+    refused: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
   ) => void | Promise<void>;
 }) {
   const active = useRef(true);
@@ -47,7 +47,7 @@ export function SuggestedReplies({
   if (
     state === 'accepted' ||
     state === 'expired' ||
-    (requestKey !== undefined && retained?.key === requestKey && retained.state === 'accepted')
+    (scopedRequest && retained.state === 'accepted')
   )
     return null;
   return (
@@ -88,7 +88,7 @@ export function SuggestedReplies({
                 (reason) => {
                   if (!active.current) return;
                   locked.current = false;
-                  setState(reason === 'answer_changed' ? 'expired' : 'failed');
+                  setState(reason === undefined ? 'failed' : 'expired');
                 },
               ),
             ).then(() => {
