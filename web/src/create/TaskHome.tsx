@@ -233,7 +233,7 @@ function TaskComposer({
         </p>
       ) : null}
       {intent ? (
-        <section aria-label="Retained task">
+        <section aria-label="Submitted task">
           <h2>Submitted task</h2>
           <pre>{intent.body.initial_message}</pre>
           {intent.body.repository ? (
