@@ -28,6 +28,12 @@
 .agent-toolbar__actions {
   flex: none;
 }
+.agent-toolbar__completion {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
 .agent-toolbar__progress {
   display: flex;
   align-items: center;
@@ -136,6 +142,10 @@
     min-height: 44px;
   }
   .agent-toolbar__progress {
+    order: 1;
+    flex-basis: 100%;
+  }
+  .agent-toolbar__completion {
     order: 1;
     flex-basis: 100%;
   }
