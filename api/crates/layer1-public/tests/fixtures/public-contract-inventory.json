@@ -1,7 +1,15 @@
 {
   "version": 1,
-  "openapi_operations": 233,
+  "openapi_operations": 238,
   "operations": {
+    "GET /api/v1/agents/{id}/environment": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_environment.rs# Authorized read-only Agent environment observations preserve file scope and explicit feature availability without contacting the runtime.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
     "GET /api/v1/organizations": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/organizations.rs# Authenticated current organization choices contain presentation roles and no reusable resource evidence.",
@@ -3265,6 +3273,46 @@
         "invalid_agent_request",
         "feedback_version_conflict",
         "invalid_json"
+      ]
+    },
+    "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/deliverable-references": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "deliverable_unavailable",
+        "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "deliverable_not_found",
+        "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "deliverable_changed",
+        "deliverable_unavailable",
+        "document_not_found",
+        "not_authenticated"
       ]
     },
     "GET /api/v1/agents/{id}/browser": {

@@ -1,5 +1,5 @@
 use super::{agent_log::read_entry, sandbox_mongo::MongoSandboxStore};
-use layer2_core::sandbox::{store::SandboxStoreError, Agent, AgentTaskStatus};
+use layer2_core::sandbox::{store::SandboxStoreError, Agent, AgentStatus, AgentTaskStatus};
 use mongodb::{bson::doc, ClientSession};
 
 pub(super) async fn read(
@@ -7,6 +7,9 @@ pub(super) async fn read(
     agent: &Agent,
     session: &mut ClientSession,
 ) -> Result<AgentTaskStatus, SandboxStoreError> {
+    if agent.status != AgentStatus::Ready {
+        return Ok(AgentTaskStatus::from_latest(agent, None, false));
+    }
     let document = store.agent_log.find_one(doc! {
         "agent_id": agent.id.as_str(),
         "record.kind.type": { "$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"] },
