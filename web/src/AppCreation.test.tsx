@@ -7,6 +7,7 @@ import { createMockAuthProvider } from './auth/mock';
 import { CmaClientProvider } from './api/context';
 import { agentClient } from './test/agent';
 import { creationClient } from './test/creation';
+import { taskExperience } from './test/taskExperience';
 import {
   AGENT_PROFILE,
   OWN_PROFILES,
@@ -78,7 +79,11 @@ it('creates the Agent in the Workspace whose row opened New agent', async () => 
   render(
     <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
       <CmaClientProvider
-        client={agentClient({ createAgentLifecycle, readTaskCreationSupport: async () => true })}
+        client={agentClient({
+          createAgentLifecycle,
+          readTaskCreationSupport: async () => true,
+          taskExperience: taskExperience('mock-subject'),
+        })}
         creation={creationClient()}
       >
         <App />

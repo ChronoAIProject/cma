@@ -46,6 +46,7 @@ data:
   # Additional gates still require their own canary verification.
   # New file admissions only; supporting readers/workers must precede enablement.
   CHRONO_V2_UI_TRANSPORT_ENABLED: "true"
+  CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"

@@ -7,6 +7,7 @@ import { creationClient } from '../test/creation';
 import type { AgentLifecycleOperationView, CmaWebClient } from '../api/client';
 import { connectionClient, type ConnectionReport } from '../connections/client';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
+import { taskExperience } from '../test/taskExperience';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { CreationFlow } from './CreationFlow';
 
@@ -210,6 +211,7 @@ it('keeps contextual Agent creation in the selected workspace and recovers only 
   const client = agentClient({
     readWorkspace: async () => workspaceFixture(),
     readTaskCreationSupport: async () => true,
+    taskExperience: taskExperience('owner'),
     createAgentLifecycle: create,
     readAgentLifecycle: async () => running,
   });
@@ -331,6 +333,7 @@ it('retains the contextual Sandbox and keeps its recovery separate from global c
   const client = agentClient({
     createAgentLifecycle: create,
     readTaskCreationSupport: async () => true,
+    taskExperience: taskExperience('owner'),
   });
   const draw = () =>
     render(

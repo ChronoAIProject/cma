@@ -103,3 +103,20 @@ Select default capacity only when both digests are `Some` and equal;
 matching only image and resources can select a retained older policy.
 Use a new idempotency key to create a target after policy changes. Replaying an
 old key and resizing an old target preserve that target's original policy.
+
+## Task experience policy
+
+`client.read_task_experience().await?` dispatches authenticated
+`GET /api/v2/ui/task-experience` without caching. The version1 `TaskExperience`
+contains only the caller's `account_id` and `TaskExperienceCapabilities` booleans:
+`task_home_admission`, `suggested_followup_admission`, `desktop_enable`,
+`browser_takeover`, `replay_presentation`. Invalid or unsupported schema replies
+return `Error::Protocol`. Fence replies to the current identity; refresh policy
+after identity/focus changes. Unsupported servers do not prevent ordinary manual
+conversation and never implicitly enable the new features.
+
+Policy permissions are separate from real environment capability and per-request
+resource authorization. Closing admission preserves original accepted request
+recovery, keys and records. Browser status/receipt recovery and explicit return
+remain available while new acquire/input/renew is disabled. Replay is presentation
+only; authorized history remains readable. Native lease behavior is unchanged.
