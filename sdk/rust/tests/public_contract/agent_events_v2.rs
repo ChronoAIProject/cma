@@ -6,6 +6,12 @@ use cma_sdk::{
 
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let api = c.client.agent_events_v2();
+    let tool_output = c
+        .case
+        .request
+        .headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("prefer") && value == "cma-tool-output");
     match c.case.operation.as_str() {
         "GET /api/v2/agents/{agent_id}/events/head" => c.check(api.head(c.param("agent_id")).await),
         "GET /api/v2/ui/transport" => c.check(api.read_transport_eligibility().await),
@@ -13,7 +19,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
             api.snapshot(
                 c.param("agent_id"),
                 &SnapshotOptions {
-                    tool_output: false,
+                    tool_output,
                     limit: c.number("limit")?,
                     page_cursor: c.q("page_cursor").map(AgentPageCursor::parse).transpose()?,
                 },
@@ -25,7 +31,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .events(
                     c.param("agent_id"),
                     &TailOptions {
-                        tool_output: false,
+                        tool_output,
                         after_cursor: c.q("after_cursor").map(AgentCursor::parse).transpose()?,
                         last_event_id: c
                             .case
