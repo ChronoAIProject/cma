@@ -100,6 +100,7 @@ export function useMessageFeedback(
       ...current,
       reasons,
       reload: () => {
+        if (active.current !== scope) return;
         setState((previous) => ({ ...previous, ready: false }));
         setRevision((value) => value + 1);
       },

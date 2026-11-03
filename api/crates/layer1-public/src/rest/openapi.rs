@@ -1,6 +1,7 @@
 use utoipa::OpenApi;
 pub mod agent_delegations;
 mod agent_manager;
+mod composition;
 mod identity;
 mod projections;
 use self::projections::{
@@ -487,16 +488,7 @@ use super::trigger_openapi_shapes::*;
     )
 )]
 struct ApiDoc;
-pub fn document() -> utoipa::openapi::OpenApi {
-    let mut document = ApiDoc::openapi();
-    document.merge(super::documents::document());
-    document.merge(super::message_feedback::document());
-    document.merge(crate::responses::document());
-    document.merge(crate::agui::document());
-    document.merge(crate::agent_v2::document());
-    identity::secure_operations(&mut document);
-    document
-}
 pub use agent_manager::document as agent_manager_document;
+pub use composition::document;
 #[cfg(test)]
 mod tests;
