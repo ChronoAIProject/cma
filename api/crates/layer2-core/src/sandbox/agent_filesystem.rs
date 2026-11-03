@@ -81,7 +81,6 @@ impl AgentFileService {
         use super::agent_environment::{
             AgentEnvironment, EnvironmentAvailability as State, EnvironmentFeature,
         };
-        use sha2::{Digest, Sha256};
         let authorized = self
             .authorize(
                 caller,
@@ -111,21 +110,10 @@ impl AgentFileService {
         let writable = matches!(state, State::Available)
             && require_home_mutation(&authorized, &caller.subject).is_ok();
         let history = authorized.decision.allows(ResourceCapability::ViewHistory);
-        let runtime_incarnation = sandbox.runtime.as_ref().and_then(|runtime| {
-            let boot = runtime.boot_id.as_ref()?;
-            let generation = runtime.provision_generation?;
-            let mut digest = Sha256::new();
-            digest.update(b"cma-agent-environment-v1\0");
-            digest.update(agent_id.as_str());
-            digest.update([0]);
-            digest.update(generation.to_be_bytes());
-            digest.update(boot);
-            Some(format!("{:x}", digest.finalize()))
-        });
         Ok(AgentEnvironment {
             agent_id: agent_id.to_string(),
             policy_revision: authorized.snapshot.fence().policy_revision,
-            runtime_incarnation,
+            runtime_incarnation: AgentEnvironment::incarnation(agent_id, sandbox),
             revalidate_at: authorized.decision.revalidate_at.map(crate::rfc3339_at),
             files: EnvironmentFeature {
                 state,
@@ -133,22 +121,9 @@ impl AgentFileService {
                 scope: "mounted_home",
                 writable,
             },
-            operation_output: EnvironmentFeature {
-                state: if history {
-                    State::Available
-                } else {
-                    State::Forbidden
-                },
-                reason: if history {
-                    "recorded_output_only"
-                } else {
-                    "view_history_required"
-                },
-                scope: "agent_turn_history",
-                writable: false,
-            },
+            operation_output: EnvironmentFeature::history(history, "recorded_output_only"),
             browser: EnvironmentFeature::unsupported(),
-            replay: EnvironmentFeature::unsupported(),
+            replay: EnvironmentFeature::history(history, "operation_records_only"),
             control: EnvironmentFeature::unsupported(),
         })
     }
