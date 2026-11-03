@@ -4,7 +4,7 @@
 
 **Blocked by:** None（已有消息级 vote 契约可复用）。
 
-**Status:** draft-review
+**Status:** ready-for-agent
 
 **优先级:** P0
 
@@ -19,7 +19,7 @@
 - [ ] 桌面 hover/focus 可访问，选中及反馈状态始终可见；移动端入口常显且热区至少 44px，成功/失败可被读屏播报。
 - [ ] 兼容历史 up/down/null 客户端和既有已存评价，不能因收紧前端入口而删除历史记录。
 
-## Testing boundaries（待确认）
+## Testing boundaries（2026-11-03 已确认）
 
 - **U/A：** 最终回答→评价→公开读取恢复，核对原会话未新增 turn；验证 streaming、中间消息、只读及换号。不能判断回答本身正确性。
 - **真实浏览器：** 选中状态、触控热区、键盘焦点和状态播报；不会把点击次数作为持久化成功断言。
