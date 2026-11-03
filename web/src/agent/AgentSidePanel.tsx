@@ -11,9 +11,14 @@ import { Button } from '../ui/Button';
 import './files/AgentFiles.css';
 import type { ConversationState } from './model';
 import { OperationOutput } from './environment/OperationOutput';
+import { OperationReplay } from './environment/OperationReplay';
 import './environment/AgentComputer.css';
 import { FeatureAvailability, useAgentEnvironment } from './environment/availability';
-import { useComputerObservation, type AgentComputerObservation } from './environment/observation';
+import {
+  useComputerObservation,
+  useReplaySelection,
+  type AgentComputerObservation,
+} from './environment/observation';
 import { BrowserPanel, EnableBrowser } from './environment/BrowserPanel';
 
 export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
@@ -53,6 +58,7 @@ export function AgentSidePanel({
   const computerOpen = panel !== undefined && panel !== 'details';
   const environment = useAgentEnvironment(client.files, agentId, computerOpen);
   const features = environment.state.status === 'ready' ? environment.state.value : undefined;
+  const replaySelection = useReplaySelection(observation);
   const selection = useRef<
     { client: typeof client; agentId: string; tab: AgentPanel; open: boolean } | undefined
   >(undefined);
@@ -65,17 +71,23 @@ export function AgentSidePanel({
       if (chosen) selection.current = { ...chosen, open: false };
       return;
     }
+    if (replaySelection && panel === 'activity') {
+      selection.current = { client, agentId, tab: 'activity', open: true };
+      return;
+    }
     if (!features || chosen?.open) return;
-    const tab = chosen?.tab ?? (features.browser.state === 'available' ? 'browser' : panel);
+    const tab =
+      chosen?.tab ??
+      (panel === 'files' && features.browser.state === 'available' ? 'browser' : panel);
     selection.current = { client, agentId, tab, open: true };
     if (tab !== panel && panel === 'files') onSelect?.(tab);
-  }, [computerOpen, features, client, agentId, panel, onSelect]);
+  }, [computerOpen, features, client, agentId, panel, onSelect, replaySelection]);
   const select = (tab: AgentPanel) => {
     selection.current = { client, agentId, tab, open: computerOpen };
     onSelect?.(tab);
   };
-  const observed = useComputerObservation(shared ? observation : undefined);
-  const operations = shared ? observed : conversation;
+  const observed = useComputerObservation(observation);
+  const operations = shared ? observed : (conversation ?? observed);
   const [visited, setVisited] = useState(false);
   if (filesOpen && !visited) setVisited(true);
   // Shared file access is independently renewed and never inferred from a visible toolbar.
@@ -238,6 +250,33 @@ export function AgentSidePanel({
             </>
           ) : features?.operation_output.state === 'forbidden' ? (
             <FeatureAvailability name="Operation output" feature={features.operation_output} />
+          ) : client.operationReplay &&
+            client.files?.environment &&
+            environment.state.status !== 'ready' ? (
+            <>
+              <p role="status">
+                {environment.state.status === 'loading'
+                  ? 'Checking operation history access…'
+                  : 'Operation history access could not be checked. Try again.'}
+              </p>
+              {environment.state.status === 'error' ? (
+                <Button size="sm" onClick={environment.reload}>
+                  Check history access again
+                </Button>
+              ) : null}
+            </>
+          ) : features?.replay.state === 'available' &&
+            client.operationReplay &&
+            panel === 'activity' ? (
+            <OperationReplay
+              key={`${agentId}:${observation?.scope.subject}:${features.policy_revision}`}
+              reader={client.operationReplay}
+              agentId={agentId}
+              scope={observation?.scope.subject ?? 'owner'}
+              toolCalls={operations?.toolCalls}
+              selection={replaySelection}
+              onSelectionHandled={observation?.clearReplaySelection}
+            />
           ) : (
             <OperationOutput
               toolCalls={operations?.toolCalls}
