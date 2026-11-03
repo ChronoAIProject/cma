@@ -145,6 +145,9 @@ async fn computer_environment_public_route_preserves_file_scope_and_denies_forei
 }
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if name.starts_with("browser_") {
+        return browser_cases::scenario(name).await;
+    }
     let kind = name.strip_prefix("filesystem_")?;
     scenario_with_runtime(name, Arc::new(runtime::Files::new(kind))).await
 }
