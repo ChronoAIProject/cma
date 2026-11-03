@@ -68,7 +68,10 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   };
   return {
     documents: documentsClient(),
-    files: agentFilesClient(),
+    files: {
+      ...agentFilesClient(),
+      environment: (id, options) => sdk.agentFiles.environment(id, options),
+    },
     updateSandboxRuntime: async (id, targetVersion, options) => {
       const result = await sdk.sandboxes.updateRuntime(
         id,
@@ -224,7 +227,11 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       };
     },
     readAgentEvents: async (id, options) => {
-      const page = await sdk.agents.events(id, { after: options?.cursor, signal: options?.signal });
+      const page = await sdk.agents.events(id, {
+        after: options?.cursor,
+        signal: options?.signal,
+        toolOutput: true,
+      });
       return {
         items: page.items.map((event) => ({
           seq: event.seq,

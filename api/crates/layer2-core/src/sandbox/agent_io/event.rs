@@ -81,6 +81,12 @@ pub enum AgentEventKind {
         call_id: String,
         status: String,
         title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<super::super::RecordedToolOutput>,
+    },
+    ToolOutputReported {
+        call_id: String,
+        output: super::super::RecordedToolOutput,
     },
     ApprovalRequested {
         approval_id: String,
@@ -212,11 +218,16 @@ impl From<AgentLogEntry> for AgentEvent {
                 call_id,
                 status,
                 title,
+                output,
             } => AgentEventKind::ToolUpdated {
                 call_id,
                 status,
                 title,
+                output,
             },
+            AgentLogKind::ToolOutputReported { call_id, output } => {
+                AgentEventKind::ToolOutputReported { call_id, output }
+            }
             AgentLogKind::ApprovalRequested {
                 approval_id,
                 action,
