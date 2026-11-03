@@ -13,6 +13,7 @@ import {
 
 export const agentLifecycleCreateRequest = object({
   name: text,
+  initial_message: optional(text),
   workspace_id: optional(text),
   sandbox_id: optional(text),
   image: optional(object({ id: text, version: optional(text) })),
