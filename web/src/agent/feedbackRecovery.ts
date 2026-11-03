@@ -8,6 +8,8 @@ function key(agentId: string, viewerId: string) {
 
 export function pendingFeedback(agentId: string, viewerId: string): Record<string, MessageVote> {
   const scope = key(agentId, viewerId);
+  const retained = fallback.get(scope);
+  if (retained) return retained;
   try {
     const value: unknown = JSON.parse(sessionStorage.getItem(scope) ?? '{}');
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -32,11 +34,11 @@ export function retainFeedback(
   const entries = { ...pendingFeedback(agentId, viewerId) };
   if (vote === undefined) delete entries[messageId];
   else entries[messageId] = vote;
-  fallback.set(scope, entries);
   try {
     if (Object.keys(entries).length === 0) sessionStorage.removeItem(scope);
     else sessionStorage.setItem(scope, JSON.stringify(entries));
+    fallback.delete(scope);
   } catch {
-    return;
+    fallback.set(scope, entries);
   }
 }
