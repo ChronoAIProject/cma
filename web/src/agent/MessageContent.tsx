@@ -1,4 +1,4 @@
-import { useContext } from 'react';
+import { memo, useContext } from 'react';
 import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MessageMedia } from './MessageMedia';
@@ -68,7 +68,7 @@ const components: Components = {
   ),
 };
 
-export function MessageContent({
+export const MessageContent = memo(function MessageContent({
   content,
   streaming = false,
 }: {
@@ -92,4 +92,4 @@ export function MessageContent({
       </Markdown>
     </div>
   );
-}
+});

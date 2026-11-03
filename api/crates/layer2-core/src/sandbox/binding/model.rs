@@ -200,6 +200,52 @@ impl ProviderBinding {
             && self.profile.organization_owned == profile.organization_owned
     }
 
+    pub fn skill_version_update(
+        &self,
+        profile: &BindingProfilePlan,
+    ) -> Option<(String, String, String)> {
+        if self.profile.environment != profile.environment
+            || self.profile.session_affinity != profile.session_affinity
+            || self.profile.owner != profile.owner
+            || self.profile.organization_owned != profile.organization_owned
+            || self.profile.agent.isolated_agent != profile.agent.isolated_agent
+            || self.profile.agent.model != profile.agent.model
+            || self.profile.agent.thinking_effort != profile.agent.thinking_effort
+            || self.profile.agent.permission_level != profile.agent.permission_level
+            || self.profile.agent.system_prompt != profile.agent.system_prompt
+            || self.profile.agent.skills.len() != profile.agent.skills.len()
+        {
+            return None;
+        }
+        if !self
+            .profile
+            .agent
+            .skills
+            .iter()
+            .zip(&profile.agent.skills)
+            .all(|(current, requested)| {
+                current.source == requested.source && current.id == requested.id
+            })
+        {
+            return None;
+        }
+        self.profile
+            .agent
+            .skills
+            .iter()
+            .zip(&profile.agent.skills)
+            .find_map(|(current, requested)| {
+                (current.version != requested.version)
+                    .then(|| {
+                        (
+                            current.id.as_str().into(),
+                            current.version.clone().unwrap_or_default(),
+                            requested.version.clone().unwrap_or_default(),
+                        )
+                    })
+            })
+    }
+
     /// Metadata changes retain the original generation. Runtime configuration
     /// updates require a separately proved continuity-preserving operation.
     pub fn reconfigure(

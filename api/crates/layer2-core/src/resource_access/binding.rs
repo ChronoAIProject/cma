@@ -94,7 +94,9 @@ impl AuthorizedResource {
 fn binding_error(error: BindingError) -> ResourceAccessError {
     match error {
         BindingError::NotFound | BindingError::Forbidden => AccessError::NotFound.into(),
-        BindingError::Conflict | BindingError::ReconfigurationUnsupported => {
+        BindingError::Conflict
+        | BindingError::SkillVersionUpdateUnsupported { .. }
+        | BindingError::ReconfigurationUnsupported => {
             ResourceAccessStoreError::Conflict.into()
         }
         BindingError::Corrupt(_) | BindingError::InvalidRequest(_) => {

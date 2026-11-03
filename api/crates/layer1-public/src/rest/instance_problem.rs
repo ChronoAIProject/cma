@@ -26,6 +26,11 @@ pub(crate) enum InstanceProblem {
     ApprovalNotPending { approval_id: String },
     CapabilityUnsupported { capability: RuntimeCapability },
     ContentUnsupported,
+    SkillVersionUpgradeUnsupported {
+        id: String,
+        installed: String,
+        requested: String,
+    },
     OperationInFlight,
     CheckpointInProgress,
     DeliveryAmbiguous,
@@ -120,6 +125,15 @@ impl From<AgentOperationError> for InstanceProblem {
                 Self::CapabilityUnsupported { capability }
             }
             AgentOperationError::ContentUnsupported => Self::ContentUnsupported,
+            AgentOperationError::SkillVersionUpgradeUnsupported {
+                id,
+                installed,
+                requested,
+            } => Self::SkillVersionUpgradeUnsupported {
+                id,
+                installed,
+                requested,
+            },
             AgentOperationError::QueueCapacityExceeded { limit } => {
                 Self::MessageQueueFull { limit }
             }
@@ -185,6 +199,18 @@ impl IntoResponse for InstanceProblem {
                 "agent-content-unsupported",
                 "This Agent interface accepts text content only.",
                 "agent_content_unsupported",
+            ),
+            Self::SkillVersionUpgradeUnsupported {
+                id,
+                installed,
+                requested,
+            } => (
+                StatusCode::CONFLICT,
+                "agent-skill-version-upgrade-unsupported",
+                format!(
+                    "Skill {id:?} is already installed at version {installed:?}; changing it to version {requested:?} is unsupported on an existing Agent. Create a replacement Agent with the requested profile."
+                ),
+                "agent_skill_version_upgrade_unsupported",
             ),
             Self::WorkspaceNotReady => (
                 StatusCode::CONFLICT,
@@ -290,5 +316,32 @@ fn capability_name(capability: RuntimeCapability) -> &'static str {
         RuntimeCapability::Interrupt => "interrupt",
         RuntimeCapability::Usage => "usage",
         RuntimeCapability::Resources => "resources",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn skill_version_upgrade_refusal_has_a_named_conflict_code() {
+        let response = InstanceProblem::from(
+            AgentOperationError::SkillVersionUpgradeUnsupported {
+                id: "research".into(),
+                installed: "1.0".into(),
+                requested: "1.1".into(),
+            },
+        )
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], "agent_skill_version_upgrade_unsupported");
+        assert!(body["detail"]
+            .as_str()
+            .unwrap()
+            .contains("replacement Agent"));
     }
 }
