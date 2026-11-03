@@ -4015,3 +4015,15 @@ status region, using the card's existing 8px column gap. Only plan or turn-state
 changes update it; streamed message tokens do not rerender this region.
 
 | 2026-11-03 | Make reported plan updates and terminal summaries one atomic polite status announcement for ticket 06. |
+
+Shared operation output requires a current successful read-authority observation.
+Withdraw already displayed output when that authority expires or renewal fails,
+including while the next check is pending. Show **Checking operation output
+access…** during checking and **Operation output access could not be checked. Try
+again.** after failure, with **Check output access again**. Explicit read denial
+or a refreshed environment output prohibition replaces existing output with its
+permission message. A still-valid authority lease may remain visible during its
+background refresh. These changes do not discard a file draft whose read
+authority remains valid.
+
+| 2026-11-03 | Gate existing shared operation output on current read authority, distinguish renewal checking/failure, and provide scoped retry. |
