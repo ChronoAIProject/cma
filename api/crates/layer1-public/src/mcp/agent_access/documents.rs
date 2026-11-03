@@ -1,7 +1,7 @@
 use super::*;
 use layer2_core::document_artifacts::{CreateDocument, DocumentError, UpdateDocument};
 
-pub(super) const INSTRUCTIONS: &str = "When producing a specification, reference document, substantial explanation or other document to preserve for the user, call publish_document with its complete Markdown and return the confirmed artifact link. Use update_document for revisions to documents you authored; retain a stable request_key for identical transport retries. Documents are private in the owner's registry until the owner shares them. Never include secrets or publish external data without task authority. A failed save is not a published artifact.";
+pub(super) const INSTRUCTIONS: &str = "When producing a specification, reference document, substantial explanation or other document to preserve for the user, call publish_document with its complete Markdown and return the confirmed artifact link. Copy the returned deliverable marker unchanged on a standalone line in your final answer to attach that exact document revision. Use update_document for revisions to documents you authored; retain a stable request_key for identical transport retries. Documents are private in the owner's registry until the owner shares them. Never include secrets or publish external data without task authority. A failed save is not a published artifact.";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,13 +66,25 @@ pub(super) async fn invoke(
             )
             .await
     };
+    let outcome = match outcome {
+        Ok(document) => documents
+            .deliverable_for_agent(
+                state.auth.as_ref(),
+                capability,
+                &document.id,
+                document.source_revision,
+            )
+            .await
+            .map(|deliverable| (document, deliverable)),
+        Err(error) => Err(error),
+    };
     match outcome {
-        Ok(document) => {
+        Ok((document, deliverable)) => {
             let url = format!("{}/artifacts/{}", state.public_origin, document.id);
             result(
                 id,
-                json!({"content":[{"type":"text","text":format!("Saved document [{}]({url}). Document ID: {}; revision: {}. Include this link in your response.", document.title, document.id, document.revision)}],
-                "structuredContent":{"document":document,"url":url},"isError":false}),
+                json!({"content":[{"type":"text","text":format!("Saved document [{}]({url}). Document ID: {}; revision: {}. Include this link and the following unchanged marker on a standalone line in your final answer:\n{}", document.title, document.id, document.revision, deliverable.marker)}],
+                "structuredContent":{"document":document,"url":url,"deliverable":deliverable},"isError":false}),
             )
         }
         Err(error) => {

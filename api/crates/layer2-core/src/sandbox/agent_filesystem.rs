@@ -21,6 +21,8 @@ mod browser;
 #[path = "agent_environment_service.rs"]
 mod environment;
 
+mod read_check;
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentFileError {
     #[error(transparent)]
