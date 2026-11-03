@@ -4,7 +4,7 @@
 
 **Blocked by:** None（可使用现有 Agent 消息入口独立验证）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **优先级:** P0
 
@@ -26,3 +26,9 @@
 ## 范围与依赖说明
 
 现有发消息链路足以触发命名，所以不依赖 03；也不依赖 01 的视觉重排。共享区域需协调合并。
+
+## Implementation record
+
+- 2026-11-03: isolated worktree `ticket-05`, branch `codex/cma-ui-05`, clean starting integration commit `d0d085c90` (01/09/03).
+- Confirmed U/A/R seams remain as approved above. First slice exercises the public rename/read path and visible navigation/header/browser title after a late provider update; runtime evidence uses pinned Codex 0.147.0 and patched ACP 1.4.0, with bounded manual title review.
+- First red → green: `ConsoleTaskTitle.test.tsx` renamed via the existing preferences dialog to “工具选型”, delivered the old provider name, then reopened the page. Navigation/header already preserved the owner override; the browser title failed with the fixed product name. The focused test now passes (1/1), including draft/message DOM identity and reopened public-client reads. The legacy `AgentTitleService::set_user_title` is genuinely write-once; the normal owner rename uses revisioned `conversation.preferences.title`, which is preserved.
