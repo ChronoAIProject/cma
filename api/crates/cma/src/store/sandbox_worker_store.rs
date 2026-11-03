@@ -230,7 +230,13 @@ async fn purge_in_transaction(
     if !agent_ids.is_empty() {
         store
             .agent_log
-            .delete_many(doc! { "agent_id": { "$in": agent_ids } })
+            .delete_many(doc! { "agent_id": { "$in": &agent_ids } })
+            .session(&mut *session)
+            .await
+            .map_err(PurgeError::Driver)?;
+        store
+            .suggestions
+            .delete_many(doc! { "agent_id": { "$in": &agent_ids } })
             .session(&mut *session)
             .await
             .map_err(PurgeError::Driver)?;

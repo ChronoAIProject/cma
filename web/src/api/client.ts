@@ -20,6 +20,7 @@ import type {
   WorkspaceDetail,
 } from './types';
 import type {
+  Cma,
   AccessibleAgentSource,
   AgentAttachment,
   AgentProvenance,
@@ -168,6 +169,26 @@ export interface CmaWebClient {
     import('@chronoai/cma-sdk').Cma['agentEventsV2'],
     'snapshot' | 'head' | 'events'
   >;
+  readonly readSuggestedReplies?: (
+    agentId: string,
+    scope: { readonly turn_sequence: number; readonly answer_sequence: number },
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<import('@chronoai/cma-sdk').SuggestedReplyReading>;
+  readonly deliverables?: Pick<
+    Cma['agents'],
+    'answerDeliverables' | 'readAnswerDeliverable' | 'downloadAnswerDeliverable'
+  >;
+  readonly readFeedbackDetails?: (
+    agentId: string,
+    messageId: string,
+    options?: ReadOptions,
+  ) => Promise<import('./feedbackTypes').FeedbackDetails>;
+  readonly setFeedbackReasons?: (
+    agentId: string,
+    messageId: string,
+    body: import('./feedbackTypes').FeedbackReasonRequest,
+    options?: ReadOptions,
+  ) => Promise<import('./feedbackTypes').FeedbackDetails>;
   readonly documents?: DocumentsClient;
   readonly files?: AgentFilesClient;
   readonly readMessageFeedback?: (

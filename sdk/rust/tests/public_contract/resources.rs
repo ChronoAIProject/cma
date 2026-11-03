@@ -139,10 +139,34 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .deny_access_request(c.param("id"), c.param("request_id"), &c.key()?)
                 .await,
         ),
+        "GET /api/v1/agents/{id}/suggestions" => c.check(
+            client
+                .agents()
+                .suggestions(
+                    c.param("id"),
+                    cma_sdk::answer_context::AnswerContext {
+                        turn_sequence: c.number("turn_sequence")?.unwrap_or_default(),
+                        answer_sequence: c.number("answer_sequence")?.unwrap_or_default(),
+                    },
+                )
+                .await,
+        ),
         "GET /api/v1/agents/{id}/message-feedback" => c.check(
             client
                 .agents()
                 .message_feedback(c.param("id"), c.events()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/messages/{message_id}/feedback" => c.check(
+            client
+                .agents()
+                .feedback_details(c.param("id"), c.param("message_id"))
+                .await,
+        ),
+        "PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons" => c.check(
+            client
+                .agents()
+                .set_feedback_reasons(c.param("id"), c.param("message_id"), &c.body()?)
                 .await,
         ),
         "PUT /api/v1/agents/{id}/messages/{message_id}/feedback" => {

@@ -12,11 +12,13 @@ use tokio::sync::mpsc;
 pub(super) struct Files {
     pub kind: String,
     pub entries: Mutex<BTreeMap<String, Option<Vec<u8>>>>,
+    pub root: Option<std::path::PathBuf>,
 }
 impl Files {
     pub fn new(kind: &str) -> Self {
         Self {
             kind: kind.into(),
+            root: None,
             entries: Mutex::new(BTreeMap::from([
                 ("cma".into(), None),
                 (
@@ -135,10 +137,15 @@ impl SandboxAdapter for Files {
             request.owner_access,
         )?;
         let files = self.entries.lock().unwrap();
-        let bytes = files
-            .get(&request.path)
-            .and_then(Option::as_ref)
-            .ok_or_else(missing)?;
+        let bytes = if let Some(root) = &self.root {
+            std::fs::read(root.join(&request.path)).map_err(|_| missing())?
+        } else {
+            files
+                .get(&request.path)
+                .and_then(Option::as_ref)
+                .ok_or_else(missing)?
+                .clone()
+        };
         if bytes.len() as u64 > request.max_bytes {
             return Err(AdapterError::Rejected(
                 "file_too_large: bounded read".into(),
@@ -147,7 +154,7 @@ impl SandboxAdapter for Files {
         Ok(AgentFileReadReceipt {
             path: request.path.clone(),
             size_bytes: bytes.len() as u64,
-            sha256: digest(bytes),
+            sha256: digest(&bytes),
             content_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
         })
     }
