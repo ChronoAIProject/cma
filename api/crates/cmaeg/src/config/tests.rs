@@ -36,3 +36,26 @@ fn origins_keep_public_callbacks_strict_and_allow_configured_cluster_services() 
         "https://cma.example"
     );
 }
+
+#[test]
+fn console_origin_requires_a_public_origin_without_path_or_credentials() {
+    assert_eq!(
+        validate_origin(CMAEG_CONSOLE_PUBLIC_URL, "https://CMA.NYXID.AI:443").unwrap(),
+        "https://cma.nyxid.ai"
+    );
+    for value in [
+        "",
+        "https://cma.nyxid.ai/console",
+        "https://cma.nyxid.ai/",
+        "http://cma-event-gateway.chrono-bot.svc",
+        "http://cma.nyxid.ai",
+        "https://user:pass@cma.nyxid.ai",
+        "https://cma.nyxid.ai?q=1",
+        "https://cma.nyxid.ai#console",
+    ] {
+        assert!(
+            validate_origin(CMAEG_CONSOLE_PUBLIC_URL, value).is_err(),
+            "{value}"
+        );
+    }
+}

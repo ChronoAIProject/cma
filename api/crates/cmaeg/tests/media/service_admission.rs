@@ -301,6 +301,7 @@ fn config(media: MediaConfig) -> Config {
         provider_request_timeout: Duration::from_secs(1),
         provider_max_inflight: 1,
         management: ManagementConfig {
+            console_public_url: None,
             public_url: "https://gateway.example".into(),
             public_api_url: "https://gateway.example".into(),
             public_api_aliases: vec![],

@@ -245,3 +245,13 @@ spec:
           name: cma-event-gateway
           port: 80
           weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /console
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
