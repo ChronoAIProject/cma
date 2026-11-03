@@ -27,6 +27,7 @@ import { Button } from './ui/Button';
 import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
 import { NotFoundView, UnavailableView, WelcomeView } from './ConsoleViews';
+import { TaskHome } from './create/TaskHome';
 import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
@@ -353,6 +354,16 @@ function ConsoleContent({
       )
     ) : route.kind === 'not_found' ? (
       <NotFoundView />
+    ) : (route.kind === 'home' || route.kind === 'agent_manager') && canCreateInScope ? (
+      <TaskHome
+        client={client}
+        viewerId={user.id}
+        canCreateSandbox={user.capabilities.includes('create_sandbox')}
+        onCreated={(target) => {
+          setRevision((value) => value + 1);
+          onNavigate(target);
+        }}
+      />
     ) : (
       <WelcomeView
         heading={

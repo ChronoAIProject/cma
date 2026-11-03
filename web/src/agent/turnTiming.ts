@@ -12,7 +12,7 @@ export function startTurn(
     ...state,
     activeRunId: runId,
     activeRunStartedAt: start,
-    lastTurn: { runId, outcome: 'active' },
+    latestRunId: runId,
     turnTiming:
       start === undefined || !Number.isFinite(Date.parse(start))
         ? state.turnTiming
@@ -24,7 +24,6 @@ export function finishTurn(
   state: ConversationState,
   runId: string | undefined,
   finishedAt?: string,
-  outcome = 'unknown',
 ): ConversationState {
   if (runId === undefined) return state;
   const previous = state.turnTiming?.[runId];
@@ -37,10 +36,10 @@ export function finishTurn(
     !Number.isFinite(Date.parse(finishedAt)) ||
     Date.parse(finishedAt) < Date.parse(startedAt)
   )
-    return { ...state, lastTurn: { runId, outcome } };
+    return { ...state, latestRunId: runId };
   return {
     ...state,
-    lastTurn: { runId, outcome },
+    latestRunId: runId,
     turnTiming: {
       ...state.turnTiming,
       [runId]: { startedAt, finishedAt: previous?.finishedAt ?? finishedAt },
