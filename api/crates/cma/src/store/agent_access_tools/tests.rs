@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::*;
 use layer2_core::sandbox::*;
 use layer2_core::SubjectId;
 
-fn key(byte: u8) -> AuthEncryptionKey {
+pub(super) fn key(byte: u8) -> AuthEncryptionKey {
     AuthEncryptionKey::from_base64(&base64::engine::general_purpose::STANDARD.encode([byte; 32]))
         .unwrap()
 }
@@ -80,7 +80,7 @@ fn snapshot() -> AgentProvenanceSnapshot {
     }
 }
 
-fn request(snapshot: &AgentProvenanceSnapshot) -> AgentOpenRequest {
+pub(super) fn request(snapshot: &AgentProvenanceSnapshot) -> AgentOpenRequest {
     let agent = snapshot.resource.lineage.agent.as_ref().unwrap();
     AgentOpenRequest::new(
         format!("agent:{}:open:v1", agent.id),
