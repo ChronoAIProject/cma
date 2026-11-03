@@ -18,6 +18,7 @@
 mod macros;
 pub mod admin;
 pub mod agent_browser;
+pub mod agent_browser_control;
 pub mod agent_card;
 pub mod agent_delegations;
 pub mod agent_environment;

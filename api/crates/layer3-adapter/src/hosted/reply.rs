@@ -22,6 +22,7 @@ pub(super) fn expect_ack(response: ResponseFrame) -> crate::Result<()> {
 pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
     match response {
         ResponseFrame::Browser(_) => WireOperation::Browser,
+        ResponseFrame::BrowserControl(_) => WireOperation::BrowserControl,
         ResponseFrame::UploadAgentAttachment(_) => WireOperation::UploadAgentAttachment,
         ResponseFrame::ListAgentFiles(_) => WireOperation::ListAgentFiles,
         ResponseFrame::ReadAgentFile(_) => WireOperation::ReadAgentFile,
@@ -71,6 +72,7 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
 pub(super) const fn operation_name(operation: WireOperation) -> &'static str {
     match operation {
         WireOperation::Browser => "observe agent browser",
+        WireOperation::BrowserControl => "control agent browser",
         WireOperation::UploadAgentAttachment => "upload agent attachment",
         WireOperation::ListAgentFiles => "list agent files",
         WireOperation::ReadAgentFile => "read agent file",

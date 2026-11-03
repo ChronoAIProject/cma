@@ -6,6 +6,8 @@ mod agent_events_v2;
 mod bindings;
 #[path = "public_contract/bots.rs"]
 mod bots;
+#[path = "public_contract/browser_control.rs"]
+mod browser_control;
 #[path = "public_contract/context.rs"]
 mod context;
 #[path = "public_contract/deliverables.rs"]
@@ -32,7 +34,9 @@ use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.ends_with("/browser") && op.contains("/api/v1/agents/") {
+    if op.ends_with("/browser/control") && op.contains("/api/v1/agents/") {
+        browser_control::dispatch(c).await
+    } else if op.ends_with("/browser") && op.contains("/api/v1/agents/") {
         agent_browser::dispatch(c).await
     } else if op.contains("/deliverable-references") || op.contains("/deliverables") {
         deliverables::dispatch(c, corpus).await

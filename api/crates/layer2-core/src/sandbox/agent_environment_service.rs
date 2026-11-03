@@ -40,6 +40,10 @@ impl AgentFileService {
         let writable = matches!(state, State::Available)
             && require_home_mutation(&authorized, &caller.subject).is_ok();
         let history = authorized.decision.allows(ResourceCapability::ViewHistory);
+        let browser = self.browser_feature(&authorized, agent_id).await?;
+        let control = self
+            .browser_control_feature(&authorized, agent_id, &browser)
+            .await?;
         Ok(AgentEnvironment {
             agent_id: agent_id.to_string(),
             policy_revision: authorized.snapshot.fence().policy_revision,
@@ -52,9 +56,9 @@ impl AgentFileService {
                 writable,
             },
             operation_output: EnvironmentFeature::history(history, "recorded_output_only"),
-            browser: self.browser_feature(&authorized, agent_id).await?,
+            browser,
             replay: EnvironmentFeature::history(history, "operation_records_only"),
-            control: EnvironmentFeature::unsupported(),
+            control,
         })
     }
 }
