@@ -39,6 +39,7 @@ export async function followV2Agent(
         await v2.events.events(v2.journal.agentId, {
           afterCursor: cursor,
           messageBindings: true,
+          toolOutput: true,
           liveTimestamps: true,
           signal,
           onEvent(frame) {

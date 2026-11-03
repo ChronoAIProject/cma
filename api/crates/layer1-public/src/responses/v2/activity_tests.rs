@@ -74,6 +74,7 @@ fn done(call: &str, status: &str) -> AgentLogKind {
         call_id: call.into(),
         status: status.into(),
         title: None,
+        output: None,
     }
 }
 fn kinds(events: &[Value]) -> Vec<&str> {
