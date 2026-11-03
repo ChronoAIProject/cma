@@ -61,6 +61,38 @@ it('shows completion only after the durable successful Responses turn and clears
   expect(transport.client.runAgent).not.toHaveBeenCalled();
 });
 
+it('keeps a recorded output gap failed in completion and plan displays without failing the next turn', async () => {
+  const transport = harness();
+  render(<Agent client={transport.client} />);
+  await waitFor(() => expect(transport.streaming).toBe(true));
+  await act(async () => {
+    transport.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
+    transport.durable(2, {
+      type: 'plan_set',
+      entries: [{ title: 'Report result', status: 'completed' }],
+    });
+    transport.durable(3, {
+      type: 'message',
+      role: 'assistant',
+      content: 'Retained partial answer',
+    });
+    transport.durable(4, { type: 'history_gap', frames: 2 });
+    transport.durable(5, { type: 'turn_completed', turn_sequence: 1 });
+  });
+  expect(screen.queryByText(/Completed in/)).not.toBeInTheDocument();
+  expect(screen.getByText('Response failed')).toBeVisible();
+  expect(screen.getByText('Retained partial answer')).toBeVisible();
+  expect(screen.getByText('Incomplete conversation history')).toBeVisible();
+  await act(async () => {
+    transport.durable(6, { type: 'turn_started', turn_sequence: 6 });
+    transport.durable(7, { type: 'message', role: 'assistant', content: 'Complete next answer' });
+    transport.durable(8, { type: 'turn_completed', turn_sequence: 6 });
+  });
+  expect(await screen.findByText('Completed in less than 1 second')).toBeVisible();
+  expect(screen.getByText('Response failed')).toBeVisible();
+  expect(transport.client.runAgent).not.toHaveBeenCalled();
+});
+
 it('replaces the previous completion with a newly confirmed AG-UI duration without remounting the draft', async () => {
   let receive: ((event: AgentLiveEvent) => void) | undefined;
   const client = agentClient({

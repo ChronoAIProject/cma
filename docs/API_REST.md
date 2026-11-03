@@ -1863,6 +1863,11 @@ resource authorization. A live file is `unchecked` until download or explicit
 `verify=true` checks that selected file's bytes. The stored reference remains the
 answer-time evidence even after a file changes. A newer document source reports
 `version_changed` and downloads the original source revision when authorized.
+Live-file verification and download request at most the reference's byte count
+from the runtime (one byte for an empty reference, which must still return zero
+bytes). Growth beyond that bound, a smaller file, or changed content returns
+`changed` without expanding that read budget. Initial live-path description
+retains the 32 MiB cap and its `too_large` refusal.
 
 Each request requires current answer visibility and independent resource access.
 Document token links retain `X-CMA-Document-Share-Token` plus authentication.

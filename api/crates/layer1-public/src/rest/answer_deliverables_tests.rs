@@ -79,7 +79,7 @@ async fn answer_deliverables_keep_explicit_repeats_but_reject_examples_and_nonfi
     let fixture = agents_tests::fixture().await;
     let agent = agents_tests::insert_agent(
         &fixture.store,
-        agents_tests::seeded_agent("agt_delivery", AgentStatus::Ready, 27, None),
+        agents_tests::seeded_agent("agt_delivery", AgentStatus::Ready, 41, None),
         vec![],
     )
     .await;
@@ -155,6 +155,20 @@ async fn answer_deliverables_keep_explicit_repeats_but_reject_examples_and_nonfi
         owner(),
         reply(marker.into()),
         AgentLogKind::TurnCompleted { turn_sequence: 24 },
+        start(28),
+        owner(),
+        AgentLogKind::ConversationGap { frames: 1 },
+        reply(marker.into()),
+        AgentLogKind::TurnCompleted { turn_sequence: 28 },
+        start(33),
+        owner(),
+        reply(marker.into()),
+        AgentLogKind::ConversationGap { frames: 1 },
+        AgentLogKind::TurnCompleted { turn_sequence: 33 },
+        start(38),
+        owner(),
+        reply(marker.into()),
+        AgentLogKind::TurnCompleted { turn_sequence: 38 },
     ] {
         fixture
             .store
@@ -188,6 +202,35 @@ async fn answer_deliverables_keep_explicit_repeats_but_reject_examples_and_nonfi
     let repeated = read(&router, &format!("{ROOT}/answers/event:26/deliverables")).await;
     assert_eq!(repeated["turn_sequence"], 24);
     assert_eq!(repeated["items"], first["items"]);
+    let delivery_id = first["items"][0]["id"].as_str().unwrap();
+    for sequence in [31, 35] {
+        for suffix in [
+            String::new(),
+            format!("/{delivery_id}"),
+            format!("/{delivery_id}?verify=true"),
+            format!("/{delivery_id}/download"),
+        ] {
+            let (status, _) = agents_tests::json_response(
+                &router,
+                agents_tests::request(
+                    Method::GET,
+                    &format!("{ROOT}/answers/event:{sequence}/deliverables{suffix}"),
+                    "owner-a",
+                    None,
+                    None,
+                ),
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "gapped answer {sequence}{suffix}"
+            );
+        }
+    }
+    let intact = read(&router, &format!("{ROOT}/answers/event:40/deliverables")).await;
+    assert_eq!(intact["turn_sequence"], 38);
+    assert_eq!(intact["items"], first["items"]);
 }
 
 #[tokio::test]
