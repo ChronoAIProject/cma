@@ -99,3 +99,13 @@
 - [02 验收矩阵、完整 28 路径清单与复现命令](02-EVIDENCE.md)。最终聚焦 Web 114/114；唯一 `--cfg cma_ui_ticket02` 下公共 handler 实际 58/58；固定 native Mac 5/5、Linux 1/1；双传输 Chrome 4/4、06 计划 Chrome 2/2、现有设置/审批/恢复 Chrome 4/4。类型、lint、CSS、build、改动文件格式及 secret scan 通过。
 - 首条指定行为已证明 red → green；本地真实 native 终态 → recorder → AG-UI/Responses 公共输出 → 浏览器证据在 `/tmp/cma-ticket-02-evidence/`。模型/存储/时钟 fixture 边界明确；4 分钟是记录时间示例，不是性能或已部署整链声明。
 - 广泛 Web 926 通过、7 项按精确名称排除；这 7 项在没有 02 的 `9a900786a` 快照独立复现，旧浏览器 fixture 问题也有独立基线记录。没有提交 skip 或弱化 gate；原始 skill contract/格式缺陷未改。无原工作区/其他 worker 源码修改，无 PR、推送、部署或 worktree 清理。
+
+## Ticket 02 集成（2026-11-03）
+
+- 合并前 `codex/cma-ui-optimization` 工作区干净，HEAD 为 `111530241e88806140685382b53de2134b8a7b79`；该状态已包含于票分支。已读取票文档和 `02-EVIDENCE.md`，其中 28 路径 manifest 与实际 diff 完全匹配。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-02` 的 `d3da33071b260d73549a6ae3cdb288bc7b622b0c`，merge commit 为 `b016065a8cd68922b79a22599e6bc98fd172fdac`。无冲突、无集成修正；合并树与票分支完全一致。
+- 已断言 Web Style 保留集成全文为原样前缀，仅追加 02 的 48 行。01/03/06/09/11 保留；`AgentHeaderProgress` 同时呈现原 PlanProgress 与确认完成耗时，继续共用 `latestTurnId`，不重复活动摘要。正常 transport、发送提取及草稿/附件所有权保留。
+- 合并态检查（集成工作区执行）：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/ComposerSettings.surface.test.tsx src/agent/AgentCompletion.test.tsx src/agent/SessionSettings.test.tsx` 通过，3 文件 / 36 tests，无跳过；`npm --prefix web run typecheck` 通过。
+- `git diff --check 111530241e88806140685382b53de2134b8a7b79 HEAD` 与记录提交前的 `git diff --check` 通过。未重复 worker 的广泛/native/浏览器验证，本次没有 Rust 运行。
+- 02 发现的 7 个测试失败属于本轮集成回归：ActiveThinking 4 项、MessageIdentity 1 项、SharedAgent 2 项；parent 已交由 14 按 06 的折叠展示契约处理。旧创建/登录后首页浏览器断言由 04 作为 03 集成后续处理；这些均不是原始基线问题，本 merger 不跳过或修正它们，也不宣称全仓绿色。14 仍在独立实施，未合入其未完成文件；原始 skill contract/Core fixture、格式和 508 行 Agent service 问题独立保留。
+- 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。
