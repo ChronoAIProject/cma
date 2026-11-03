@@ -2,6 +2,31 @@ use layer3_adapter::{ToolCall, ToolCallStatus};
 
 use super::*;
 
+#[tokio::test]
+async fn completed_tool_records_reported_text_without_recording_each_output_delta() {
+    let (_, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+    let update = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "tool_call_update", "toolCallId": "proof",
+        "status": "completed", "content": [{"type":"content", "content":{"type":"text", "text":"computer-proof"}}]
+    })).unwrap();
+    let receipt = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            ConversationUpdate::Said(update),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let events = serde_json::to_value(receipt.appended).unwrap();
+    assert_eq!(
+        events[0]["kind"]["output"],
+        serde_json::json!({"text":"computer-proof", "truncated":false})
+    );
+}
+
 fn output_update(index: usize) -> ConversationUpdate {
     ConversationUpdate::Said(
         serde_json::from_value(serde_json::json!({
@@ -11,6 +36,61 @@ fn output_update(index: usize) -> ConversationUpdate {
         }))
         .unwrap(),
     )
+}
+
+#[tokio::test]
+async fn native_command_completion_records_the_provider_reported_output() {
+    let (_, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+    let update = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "tool_call_update", "toolCallId": "native-proof", "status": "completed",
+        "rawOutput": {"formatted_output": "native-computer-proof\n", "exit_code": 0}
+    }))
+    .unwrap();
+    let receipt = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            ConversationUpdate::Said(update),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let events = serde_json::to_value(receipt.appended).unwrap();
+    assert_eq!(
+        events[0]["kind"]["output"],
+        serde_json::json!({"text":"native-computer-proof\n", "truncated":false})
+    );
+}
+
+#[tokio::test]
+async fn reported_output_without_status_is_bounded_and_does_not_invent_a_status() {
+    let (_, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+    let update = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "tool_call_update", "toolCallId": "proof",
+        "content": [{"type":"content", "content":{"type":"text", "text":"界".repeat(6000)}}]
+    }))
+    .unwrap();
+    let receipt = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            ConversationUpdate::Said(update),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let events = serde_json::to_value(receipt.appended).unwrap();
+    assert_eq!(
+        events[0]["kind"],
+        serde_json::json!({
+            "type":"tool_output_reported", "call_id":"proof",
+            "output":{"text":"界".repeat(5461), "truncated":true}
+        })
+    );
 }
 
 #[tokio::test]
@@ -83,7 +163,7 @@ async fn output_only_tool_updates_do_not_grow_the_log_before_ordered_completion(
             .unwrap();
         assert!(matches!(
             result.appended.as_slice(),
-            [AgentLogEntry { kind: AgentLogKind::ToolCallUpdated { call_id, status, title }, .. }]
+            [AgentLogEntry { kind: AgentLogKind::ToolCallUpdated { call_id, status, title, .. }, .. }]
                 if call_id == "call-1" && status == expected_status && title.as_deref() == expected_title
         ));
     }

@@ -9,6 +9,21 @@ pub(crate) async fn conversation_fixture(
     conversation_fixture_with_registry(TestRegistry::new()).await
 }
 
+pub(crate) async fn authorized_conversation_fixture(
+) -> (crate::AgentConversationState, Arc<InMemorySandboxStore>) {
+    let (mut state, store) = conversation_fixture().await;
+    let authority = super::super::shared_agent_tests::Authority(std::sync::Mutex::new(
+        super::super::shared_agent_tests::Reply::Missing,
+    ));
+    state.reads = state.reads.with_resource_access(Arc::new(
+        layer2_core::resource_access::ResourceAccessService::new(
+            store.clone(),
+            Arc::new(authority),
+        ),
+    ));
+    (state, store)
+}
+
 pub(crate) async fn conversation_fixture_with_registry<R: AgentRuntimeRegistry + 'static>(
     registry: Arc<R>,
 ) -> (crate::AgentConversationState, Arc<InMemorySandboxStore>) {
