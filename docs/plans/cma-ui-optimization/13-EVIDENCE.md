@@ -3,8 +3,9 @@
 Date: 2026-11-03. Branch `codex/cma-ui-13`, isolated worktree
 `/Users/liuyitian/code/cma-ui-worktrees/ticket-13`; initial integration base
 `424b1534e`. Implementation and runtime evidence are delivered. Tracker remains
-in-progress for literal independent human quality signoff, unavailable actual
-billed-cost confirmation, and the separately owned ticket-12 edit integration.
+in-progress solely for literal independent human quality signoff at full-delivery
+review. Ticket 12 editing is integrated and machine proof work is complete.
+Actual billed cost remains unknown because the provider supplied no monetary data.
 
 ## Delivered behavior
 
@@ -21,7 +22,8 @@ with the existing answer scope. SDKs expose the same read. GET/transcript/histor
 do not enqueue, generate, repair, retry or admit work. The browser reads at most
 50 times / 75 seconds while pending, hides terminal failure or absence, and uses
 ticket 11's conditional normal-send path for exact text. It preserves composer
-drafts and uncertain-send recovery. Ticket 12 owns editing, not this patch.
+drafts and uncertain-send recovery. The merged ticket-12 editor consumes the saved
+set through the same existing identity and conditional normal-send contract.
 
 The `agent_suggestions` collection uses a unique owner/Agent/answer/version key,
 majority transactions, claim-before-call and a terminal interrupted state after
@@ -57,6 +59,9 @@ real authorized model route, confirmed-turn recorder, Mongo persistence,
 authenticated public reads and separately reopened store. Three useful final
 sets and two deliberate empty sets were returned; no template passes dynamic
 acceptance. Earlier v1/v2 rejected clarification outputs are retained openly.
+The [verbatim independent parent AI review](13-PARENT-AI-REVIEW.md) passes all five
+v3 samples after reading the fixed rubric, actual raw outputs and saved public
+JSON. This independent AI review is explicitly not literal human approval.
 
 Final run: five calls, 2,200 input tokens, 0 cached input tokens, 270 output
 tokens; measured generation total 35,629 ms (mean 7,125.8 ms, range
@@ -111,27 +116,29 @@ set exposure, actual send confirmation (`original` / `edited`), and the exact
 receipt's durable task outcome. It never treats a click or acceptance as task
 success. No analytics platform, remote collection or raw message text is added.
 See [shared contract](SUGGESTION_CONTRACT.md) for dedupe, denominators and the
-`confirmSuggestionSend(set, itemId, 'edited', receipt)` seam. Ticket 12 wires its
-own edited normal-send/recovery callback; ticket 13 forwards the existing
-optional receipt without changing any message protocol.
+`confirmSuggestionSend(set, itemId, 'edited', receipt)` seam. The merged
+`useSuggestionEditing` observes its existing normal-send callback and retained
+request; ticket 13 forwards the existing optional receipt without changing any
+message protocol. It remembers only the existing set/item and request identity,
+records nothing before acceptance, and correlates recovered receipts after the
+group disappears. `useAgentSuggestions` keeps this composition out of the
+495-line AgentSurface. Ticket 12's composer behavior remains the only editor.
 
 ## Acceptance still pending
 
-- An actual person must review the fixed rubric and exact samples. Current
-  judgments are implementation-agent judgments only; parent AI review, if given,
-  must remain labelled independent AI review. Artifact was sent to parent for
-  independent review; no approval is fabricated.
+- An actual person must review the fixed rubric and exact samples at the final
+  full-delivery review. Independent parent AI review passed all five v3 samples,
+  but it is not human approval. This precise item remains unchecked and does not
+  stall remaining authorized ticket work.
 - Actual billed-cost confirmation is unavailable from this route. Null reporting
   and usage/latency evidence are implemented, but no actual monetary estimate is
   claimed.
-- Ticket 12's separately owned edit UI and edited-send recovery must integrate
-  the shared set and metric callback. This worker does not duplicate editing.
 
 Original formatting/skill fixtures/508-line Agent service limits remain separate
 from the task-introduced AppCreation navigation test and Console503 issues fixed
 by incoming ticket 04. No unrelated broad failure is reclassified here.
 
-## Final integration checkpoint
+## Earlier ticket-04 integration checkpoint
 
 Commits `d0cff82a0` (production adapter/store/SDK/evidence) and `3a1aa9a46`
 (visibility and recovered-receipt metrics) follow the initial style commit
@@ -181,3 +188,76 @@ in the older v1 response metadata. Unneeded provider metadata was removed while
 preserving the exact assistant outputs, requests, timing and usage. Final logs:
 `ticket13-final-secrets.log`, `ticket13-proof-secrets.log`. No credential value was
 printed or committed.
+
+## Final ticket-07/12/10 composition and handoff
+
+Latest integration `f793a41518fa969af068d7913ff6310dee7e040b` is an ancestor
+through merges `88963638f`, `1c70eca3f` and `6de02dae9`. The final merge includes
+07 deliverables, 12 editing and 10 feedback. Conflicts preserve all incoming
+behavior and the complete incoming Web Style prefix, then append the original
+13 style block. The shared client retains both scoped deliverables and saved
+suggestions; OpenAPI retains both feedback and suggestions. No parent or other
+worker worktree was edited.
+
+Ticket 12's existing editor now receives persisted generated sets through
+`useAgentSuggestions`. Its normal-send callback and immutable uncertain-request
+journal feed ticket 13's metrics. A new two-case red first showed missing edited
+confirmation on immediate acceptance and lost-receipt recovery. The green verifies
+exact body/condition/key retention, no event before acceptance, one edited
+confirmation, preserved newer draft and a separate receipt-bound completed task.
+The existing 14 editing tests still pass, including cancellation, replacement
+undo, attachments, ownership changes and expired-source behavior.
+
+| Final focused verification | Actual result | Log under `/Users/liuyitian/code/cma-ui-worktrees/` |
+| --- | --- | --- |
+| Edited-metric regression red | 2 failed at missing metric assertions | `ticket13-red-edited-metrics.log` |
+| Combined suggestion/edit/connection/surface/delivery/feedback UI | 88 passed / 7 files, no unhandled errors | `ticket13-green-edited-metrics.log` |
+| Final hook lifecycle recheck | 40 passed / 3 suggestion files | `ticket13-final-edited-metrics.log` |
+| Public generation lifecycle | 8 passed, nonzero named tests | `ticket13-final-public.log` |
+| Real Mongo adapter/persistence/restart/late result | 4 passed, 0 ignored | `ticket13-final-mongo.log` |
+| Ticket-13 shared public HTTP corpus | 1 test / 6 cases passed | `ticket13-final-contract.log` |
+| Focused OpenAPI composition | 10 passed | `ticket13-final-openapi-recheck.log` |
+| Checked REST documentation inventory | 1 passed | `ticket13-final-rest-docs.log` |
+| TypeScript SDK scoped GET and shared cases | 7 passed, 2,737 unrelated tests filtered | `ticket13-final-sdk-ts.log` |
+| Rust SDK scoped GET | 1 passed | `ticket13-final-sdk-rust.log` |
+| Rust shared SDK corpus | 1 passed; 2,297 typed HTTP, 173 typed preflight, 241 wire-shape and 27 browser contract cases | `ticket13-final-sdk-rust-contract.log` |
+| Chrome desktop/320px, light/dark, editing and late A | 6 passed | `ticket13-final-browser.log` |
+| Web, E2E and TypeScript SDK types | Passed | `ticket13-final-types.log`, `ticket13-final-e2e-types.log`, `ticket13-final-sdk-ts-types.log` |
+| Focused ESLint, changed formatting, whitespace and secret scan | Passed, no exclusions added | `ticket13-final-lint.log`, `ticket13-final-format.log`, `ticket13-final-rustfmt.log`, `ticket13-final-secrets.log`, `ticket13-proof-secrets.log` |
+
+The merge's focused OpenAPI expectation initially retained the incoming 64 paths /
+79 operations. Ticket 13 adds exactly one scoped read, so the expected counts are
+now 65 / 80. The exact route/identity/schema checks remain intact. The initial
+9-pass/1-fail evidence remains in `ticket13-final-openapi.log`; all ten pass after
+that precise correction. The inherited diagnostic still prints a hardcoded
+`operations=45`; the actual enumerated and asserted total is 80.
+
+The independent integration inventory gap is still present: 235 actual operations
+versus 230 declared. The missing entries are ticket 14's environment read and the
+four ticket-07 deliverable operations; neither has shared JSON coverage in this
+incoming checkpoint. Ticket 13 adds its own operation and all six cases, and 10's
+two operations are preserved. `ticket13-final-inventory.log` retains the failure.
+This is reported to the parent integration-repair work, without weakening the
+inventory gate, claiming whole-repository green, or duplicating that worker's
+CSS/size/shared-inventory/task-status/AppPublic work.
+
+Browser artifacts are in `ticket13-proof/browser-final`. Final desktop light
+saved-result and 320px dark edited-result screenshots were visually inspected:
+text wraps, editing remains reachable, the composer retains the new body, and
+07's scoped empty-delivery fixture introduces no spurious resource claim. These
+are controlled browser-boundary checks using the exact accepted model sample.
+Real model configuration, prompts, adapter, cases and filters did not change in
+these merges; no additional paid samples or automatic generation retries ran.
+
+The parent's report is copied verbatim to [13-PARENT-AI-REVIEW.md](13-PARENT-AI-REVIEW.md).
+It passes all five v3 samples and is explicitly independent AI review. Literal
+human/user quality acceptance remains the single unchecked criterion. Actual
+cost remains null/unknown, with measured tokens and latency retained. Machine
+delivery is ready for integration and does not stall tickets 16–19.
+
+All ticket-owned production source files are within 500 lines and test files
+within 2,000; AgentSurface and the top-level OpenAPI file are both 495 lines.
+Owned Vite on port 4373 and all bounded model proxies are stopped. Shared Mongo
+responds to ping and has no ticket-13 test databases left; it and its VM remain
+running (`ticket13-final-cleanup.log`). Worktree and private targets are retained
+for parent cleanup. No push, PR or deployment occurred.

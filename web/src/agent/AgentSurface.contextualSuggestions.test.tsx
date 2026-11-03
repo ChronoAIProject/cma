@@ -5,7 +5,7 @@ import { connectionClient } from '../connections/client';
 import { accessRequests } from './accessRequests';
 import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
-import { harness, item, json, page } from './transport/controller.fixture';
+import { accepted, harness, item, json, page } from './transport/controller.fixture';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -107,6 +107,93 @@ it('never reopens answer A when its saved suggestions arrive after another messa
   expect(screen.queryByRole('region', { name: 'Next you can ask' })).not.toBeInTheDocument();
   expect(composer).toBeEnabled();
 });
+
+it.each([false, true])(
+  'records one edited confirmation and a bound outcome after recovery=%s',
+  async (recover) => {
+    const metrics: unknown[] = [];
+    const listener = (event: Event) => metrics.push((event as CustomEvent).detail);
+    window.addEventListener('cma:suggestion-metric', listener);
+    try {
+      const result = { ...saved, set: { ...saved.set, id: `edited-metric-${recover}` } };
+      const { fixture } = await setup(async () => result);
+      await screen.findByRole('button', { name: saved.set.items[0]!.text });
+      fireEvent.click(screen.getByRole('button', { name: 'Edit suggestion 1 before sending' }));
+      const composer = screen.getByRole('textbox', { name: 'Message' });
+      fireEvent.change(composer, {
+        target: { value: 'Explain a nightly SQLite backup schedule.' },
+      });
+      let acknowledge: (response: Response) => void = () => {};
+      if (recover) fixture.post.mockRejectedValueOnce(new TypeError('Receipt lost'));
+      else
+        fixture.post.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              acknowledge = resolve;
+            }),
+        );
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(fixture.post).toHaveBeenCalledOnce());
+      expect(metrics).not.toContainEqual(expect.objectContaining({ kind: 'send_confirmed' }));
+      const original = fixture.post.mock.calls[0]![0]!;
+      expect(JSON.parse(String(original.body))).toMatchObject({
+        input: 'Explain a nightly SQLite backup schedule.',
+        answer_context: saved.set.scope,
+      });
+      if (recover) {
+        const recovery = await screen.findByRole('button', { name: 'Recover pending request' });
+        fireEvent.change(composer, { target: { value: 'Keep this separate draft.' } });
+        fireEvent.click(recovery);
+        await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(2));
+        expect(fixture.post.mock.calls[1]![0]!.body).toBe(original.body);
+        expect(new Headers(fixture.post.mock.calls[1]![0]!.headers).get('Idempotency-Key')).toBe(
+          new Headers(original.headers).get('Idempotency-Key'),
+        );
+        expect(composer).toHaveValue('Keep this separate draft.');
+      } else await act(async () => acknowledge(accepted()));
+      await waitFor(() =>
+        expect(metrics).toContainEqual(
+          expect.objectContaining({
+            kind: 'send_confirmed',
+            mode: 'edited',
+            setId: result.set.id,
+            itemId: saved.set.items[0]!.id,
+          }),
+        ),
+      );
+      expect(
+        metrics.filter((metric) => (metric as { kind: string }).kind === 'send_confirmed'),
+      ).toHaveLength(1);
+      expect(metrics).not.toContainEqual(expect.objectContaining({ kind: 'task_outcome' }));
+      await act(async () => {
+        fixture.durable(
+          5,
+          { type: 'turn_started', turn_sequence: 5 },
+          { response_id: 'resp_1', command_id: 'cmd_1', turn_sequence: 5 },
+        );
+        fixture.durable(
+          6,
+          { type: 'message', role: 'user', content: 'Explain a nightly SQLite backup schedule.' },
+          null,
+          'cmd_1',
+        );
+        fixture.durable(7, { type: 'turn_completed', turn_sequence: 5 });
+      });
+      await waitFor(() =>
+        expect(metrics).toContainEqual(
+          expect.objectContaining({
+            kind: 'task_outcome',
+            mode: 'edited',
+            outcome: 'completed',
+            setId: result.set.id,
+          }),
+        ),
+      );
+    } finally {
+      window.removeEventListener('cma:suggestion-metric', listener);
+    }
+  },
+);
 
 it('shows a saved generated result after a pending read, reopens it, and recovers its exact conditional send', async () => {
   const events = vi.spyOn(window, 'dispatchEvent');

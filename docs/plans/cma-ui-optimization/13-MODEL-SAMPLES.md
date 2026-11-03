@@ -2,7 +2,7 @@
 
 Date: 2026-11-03. Strategy: `contextual-v3`. Model reported by provider: `gpt-6-astra`.
 
-**Review state: implementation-agent rubric judgments only. Independent parent review and literal human/user signoff are pending. No AI judgment here is labelled human approval.**
+**Review state: independent parent AI review passes all five v3 samples against the fixed rubric. The [verbatim review](13-PARENT-AI-REVIEW.md) separately records its semantic judgments after inspecting the raw outputs and saved public JSON. Literal human/user signoff remains pending; neither AI review is human approval.**
 
 The rubric in `13-QUALITY-RUBRIC.md` was committed before sampling. These five fixed synthetic cases exercise the production HTTP adapter, its response parsing/filtering, the confirmed-turn recorder, transactional Mongo outbox, generation service, authenticated public GET and a separately reopened Mongo store. A local loopback proxy forwards the unchanged bounded request through the existing authenticated local model configuration; the production worker uses the existing sandbox model proxy port and credential custody instead of this proof proxy. No Agent input or tools are used for suggestion generation.
 

@@ -68,15 +68,15 @@ No raw message text, credentials, or inferred task success is emitted. Dedupe
 and pending correlation are bounded to 100 entries / 30 minutes in this tab.
 This is instrumentation, not an analytics collection service or durable funnel.
 
-Ticket 12 may call `confirmSuggestionSend(set, itemId, 'edited', receipt)` only
+The merged `useSuggestionEditing` calls `confirmSuggestionSend(set, itemId, 'edited', receipt)` only
 after normal-send admission, including recovered admission. Original sends use
 `'original'`. `messageSubmission` now forwards its existing optional
 `MessageAcceptance` to the accepted callback; no wire format changes. Ticket 13
-does not implement append/replace/undo/cancel or edited recovery. Literal edited
-UI wiring and its runtime evidence belong to 12. `useSuggestionOutcomes` remains
-on AgentSurface after the suggestion group disappears.
+does not implement another append/replace/undo/cancel or edited recovery path.
+`useAgentSuggestions` composes persisted-set reads with ticket 12's editor and
+keeps `useSuggestionOutcomes` mounted after the suggestion group disappears.
 
-For an uncertain edited request, 12 may retain the existing journal key with
+For an uncertain edited request, the merged editor retains the existing journal key with
 `rememberSuggestionRequest(set, itemId, 'edited', requestKey)`. This records no
 confirmation event. The surface's metric observer confirms it only when that
 same retained request exposes an accepted receipt; it never retries or changes
