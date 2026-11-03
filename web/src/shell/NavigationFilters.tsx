@@ -2,33 +2,24 @@ import { useId, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Picker } from '../ui/Picker';
 import { IconPersonalizationOutline16 } from '../ui/icons';
-import { NavigationViews } from './NavigationViews';
 import { statusLabel } from '../vocabulary/status';
+import { taskWords } from './taskStatus';
 export type NavigationView = 'agent' | 'sandbox';
 export const navigationStatuses = (view: NavigationView) => [
   { value: 'all', label: 'All statuses' },
   ...(view === 'agent'
-    ? (['starting', 'ready', 'working', 'waiting_approval', 'paused', 'stopped', 'failed'] as const)
-    : (['active', 'provisioning', 'installing', 'pausing', 'paused', 'reviving', 'failed'] as const)
-  ).map((value) => ({ value, label: statusLabel(value) })),
+    ? Object.entries(taskWords).map(([value, label]) => ({ value, label }))
+    : (
+        ['active', 'provisioning', 'installing', 'pausing', 'paused', 'reviving', 'failed'] as const
+      ).map((value) => ({ value, label: statusLabel(value) }))),
 ];
 
-/**
- * The navigation view and its filters — `docs/Web_Style.md` §10.
- *
- * The view switch stays visible because it changes what the list *is*. Scope
- * and status only narrow it, so they sit behind one Filter key on the same
- * row. At their defaults nothing more is drawn: the dot and the summary line
- * appear only once something narrows the list, and the summary names only
- * what does, because restating the defaults is the noise this row removed.
- */
 export function NavigationFilters({
   scope,
   scopeSummary,
   scopeActive = false,
   view,
   status,
-  onView,
   onStatus,
   onClear,
 }: {
@@ -39,7 +30,6 @@ export function NavigationFilters({
   readonly scopeActive?: boolean;
   readonly view: NavigationView;
   readonly status: string;
-  readonly onView: (view: NavigationView) => void;
   readonly onStatus: (status: string) => void;
   readonly onClear?: () => void;
 }) {
@@ -59,14 +49,9 @@ export function NavigationFilters({
   return (
     <div className="navigation-filters">
       <div className="navigation-filters__bar">
-        <NavigationViews
-          value={view}
-          options={[
-            { value: 'agent', label: 'Agents' },
-            { value: 'sandbox', label: 'Sandboxes' },
-          ]}
-          onChange={onView}
-        />
+        <span className="navigation-filters__heading">
+          {view === 'agent' ? 'Tasks' : 'Environments'}
+        </span>
         <button
           type="button"
           className="navigation-filters__toggle"
