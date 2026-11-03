@@ -2,8 +2,13 @@ use super::Scenario;
 use crate::responses::v2::binding_tests as conversation;
 use crate::rest::bindings_tests as management;
 use axum::Extension;
-use layer2_core::{resource_access::CallerContext, sandbox::binding::*, Authorization};
-use serde_json::json;
+use layer2_core::{
+    profiles::content_digest,
+    resource_access::CallerContext,
+    sandbox::binding::*,
+    Authorization,
+};
+use serde_json::{json, Value};
 use tower::ServiceExt;
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
@@ -42,19 +47,24 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     }
     let mode = name.strip_prefix("binding_management_")?;
     let (router, store) = management::app();
-    if ["ready", "pending"].contains(&mode) {
+    if ["ready", "pending", "skill_version"].contains(&mode) {
+        let body = if mode == "skill_version" {
+            skill_version_body("1.0")
+        } else {
+            management::body()
+        };
         let response = router
             .clone()
             .oneshot(management::request(
                 "PUT",
                 "/api/v1/cmaeg/bindings/binding-contract",
-                Some(management::body()),
+                Some(body),
                 Some(management::authority()),
             ))
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
-        if mode == "ready" {
+        if matches!(mode, "ready" | "skill_version") {
             let mut binding = store.binding("binding-contract").await.unwrap().unwrap();
             let revision = binding.revision;
             binding.state = BindingState::Ready;
@@ -76,4 +86,16 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         },
         symbols: Default::default(),
     })
+}
+
+fn skill_version_body(version: &str) -> Value {
+    let mut body = management::body();
+    body["profile"]["context"]["skills"] = json!([{
+        "id": "research",
+        "source": "ornn",
+        "version": version,
+    }]);
+    let digest = content_digest(&body["profile"]).unwrap();
+    body["profile_digest"] = json!(format!("sha256:{digest}"));
+    body
 }

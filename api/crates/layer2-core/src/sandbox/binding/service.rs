@@ -55,6 +55,14 @@ pub enum BindingError {
     InvalidRequest(String),
     #[error("binding changed or is not ready")]
     Conflict,
+    #[error(
+        "skill {id:?} is installed at version {installed:?}; changing it to version {requested:?} is unsupported for an existing binding"
+    )]
+    SkillVersionUpdateUnsupported {
+        id: String,
+        installed: String,
+        requested: String,
+    },
     #[error("This binding's sandbox or workspace is missing or removed. Reconnect the channel to an available agent.")]
     ResourcesUnavailable,
     #[error("This binding update cannot preserve the existing Agent conversation and home. Service scope, skills, prompt, model, environment and conversation affinity remain pinned; update the existing resources through their supported controls. The binding and its retained work have not been changed. Rotate a credential with the current profile before changing metadata.")]
@@ -224,6 +232,16 @@ impl BindingService {
                         .map_err(credential_error);
                 }
                 Some(value) => {
+                    if value.key_sha256 == credential.sha256() {
+                        if let Some((id, installed, requested)) = value.skill_version_update(&plan)
+                        {
+                            return Err(BindingError::SkillVersionUpdateUnsupported {
+                                id,
+                                installed,
+                                requested,
+                            });
+                        }
+                    }
                     if !value.retains_runtime_configuration(&plan)
                         || value.key_sha256 != credential.sha256()
                     {
