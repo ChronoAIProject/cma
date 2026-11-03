@@ -14,8 +14,7 @@ use layer2_core::{
 };
 use std::sync::Arc;
 
-#[path = "filesystem_runtime.rs"]
-mod runtime;
+use super::filesystem_runtime as runtime;
 
 #[cfg(test)]
 #[path = "native_deliverables.rs"]
