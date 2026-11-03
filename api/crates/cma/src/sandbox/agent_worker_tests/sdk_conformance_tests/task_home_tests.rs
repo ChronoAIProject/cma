@@ -12,6 +12,7 @@ use tower::ServiceExt;
 mod desktop;
 mod desktop_native;
 mod environment;
+mod integrated_tests;
 mod recovery;
 mod restart;
 mod subprocess;
