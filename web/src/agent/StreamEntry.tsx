@@ -74,7 +74,7 @@ function StreamEntryView({
           ) : null}
           <MessageFooter
             id={message.id}
-            canVote={message.role === 'assistant'}
+            canVote={message.role === 'assistant' && message.finalAnswer === true}
             at={message.at}
             content={message.content}
             committed={
