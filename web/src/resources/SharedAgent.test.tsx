@@ -329,6 +329,32 @@ it('shares the authorized conversation observation with the computer and clears 
   expect(screen.queryByText('shared-proof', { exact: true })).not.toBeInTheDocument();
 });
 
+it('does not invent an operation or status from output without a recorded call', async () => {
+  let deliver: ((event: AgentLiveEvent) => void) | undefined;
+  const fixtureView = fixture(['view_details', 'view_history'], {
+    readAgentTranscript: async () => ({ agentId: 'agt_1', throughSeq: 0, turns: [] }),
+    readAgentEvents: async () => ({ items: [] }),
+    replayAgent: async (_agent, options) => {
+      deliver = options.onEvent;
+      await new Promise<void>((resolve) =>
+        options.signal?.addEventListener('abort', () => resolve(), { once: true }),
+      );
+    },
+  });
+  fixtureView.show();
+  await waitFor(() => expect(deliver).toBeDefined());
+  await act(async () =>
+    deliver?.({
+      type: 'CUSTOM',
+      name: 'cma.tool_output_reported',
+      threadId: 'agt_1',
+      runId: '1',
+      value: { toolCallId: 'unobserved-call', output: { text: 'partial proof', truncated: false } },
+    }),
+  );
+  expect(screen.queryByText('Tool call', { exact: true })).not.toBeInTheDocument();
+});
+
 it('sends with current access before the shared transcript or rich history arrives', async () => {
   let finish!: (value: typeof AGENT_TRANSCRIPT) => void;
   const transcript = new Promise<typeof AGENT_TRANSCRIPT>((resolve) => {
