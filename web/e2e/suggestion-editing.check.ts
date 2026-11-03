@@ -54,7 +54,7 @@ for (const width of [1440, 390, 320]) {
         const field = page.getByRole('textbox', { name: 'Message', exact: true });
         await expect(field).toBeEnabled();
         await field.fill('保留预算上限');
-        await page.locator('input[type="file"]').setInputFiles({
+        await page.getByLabel('Choose attachments', { exact: true }).setInputFiles({
           name: 'budget.txt',
           mimeType: 'text/plain',
           buffer: Buffer.from('budget'),
