@@ -52,4 +52,38 @@ async fn browser_control_preserves_operation_identity_and_rejects_a_foreign_cont
         Err(Error::Protocol { .. })
     ));
     server.assert_drained();
+    assert_eq!(server.request_count(), 2);
+    let rebuilt = cma_sdk::Client::builder(&server.base_url)
+        .unwrap()
+        .build()
+        .unwrap();
+    for client in [&server.anonymous, &rebuilt] {
+        let mut expected_headers = headers(false, "application/json");
+        expected_headers.insert("content-type".into(), "application/json".into());
+        expected_headers.insert(
+            "x-cma-browser-client".into(),
+            command.scope.client_key.clone(),
+        );
+        server.expect(Expected {
+            method: "POST".into(),
+            path: "/api/v1/agents/agent/browser/control".into(),
+            headers: expected_headers,
+            body: Some(serde_json::to_value(&command).unwrap()),
+            status: 401,
+            response_headers: [("content-type".into(), "application/problem+json".into())].into(),
+            response: serde_json::to_vec(&serde_json::json!({"type":"urn:cma:unauthenticated",
+                "title":"Authentication required", "status":401}))
+            .unwrap(),
+            ..Default::default()
+        });
+        assert!(matches!(
+            client
+                .agent_browser_control()
+                .change("agent", &command)
+                .await,
+            Err(Error::Api { status: 401, .. })
+        ));
+    }
+    server.assert_drained();
+    assert_eq!(server.request_count(), 4);
 }

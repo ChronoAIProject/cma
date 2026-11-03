@@ -138,6 +138,11 @@ test('real Web input exclusively controls the native Agent browser through publi
   ]);
   expect(blocked.refused).toBe(true);
   await expect.poll(async () => (await rpc({ t: 'form_state' })).values.at(-1)).toBe('USER-17');
+  await expect(page.getByRole('button', { name: 'Return to Agent' })).toBeEnabled();
+  await page.getByRole('application').press('Backspace');
+  await expect.poll(async () => (await rpc({ t: 'form_state' })).values.at(-1)).toBe('USER-1');
+  await page.getByRole('application').press('7');
+  await expect.poll(async () => (await rpc({ t: 'form_state' })).values.at(-1)).toBe('USER-17');
   const controlPath = root + '/browser/control';
   const scope = {
     runtime_incarnation: incarnation,
@@ -160,6 +165,21 @@ test('real Web input exclusively controls the native Agent browser through publi
     expected_revision: audit.revision,
   };
   const otherHeaders = { 'x-cma-browser-client': randomUUID() };
+  expect(
+    (
+      await request.post(origins.owner + controlPath, {
+        headers: otherHeaders,
+        data: {
+          ...competitor,
+          command: 'input',
+          operation_id: randomUUID(),
+          lease_token: acquired.lease_token,
+          input: { kind: 'text', text: '-COMPETING' },
+        },
+      })
+    ).status(),
+  ).toBe(409);
+  expect((await rpc({ t: 'form_state' })).values.at(-1)).toBe('USER-17');
   expect(
     (
       await request.post(origins.owner + controlPath, { data: competitor, headers: otherHeaders })
@@ -209,6 +229,7 @@ test('real Web input exclusively controls the native Agent browser through publi
   await expect(page.getByText('Agent is controlling', { exact: true })).toBeVisible();
   const returned = await (await request.get(origins.owner + auditPath)).json();
   expect(returned.context_id).toBe(browserContext);
+  expect(returned.audit.some((entry: { kind: string }) => entry.kind === 'returned')).toBe(true);
   expect(
     (
       await request.post(origins.owner + controlPath, {
@@ -232,6 +253,10 @@ test('real Web input exclusively controls the native Agent browser through publi
   const expired = await native('-EXPIRED');
   expect(expired.refused).toBe(false);
   expect(expired.values.at(-1)).toBe('USER-17-ONCE-AGENT-EXPIRED');
+  const expiryAudit = await (await request.get(origins.viewer + auditPath)).json();
+  expect(expiryAudit.state).toBe('agent');
+  expect(expiryAudit.lease_token).toBeNull();
+  expect(expiryAudit.audit.some((entry: { kind: string }) => entry.kind === 'expired')).toBe(true);
   await context.setOffline(false);
   await expect(page.getByText('Agent is controlling', { exact: true })).toBeVisible({
     timeout: 10000,
@@ -288,7 +313,7 @@ test('real Web input exclusively controls the native Agent browser through publi
         incarnation,
         samePageLoadsBeforeExplicitReplacement: resumed.pages,
         inputValues: expired.values,
-        publicAuditKinds: audit.audit.map((entry: { kind: string }) => entry.kind),
+        publicAuditKinds: expiryAudit.audit.map((entry: { kind: string }) => entry.kind),
         lostReceipts: ['acquire', 'input', 'return'],
         offlineExpiry: true,
         competingClient: true,
