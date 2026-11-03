@@ -1,7 +1,7 @@
 use axum::response::Response;
 use layer2_core::{
     sandbox::agent_io::{
-        AgentCommand, AgentContent, AgentInput, AgentInputOrder, CommandSubmission,
+        AgentCommand, AgentContent, AgentInput, AgentInputOrder, AnswerContext, CommandSubmission,
     },
     AgentId,
 };
@@ -37,6 +37,7 @@ pub(super) fn parse(
                 | "stream"
                 | "metadata"
                 | "event_context"
+                | "answer_context"
                 | "model"
                 | "store"
         ) {
@@ -139,13 +140,25 @@ pub(super) fn parse(
             )
         })?;
     }
+    let mut command = AgentCommand::Message {
+        input,
+        order: AgentInputOrder::Append,
+        metadata,
+    };
+    if let Some(value) = body.remove("answer_context") {
+        let invalid = || {
+            refusal(
+                "answer_context",
+                "invalid_answer_context",
+                "Supply the exact durable turn_sequence and answer_sequence.",
+            )
+        };
+        let context: AnswerContext = serde_json::from_value(value).map_err(|_| invalid())?;
+        context.bind(&mut command).map_err(|_| invalid())?;
+    }
     Ok(CommandSubmission {
         agent_id: conversation,
-        command: AgentCommand::Message {
-            input,
-            order: AgentInputOrder::Append,
-            metadata,
-        },
+        command,
         idempotency_key: key,
         expected_agent_revision: None,
         requested_model,
