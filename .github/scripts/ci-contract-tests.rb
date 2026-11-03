@@ -181,7 +181,7 @@ if mode == "release"
     end
     raise "Gateway contract accepted a bypass of the shared login bridge: #{mutation}"
   end
-  %w[portal-capture wrong-protocol-target stripped-connect removed-independent-gateway-host wrong-openapi-target unsupported-full-path-rewrite].each do |mutation|
+  %w[portal-capture wrong-protocol-target stripped-connect removed-canonical-gateway wrong-openapi-target unsupported-full-path-rewrite missing-console stripped-console wrong-console-target].each do |mutation|
     candidate = GatewaySourceContract.expected
     routes = candidate.fetch("infra/cmaeg/httproute.yaml")
     public_route = routes.find { |value| value.dig("metadata", "name") == "cma-event-gateway-public-nyxid" }
@@ -191,9 +191,17 @@ if mode == "release"
     when "wrong-protocol-target"
       public_route["spec"]["rules"][0]["backendRefs"] = GatewaySourceContract.backend("cma-agent-manager")
     when "stripped-connect"
-      public_route["spec"]["rules"][-1]["filters"] = GatewaySourceContract.gateway_public_route("PathPrefix", "connect", "/connect")["filters"]
-    when "removed-independent-gateway-host"
-      routes.delete_at(0)
+      connect = public_route["spec"]["rules"].find { |rule| rule["matches"].any? { |match| match.dig("path", "value") == "/event-gateway/connect" } }
+      connect["filters"] = GatewaySourceContract.gateway_public_route("PathPrefix", "connect", "/connect")["filters"]
+    when "removed-canonical-gateway"
+      routes.delete(public_route)
+    when "missing-console", "stripped-console", "wrong-console-target"
+      console = public_route["spec"]["rules"].find { |rule| rule["matches"].any? { |match| match.dig("path", "value") == "/console" } }
+      case mutation
+      when "missing-console" then public_route["spec"]["rules"].delete(console)
+      when "stripped-console" then console["filters"] = GatewaySourceContract.gateway_public_route("PathPrefix", "console", "/")["filters"]
+      when "wrong-console-target" then console["backendRefs"] = GatewaySourceContract.backend("cma-web")
+      end
     when "wrong-openapi-target"
       api_route = candidate.fetch("infra/api/httproute.yaml").find { |value| value.dig("metadata", "name") == "cma-web-nyxid" }
       discovery = api_route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/agent-manager/openapi.json" } }
@@ -237,7 +245,7 @@ if mode == "release"
       end
     end
   end
-  %w[bot.chrono-ai.fun bot-api.chrono-ai.fun].each do |hostname|
+  %w[bot.chrono-ai.fun bot-api.chrono-ai.fun bot-gateway.chrono-ai.fun].each do |hostname|
     candidate = GatewaySourceContract.expected
     routes = candidate.fetch("infra/api/httproute.yaml")
     legacy = Marshal.load(Marshal.dump(routes.first))
