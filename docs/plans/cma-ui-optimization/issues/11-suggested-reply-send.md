@@ -4,7 +4,7 @@
 
 **Blocked by:** None（复用当前 Agent 的正常发送与恢复入口）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **优先级:** P1
 
@@ -29,3 +29,9 @@
 ## 范围与依赖说明
 
 有无成果都可以继续对话，因此不依赖 07。12 增加编辑入口，13 替换/扩展建议来源为上下文生成，整项功能不能以模板版本宣布完成。
+
+## 实施记录
+
+- 2026-11-03：在 `codex/cma-ui-11` 独立 worktree 实施，沿用已授权的 U/A/R 边界；先更新 Web Style，再按单行为 red → green 推进。
+- 首版来源明确标注场景模板；12 的编辑与 13 的动态生成不在本票内。
+- 基线 TypeScript 与 ESLint 已通过。全量 Rust format 既有失败见工作区外 `/Users/liuyitian/code/cma-ui-worktrees/baseline-rust-format.log`；本票不重排无关文件。
