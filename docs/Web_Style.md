@@ -3983,3 +3983,21 @@ actions never submit suggestions. Editing and contextual generation are separate
 extensions of the same viewer/Agent/turn/answer/source-version/item contract.
 
 | 2026-11-03 | Specify bounded comparison-template suggestions, exact-text sending, retained manual drafts, group pending/recovery states, answer scoping and accessible wrapping controls for ticket 11. |
+
+## Contextual suggestions after a confirmed answer
+
+Contextual follow-ups use the existing suggested-reply region and controls. A
+confirmed answer and the composer remain usable while generation is pending.
+Read saved suggestions for the current viewer, Agent and canonical final answer;
+show **Suggested follow-ups** only for a valid saved generated set. Pending,
+empty, failed, expired and unauthorized results leave the region absent. Do not
+show a loading skeleton, retry-generation button or model error in the answer.
+
+Refresh reads the same saved identity, order and exact text. Bound background
+reads to the active answer and stop after a terminal result, a short deadline or
+any viewer, permission, Agent or answer change. A late response cannot reopen an
+old group. Normal conditional send, retained draft, uncertain-request recovery,
+keyboard focus and narrow-screen wrapping follow ticket 11. The same set and item
+identity remains available to the separate suggestion-edit extension.
+
+| 2026-11-03 | Define saved contextual follow-ups, unobtrusive asynchronous delivery, bounded reads and stale-result suppression for ticket 13. |

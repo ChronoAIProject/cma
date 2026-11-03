@@ -4,7 +4,7 @@
 
 **Blocked by:** 11（建议数据身份、发送与失效语义）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **优先级:** P1
 
