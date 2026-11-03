@@ -1,7 +1,15 @@
 {
   "version": 1,
-  "openapi_operations": 229,
+  "openapi_operations": 230,
   "operations": {
+    "GET /api/v1/agents/{id}/environment": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_environment.rs# Authorized read-only Agent environment observations preserve file scope and explicit feature availability without contacting the runtime.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
     "GET /api/v1/organizations": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/organizations.rs# Authenticated current organization choices contain presentation roles and no reusable resource evidence.",
