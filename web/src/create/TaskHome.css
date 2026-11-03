@@ -49,6 +49,13 @@
   gap: 16px;
 }
 
+.task-home__desktop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+}
+
 @media (max-width: 600px) {
   .task-home {
     padding: 16px;

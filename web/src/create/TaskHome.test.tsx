@@ -455,7 +455,7 @@ it('verifies the Agent even when the first status read already reports preparati
   );
 });
 
-it('resumes a repository task only on explicit connection action with its frozen ref, body and key after refresh', async () => {
+it('resumes a desktop repository task only on explicit connection action with its frozen options, body and key after cancel and refresh', async () => {
   const writes: { body: unknown; key: string | null }[] = [];
   let checks = 0;
   let authorized = false;
@@ -498,10 +498,22 @@ it('resumes a repository task only on explicit connection action with its frozen
       });
     throw new Error('Unexpected read');
   };
-  const client = taskClient(transport);
+  const client = {
+    ...taskClient(transport),
+    readDesktopCapability: async () => ({
+      state: 'available' as const,
+      reason: 'Verified desktop runtime',
+      runtime_contract: 3,
+      min_memory_mib: 2048,
+      min_cpu_millis: 1000,
+    }),
+  };
   const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
   const first = render(<TaskHome {...props} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  const desktop = screen.getByRole('checkbox', { name: 'Enable desktop' });
+  await waitFor(() => expect(desktop).toBeEnabled());
+  fireEvent.click(desktop);
   fireEvent.change(screen.getByLabelText('Your task'), {
     target: { value: '  Original task\nwith whitespace  ' },
   });
@@ -518,12 +530,16 @@ it('resumes a repository task only on explicit connection action with its frozen
   await screen.findByRole('dialog', { name: 'Connect your accounts' });
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  expect(desktop).toBeChecked();
+  expect(desktop).toBeDisabled();
   expect(writes).toHaveLength(1);
   const checksBeforeRefresh = checks;
   first.unmount();
   authorized = true;
   render(<TaskHome {...props} />);
   await screen.findByRole('button', { name: 'Continue original task' });
+  expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeDisabled();
   expect(writes).toHaveLength(1);
   expect(checks).toBe(checksBeforeRefresh);
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Next task draft' } });
@@ -533,6 +549,7 @@ it('resumes a repository task only on explicit connection action with its frozen
   expect(writes[0]?.body).toMatchObject({
     initial_message: '  Original task\nwith whitespace  ',
     repository: { url: 'https://github.com/example/project', ref: 'proof/fixed' },
+    desktop: true,
   });
   expect(checks).toBe(checksBeforeRefresh + 1);
   expect(screen.getByLabelText('Your task')).toHaveValue('Next task draft');

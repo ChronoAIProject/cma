@@ -69,9 +69,16 @@ pub enum FirstMessagePurpose {
     Task,
 }
 
+pub struct FirstMessagePreparation {
+    pub purpose: FirstMessagePurpose,
+    pub desktop: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FirstMessageRecord {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desktop: bool,
     #[serde(skip)]
     pub common_binding: Option<super::agent_io::TriggerFirstMessageBinding>,
     pub origin_key: String,
@@ -110,6 +117,7 @@ impl FirstMessageRecord {
     ) -> Result<Self, SandboxModelError> {
         let text = text.into();
         let record = Self {
+            desktop: false,
             common_binding: None,
             origin_key: origin_key.into(),
             payload_sha256: hex_sha256(text.as_bytes()),
