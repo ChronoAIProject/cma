@@ -111,6 +111,24 @@ control intent.
 
 ## Snapshot bootstrap
 
+The Computer operation replay also uses this public query, independently of the
+selected conversation input transport. `Prefer: cma-tool-output` includes bounded
+recorded output. Its index uses Agent incarnation, recorded turn sequence, tool
+identity and durable event cursor. A selected record freezes the reported title,
+status, output, timestamp and preceding plan from that turn. It does not project
+current files, browser images or current plans into the past.
+
+The Web reader retains at most 50 operation records per window and renders one
+selected record. Earlier windows and reloads reread authorized snapshot pages;
+historical folds stop at the selected cursor. Live catch-up uses the existing
+finite `events?follow=false&after_cursor=...` read from the last applied cursor,
+without rescanning the historical prefix or opening another live subscription.
+Return Live reads a fresh fixed-head snapshot. Querying these surfaces never
+admits or recovers commands, approvals, feedback, suggestions or control.
+Missing events, `history_gap`, expired positions and authorization failures must
+be explained instead of silently substituting current state. The retained event
+contract declares no expiry deadline or screen recording capability.
+
 `GET /api/v2/agents/{agent_id}/events/snapshot` captures a durable high-water
 mark and returns a chronological page. `limit` is 1–200, default 100. Follow
 `next_page_cursor` with the `page_cursor` query parameter until it is null.

@@ -551,8 +551,9 @@ view-write links may change files. Older runtimes return
 `client.agent_files().environment(agent_id)` reads current feature availability,
 reasons and scopes with a policy revision, opaque runtime incarnation and renewal
 deadline. The SDK validates the Agent identity. Each later operation still
-checks authorization. Files retain the mounted-home scope; browser, replay and
-control are currently unsupported.
+checks authorization. Files retain the mounted-home scope. Authorized operation
+record replay is available with `operation_records_only`, `agent_turn_history`
+and `writable: false`; browser and control remain unsupported.
 
 Use `SnapshotOptions { tool_output: true, ..Default::default() }` and
 `TailOptions { tool_output: true, ..Default::default() }` for Agent events v2, or
@@ -560,6 +561,16 @@ Use `SnapshotOptions { tool_output: true, ..Default::default() }` and
 output is a bounded `{text, truncated}` replacement snapshot. Output-only events
 do not carry a status. Responses v2 `ActivityItem.recorded_output` reads the
 additive `cma:output` extension while the standard `output` remains absent.
+
+Replay uses `agent_events_v2().snapshot(agent_id, options)` and the existing
+opaque Agent and page cursors. Read no more than 200 events per page and retain
+the fixed `through_cursor` while following `next_page_cursor`. A historical
+record is identified by Agent, recorded turn sequence and event cursor. Fold
+only through that cursor for its command, output, status, timestamp and preceding
+plan; absent snapshots stay unknown. Fresh authorized reads restore a position
+after reload. Keep live reception separate and use a fresh snapshot for Live.
+Expose gaps and unavailable or expired positions; no expiry deadline is promised
+by the retained event contract. These queries admit no command or control effects.
 
 ### Answer deliverables
 
