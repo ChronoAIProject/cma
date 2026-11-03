@@ -90,6 +90,21 @@ for (const width of [1440, 390]) {
       );
       await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
       await page.screenshot({ path: `${evidence}/file-save-${width}.png`, fullPage: true });
+      await page.getByRole('button', { name: 'Back to conversation', exact: true }).click();
+      await page.getByRole('button', { name: 'More Agent actions' }).click();
+      await page.getByRole('menuitem', { name: 'Show Agent details', exact: true }).click();
+      await expect(page.getByRole('complementary', { name: 'Agent details' })).toBeVisible();
+      await page.getByRole('button', { name: 'Close Agent details' }).click();
+      await expect(composer).toHaveValue('Keep this unsent draft');
+      expect(
+        await composer.evaluate((element, original) => element === original, composerNode),
+      ).toBe(true);
+      expect(await history.evaluate((element, original) => element === original, historyNode)).toBe(
+        true,
+      );
+      await expect(
+        page.getByRole('list', { name: 'Attachments' }).getByText('context.txt'),
+      ).toBeVisible();
       expect(boundary.errors).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
       expect(boundary.writes).toEqual([]);
