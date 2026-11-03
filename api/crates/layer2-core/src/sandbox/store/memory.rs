@@ -51,7 +51,6 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
-mod suggestions;
 mod bindings;
 mod channel_usage;
 mod command_audit;
@@ -66,6 +65,7 @@ mod queued_cancellations_tests;
 mod queued_inputs;
 #[cfg(test)]
 mod queued_inputs_tests;
+mod suggestions;
 use events::{append_sandbox_event, bounded_events};
 #[cfg(test)]
 mod launch_command_tests;

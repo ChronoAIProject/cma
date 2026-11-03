@@ -55,3 +55,29 @@ The suggestions UI is a separate component inserted in AgentSurface's existing
 MessageStream children after the answer/artifacts. It does not change StreamEntry or
 the timeline projector. The Web Style rule was committed before UI implementation
 as `078b9bafe`.
+# Ticket 13 metric handoff (2026-11-03)
+
+Ticket 13 owns `web/src/agent/suggestionMetrics.ts`. It emits the local browser
+`cma:suggestion-metric` CustomEvent with distinct `exposure`, `send_confirmed`,
+and `task_outcome` kinds. Exposure requires a current enabled set at least half
+visible in a visible document. Confirmation requires the existing command/run
+receipt; task outcomes require that receipt's actual durable turn outcome.
+No raw message text, credentials, or inferred task success is emitted. Dedupe
+and pending correlation are bounded to 100 entries / 30 minutes in this tab.
+This is instrumentation, not an analytics collection service or durable funnel.
+
+Ticket 12 may call `confirmSuggestionSend(set, itemId, 'edited', receipt)` only
+after normal-send admission, including recovered admission. Original sends use
+`'original'`. `messageSubmission` now forwards its existing optional
+`MessageAcceptance` to the accepted callback; no wire format changes. Ticket 13
+does not implement append/replace/undo/cancel or edited recovery. Literal edited
+UI wiring and its runtime evidence belong to 12. `useSuggestionOutcomes` remains
+on AgentSurface after the suggestion group disappears.
+
+Metric denominators: one exposure per viewer/Agent/set within the tab's dedupe
+window; confirmations are deduped by that scope, item and admitted command/run.
+Original versus edited share the confirmed-send denominator. Task completion
+rates use only receipt-correlated resolved outcomes; pending/unobserved outcomes
+remain unknown. Failed generation and mere clicks contribute no exposure or
+confirmation. These events have no remote collector and do not claim durable
+cross-tab or cross-reload analytics.

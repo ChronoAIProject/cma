@@ -37,6 +37,7 @@ mod agent_preferences;
 mod agent_settings;
 mod agent_skills;
 mod message_feedback;
+mod suggestion_shapes;
 mod suggestions;
 pub use agent_channel_usage::agent_channel_usage_router;
 pub use agent_skills::AgentSkillRuntimeSupport;

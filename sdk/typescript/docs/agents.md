@@ -2,6 +2,15 @@
 
 <!-- nav: 5 Agents -->
 
+Read saved contextual follow-ups with
+`client.agents.suggestions(agentId, { turn_sequence: 3, answer_sequence: 5 })`.
+This is a read-only GET. `ready` contains the shared `SuggestedReplySet` with
+stable identity, exact text, ranks and generation strategy version; other states
+hide the group without blocking the answer or manual composer. Preserve its
+`scope` as `answer_context` for an unchanged suggestion's normal conditional
+send. Generation observations report token usage and latency; missing cost is
+null, never a zero-cost claim. Neither reading nor refreshing starts model work.
+
 Use `agents.createLifecycle` to create an Agent from an Image Manager selection
 and inline configuration. Omit `image` for the deployment default. Persist the
 exact request and idempotency key before sending it; an uncertain response must

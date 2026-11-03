@@ -111,6 +111,7 @@ export * from './event-worker-profiles.js';
 
 export type { AgentSettings, UpdateAgentSettingsRequest } from './agents/settings.js';
 
+export type { SuggestedReplySet, SuggestedReplyReading } from './agents/suggestions.js';
 export type {
   MessageVote,
   MessageFeedback,

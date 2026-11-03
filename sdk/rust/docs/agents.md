@@ -2,6 +2,14 @@
 
 <!-- nav: 5 Agents -->
 
+`client.agents().suggestions(agent_id, cma_sdk::answer_context::AnswerContext {
+turn_sequence: 3, answer_sequence: 5 }).await` reads a saved contextual result.
+This GET never generates or sends input. A `ready` reading contains a stable
+`SuggestedReplySet`; pending, empty, unavailable, failed and expired states do
+not block ordinary conversation. Preserve the returned scope for an unchanged
+suggestion's normal conditional send. Observations retain measured tokens and
+latency, with provider-reported cost when available and `None` when unknown.
+
 Use `agents().create_lifecycle` for Image Manager selections and inline Agent
 configuration. Omit the image to use the deployment default. Persist the exact
 request and key before submission so an uncertain result can be retried safely.

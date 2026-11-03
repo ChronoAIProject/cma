@@ -3,9 +3,7 @@ pub mod agent_delegations;
 mod agent_manager;
 mod identity;
 mod projections;
-use self::projections::{
-    EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, SignupOptions,
-};
+use self::projections::*;
 use super::admin::profiles::{ProfilePageView, ProfileSummaryView};
 use super::admin::sandboxes::{
     AgentSummaryView, SandboxDetailView, SandboxPageView, SandboxSummaryView, WorkspaceSummaryView,
@@ -154,6 +152,7 @@ use super::trigger_openapi_shapes::*;
         super::agent_skills::read,
         super::agent_skills::install,
         super::message_feedback::list,
+        super::suggestions::read,
         super::message_feedback::set,
         super::agent_preferences::read,
         super::agent_preferences::update,

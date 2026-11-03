@@ -1,6 +1,7 @@
 import { SuggestedReplies } from './SuggestedReplies';
 import type { SuggestedReplySet } from './suggestions';
 import { useContextualSuggestions } from './useContextualSuggestions';
+import { useSuggestionOutcomes } from './suggestionMetrics';
 import { Presence } from '../ui/Presence';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
@@ -128,9 +129,17 @@ export function AgentSurface({
   const discardPrepared = connection.discardPrepared;
   const suggestions = useContextualSuggestions(
     state.status === 'ready' ? state.conversation : undefined,
-    viewerId ?? verified?.owner ?? '', agentId,
-    !readOnly && verified !== undefined && !optimistic.messages.some((message) => message.state === 'accepted'),
+    viewerId ?? verified?.owner ?? '',
+    agentId,
+    !readOnly &&
+      verified !== undefined &&
+      !optimistic.messages.some((message) => message.state === 'accepted'),
     suggestedReplies,
+  );
+  useSuggestionOutcomes(
+    state.status === 'ready' ? state.conversation : undefined,
+    viewerId ?? verified?.owner ?? '',
+    agentId,
   );
   useLayoutEffect(() => {
     discardPrepared();
