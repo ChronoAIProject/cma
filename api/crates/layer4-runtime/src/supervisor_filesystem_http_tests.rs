@@ -9,6 +9,9 @@ use super::*;
 
 struct FilesystemFixture(PathBuf);
 
+#[path = "supervisor_browser_http_tests.rs"]
+mod browser_http;
+
 impl Drop for FilesystemFixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -28,6 +31,51 @@ async fn exchange(router: &Router, frame: Value) -> Value {
         .unwrap();
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn browser_observation_is_disabled_by_default_and_fences_the_runtime_boot() {
+    let fixture = FilesystemFixture(std::env::temp_dir().join(format!(
+        "cma-browser-scope-{}",
+        uuid::Uuid::new_v4().simple()
+    )));
+    let config = RuntimeConfig::for_test(fixture.0.clone());
+    let supervisor = Supervisor::new(config, SupervisorBoundary::default()).unwrap();
+    let router = crate::link::router(Arc::clone(&supervisor));
+    exchange(
+        &router,
+        serde_json::to_value(RequestFrame::Install(InstallRequest::new(
+            "browser-scope-install",
+            Vec::new(),
+        )))
+        .unwrap(),
+    )
+    .await;
+    exchange(
+        &router,
+        serde_json::to_value(RequestFrame::Credential(CredentialFrame {
+            operation_id: "browser-scope-credential".into(),
+            value: RuntimeCredential::new("browser-scope-credential"),
+            custody_generation: Some(1),
+        }))
+        .unwrap(),
+    )
+    .await;
+    let request = json!({"t":"browser", "sandbox_id":"sandbox-test", "runtime_generation":1,
+        "boot_id":supervisor.boot_id, "agent_id":"agent-a", "operation":"status"});
+    let response = exchange(&router, request.clone()).await;
+    assert_eq!(response["t"], "browser");
+    assert_eq!(response["observation"]["state"], "not_enabled");
+    assert!(response["observation"]["frame"].is_null());
+    let mut stale = request.clone();
+    stale["boot_id"] = json!("0".repeat(32));
+    assert_eq!(exchange(&router, stale).await["code"], "browser_identity");
+    let mut absent = request;
+    absent["operation"] = json!("enable");
+    assert_eq!(
+        exchange(&router, absent).await["code"],
+        "browser_agent_absent"
+    );
 }
 
 #[tokio::test]

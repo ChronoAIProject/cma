@@ -36,6 +36,10 @@ export function FeatureAvailability({
   readonly name: string;
   readonly feature: EnvironmentFeature;
 }) {
+  if (name === 'Browser' && feature.reason === 'browser_paused')
+    return <p role="status">Browser observation paused.</p>;
+  if (name === 'Browser' && feature.reason === 'browser_disconnected')
+    return <p role="status">Browser disconnected.</p>;
   const description = {
     available: `${name} is available but cannot be displayed here.`,
     unsupported: `${name} is not supported by this environment.`,

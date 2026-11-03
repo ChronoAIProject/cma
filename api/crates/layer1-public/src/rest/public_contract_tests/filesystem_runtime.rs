@@ -12,13 +12,17 @@ use tokio::sync::mpsc;
 pub(super) struct Files {
     pub kind: String,
     pub entries: Mutex<BTreeMap<String, Option<Vec<u8>>>>,
+    pub browser_reply: Mutex<BrowserObservation>,
     pub root: Option<std::path::PathBuf>,
+    pub browser_relay: Option<std::path::PathBuf>,
 }
 impl Files {
     pub fn new(kind: &str) -> Self {
         Self {
             kind: kind.into(),
+            browser_reply: Mutex::new(BrowserObservation::idle(BrowserState::NotEnabled)),
             root: None,
+            browser_relay: None,
             entries: Mutex::new(BTreeMap::from([
                 ("cma".into(), None),
                 (
@@ -75,6 +79,9 @@ fn missing() -> AdapterError {
 
 #[async_trait::async_trait]
 impl SandboxAdapter for Files {
+    fn browser(&self) -> Option<&dyn BrowserAdapter> {
+        self.kind.starts_with("browser").then_some(self)
+    }
     async fn list_agent_files(
         &self,
         handle: &RuntimeHandle,

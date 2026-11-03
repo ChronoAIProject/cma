@@ -36,12 +36,7 @@ use crate::{
     WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
 
-/// Configuration for Codex inside a hosted sandbox.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CodexSandboxSpec {
-    pub deployment: HostedDeployment,
-    pub config: CodexConfig,
-}
+pub use construction::CodexSandboxSpec;
 
 /// Complete Codex sandbox adapter.
 pub struct CodexAdapter {
@@ -50,6 +45,9 @@ pub struct CodexAdapter {
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
+        Some(&self.hosted)
+    }
     async fn list_agent_files(
         &self,
         handle: &RuntimeHandle,
