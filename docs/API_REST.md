@@ -35,12 +35,37 @@ participates in idempotency comparison and reaches the durable first-message
 queue with `purpose: task`. Input must contain non-whitespace text and at most
 262144 UTF-8 bytes. It replaces the automatic readiness turn after environment
 preparation; omission preserves the captured `purpose: setup` behavior for old
-clients and stored operations. Combining an initial task with `repository` is
-not supported in this slice. Invalid input is rejected before admission.
+clients and stored operations. An initial task may include `repository` only
+when creating a new Sandbox. Invalid input is rejected before admission.
 Check the served `AgentLifecycleCreateRequest` schema for `initial_message`
 before offering this capability against an older service. Task delivery and
 results remain observable through Agent detail and transcript; the client must
 never send a second, unrecorded message after receiving the Agent identity.
+
+The served OpenAPI extension `x-cma-task-repository: true` advertises repository
+tasks. Their optional `{url, ref}` context is frozen with the task and request
+key. GitHub access uses the existing `api-github` connection and scoped runtime
+proxy. A connection wait resumes only on the caller's explicit replay of that
+request. Existing `workspace_id` or `sandbox_id` cannot be combined with a task
+repository; their source and runtime remain inherited.
+
+Preparation resolves the requested ref (or default branch) once, fetches that
+immutable commit's archive through the existing GitHub proxy, and commits the
+source snapshot locally before binding the Agent worktree. Agent detail exposes
+`workspace.source` with type `repository_snapshot`, URL, requested `reference`,
+and upstream `source_commit`; `workspace.resolved_commit` and
+`worktree.base_commit` identify the actual local checkout. The source archive
+does not import Git history, so its upstream and local commit IDs are distinct.
+Requests without repository context retain their existing response shape.
+
+Completed preparation replays its durable receipt after restart even if a ref
+moves. Interrupted preparation without complete checkout evidence fails closed;
+it never checks out a new ref under the old creation identity. Preparation
+rejects unsafe paths, metadata replacement, escaping links, submodules and LFS
+pointers, archives above 64 MiB, expanded sources above 256 MiB or 20,000 entries.
+Repository access, missing ref and unsafe preparation errors are separate from
+task execution outcomes. A terminal preparation failure retains the original
+operation and draft; correcting its source requires an explicit new task.
 
 To add an Agent to an existing owned, ready Workspace, pass `workspace_id` to
 the same lifecycle endpoint. This path retains the Workspace and parent Sandbox;
@@ -1432,6 +1457,7 @@ Directory creation uses `directory: true`. File operations do not require an
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `GET /api/v1/agents/{id}/environment` | - | - | 200 EnvironmentView |
 | `GET /api/v1/agents/{id}/files/tree` | - | path | 200 FileListView |
 | `GET /api/v1/agents/{id}/files/content` | - | path*, max_bytes | 200 FileReadView |
 | `GET /api/v1/agents/{id}/files/download` | - | path* | 200 application/octet-stream |

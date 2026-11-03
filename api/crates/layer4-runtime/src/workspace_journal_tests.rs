@@ -58,6 +58,7 @@ fn receipt(config: &RuntimeConfig, request: &WorkspaceRequest) -> WorkspaceRecei
             .to_string_lossy()
             .into_owned(),
         resolved_commit: "0".repeat(40),
+        source_commit: None,
     }
 }
 
