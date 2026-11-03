@@ -40,8 +40,8 @@ import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
+import { AgentHeaderProgress } from './AgentHeaderProgress';
 import { messageSubmission } from './messageSubmission';
-import { PlanProgress } from './PlanProgress';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -210,9 +210,7 @@ export function AgentSurface({
     <section className="agent-surface">
       {connections.dialog}
       <OwnerAgentHeader
-        progress={
-          <PlanProgress plans={conversation.plans} activeRunId={conversation.activeRunId} />
-        }
+        progress={<AgentHeaderProgress state={state} starting={starting} />}
         onTitleUpdated={controller.applyAgentTitle}
         detail={detail}
         availability={controller.resourceAvailability}

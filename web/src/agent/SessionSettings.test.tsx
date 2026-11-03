@@ -18,6 +18,11 @@ const catalog = async () => [
   { id: 'gpt-6-updated', label: 'Updated model', available: true },
 ];
 
+async function expandSettings() {
+  const summary = await screen.findByRole('button', { name: /^Agent settings:/ });
+  if (summary.getAttribute('aria-expanded') === 'false') fireEvent.click(summary);
+}
+
 const chip = () => screen.getByRole('button', { name: /^Model and reasoning effort/ });
 const card = () => screen.getByRole('dialog', { name: 'Model and reasoning effort' });
 const slider = () => within(card()).getByRole('slider', { name: 'Reasoning effort' });
@@ -62,6 +67,7 @@ it('loads actual settings and retains the same update body and key after an unce
       }),
     ),
   );
+  await expandSettings();
   expect(
     await screen.findByRole('button', { name: /^Model and reasoning effort/ }),
   ).toHaveTextContent('GPT-6 High');
@@ -96,7 +102,7 @@ it('does not offer an apply operation while a turn is active', async () => {
       true,
     ),
   );
-  await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  await expandSettings();
   await chooseEffort(user, 'Low');
   expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
   expect(
@@ -143,7 +149,7 @@ it('allows correction after a definitive rejection without replaying its command
       }),
     ),
   );
-  await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  await expandSettings();
   await openCard(user);
   await chooseOptionValue(user, model(), 'invalid');
   expect(chip()).toHaveTextContent('Retired model High');
@@ -175,6 +181,7 @@ it('waits for runtime confirmation when the server reports pending settings', as
     ),
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
+  fireEvent.click(screen.getByRole('button', { name: /^Agent settings:/ }));
   expect(screen.getByText('Waiting for the runtime to confirm these settings.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Permission mode' })).toBeDisabled();
   fireEvent.click(chip());
@@ -203,7 +210,7 @@ it('loads the scoped model catalog, preserves an unavailable current model, and 
       }),
     ),
   );
-  await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  await expandSettings();
   await openCard(user);
   await within(card()).findByText('Catalog unavailable');
   expect(model()).toBeDisabled();
@@ -269,7 +276,7 @@ it('keeps retained runtime models disabled while applying reasoning changes to t
       }),
     ),
   );
-  await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  await expandSettings();
   await openCard(user);
   await within(card()).findByText(/Model changes are unavailable for this Agent/);
   expect(model()).toHaveTextContent('GPT-6');
@@ -322,7 +329,7 @@ it('refreshes capability after a turn and preserves reasoning edits when a model
     updateAgentSettings: update,
   });
   const { rerender } = render(draw(client));
-  await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  await expandSettings();
   await openCard(user);
   await chooseOptionValue(user, model(), 'gpt-6-astra');
   await chooseEffort(user, 'Medium');
@@ -349,7 +356,7 @@ it('names the permission modes Guarded and Autonomous while sending the unchange
       }),
     ),
   );
-  await screen.findByRole('button', { name: 'Permission mode' });
+  await expandSettings();
   const actor = userEvent.setup();
   expect(await openedOptions(actor, 'Permission mode')).toEqual(['Guarded', 'Autonomous']);
   await actor.keyboard('{Escape}');
@@ -375,7 +382,7 @@ it('operates the effort slider from the keyboard and announces each stop by name
       }),
     ),
   );
-  await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  await expandSettings();
   await user.click(chip());
   // Opening the card puts focus on the slider, which starts at the Agent's effort.
   expect(slider()).toHaveFocus();
@@ -411,7 +418,7 @@ it('snaps a press on the track to the nearest stop', async () => {
       }),
     ),
   );
-  await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  await expandSettings();
   await user.click(chip());
   vi.spyOn(slider(), 'getBoundingClientRect').mockReturnValue(
     DOMRect.fromRect({ x: 100, y: 0, width: 200, height: 20 }),
@@ -434,7 +441,7 @@ it('resets model and effort to the confirmed settings, and is unavailable when t
       }),
     ),
   );
-  await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  await expandSettings();
   await openCard(user);
   const reset = within(card()).getByRole('button', { name: 'Reset to current settings' });
   expect(reset).toBeDisabled();
@@ -462,7 +469,7 @@ it('closes the card with Escape or an outside press, and Escape in the model lis
       <p>Conversation</p>
     </>,
   );
-  await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  await expandSettings();
   await openCard(user);
   expect(chip()).toHaveAttribute('aria-expanded', 'true');
   await user.click(model());
@@ -504,6 +511,7 @@ it('offers a retry when the settings themselves cannot be read', async () => {
     screen.queryByRole('button', { name: /^Model and reasoning effort/ }),
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Retry settings' }));
+  await expandSettings();
   expect(
     await screen.findByRole('button', { name: /^Model and reasoning effort/ }),
   ).toHaveTextContent('GPT-6 High');
