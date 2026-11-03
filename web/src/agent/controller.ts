@@ -431,6 +431,8 @@ export function useAgentController(
       ? currentAgentStatus(state.detail, state.conversation, summary)
       : undefined;
   const retained = v2?.pending();
+  const legacy = client.agentTransport?.legacySession(agentId, options.viewerId);
+  const legacyInput = legacy?.journal.legacySuggestion.read();
   const controlNotice = useControlStatus(v2, onIdentityChange);
   const queuedInputs = useQueuedInputs(
     v2,
@@ -440,9 +442,12 @@ export function useAgentController(
     onIdentityChange,
   );
   return {
+    readSuggestionRequest: () => v2?.journal.read() ?? legacy?.journal.legacySuggestion.read(),
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
-    pendingMessage: retained?.input,
-    acceptedMessage: retained?.accepted,
+    pendingMessage:
+      retained?.input ?? (legacyInput?.state === 'pending' ? legacyInput.input : undefined),
+    acceptedMessage:
+      retained?.accepted ?? (legacyInput?.state === 'accepted' ? legacyInput.input : undefined),
     acceptedSteeringMessage: retained?.acceptedSteering,
     acceptedInterruptionMessage: retained?.acceptedInterruption,
     pendingControl: retained?.control,
@@ -452,7 +457,7 @@ export function useAgentController(
       (v2 !== undefined &&
         state.status === 'ready' &&
         state.conversation.responseBinding === undefined),
-    recoverPending: v2 === undefined ? undefined : recoverPending,
+    recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
     state: presentAgent(state, displayedStatus),
     inputAvailability: suspended
       ? {
@@ -473,8 +478,8 @@ export function useAgentController(
       setActionError(undefined);
       setReplayError(undefined);
     },
-    send: (content, onAccepted, onReceiptObserved, onRefused) =>
-      run(content, onAccepted, onReceiptObserved, onRefused),
+    send: (content, onAccepted, onReceiptObserved, onRefused, answerContext) =>
+      run(content, onAccepted, onReceiptObserved, onRefused, 'send', undefined, answerContext),
     steer:
       v2 === undefined
         ? undefined

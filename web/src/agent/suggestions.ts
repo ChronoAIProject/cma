@@ -19,6 +19,7 @@ export function scenarioSuggestions(
   if (
     conversation.activeRunId ||
     !answer?.finalAnswer ||
+    conversation.latestTurnId !== answer.runId ||
     answer.role !== 'assistant' ||
     answer.sequence === undefined ||
     answer.liveOnly ||
