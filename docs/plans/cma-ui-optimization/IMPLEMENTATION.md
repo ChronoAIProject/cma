@@ -20,7 +20,7 @@
 - 已确认 19 张票及 22 条依赖，无循环；初始 frontier：01、02、03、05、06、07、09、11、14。
 - 已隔离并保存原工作区内容；原文件哈希清单保存在工作区外，交付时复核。
 - 首批任务 01、03、07、09、11、14 已在独立 worktree 启动；共享回答区域的改动合并时逐项检查。
-- 09 已验收合入，完成 worker 的 worktree 已清理；06 已从含 09 的最新集成状态启动。当前实施：01、03、06、07、11、14；其余票依赖满足后排入可用执行槽。
+- 01、09 已验收合入，两个已完成 worker 的 worktree 已清理；02 已从含 01、09 的集成状态启动。当前实施：02、03、06、07、11、14；其余票依赖满足后排入可用执行槽。
 
 ## 基线验证
 
@@ -37,6 +37,8 @@
 - Linux 隔离镜像中的原生观测/工具测试 3/3 通过，覆盖原生工具调用、密钥轮换、会话重载、名称来源和用量。该镜像包含 Node 24.19.0、Codex 0.147.0、固定 ACP 修补字节及 Chromium 156.0.8078.79；未修改生产镜像或部署。
 - 已在不含任何 ticket 功能的独立基线 `60fc98ee5`、私有 Cargo target 中复现技能契约失败：`agent-skills-install-version-conflict` 期望 `agent_operation_in_flight`，实际为 `agent_skill_version_upgrade_unsupported`。真实执行 1 个 corpus 测试并失败，400 个被筛除；日志为工作区外 `baseline-skill-contract.log`。该既有期望不在页面票内修改，也不把完整 corpus 宣称通过。
 - 09 合入前后的新增提交已通过带脱敏输出的 Gitleaks 检查。基线 fixture Vite 服务已停止，截图与测试记录保留在工作区外。
+- 01 的新增提交同样通过 Gitleaks 脱敏检查（6 commits，73.61 KB，无泄漏）。集成态源码行数检查发现 `agent_operation_service.rs` 为 508 行，超过 500 行限制；该文件与基线 `c9e2d7b91` 的 SHA-256 完全相同，属于原有工作，未混入无关拆分。
+- 隔离镜像中的 Chromium 156.0.8078.79 已通过私有 DevTools pipe 导航两个本地页面并产生不同截图，记录位于工作区外 `runtime-proof/browser-prerequisite.json`。这是浏览器基础条件验证，尚不证明 CMA 授权、Agent 工具接入、实时画面或接管能力；仅测试容器使用禁用 Chromium sandbox 的参数，不能作为生产安全配置依据。
 
 ## Ticket 09 集成（2026-11-03）
 
