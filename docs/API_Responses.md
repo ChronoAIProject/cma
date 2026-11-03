@@ -186,7 +186,12 @@ uncertain.
 This version streams committed messages, not transient provider token fragments.
 Provider tool activity uses standard `mcp_call` items with `server_label: "cma"`,
 a display `name` bounded to 200 Unicode characters, empty `arguments`, and null
-`output` and `error` bodies. These items describe provider activity; they do not
+`output` and `error` bodies. An optional additive `cma:output: {text, truncated}`
+extension carries bounded recorded output in retrieval, completed activity items
+and the terminal response. In-progress output-only updates are available by
+retrieval and the Agent event/AG-UI streams; they do not manufacture a Responses
+activity status transition or renumber earlier events. The standard `output`
+field remains null for existing clients. These items describe provider activity; they do not
 request client tool execution. Their status is `in_progress`, `completed` or
 `failed`. Tool starts and terminal updates follow immutable log order, so tools
 may overlap and text may appear before a tool completes without rewriting the
@@ -591,9 +596,13 @@ for that connection. The SSE `event` field repeats `type`.
 | `response.incomplete` | Terminal incomplete response with details |
 
 `response.cma_chat.tool_activity` carries an `item` whose type is
-`cma_chat.tool_activity`. It includes the tool call id, kind, target and status;
+`cma_chat.tool_activity`. Starts and status updates include the tool call id,
+kind, target and reported status;
 `duration_ms` is currently null. Tool updates without a retained kind use
-`"unknown"`. Argument and result bodies are not part of this projection.
+`"unknown"`. Optional `output: {text, truncated}` contains at most 16 KiB of
+reported text. An output-only activity update has an id and output without an
+invented status; merge it into the existing call. Executable arguments and
+structured tool result bodies are not part of this projection.
 The same extension item can appear in durable conversation history.
 
 Reasoning has a narrower lifetime. Live `ThoughtDelta` frames project into the

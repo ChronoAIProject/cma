@@ -116,10 +116,13 @@ fn open_inner(
                         "item": {"id": format!("tool_{}_{}", agent.id, entry.seq), "type": "cma_chat.tool_activity",
                             "call_id": call_id, "kind": kind, "target": title, "status": status, "duration_ms": null}
                     })),
-                    AgentLogKind::ToolCallUpdated { call_id, title, status } => open.push("response.cma_chat.tool_activity", json!({
+                    AgentLogKind::ToolOutputReported { call_id, output } => open.push("response.cma_chat.tool_activity", json!({
+                        "call_id": call_id, "output": output,
+                    })),
+                    AgentLogKind::ToolCallUpdated { call_id, title, status, output } => open.push("response.cma_chat.tool_activity", json!({
                         "response_id": response.id,
                         "item": {"id": format!("tool_{}_{}", agent.id, entry.seq), "type": "cma_chat.tool_activity",
-                            "call_id": call_id, "kind": "unknown", "target": title, "status": status, "duration_ms": null}
+                            "call_id": call_id, "kind": "unknown", "target": title, "status": status, "duration_ms": null, "output": output}
                     })),
                     _ => {}
                 }

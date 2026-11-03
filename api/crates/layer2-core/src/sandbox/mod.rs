@@ -5,6 +5,7 @@ mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
 mod agent_context;
+pub mod agent_environment;
 pub mod agent_filesystem;
 pub mod agent_io;
 pub mod agent_live_skills;
@@ -201,7 +202,7 @@ pub use credential_prerequisite::{
 pub use error::SandboxModelError;
 pub use event::{
     AgentAvailableCommand, AgentConfigOption, AgentLogEntry, AgentLogKind, AgentPlanStep,
-    SandboxEvent, SandboxEventKind,
+    RecordedToolOutput, SandboxEvent, SandboxEventKind,
 };
 pub use execution::ProvisioningExecution;
 pub use first_message::{

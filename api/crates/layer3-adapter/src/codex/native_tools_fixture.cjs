@@ -5,7 +5,7 @@ const { createServer } = require("node:http");
 
 const names = ["readEventContext", "replyToEvent", "sendTyping", "updateMessage"];
 
-function processRpc(program, args, options) {
+function processRpc(program, args, options, observe = () => {}) {
   const child = spawn(program, args, { ...options, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   child.stderr.resume();
   const pending = new Map();
@@ -13,6 +13,7 @@ function processRpc(program, args, options) {
   let serial = 0;
   lines.on("line", (line) => {
     const frame = JSON.parse(line);
+    observe(frame);
     if (frame.method === "session/request_permission") {
       const option = frame.params.options.find((value) => value.kind === "allow_once");
       assert(option, "fixture permission request must offer allow_once");

@@ -3984,6 +3984,155 @@ extensions of the same viewer/Agent/turn/answer/source-version/item contract.
 
 | 2026-11-03 | Specify bounded comparison-template suggestions, exact-text sending, retained manual drafts, group pending/recovery states, answer scoping and accessible wrapping controls for ticket 11. |
 
+### Compact input settings and confirmed completion time (2026-11-03)
+
+The composer defaults to one **Agent settings** disclosure, summarizing the
+model catalog label, reasoning effort and permission mode separated by middle
+dots. Reuse the quiet composer chip, 12/18 secondary ink, 8px radius and 4px gap.
+The summary truncates on one line and exposes the full text as its accessible
+name and title. It occupies the flexible space between attachment/steering and
+context/send/stop controls. Opening it reveals the existing model/effort and
+permission controls in a wrapping row inside the composer, with 4px gaps and
+8px top spacing. This supersedes the always-visible separate settings chips.
+The disclosure announces its expanded state and controls its named settings
+region. It never replaces the composer, draft, attachments or selected transport.
+Closing it retains unapplied changes. Apply, recovery, pending confirmation and
+errors stay visible below the controls even when the settings row is collapsed.
+Existing capability checks, idle-only application and exact request recovery
+remain authoritative. Settings changes never send a conversation message.
+Below 30rem, the summary gets its own full-width row above the action row;
+settings and sending controls retain 44px touch targets and keyboard focus rings.
+Long labels cannot displace Send or Stop. Reduced-motion behavior stays unchanged.
+
+Only Responses tabs offer Queue and Interrupt during a running turn. **Queue**
+says **Process after the current turn finishes.** **Interrupt** says **Stop the
+current turn, then start a new turn with this message.** Acceptance or delivery
+is not completion. AG-UI retains ordinary idle Send and active Stop; it must not
+advertise unsupported queue or interruption-with-message actions. Existing
+approval, uncertain send and control recovery remain independently actionable.
+
+The header has a separate completion slot, independent of plan/activity progress.
+It displays **Completed in 4 minutes** for a recorded start at 10:00 and successful
+end at 10:04. Use 12/18 caption ink and tabular numerals, with a polite atomic
+status announcement. Durations below one second read **Completed in less than
+1 second**. Longer durations show whole minutes and remaining whole seconds.
+Missing, invalid or reversed timestamps omit the duration; zero is valid only
+when both recorded timestamps exist. Never use mount time, last-updated time or
+the current clock to fill missing history. A new active turn, failure or
+interruption removes the previous completion duration. Loading incomplete history
+cannot claim completion. The slot wraps within the header at narrow widths and
+does not duplicate task status, plan progress or the active Thinking clock.
+
+| 2026-11-03 | Collapse model, reasoning and permission into one reversible settings disclosure; preserve all input/recovery controls, describe transport-specific queue/interruption truthfully, and show only confirmed successful last-turn elapsed time in an independent header slot for ticket 02. |
+
+The completion display shares the header's existing **progress** slot with the
+current-turn plan link. The plan link stays memoized and available while a turn
+is active; completion occupies that same space only after confirmed success.
+No second activity summary or independent timing authority is introduced.
+
+| 2026-11-03 | Combine ticket 02 elapsed time with ticket 06's existing header progress slot, preserve its current-plan link and reuse recorded turn outcomes. |
+
+### Durable task names (2026-11-03)
+
+Task navigation, conversation headings and the active browser tab use the same
+name: owner override, valid provider title, first real task preview, configured
+name, then **Untitled task**. Automatic setup previews never supply a task name.
+Preserve legacy descriptions with unknown provenance as bounded fallback text;
+do not infer purpose from wording. Automatic labels are single-line and bounded
+to 64 Unicode characters, with task previews limited to 48. Keep full owner
+names within the existing rename limit and existing truncation/hover treatment.
+
+On an Agent page the browser title is **<task name> · CMA**. Loading, denied and
+non-Agent pages retain **ChronoAI Managed Agent (CMA)**. Hidden retained services
+cannot change the active tab title. Rename and delayed provider metadata update
+only presentation: preserve the mounted conversation, composer, draft and focus.
+Reload and navigation restore names from authorized persisted resource metadata.
+
+| 2026-11-03 | Unify persisted real-task and owner names across navigation, conversation and browser tabs, with bounded fallback and setup exclusion. |
+
+The Agent computer is a retained sibling of the conversation. On layouts with
+room for the existing 640px center and 300px details floor it opens by default;
+an explicit collapse is retained. Narrow layouts start closed and offer Show
+Agent computer. The existing right overlay has Back to conversation and Escape,
+restores focus to its opener, and keeps the composer and reading position mounted.
+Details and computer occupy the same selection slot. Files, Operation output and
+Browser are named keyboard-operable tabs with 44px targets. The header uses the
+existing 48px height, 8px/16px padding and 14/20 title; bodies use 12px gaps/insets,
+13/20 secondary explanations and existing code typography. No new colors or motion.
+
+Files retains the authorized explorer and unsaved edits when tabs or panels close.
+The existing file API grants mounted-home access; label that scope explicitly and
+do not describe it as an isolated Agent filesystem. Operation output is read-only,
+grouped by recorded turn and stable tool identity, in event order. It uses the
+conversation's existing observation, never a second event subscription. Recorded
+status words remain authoritative; missing output says Output not reported,
+bounded output says Output truncated. Render output as plain preformatted text.
+Browser, replay and control remain unavailable until public capability evidence
+supports them; there is no illustrative browser frame, Live label, command input
+or PTY. Loading, unsupported, not enabled, forbidden and temporary failure remain
+distinct. Authority changes invalidate cached content and late callbacks.
+
+| 2026-11-03 | Define the retained Agent computer, responsive default and return focus, shared selection, authorized mounted-home files, and read-only recorded operation output with explicit missing/truncated evidence and unavailable browser capabilities. |
+
+The Agent toolbar names its retained panel **Computer** (accessible name **Show
+Agent computer** / **Hide Agent computer**). Compact overlays trap focus in the
+visible panel, make background columns inert, and return focus to that control on
+Back or Escape. Hidden retained tabs are excluded from keyboard focus. A wide
+default panel does not take focus from the conversation.
+
+Computer availability comes from the authenticated Agent environment observation.
+Show checking, unsupported, not enabled, permission denied, and temporarily
+unavailable states distinctly. Older servers that do not report the capability
+show **Environment capabilities not reported**. The files surface continues to
+label the authorized mounted home; an unavailable capability never invents a
+browser image, live indicator, replay timeline, or interactive terminal. Readable
+file drafts survive changes to write authority and remain read-only while saving
+is unavailable. Shared operation output uses the same authorized observation as
+the conversation.
+
+| 2026-11-03 | Name the Computer entry, define compact keyboard containment and return focus, and render scoped public capability observations with distinct unavailable states. |
+
+Operation output displays at most 50 operations per page, in their recorded order,
+with Older/Newer controls and a visible range. It initially shows the newest page.
+Hidden output does not render historical operations. Assistant text streaming does
+not rebuild operation groups or replace the visible output DOM.
+
+| 2026-11-03 | Bound operation output to 50 visible records, retain chronological paging, and isolate hidden history from unrelated conversation text rendering. |
+
+Environment read failures use **Environment capabilities are unavailable. Try
+again.** Keep protocol parser details out of the computer panel and retain its
+explicit retry action.
+
+| 2026-11-03 | Keep computer capability failures readable without exposing transport parser diagnostics. |
+
+The Files scope label occupies its own row above the flexible explorer. The
+explorer and its actions remain within the viewport in both the details column
+and compact overlay; inner content scrolls without extending the panel.
+
+| 2026-11-03 | Reserve the mounted-home scope row without overflowing the retained file explorer. |
+
+Shared operation output requires a current successful read-authority observation.
+Withdraw already displayed output when that authority expires or renewal fails,
+including while the next check is pending. Show **Checking operation output
+access…** during checking and **Operation output access could not be checked. Try
+again.** after failure, with **Check output access again**. Explicit read denial
+or a refreshed environment output prohibition replaces existing output with its
+permission message. A still-valid authority lease may remain visible during its
+background refresh. These changes do not discard a file draft whose read
+authority remains valid.
+
+| 2026-11-03 | Gate existing shared operation output on current read authority, distinguish renewal checking/failure, and provide scoped retry. |
+
+The computer Files scope reads **Authorized Sandbox files (/home); private runtime
+state excluded.** Workspace source and worktree files remain intentionally shared
+within the authorized Sandbox file surface. The tree omits supervisor control
+state and other Agents' upload namespaces; the selected Agent's uploaded files
+retain preview, download and authorized edit behavior. An Agent route does not
+make the Sandbox workspace an Agent-private filesystem. File-operation errors
+retain the existing draft and retry behavior.
+
+| 2026-11-03 | Distinguish authorized shared Sandbox files from protected runtime state and Agent-scoped uploads in the computer panel. |
+
 ## Contextual suggestions after a confirmed answer
 
 Contextual follow-ups use the existing suggested-reply region and controls. A

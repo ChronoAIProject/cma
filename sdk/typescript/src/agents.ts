@@ -356,12 +356,13 @@ export class Agents {
     return this.operate(id, '', 'DELETE', options);
   }
 
-  events(id: string, options: EventOptions = {}) {
+  events(id: string, options: EventOptions & { readonly toolOutput?: boolean } = {}) {
     return read(
       this.config,
       query(`/api/v1/agents/${segment(id)}/events`, {
         after: options.after,
         limit: options.limit,
+        tool_output: options.toolOutput ? 'true' : undefined,
       }),
       object({ items: array(agentEvent), next: optional(integer) }),
       options,

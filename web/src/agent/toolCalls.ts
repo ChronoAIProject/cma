@@ -1,6 +1,7 @@
 import type { AgentLiveEvent } from '../api/types';
 import type { ConversationState, ToolCall } from './model';
 import { isPendingTool } from './toolStatus';
+import { object } from './conversationValues';
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -37,6 +38,7 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
   const id = text(event.toolCallId);
   if (id === undefined) return state;
   const current = state.toolCalls.find((tool) => tool.id === id);
+  if (event.type === 'CUSTOM' && current === undefined) return state;
   if (event.type === 'TOOL_CALL_START') {
     return updateTool(
       state,
@@ -51,6 +53,7 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
     );
   }
   const update = text(event.delta);
+  const output = object(event['cma:output']);
   const detail =
     event.type === 'TOOL_CALL_ARGS' && update !== undefined
       ? `${current?.detail ?? ''}${update}`
@@ -64,5 +67,9 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
       text(event['cma:status']) ??
       (event.type === 'TOOL_CALL_END' ? 'completed' : (current?.status ?? 'running')),
     detail,
+    output:
+      typeof output?.text === 'string' && typeof output.truncated === 'boolean'
+        ? { text: output.text, truncated: output.truncated }
+        : current?.output,
   });
 }
