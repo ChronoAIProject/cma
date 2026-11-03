@@ -158,6 +158,55 @@ it('selects the available browser without starting a hidden file read', async ()
   expect(fileClient.list).not.toHaveBeenCalled();
 });
 
+it('refreshes the desktop browser after Agent readiness even when files were already available', async () => {
+  let ready = false;
+  const sdk = createClient({
+    fetch: async (input) =>
+      Response.json(
+        String(input).endsWith('/environment')
+          ? {
+              ...environment('available'),
+              browser: feature(ready ? 'available' : 'not_enabled'),
+            }
+          : {
+              agent_id: 'agt_1',
+              runtime_incarnation: 'boot-one',
+              context_id: 'context',
+              state: 'live',
+              location: 'Local page',
+              observers: 1,
+              captures: 1,
+              bytes: 3,
+              min_interval_ms: 1000,
+              fresh_for_ms: 3000,
+              max_frame_bytes: 262144,
+              max_observers: 16,
+              frame: {
+                sequence: 1,
+                captured_at: new Date().toISOString(),
+                media_type: 'image/jpeg',
+                width: 1280,
+                height: 720,
+                data: '/9j/',
+              },
+            },
+      ),
+  });
+  const client = agentClient({
+    files: { ...files(), environment: sdk.agentFiles.environment.bind(sdk.agentFiles) },
+    browser: sdk.agentBrowser,
+  });
+  const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
+  const view = render(panel(client, 'browser', vi.fn(), starting));
+  await screen.findByText('Browser is not enabled for this environment.');
+  ready = true;
+  view.rerender(panel(client, 'browser'));
+  expect(await screen.findByAltText('Agent browser page')).toBeVisible();
+  expect(
+    screen.queryByText('Browser is not enabled for this environment.'),
+  ).not.toBeInTheDocument();
+});
+
 it.each(['failure', 'expiry'] as const)(
   'keeps an unsaved file draft through authorization %s without file IO',
   async (mode) => {

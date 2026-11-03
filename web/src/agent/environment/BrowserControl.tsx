@@ -206,7 +206,9 @@ export function BrowserControl({
     current.current = { phase: 'loading' };
     busy.current = false;
     inputs.current = [];
-    void actions.current.read();
+    queueMicrotask(() => {
+      if (version.alive) void actions.current.read();
+    });
     const timer = setInterval(() => {
       setClock(Date.now());
       if (!ready.current || !visible() || busy.current) return;
