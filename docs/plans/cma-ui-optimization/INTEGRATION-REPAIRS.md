@@ -107,6 +107,36 @@ unchanged original 508-line `agent_operation_service.rs` and the newly merged
 ticket-10 `agents_tests/message_feedback.rs` at 556 lines. The latter file is
 outside this batch's owned source and is a separate new integration handoff.
 
+## Task status query repair
+
+The independent probe (`query-probe.jsonl`) repeats the parent's exact Mongo
+query and `{agent_id: 1, seq: 1}` index with 10,000 intervening tool updates:
+MongoDB 8.0.34 returns one result after examining **10,001 keys and documents**.
+The probe's unique database was dropped. Its 7 ms synthetic debug observation
+is not a production latency benchmark.
+
+`agent_task_status::read` now returns the existing domain projection immediately
+for non-Ready status. It introduces no second status mapping. Ready Agents keep
+the original latest-event and pending-command reads, validation and reducer.
+Thus incomplete or corrupt evidence still cannot certify a Ready Agent as done.
+
+The existing Mongo shared-inventory corruption regression now also exercises the
+public `HierarchyReadStore` and `AgentProvenanceInventoryStore` seams. It checks
+completed Ready state; rejects mismatched log identity and malformed queued
+command evidence for Ready; and preserves Starting, Working, WaitingApproval,
+Paused, Stopped and Failed observations when that unused evidence is corrupt.
+It restores the original fixture before checking revoked-grant behavior. There
+is no test of the private read helper or copy of its implementation, and no new
+ignore/skip annotation.
+
+- `status-red.log`: **1 real failing test**, with non-Ready hierarchy reading the
+  irrelevant corrupt log and returning `Corrupt`.
+- `status-green.log`: the same exact named regression passes **1 test**, including
+  both corruption paths and both public status projections.
+- Mongo is the shared `cma-ticket11-mongo` fixture on `colima-cma-ui-proof`, port
+  27027, replica set `ticket11`; all mutation is in this test's PID/sequence-scoped
+  database. The shared container and VM are not stopped or reconfigured.
+
 Environment corpus, Mongo fast path, latest integration merge and final affected
 checks remain in progress. Original skill fixtures, LocalAgentV2 head-404,
 formatter drift and unchanged 508-line `agent_operation_service.rs` are outside
