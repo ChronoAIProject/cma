@@ -478,6 +478,7 @@ async fn initial_task_environment(
                 &harness.stored(&agent_id).await,
             )
             .await;
+            super::desktop::verify_existing_admission(&service, &harness, &agent_id).await;
         }
     }
     if public_server.is_some() {
