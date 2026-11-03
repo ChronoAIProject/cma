@@ -1,6 +1,6 @@
 //! Bounded, authorized Agent chronology beside the standard Responses stream.
-use axum::{routing::get, Router};
-use layer2_core::sandbox::{agent_io::AgentCommandService, AgentReadService, AgentUpdateRecorder};
+use axum::{Router, routing::get};
+use layer2_core::sandbox::{AgentReadService, AgentUpdateRecorder, agent_io::AgentCommandService};
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -15,6 +15,8 @@ mod head;
 mod head_tests;
 #[cfg(test)]
 mod message_binding_tests;
+#[cfg(test)]
+mod operation_replay_tests;
 #[cfg(test)]
 mod output_tests;
 mod parse;

@@ -575,11 +575,25 @@ returns `file_runtime_unsupported` until it is updated while idle.
 reasons and scopes for files, operation output, browser, replay and control. It
 validates the returned Agent identity. The observation includes policy revision,
 an opaque runtime incarnation and a renewal deadline; it never grants authority
-to a later operation. Files retain the authorized mounted-home scope. Browser,
-replay and control are currently unsupported.
+to a later operation. Files retain the authorized mounted-home scope. Replay is
+available for authorized durable operation records (`operation_records_only`,
+`agent_turn_history`, read-only). Browser and control remain unsupported.
 
 Pass `{ toolOutput: true }` to `agentEventsV2.snapshot` / `agentEventsV2.events`
 or `agents.events` to read bounded recorded output. `tool_output_reported` has no
 status; preserve the known call status and replace its output snapshot. Missing
 output remains unknown. Responses v2 exposes the same `{text, truncated}` value
 through the optional `cma:output` activity extension, preserving `output: null`.
+
+Operation record replay uses the existing public `agentEventsV2.snapshot` query:
+read pages of at most 200 events with `toolOutput: true`, following the returned
+`next_page_cursor` within its fixed `through_cursor`. Index records by Agent,
+the recorded `turn_started.turn_sequence`, and the event cursor. A selected
+cursor freezes command/output/status/time and the preceding plan in that turn;
+never fill a missing historical field from the current Agent state. After
+reload, authorize fresh reads and fold only through the saved cursor. Continue
+receiving live events independently and read a fresh snapshot on Return Live.
+`history_gap`, unavailable history and changed incarnations must remain visible.
+There is no configured event expiry deadline in this contract; a missing or
+expired position must not silently move to a different operation. These GETs
+never execute, recover or acknowledge a command, approval, feedback or control.
