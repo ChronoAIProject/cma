@@ -43,6 +43,7 @@ mod agent_skills;
 mod message_feedback;
 mod suggestion_shapes;
 mod suggestions;
+mod message_feedback_reasons;
 pub use agent_channel_usage::agent_channel_usage_router;
 pub use agent_skills::AgentSkillRuntimeSupport;
 #[cfg(test)]

@@ -88,6 +88,10 @@ export const resourceDispatch: Record<string, Dispatch> = {
       ...(query.has('after') ? { after: Number(query.get('after')) } : {}),
       ...(query.has('limit') ? { limit: Number(query.get('limit')) } : {}),
     }),
+  'GET /api/v1/agents/{id}/messages/{message_id}/feedback': ({ client, param }) =>
+    client.agents.feedbackDetails(param('id'), param('message_id')),
+  'PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons': ({ client, param, body }) =>
+    client.agents.setFeedbackReasons(param('id'), param('message_id'), body),
   'PUT /api/v1/agents/{id}/messages/{message_id}/feedback': ({ client, param, body }) =>
     client.agents.setMessageFeedback(
       param('id'),

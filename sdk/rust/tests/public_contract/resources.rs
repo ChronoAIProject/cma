@@ -157,6 +157,18 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .message_feedback(c.param("id"), c.events()?)
                 .await,
         ),
+        "GET /api/v1/agents/{id}/messages/{message_id}/feedback" => c.check(
+            client
+                .agents()
+                .feedback_details(c.param("id"), c.param("message_id"))
+                .await,
+        ),
+        "PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons" => c.check(
+            client
+                .agents()
+                .set_feedback_reasons(c.param("id"), c.param("message_id"), &c.body()?)
+                .await,
+        ),
         "PUT /api/v1/agents/{id}/messages/{message_id}/feedback" => {
             #[derive(serde::Deserialize)]
             struct FeedbackBody {

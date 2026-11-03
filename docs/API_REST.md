@@ -1153,6 +1153,15 @@ only when supplied, otherwise null (unknown). A GET never repairs or regenerates
 missing results. Browser pending reads stop after 50 attempts / 75 seconds.
 
 Message feedback is private, durable metadata for the Agent owner.
+`GET /api/v1/agents/{id}/messages/{message_id}/feedback` reads the current vote,
+version, six-choice negative reasons, optional comment, update time and request
+receipt with authenticated viewer/Agent/answer identities. The independent
+`PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons` requires the
+confirmed down vote's `expected_version` and a stable `request_id`; identical
+retries recover the same result, while stale versions return 409
+`feedback_version_conflict`. The optional comment is limited to 500 Unicode
+code points. Old clients' up/null writes atomically clear reasons and preserve
+the version fence. See the Agent Manager contract for migration and rollback.
 `GET /api/v1/agents/{id}/message-feedback` pages non-null votes using `after`
 and `limit` (1–200, default 200). `PUT
 /api/v1/agents/{id}/messages/{message_id}/feedback` sets or clears a vote with
@@ -1408,6 +1417,8 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/{id}/suggestions` | - | turn_sequence, answer_sequence | 200 SuggestionReadingView |
 | `GET /api/v1/agents/{id}/message-feedback` | - | after, limit | 200 MessageFeedbackPageView |
+| `GET /api/v1/agents/{id}/messages/{message_id}/feedback` | - | - | 200 FeedbackDetailsView |
+| `PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons` | SetFeedbackReasonsRequest | - | 200 FeedbackDetailsView; 409 stale version; 422 invalid reasons |
 | `PUT /api/v1/agents/{id}/messages/{message_id}/feedback` | SetMessageFeedbackRequest | - | 200 MessageFeedbackView |
 | `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `task_status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |

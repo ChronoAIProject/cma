@@ -89,3 +89,23 @@ rates use only receipt-correlated resolved outcomes; pending/unobserved outcomes
 remain unknown. Failed generation and mere clicks contribute no exposure or
 confirmation. These events have no remote collector and do not claim durable
 cross-tab or cross-reload analytics.
+
+## Ticket 12 editing handoff
+
+`AgentSurface` passes the validated set into `useSuggestionEditing`; the existing
+`SuggestedReplies` component exposes an optional `onEdit(text)` action. The real
+`ComposerSuggestionEditor` opens the standard conflict dialog or fills an empty
+composer, retains attachments and provides replacement undo. Cancel and dismissal
+return focus to the composer. No generated-set fetch, generation worker, new set
+identity, analytics or message transport is introduced here.
+
+The composer submits through `messageSubmission` and the existing selected
+controller. While the edited set is still eligible, this is the existing normal
+send with its existing answer condition. Acceptance retires the group; editing
+alone does not. An expired source or an explicit scoped refusal detaches that
+association and keeps the manual draft. Only a subsequent deliberate send can
+submit it as ordinary input, with current authority; there is no automatic
+unconditional retry. Uncertain requests keep their original body, condition and
+key. Changed text remains separate until recovery and then uses the normal fresh
+intent path. Ticket 13 can continue supplying its persisted sets at the unchanged
+`AgentSurface.suggestedReplies` boundary; it need not implement another editor.

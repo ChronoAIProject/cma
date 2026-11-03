@@ -14,6 +14,12 @@ pub enum Classification {
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
     ("suggestions-invalid_query", Classification::TypedShape),
+    ("feedback-reasons-invalid-comment", Classification::Local),
+    ("feedback-reasons-invalid-message", Classification::Local),
+    (
+        "feedback-reasons-unknown-reason",
+        Classification::TypedShape,
+    ),
     ("document-create-missing-key", Classification::Local),
     ("document-create-invalid-key", Classification::Local),
     ("document-create-malformed-json", Classification::RawJson),
