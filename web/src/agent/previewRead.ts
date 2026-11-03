@@ -38,7 +38,7 @@ export function usePreviewRead(selected: DeliverableSelection) {
           const current = (
             await access.client.readAnswerDeliverable(access.agentId, answerId, item.id, {
               signal,
-              verify: true,
+              verify: false,
             })
           ).item;
           if (JSON.stringify(current.reference) !== JSON.stringify(item.reference))
