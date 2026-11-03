@@ -118,6 +118,7 @@ export function AgentSurface({
     state.status === 'ready' && state.v2?.owner === (viewerId ?? verified?.owner)
       ? state.v2
       : undefined,
+    controller.readSuggestionRequest,
   );
   const discardPrepared = connection.discardPrepared;
   useLayoutEffect(() => {
@@ -155,7 +156,12 @@ export function AgentSurface({
   const running = conversation.activeRunId !== undefined;
   const starting = controller.pending === 'send' && !running;
   const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
-  const submitMessage = (content: string, onAccepted: () => void) => {
+  const submitMessage = (
+    content: string,
+    onAccepted: () => void,
+    answerContext?: import('@chronoai/cma-sdk').AnswerContext,
+    onRefused?: (reason?: 'answer_changed') => void,
+  ) => {
     if (readOnly || verified === undefined) return;
     const message = optimistic.begin(
       content,
@@ -167,8 +173,9 @@ export function AgentSurface({
         message.settled();
         resolve();
       };
-      const cancelled = () => {
+      const cancelled = (reason?: 'answer_changed') => {
         message.cancelled();
+        onRefused?.(reason);
         resolve();
       };
       const send = () => {
@@ -188,11 +195,20 @@ export function AgentSurface({
           },
           message.observed,
           cancelled,
+          answerContext,
         ];
         const request =
           running && steeringMode === 'interrupt'
-            ? submit(...args, message.ordinaryInput)
-            : submit(...args);
+            ? controller.interruptWithMessage!(
+                args[0],
+                args[1],
+                args[2],
+                args[3],
+                message.ordinaryInput,
+              )
+            : answerContext === undefined
+              ? controller.send(args[0], args[1], args[2], args[3])
+              : controller.send(...args);
         void request.then(settled, settled);
       };
       if (
@@ -406,9 +422,13 @@ export function AgentSurface({
               disabled={
                 connections.pending ||
                 !controller.inputAvailability.allowed ||
-                controller.pending !== undefined
+                controller.pending !== undefined ||
+                controller.pendingMessage !== undefined ||
+                controller.pendingControl === true
               }
-              onSend={submitMessage}
+              onSend={(text, accepted, refused) =>
+                submitMessage(text, accepted, suggestions.scope, refused)
+              }
             />
           ) : null}
           {controller.queuedInputs === undefined ? null : (

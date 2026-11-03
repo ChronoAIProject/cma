@@ -12,11 +12,17 @@ export function SuggestedReplies({
   readonly suggestions: SuggestedReplySet;
   readonly controller: AgentController;
   readonly disabled: boolean;
-  readonly onSend: (text: string, accepted: () => void) => void | Promise<void>;
+  readonly onSend: (
+    text: string,
+    accepted: () => void,
+    refused: (reason?: 'answer_changed') => void,
+  ) => void | Promise<void>;
 }) {
   const active = useRef(true);
   const locked = useRef(false);
-  const [state, setState] = useState<'ready' | 'sending' | 'unconfirmed' | 'accepted'>('ready');
+  const [state, setState] = useState<
+    'ready' | 'sending' | 'unconfirmed' | 'accepted' | 'failed' | 'expired'
+  >('ready');
   const [requestKey, setRequestKey] = useState<string>();
   useLayoutEffect(() => {
     active.current = true;
@@ -24,10 +30,15 @@ export function SuggestedReplies({
       active.current = false;
     };
   }, []);
-  const retained =
-    controller.state.status === 'ready' ? controller.state.v2?.journal.read() : undefined;
+  const retained = controller.readSuggestionRequest?.();
+  const scopedRequest =
+    retained?.answerContext?.turn_sequence === suggestions.scope.turn_sequence &&
+    retained?.answerContext?.answer_sequence === suggestions.scope.answer_sequence;
+  const effectiveState =
+    state === 'unconfirmed' && requestKey !== undefined && !retained ? 'failed' : state;
   if (
     state === 'accepted' ||
+    state === 'expired' ||
     (requestKey !== undefined && retained?.key === requestKey && retained.state === 'accepted')
   )
     return null;
@@ -39,23 +50,41 @@ export function SuggestedReplies({
         <button
           type="button"
           key={item.id}
-          disabled={disabled || state !== 'ready'}
+          disabled={
+            disabled ||
+            (scopedRequest && retained.state === 'pending') ||
+            (effectiveState !== 'ready' && effectiveState !== 'failed')
+          }
           onClick={() => {
-            if (locked.current || disabled) return;
+            if (
+              (locked.current && effectiveState !== 'failed') ||
+              disabled ||
+              (scopedRequest && retained.state === 'pending')
+            )
+              return;
             locked.current = true;
             setState('sending');
             void Promise.resolve(
-              onSend(item.text, () => {
-                if (active.current) setState('accepted');
-              }),
+              onSend(
+                item.text,
+                () => {
+                  if (active.current) setState('accepted');
+                },
+                (reason) => {
+                  if (!active.current) return;
+                  locked.current = false;
+                  setState(reason === 'answer_changed' ? 'expired' : 'failed');
+                },
+              ),
             ).then(() => {
               if (!active.current) return;
-              const input =
-                controller.state.status === 'ready'
-                  ? controller.state.v2?.journal.read()
-                  : undefined;
+              const input = controller.readSuggestionRequest?.();
               setRequestKey(input?.key);
-              setState((current) => (current === 'accepted' ? current : 'unconfirmed'));
+              setState((current) =>
+                current === 'accepted' || current === 'expired' || current === 'failed'
+                  ? current
+                  : 'unconfirmed',
+              );
             });
           }}
         >
