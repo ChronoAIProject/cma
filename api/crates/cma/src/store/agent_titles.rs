@@ -165,7 +165,7 @@ async fn transcript_at_snapshot(
     )
     .await
     .map_err(map_log_error)?;
-    Ok(AgentTitleTranscript::from_complete_log(&logs))
+    Ok(AgentTitleTranscript::from_agent_log(agent, &logs))
 }
 
 pub(super) async fn snapshot_session(
