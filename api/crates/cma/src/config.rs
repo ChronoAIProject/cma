@@ -12,7 +12,9 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
+pub(crate) use provider_tool_relay::ProviderToolRelay;
 mod agent_sandbox;
 mod execution;
 mod gateway;
@@ -146,6 +148,7 @@ pub struct Config {
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
     pub(crate) agent_access_transport_migration: Option<AgentAccessMigration>,
+    pub(crate) provider_tool_relay: Option<ProviderToolRelay>,
     /// Base URL for the independently deployed Image Manager service.  CMA
     /// only uses it with the request's delegated user credential.
     pub image_manager_base_url: String,
@@ -227,6 +230,7 @@ impl Config {
         validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
         let agent_access_retained_origins = access_origins::retained(&mut lookup)?;
         let agent_access_transport_migration = access_migration::parse(&mut lookup)?;
+        let provider_tool_relay = provider_tool_relay::parse(&mut lookup, &public_url)?;
         if agent_access_transport_migration
             .as_ref()
             .is_some_and(|migration| {
@@ -360,6 +364,7 @@ impl Config {
             public_url,
             agent_access_retained_origins,
             agent_access_transport_migration,
+            provider_tool_relay,
             image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),

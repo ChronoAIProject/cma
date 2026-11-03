@@ -63,6 +63,22 @@ pub(crate) struct MongoSandboxCredentialStore {
 }
 
 impl MongoSandboxCredentialStore {
+    /// Read exact custody inside the caller's lineage transaction.
+    pub(crate) async fn get_in_session(
+        &self,
+        sandbox: &SandboxId,
+        generation: u64,
+        session: &mut mongodb::ClientSession,
+    ) -> Result<Option<CredentialMaterial>, StoreError> {
+        self.collection
+            .find_one(doc! {"_id": credential_id(sandbox, generation)})
+            .session(session)
+            .await
+            .map_err(|_| StoreError::Unavailable("credential custody unavailable".into()))?
+            .map(|document| self.material(document))
+            .transpose()
+    }
+
     pub(super) async fn open(
         client: &Client,
         database: &str,

@@ -1,6 +1,8 @@
 //! Tools admitted from durable provider-binding provenance, independently of channel bridges.
 use crate::{AdapterError, AgentOpenRequest, RuntimeHandle, ToolProxyRequest, ToolProxyStatus};
 
+mod transport;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedToolOpenReceipt {
     pub boot_id: String,
@@ -16,6 +18,7 @@ pub struct HostedProviderToolBinding {
     proxy: ToolProxyRequest,
     retained: Option<HostedToolOpenReceipt>,
     observed: Option<ToolProxyStatus>,
+    relay: Option<transport::Relay>,
 }
 
 impl std::fmt::Debug for HostedProviderToolBinding {
@@ -62,6 +65,7 @@ impl HostedProviderToolBinding {
             proxy,
             retained,
             observed: None,
+            relay: None,
         })
     }
 
@@ -101,12 +105,17 @@ impl HostedProviderToolBinding {
     }
 
     pub(super) fn acp_server(&self) -> serde_json::Value {
-        use agent_client_protocol_schema::v1::{McpServer, McpServerHttp};
-        serde_json::to_value(McpServer::Http(McpServerHttp::new(
-            "cmaeg",
-            crate::LOCAL_TOOL_PROXY_URL,
-        )))
-        .expect("typed MCP descriptor serializes")
+        use agent_client_protocol_schema::v1::{HttpHeader, McpServer, McpServerHttp};
+        let server = match &self.relay {
+            Some(relay) => {
+                McpServerHttp::new("cmaeg", &relay.endpoint).headers(vec![HttpHeader::new(
+                    "Authorization",
+                    format!("Bearer {}", relay.credential.expose()),
+                )])
+            }
+            None => McpServerHttp::new("cmaeg", crate::LOCAL_TOOL_PROXY_URL),
+        };
+        serde_json::to_value(McpServer::Http(server)).expect("typed MCP descriptor serializes")
     }
 }
 
@@ -126,6 +135,31 @@ pub trait HostedProviderToolSource: Send + Sync {
         binding: &HostedProviderToolBinding,
         conversation: &str,
     ) -> crate::Result<()>;
+
+    /// Only a durable, fenced idle maintenance intent may change transport.
+    async fn prepare_transport(
+        &self,
+        _binding: &HostedProviderToolBinding,
+        _origin: &str,
+        _conversation: &str,
+        _operation_sequence: u64,
+    ) -> crate::Result<HostedProviderToolBinding> {
+        Err(AdapterError::Unsupported(
+            "provider tool transport migration is unavailable".into(),
+        ))
+    }
+
+    /// Persist installation only after the same native conversation reloads.
+    async fn confirm_transport(
+        &self,
+        _binding: &HostedProviderToolBinding,
+        _conversation: &str,
+        _operation_sequence: u64,
+    ) -> crate::Result<()> {
+        Err(AdapterError::Unsupported(
+            "provider tool transport migration is unavailable".into(),
+        ))
+    }
 }
 
 fn valid_conversation(value: &str) -> bool {
