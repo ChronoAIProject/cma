@@ -4,7 +4,10 @@ use layer2_core::sandbox::agent_environment::{
 };
 
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(read, configure, release), components(schemas(BrowserView, BrowserFrameView, BrowserEnablement)))]
+#[openapi(
+    paths(read, configure, release),
+    components(schemas(BrowserView, BrowserFrameView, BrowserEnablement))
+)]
 struct BrowserApi;
 
 pub(crate) fn document() -> utoipa::openapi::OpenApi {

@@ -12,7 +12,12 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
                 && request.context_id.as_ref().is_none_or(|context| {
                     receipt.observation.context_id.as_ref() == Some(context)
                         || (receipt.observation.frame.is_none()
-                            && receipt.observation.state == crate::BrowserState::Paused)
+                            && matches!(
+                                receipt.observation.state,
+                                crate::BrowserState::Paused
+                                    | crate::BrowserState::NotEnabled
+                                    | crate::BrowserState::Unsupported
+                            ))
                 })
         }
         (
