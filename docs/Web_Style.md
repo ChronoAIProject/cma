@@ -3842,6 +3842,8 @@ referenced deliverables. The public answer query verifies structured references
 against the resource's own authority. Ordinary file names, code spans, directory
 contents and another answer's resources never create cards. The machine reference
 marker is hidden from rendered prose; quoted examples remain ordinary text.
+Streaming answers also hide an unfinished standalone protocol marker once its
+reserved prefix is present. Streaming and intermediate messages never show cards.
 
 Place a semantic list named **Answer deliverables** immediately after the answer
 body and before its existing duration, usage and footer. Use a vertical stack with

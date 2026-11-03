@@ -34,6 +34,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('keeps protocol metadata out of streaming prose without creating premature cards', () => {
+  const state = transcript();
+  const message = {
+    ...state.messages[0]!,
+    finalAnswer: false,
+    status: 'streaming' as const,
+    content: 'Writing the report.\n<!--cma-deliverable:v1:eyJhZ2VudF9pZCI',
+  };
+  const view = render(
+    <MessageStream conversation={{ ...state, messages: [message] }} onApproval={vi.fn()} />,
+  );
+  expect(screen.getByText('Writing the report.')).toBeVisible();
+  expect(view.container.textContent).not.toContain('cma-deliverable');
+  expect(screen.queryByRole('list', { name: 'Answer deliverables' })).toBeNull();
+});
+
 function transcript() {
   return {
     ...conversationFromTranscript({ agentId: 'agent-1', throughSeq: 0, turns: [] }),

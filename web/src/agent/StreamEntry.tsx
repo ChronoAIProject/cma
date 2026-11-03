@@ -47,13 +47,15 @@ function StreamEntryView({
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
-    const delivery =
+    const canDeliver =
       message.role === 'assistant' &&
       message.finalAnswer === true &&
       !message.liveOnly &&
       message.status !== 'streaming' &&
-      /^event:[1-9]\d*$/.test(message.id)
-        ? answerProse(message.content)
+      /^event:[1-9]\d*$/.test(message.id);
+    const delivery =
+      message.role === 'assistant'
+        ? answerProse(message.content, message.status === 'streaming')
         : { content: message.content, references: 0 };
     const identity = messageIdentity(message.role, user, unknownUserName);
     return (
@@ -71,7 +73,7 @@ function StreamEntryView({
           ) : (
             <MessageContent content={delivery.content} streaming={message.status === 'streaming'} />
           )}
-          {delivery.references ? (
+          {canDeliver && delivery.references ? (
             <AnswerDeliverables answerId={message.id} references={delivery.references} />
           ) : null}
           {/* A turn that reported nothing draws no line; absence is never shown as zero. */}
