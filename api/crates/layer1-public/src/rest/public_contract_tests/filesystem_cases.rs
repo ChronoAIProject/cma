@@ -24,6 +24,8 @@ mod scope_tests;
 
 #[path = "browser_cases.rs"]
 mod browser_cases;
+#[path = "browser_control_cases.rs"]
+mod browser_control_cases;
 #[path = "native_browser_chain.rs"]
 mod native_browser_chain;
 
@@ -146,6 +148,9 @@ async fn computer_environment_public_route_preserves_file_scope_and_denies_forei
 }
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if name.starts_with("browser_control_") {
+        return browser_control_cases::scenario(name).await;
+    }
     if name.starts_with("browser_") {
         return browser_cases::scenario(name).await;
     }
