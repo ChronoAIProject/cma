@@ -90,46 +90,9 @@ impl SandboxStore for MongoSandboxStore {
         current
             .validate_runtime_generation_successor(&sandbox)
             .map_err(|_| SandboxStoreError::Conflict)?;
-        let expected = signed(expected_revision, "expected sandbox revision")
-            .map_err(|_| SandboxStoreError::Conflict)?;
-        let (origin_type, origin_launch_id, origin_operation_id) = sandbox_origin_fields(&sandbox)?;
-        // Resource attachments also change during provisioning and cleanup,
-        // before a status event. Persist those edges with their usage interval.
-        if layer2_core::sandbox_usage::Allocation::from_sandbox(&current)
-            != layer2_core::sandbox_usage::Allocation::from_sandbox(&sandbox)
-            || current.status != sandbox.status
-        {
-            return super::super::sandbox_usage::save::save(self, expected_revision, &sandbox)
-                .await;
-        }
-        let result = self
-            .sandboxes
-            .update_one(
-                doc! {
-                    "_id": sandbox.id.as_str(),
-                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                    "revision": expected,
-                    "channel_reuse_cleanup_execution": { "$exists": false },
-                    "channel_retirement_finalization": { "$exists": false },
-                    "origin_type": origin_type,
-                    "origin_launch_id": origin_launch_id,
-                    "origin_operation_id": origin_operation_id,
-                },
-                doc! { "$set": sandbox_replacement_fields(&sandbox)? },
-            )
-            .await
-            .map_err(|error| {
-                if is_duplicate_key(&error) {
-                    SandboxStoreError::Duplicate
-                } else {
-                    SandboxStoreError::Unavailable(error.to_string())
-                }
-            })?;
-        if result.matched_count == 1 {
-            Ok(())
-        } else {
-            Err(classify_cas_miss(&self.sandboxes, &sandbox.id).await?)
-        }
+        // Even a metadata-only revision must advance the usage watermark;
+        // otherwise the next lifecycle edge looks like an unmetered writer gap.
+        super::super::sandbox_usage::save::save(self, expected_revision, &sandbox).await
     }
 
     async fn list_sandboxes(
