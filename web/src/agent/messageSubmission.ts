@@ -1,5 +1,5 @@
 import type { AnswerContext } from '@chronoai/cma-sdk';
-import type { AgentController } from './controllerTypes';
+import type { AgentController, MessageAcceptance } from './controllerTypes';
 import type { SteeringMode } from './SteeringMode';
 import type { AgentV2Session } from './transport/client';
 import type { useOptimisticMessages } from './optimisticMessages';
@@ -33,7 +33,7 @@ export function messageSubmission({
 }) {
   return (
     content: string,
-    onAccepted: () => void,
+    onAccepted: (receipt?: MessageAcceptance) => void,
     answerContext?: AnswerContext,
     onRefused?: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
   ) => {
@@ -66,7 +66,7 @@ export function messageSubmission({
         const args: Parameters<AgentController['send']> = [
           content,
           (receipt) => {
-            if (message.accepted(receipt)) onAccepted();
+            if (message.accepted(receipt)) onAccepted(receipt);
             resolve();
           },
           message.observed,

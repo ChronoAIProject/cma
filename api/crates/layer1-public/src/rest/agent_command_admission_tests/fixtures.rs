@@ -177,7 +177,11 @@ pub(super) async fn fixture() -> Fixture {
     });
     let service = AgentCommandService::new(commands.clone(), access.clone(), authority.clone());
     Fixture {
-        router: agent_router(base.state.with_commands(service.clone())),
+        router: agent_router(
+            base.state
+                .with_commands(service.clone())
+                .with_suggestions(base.store.clone()),
+        ),
         store: base.store,
         service,
         commands,

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 229,
+  "openapi_operations": 230,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2853,6 +2853,17 @@
         "idempotency_key_reused",
         "hierarchy_service_unavailable",
         "runtime_update_not_available"
+      ]
+    },
+    "GET /api/v1/agents/{id}/suggestions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/suggestions.rs# Owner-scoped saved contextual suggestions; reads do not generate or send input.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_instance_query"
       ]
     },
     "GET /api/v1/agents/{id}/message-feedback": {

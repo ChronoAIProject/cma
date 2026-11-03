@@ -1,6 +1,12 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { SuggestedReplySet } from './suggestions';
 import type { AgentController } from './controller';
+import type { MessageAcceptance } from './controllerTypes';
+import {
+  confirmSuggestionSend,
+  rememberSuggestionRequest,
+  useSuggestionExposure,
+} from './suggestionMetrics';
 import './SuggestedReplies.css';
 
 export function SuggestedReplies({
@@ -10,13 +16,13 @@ export function SuggestedReplies({
   onSend,
   onEdit,
 }: {
+  readonly onEdit?: (text: string) => void;
   readonly suggestions: SuggestedReplySet;
   readonly controller: AgentController;
   readonly disabled: boolean;
-  readonly onEdit?: (text: string) => void;
   readonly onSend: (
     text: string,
-    accepted: () => void,
+    accepted: (receipt?: MessageAcceptance) => void,
     refused: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
   ) => void | Promise<void>;
 }) {
@@ -36,6 +42,17 @@ export function SuggestedReplies({
   const scopedRequest =
     retained?.answerContext?.turn_sequence === suggestions.scope.turn_sequence &&
     retained?.answerContext?.answer_sequence === suggestions.scope.answer_sequence;
+  const visible =
+    state !== 'accepted' &&
+    state !== 'expired' &&
+    !(scopedRequest && retained.state === 'accepted');
+  const exposure = useSuggestionExposure(suggestions, visible && !disabled);
+  useLayoutEffect(() => {
+    if (!scopedRequest || retained.state !== 'accepted') return;
+    const item = suggestions.items.find((candidate) => candidate.text === retained.input);
+    if (item)
+      confirmSuggestionSend(suggestions, item.id, 'original', retained.receipt ?? undefined);
+  }, [retained, scopedRequest, suggestions]);
   const effectiveState =
     state === 'unconfirmed' && requestKey !== undefined && !retained ? 'failed' : state;
   const status =
@@ -53,7 +70,7 @@ export function SuggestedReplies({
   )
     return null;
   return (
-    <section className="suggested-replies" aria-label="Next you can ask">
+    <section ref={exposure} className="suggested-replies" aria-label="Next you can ask">
       <span>Next you can ask</span>
       <span className="suggested-replies__source">
         {suggestions.source.kind === 'template' ? 'Scenario templates' : 'Suggested follow-ups'}
@@ -67,7 +84,6 @@ export function SuggestedReplies({
         <div className="suggested-replies__item" key={item.id}>
           <button
             type="button"
-            key={item.id}
             disabled={
               disabled ||
               (scopedRequest && retained.state === 'pending') ||
@@ -85,7 +101,8 @@ export function SuggestedReplies({
               void Promise.resolve(
                 onSend(
                   item.text,
-                  () => {
+                  (receipt) => {
+                    confirmSuggestionSend(suggestions, item.id, 'original', receipt);
                     if (active.current) setState('accepted');
                   },
                   (reason) => {
@@ -97,6 +114,21 @@ export function SuggestedReplies({
               ).then(() => {
                 if (!active.current) return;
                 const input = controller.readSuggestionRequest?.();
+                if (
+                  input?.input === item.text &&
+                  input.answerContext?.answer_sequence === suggestions.scope.answer_sequence &&
+                  input.answerContext?.turn_sequence === suggestions.scope.turn_sequence
+                ) {
+                  if (input.state === 'pending')
+                    rememberSuggestionRequest(suggestions, item.id, 'original', input.key);
+                  else
+                    confirmSuggestionSend(
+                      suggestions,
+                      item.id,
+                      'original',
+                      input.receipt ?? undefined,
+                    );
+                }
                 setRequestKey(input?.key);
                 setState((current) =>
                   current === 'accepted' || current === 'expired' || current === 'failed'
