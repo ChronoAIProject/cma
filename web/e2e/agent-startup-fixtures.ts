@@ -154,7 +154,7 @@ export class LocalStartup {
               },
         );
       }
-      switch (url.pathname) {
+      switch (url.pathname.replace(this.agent.id, 'agt_contract')) {
         case '/api/agent-manager/v1/agents/agt_contract/access-requests':
           return reply({ items: [] });
         case '/api/v1/agents/agt_contract/message-feedback':
