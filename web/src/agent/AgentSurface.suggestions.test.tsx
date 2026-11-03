@@ -6,6 +6,8 @@ import { accessRequests } from './accessRequests';
 import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
 import { accepted, harness, item, json, page } from './transport/controller.fixture';
+import type { SuggestedReplySet } from './suggestions';
+import userEvent from '@testing-library/user-event';
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -19,7 +21,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-async function setup(legacy = false) {
+async function setup(legacy = false, suggestedReplies?: SuggestedReplySet) {
   const fixture = harness();
   if (legacy) {
     fixture.eligibility.mockResolvedValue(
@@ -94,11 +96,21 @@ async function setup(legacy = false) {
       ),
     ),
   );
-  function Conversation({ viewer = 'alice' }: { viewer?: string }) {
+  function Conversation({
+    viewer = 'alice',
+    provided = suggestedReplies,
+    accessUncertain = false,
+  }: {
+    viewer?: string;
+    provided?: SuggestedReplySet | null;
+    accessUncertain?: boolean;
+  }) {
     const controller = useAgentController(fixture.client, 'agt_1', { viewerId: viewer });
     return (
       <CmaClientProvider client={fixture.client}>
         <AgentSurface
+          suggestedReplies={provided}
+          accessUncertain={accessUncertain}
           agentId="agt_1"
           viewerId={viewer}
           lifecycleClient={fixture.client}
@@ -120,6 +132,9 @@ async function setup(legacy = false) {
     fixture,
     field,
     suggestion,
+    replaceSuggestions: (provided: SuggestedReplySet | null) =>
+      view.rerender(<Conversation provided={provided} />),
+    loseAccess: () => view.rerender(<Conversation accessUncertain />),
     changeViewer: (viewer: string) => view.rerender(<Conversation viewer={viewer} />),
     remount: () => {
       view.unmount();
@@ -133,7 +148,12 @@ it('recovers a double-clicked suggestion with its original request while retaini
   fixture.post.mockRejectedValueOnce(new TypeError('Response lost'));
   fireEvent.click(suggestion);
   fireEvent.click(suggestion);
+  const group = screen.getByRole('region', { name: 'Next you can ask' });
+  expect(within(group).getByRole('status')).toHaveTextContent('Sending suggestion');
   await screen.findByText('Awaiting confirmation');
+  expect(within(group).getByRole('status')).toHaveTextContent(
+    'Awaiting confirmation — recover the pending request.',
+  );
   expect(field).toHaveValue('Keep the budget limit.');
   expect(suggestion).toBeDisabled();
   const original = fixture.post.mock.calls[0]![0]!;
@@ -331,4 +351,60 @@ it('disables suggestions while a manual message is awaiting confirmation', async
   fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
   await screen.findByText('Awaiting confirmation');
   expect(suggestion).toBeDisabled();
+});
+
+it('renders three scoped candidates and sends the keyboard-selected full text without trimming', async () => {
+  const visible = 'Keep all constraints.\nExplain the cost of café hosting.  ';
+  const { fixture, field } = await setup(false, {
+    id: 'bounded-fixture',
+    viewerId: 'alice',
+    agentId: 'agt_1',
+    answerId: 'event:3',
+    scope: { turn_sequence: 1, answer_sequence: 3 },
+    source: { kind: 'template', version: 'bounded-fixture-v1' },
+    items: [
+      {
+        id: 'criteria',
+        rank: 0,
+        text: 'Add explicit comparison criteria and explain the trade-offs.',
+      },
+      { id: 'limits', rank: 1, text: 'List the stated limits.' },
+      { id: 'cost', rank: 2, text: visible },
+    ],
+  });
+  const group = screen.getByRole('region', { name: 'Next you can ask' });
+  const buttons = within(group).getAllByRole('button');
+  expect(buttons).toHaveLength(3);
+  expect(buttons[2]).toHaveTextContent('Explain the cost of café hosting.');
+  buttons[2]!.focus();
+  await userEvent.setup().keyboard('{Enter}');
+  await waitFor(() => expect(fixture.post).toHaveBeenCalledOnce());
+  expect(JSON.parse(String(fixture.post.mock.calls[0]![0]!.body)).input).toBe(visible);
+  expect(field).toHaveValue('Keep the budget limit.');
+});
+
+it('keeps the answer and manual draft usable when a supplied suggestion set is invalid or unavailable', async () => {
+  const { field, replaceSuggestions } = await setup();
+  replaceSuggestions({
+    viewerId: 'alice',
+    agentId: 'agt_1',
+    answerId: 'event:3',
+  } as SuggestedReplySet);
+  expect(screen.queryByRole('region', { name: 'Next you can ask' })).not.toBeInTheDocument();
+  expect(
+    screen.getByText('PostgreSQL supports concurrent writers; SQLite suits local storage.'),
+  ).toBeVisible();
+  expect(field).toBeEnabled();
+  expect(field).toHaveValue('Keep the budget limit.');
+  replaceSuggestions(null);
+  expect(screen.queryByRole('region', { name: 'Next you can ask' })).not.toBeInTheDocument();
+  expect(field).toBeEnabled();
+});
+
+it('removes the send entry when conversation access becomes uncertain', async () => {
+  const { field, fixture, loseAccess } = await setup();
+  loseAccess();
+  expect(screen.queryByRole('region', { name: 'Next you can ask' })).not.toBeInTheDocument();
+  expect(field).toHaveValue('Keep the budget limit.');
+  expect(fixture.post).not.toHaveBeenCalled();
 });
