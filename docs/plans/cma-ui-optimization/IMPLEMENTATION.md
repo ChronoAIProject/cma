@@ -330,3 +330,14 @@
 - Web Style 和 19 ticket 原始 AC 内容未改（保留全部 149 条）；13 的 literal human quality signoff 仍 pending。16/17 feature 分支未合并，VM slot 和其 native 工作完全未触碰。
 - 原工作区只读 preservation check 在 `2026-11-03T08:59:41.496Z` 返回 1：branch/HEAD 与 46 个原始文件 hashes 全部保持一致，19 ticket AC 检查也通过；但相对现有外部登记表发现 25 个额外 changed/untracked 路径，且已登记的 `docs/CMAEG_GitHub_Source_Tech_Design.md` hash 已变化。此为本次观察到的并发文件集漂移，已通知 parent；没有将失败称作完整 preservation pass，没有改写登记表、原文件或并发文档，没有把它们纳入本任务。
 - 仅写 integration 的 merge/ledger；无 original/其他 worker source 写入，无 push、PR、部署、服务或 VM 操作。保留 worktree 供 parent cleanup；原有 baseline 限制不在本次修复范围。
+
+## 16 首页可选桌面创建完成（2026-11-03）
+
+- 独立 worktree `/Users/liuyitian/code/cma-ui-worktrees/ticket-16`、分支 `codex/cma-ui-16`；起点9bc2f04，已合入最新 integration6722f9b（含质量修复和15 E2E类型修复）。完整实现/证据见 `16-EVIDENCE.md`；原始7条AC逐字保留，只在证实后勾选，未改17/19状态。
+- Home默认关闭的桌面选项进入原请求/key/operation和durable first-message preparation；Core在admission前验证明确的immutable runtime、2GiB/1000m配置、retained home和existing boot/generation/active状态，不自动重启。暂时失败保留原Agent/task/browser，准备状态与task/真实Live区分；accepted replay不受之后关闭新admission影响。
+- 首red是丢receipt刷新后缺桌面开关，随后U green；真实public+Mongo unsupported red→green、supported422→202、准备状态/retained draft red→green均保留。最终public/Mongo9tests证明首次任务恰好一次、process/worker重启、mutation-free refusal、原Workspace/runtime绑定；OAuth取消/刷新必须显式续同body/key/desktop。
+- 实际native Home正式POST→丢202→刷新重放→同Agent/task→真实ACP/cma-browser/Chromium→Core/public/SDK/Web1280×720JPEG→刷新同context通过。native候选0437bd154；public driver1passed/0ignored，Chrome1passed。Agent655ms可进入、准备约4s、first Web Live31.083s；native全cgroup峰值910155776bytes/93PIDs/14.103CPU秒，具体quota/read-only/UID边界与外部fixture限制见证据。VM-heavy slot16:58明确释放，无daemon/VM重启。
+- 真实启动发现15 proof image COPY丢ACP executable bit；新immutable image `sha256:da56a37266cd285f584ba4ecc3982102b20bbdaa7c0b5ba36842b5087e43fead`只恢复0755，runtime/bridge bytes不变。production Dockerfile保留`test -x`门禁；attempt01–04失败与最终绿均保留，未以截图或mock代替native链路。
+- Full Web336files/3011tests、focused3files/32tests、Web/E2E/TS SDK types、Web/SDK lint、CSS、四层+CMA/RustSDK all-target Clippy通过；13新public corpus在真实handler回放，TS完整2852tests，Rust12typed HTTP+1closed-query shape case。inventory2847cases/239operations/1627HTTP named pairs/23protocol pairs；捕获的missing-task invalid_request已准确声明，无skip/allowance。
+- 实际retained15可执行文件对新desktop journal读取503，旧omitted-field process-restart positive1passed；current process同Agent/operation恢复通过。rollback floor必须16-aware journal/first-message reader，且保留15 agent_browser-aware runtime decoder，不能仅关闭UI回滚。旧binary SHA和positive/negative日志已保留。
+- 外部 `ticket16-proof/manifest.json` / `HANDOFF.md` 提供最终精确commit、每个changed path SHA、artifact/binary hashes、source-equivalence、line/format/style/AC/preservation核验。保留原工作区46hash及并行新增路径，未写原工作区、未派生agent、未push/PR/deploy；13人工质量与19整体验收仍独立。

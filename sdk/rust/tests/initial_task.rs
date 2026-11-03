@@ -1,9 +1,9 @@
 #[path = "support/wire.rs"]
 mod wire;
 
-use cma_sdk::{agents::AgentLifecycleCreateRequest, IdempotencyKey};
+use cma_sdk::{IdempotencyKey, agents::AgentLifecycleCreateRequest};
 use serde_json::json;
-use wire::{json as response, WireServer};
+use wire::{WireServer, json as response};
 
 #[tokio::test]
 async fn repository_task_reads_source_and_actual_checkout_as_distinct_public_facts() {
