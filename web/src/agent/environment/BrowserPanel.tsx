@@ -41,12 +41,12 @@ export function BrowserPanel({
   }>();
   const [decoded, setDecoded] = useState<Frame>();
   const [clock, setClock] = useState(Date.now);
+  const requests = useRef(Promise.resolve());
   const current = stored?.scope === scope && active ? stored : undefined;
   useEffect(() => {
     if (!active) return;
     let alive = true;
     let generation = 0;
-    let pending: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let freshness: ReturnType<typeof setInterval> | undefined;
     let contextId: string | undefined;
@@ -62,22 +62,24 @@ export function BrowserPanel({
       setClock(Date.now());
       freshness = setInterval(() => setClock(Date.now()), 250);
     };
+    const schedule = (operation: () => Promise<void>) => {
+      requests.current = requests.current.then(operation).catch(() => {});
+    };
     const release = () => {
-      void client.release(agentId, { runtime_incarnation: incarnation, observer }).catch(() => {});
+      schedule(async () => {
+        await client.release(agentId, { runtime_incarnation: incarnation, observer });
+      });
     };
     const stop = () => {
       generation += 1;
       clearTimeout(timer);
       clearInterval(freshness);
-      pending?.abort();
-      pending = undefined;
       release();
     };
-    const read = async () => {
+    const observe = async () => {
       if (!alive || terminal || hidden()) return;
       const version = generation;
       const request = new AbortController();
-      pending = request;
       const deadline = setTimeout(() => request.abort(), 4000);
       try {
         const value = await client.read(
@@ -121,7 +123,6 @@ export function BrowserPanel({
         } else publish('disconnected');
       } finally {
         clearTimeout(deadline);
-        if (pending === request) pending = undefined;
         if (alive && version === generation && !terminal && !hidden())
           timer = setTimeout(
             () => {
@@ -130,6 +131,12 @@ export function BrowserPanel({
             Math.min(8000, 1000 * 2 ** failures),
           );
       }
+    };
+    const read = () => {
+      const version = generation;
+      schedule(async () => {
+        if (version === generation) await observe();
+      });
     };
     const visibility = () => {
       stop();
