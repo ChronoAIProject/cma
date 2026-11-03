@@ -9,6 +9,11 @@ use layer2_core::resource_access::{
 };
 use tower::ServiceExt;
 
+mod environment;
+mod recovery;
+mod restart;
+mod subprocess;
+
 struct UnusedCompatibilityLedger;
 
 struct PersonalAuthority;
@@ -56,30 +61,59 @@ async fn router(
     database: &mongodb::Database,
     database_client: &mongodb::Client,
 ) -> Router {
+    router_for(harness, database, database_client, "owner", false).await
+}
+
+async fn router_for(
+    harness: &Harness<MongoSandboxStore>,
+    database: &mongodb::Database,
+    database_client: &mongodb::Client,
+    owner: &str,
+    can_create: bool,
+) -> Router {
+    router_components(
+        harness.store.clone(),
+        harness.registry.clone(),
+        database,
+        database_client,
+        owner,
+        can_create,
+    )
+    .await
+}
+
+async fn router_components(
+    store: Arc<MongoSandboxStore>,
+    registry: Arc<LiveAgentRegistry>,
+    database: &mongodb::Database,
+    database_client: &mongodb::Client,
+    owner: &str,
+    can_create: bool,
+) -> Router {
     let profiles = Arc::new(
         MongoProfileStore::open(database_client, database.name())
             .await
             .unwrap(),
     );
     let services = AgentProjectionServices::new(
-        harness.store.clone(),
+        store.clone(),
         profiles.clone(),
-        harness.registry.clone(),
+        registry,
         Arc::new(UnavailableSandboxResources),
         RuntimeCapabilities::new([RuntimeCapability::Conversation]),
     )
     .with_resource_access(Arc::new(ResourceAccessService::new(
-        harness.store.clone(),
+        store.clone(),
         Arc::new(PersonalAuthority),
     )));
     let lifecycle = InlineAgentLifecycle::new(
         SandboxService::new(
-            harness.store.clone(),
+            store.clone(),
             profiles.clone(),
             SandboxPolicy::default(),
             Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
         ),
-        WorkspaceService::new(harness.store.clone(), profiles.clone()),
+        WorkspaceService::new(store, profiles.clone()),
         services.agents(),
         profiles,
         ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
@@ -94,13 +128,47 @@ async fn router(
         Arc::new(MongoAgentLifecycleStore::open(database).await.unwrap()),
         None,
     );
-    cross_interface_tests::authenticated(
-        services
-            .with_lifecycle(lifecycle.clone())
-            .with_lifecycle_operations(lifecycle)
-            .router(Arc::new(UnusedCompatibilityLedger)),
-        harness,
-    )
+    services
+        .with_lifecycle(lifecycle.clone())
+        .with_lifecycle_operations(lifecycle)
+        .router(Arc::new(UnusedCompatibilityLedger))
+        .layer(middleware::from_fn_with_state(
+            (SubjectId::new(owner), can_create),
+            authenticate_task_owner,
+        ))
+}
+
+async fn authenticate_task_owner(
+    axum::extract::State((owner, can_create)): axum::extract::State<(SubjectId, bool)>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if request
+        .headers()
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        != Some(TEST_BEARER)
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let mut capabilities = vec![Capability::UseOwnSandboxes];
+    if can_create {
+        capabilities.push(Capability::CreateSandbox);
+    }
+    let authorization = Authorization::new(capabilities);
+    let mut context = v2_tests::context(&owner);
+    context.caller = layer2_core::Caller::new(owner.clone(), authorization.clone());
+    request
+        .extensions_mut()
+        .insert(layer1_public::AuthenticatedSubject(owner));
+    request.extensions_mut().insert(context);
+    request
+        .extensions_mut()
+        .insert(layer1_public::DelegatedCredential::new(
+            "local-task-owner".into(),
+        ));
+    request.extensions_mut().insert(authorization);
+    Ok(next.run(request).await)
 }
 
 async fn create(router: &Router, body: &Value, key: &str) -> (StatusCode, Value) {
@@ -122,6 +190,55 @@ async fn create(router: &Router, body: &Value, key: &str) -> (StatusCode, Value)
     let value = serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
         .unwrap();
     (status, value)
+}
+
+async fn isolated_environment() -> (
+    mongodb::Client,
+    mongodb::Database,
+    Harness<MongoSandboxStore>,
+) {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let database = client.database(&format!(
+        "cma_task_recovery_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let store = Arc::new(
+        MongoSandboxStore::open(&client, database.name())
+            .await
+            .unwrap(),
+    );
+    let harness = Harness::with_store_services(
+        store,
+        Arc::new(EmptyAgentSkillResolver),
+        1,
+        Some(vec![
+            ServiceId::new("ornn-api"),
+            ServiceId::new("chrono-llm-public"),
+        ]),
+    )
+    .await;
+    (client, database, harness)
+}
+
+async fn admitted_identity(service: &Router, receipt: &Value) -> AgentId {
+    let path = format!(
+        "/api/v1/agent-lifecycle/{}",
+        receipt["id"].as_str().unwrap()
+    );
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let operation: Value =
+                serde_json::from_str(&cross_interface_tests::read(service, &path).await).unwrap();
+            assert_ne!(operation["status"], "failed", "{operation}");
+            if let Some(identity) = operation["agent_id"].as_str() {
+                break AgentId(identity.into());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap()
 }
 
 #[tokio::test]
