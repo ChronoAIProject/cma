@@ -2,6 +2,14 @@
 
 <!-- nav: 5 Agents -->
 
+`client.agents().suggestions(agent_id, cma_sdk::answer_context::AnswerContext {
+turn_sequence: 3, answer_sequence: 5 }).await` reads a saved contextual result.
+This GET never generates or sends input. A `ready` reading contains a stable
+`SuggestedReplySet`; pending, empty, unavailable, failed and expired states do
+not block ordinary conversation. Preserve the returned scope for an unchanged
+suggestion's normal conditional send. Observations retain measured tokens and
+latency, with provider-reported cost when available and `None` when unknown.
+
 Use `agents().create_lifecycle` for Image Manager selections and inline Agent
 configuration. Omit the image to use the deployment default. Persist the exact
 request and key before submission so an uncertain result can be retried safely.
@@ -495,6 +503,19 @@ change these votes. New writes accept only the nonempty Assistant message with
 the greatest durable sequence in a successfully completed turn. Other targets
 return 404; historical votes remain readable, and the up/down/null request and
 response shapes remain unchanged.
+
+`agents().feedback_details(agent_id, "event:42")` returns `FeedbackDetails` with
+viewer/Agent/answer identities, `version`, `reasons`, `comment`, `updated_at`,
+and `request_id`. After confirming down, call `set_feedback_reasons(agent_id,
+"event:42", &FeedbackReasonRequest { expected_version, request_id, reasons,
+comment })`. `FeedbackReason` has six variants: `Inaccurate`, `Unanswered`,
+`UnusableSteps`, `Incomplete`, `Unclear`, `Other`; selections must be distinct.
+Use an empty optional comment or at most 500 Unicode code points, and a stable
+ASCII request ID (1–128 letters/digits or `_.:-`). Exact retries recover the same
+durable result; stale versions or changed request reuse return 409
+`feedback_version_conflict`. Reread after an uncertain outcome. Up/null atomically
+clears saved details for all clients, while retaining a version fence. No Agent
+input or training operation is created.
 
 ### Agent session share links
 

@@ -50,6 +50,7 @@ mod shared_source_cases;
 mod shared_stream_cases;
 mod source_cases;
 mod state_cases;
+mod suggestion_cases;
 mod symbols;
 mod trigger_cases;
 mod warm_pool_cases;
@@ -161,6 +162,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = message_feedback_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = suggestion_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = runtime_update_cases::scenario(name).await {

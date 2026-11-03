@@ -1,4 +1,27 @@
 use super::*;
+
+#[test]
+fn message_feedback_reason_schema_is_in_focused_agent_manager_contract() {
+    let contract = document();
+    assert!(
+        contract["paths"]["/api/v1/agents/{id}/messages/{message_id}/feedback"]["get"].is_object()
+    );
+    assert!(
+        contract["paths"]["/api/v1/agents/{id}/messages/{message_id}/feedback/reasons"]["put"]
+            .is_object()
+    );
+    assert_eq!(
+        contract["components"]["schemas"]["FeedbackReasonView"]["enum"],
+        json!([
+            "inaccurate",
+            "unanswered",
+            "unusable_steps",
+            "incomplete",
+            "unclear",
+            "other"
+        ])
+    );
+}
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
@@ -58,8 +81,8 @@ fn focused_contract_preserves_existing_operations_and_identities() {
             operation_count += 1;
         }
     }
-    assert_eq!(focused["paths"].as_object().unwrap().len(), 63);
-    assert_eq!(operation_count, 77);
+    assert_eq!(focused["paths"].as_object().unwrap().len(), 65);
+    assert_eq!(operation_count, 80);
     assert_eq!(focused["servers"][0]["url"], "/");
     assert_eq!(focused["info"]["title"], "CMA Agent Manager API");
     assert!(focused["info"]["description"]
