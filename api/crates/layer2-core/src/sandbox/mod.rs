@@ -15,6 +15,7 @@ mod agent_operation;
 mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
+pub mod task_experience;
 pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};
 mod agent_settings_authority;
 pub use agent_live_skills::{AgentSkillInstallStatus, AgentSkillInstallation};

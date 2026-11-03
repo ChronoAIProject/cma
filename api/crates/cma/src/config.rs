@@ -18,6 +18,7 @@ mod profiles;
 mod runtime;
 
 mod features;
+mod task_experience;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
@@ -162,6 +163,8 @@ pub struct Config {
     pub desktop_verified_runtime_image: Option<String>,
     pub auth_mode: AuthMode,
     pub features: FeatureFlags,
+    pub task_experience:
+        std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
@@ -355,6 +358,7 @@ impl Config {
                 .filter(|value| !value.is_empty()),
             auth_mode,
             features,
+            task_experience: task_experience::from_lookup(&mut lookup)?,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage: DocumentStorageConfig::from_lookup(&mut lookup)?,

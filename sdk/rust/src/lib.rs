@@ -52,6 +52,7 @@ mod resources;
 pub mod responses;
 pub mod responses_v2;
 pub mod stream;
+pub mod task_experience;
 pub mod triggers;
 
 /// Executable integration guides shipped with the crate.

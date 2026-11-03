@@ -62,6 +62,15 @@ impl AgentFileService {
             None if observer.is_some() => BrowserOperation::Observe,
             None => BrowserOperation::Status,
         };
+        if enabled == Some(true)
+            && !self.task_experience.allows(
+                &caller.subject,
+                crate::sandbox::task_experience::TaskExperienceCapability::DesktopEnable,
+            )
+        {
+            self.finish(&authorized, agent_id, capability).await?;
+            return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
+        }
         if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.operation.is_some() {
             return Ok(BrowserObservationView {
                 agent_id: agent_id.to_string(),

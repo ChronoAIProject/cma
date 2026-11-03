@@ -13,6 +13,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         .iter()
         .any(|(name, value)| name.eq_ignore_ascii_case("prefer") && value == "cma-tool-output");
     match c.case.operation.as_str() {
+        "GET /api/v2/ui/task-experience" => c.check(c.client.read_task_experience().await),
         "GET /api/v2/agents/{agent_id}/events/head" => c.check(api.head(c.param("agent_id")).await),
         "GET /api/v2/ui/transport" => c.check(api.read_transport_eligibility().await),
         "GET /api/v2/agents/{agent_id}/events/snapshot" => c.check(

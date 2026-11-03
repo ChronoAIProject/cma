@@ -9,6 +9,7 @@ import type { AuthProvider } from '../auth/types';
 import type { CmaWebClient } from '../api/client';
 import { CreationFlow } from './CreationFlow';
 import { creationClient } from '../test/creation';
+import { taskExperience } from '../test/taskExperience';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -112,7 +113,10 @@ function taskClient(transport: typeof fetch, repositorySupport = true) {
         })
       : transport(input, options);
   vi.stubGlobal('fetch', boundary);
-  return createRestWebClient(createClient({ fetch: boundary }));
+  return {
+    ...createRestWebClient(createClient({ fetch: boundary })),
+    taskExperience: taskExperience('owner'),
+  };
 }
 
 it('keeps ordinary tasks available when the service does not support repository tasks', async () => {
@@ -316,55 +320,60 @@ it('restores an accepted home task after refresh and opens its exact preparing A
   ]);
 });
 
-it('recovers the frozen exact task after a lost response without overwriting the next draft', async () => {
-  const requests: { body: unknown; key: string | null }[] = [];
-  let resolve!: (value: Response) => void;
-  const transport = vi.fn<typeof fetch>(async (input, options) => {
-    if (options?.method === 'POST') {
-      requests.push({
-        body: JSON.parse(String(options.body)),
-        key: new Headers(options.headers).get('Idempotency-Key'),
-      });
-      if (requests.length === 1) throw new TypeError('Response lost');
-      return new Promise<Response>((done) => {
-        resolve = done;
-      });
-    }
-    if (String(input).includes('agent-lifecycle'))
-      return Response.json({
-        id: 'original-operation',
-        status: 'queued',
-        phase: 'queued',
-        events: [],
-      });
-    throw new Error('Unexpected read');
-  });
-  vi.stubGlobal('fetch', transport);
-  const client = taskClient(transport);
-  const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
-  const first = render(<TaskHome {...props} />);
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
-  fireEvent.change(screen.getByLabelText('Your task'), {
-    target: { value: '  比较三个工具\nexact text  ' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Response lost');
-  fireEvent.change(screen.getByLabelText('Your task'), {
-    target: { value: 'Next independent draft' },
-  });
-  first.unmount();
-  render(<TaskHome {...props} />);
-  expect(screen.getByLabelText('Your task')).toHaveValue('Next independent draft');
-  fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
-  await waitFor(() => expect(requests).toHaveLength(2));
-  fireEvent.change(screen.getByLabelText('Your task'), {
-    target: { value: 'Newer draft while recovering' },
-  });
-  resolve(Response.json({ id: 'original-operation', status: 'provisioning' }, { status: 202 }));
-  await screen.findByText('Task accepted. Preparing your Agent.');
-  expect(requests[1]).toEqual(requests[0]);
-  expect(screen.getByLabelText('Your task')).toHaveValue('Newer draft while recovering');
-});
+it.each([true, false])(
+  'recovers the frozen exact task without overwriting the next draft when policy is %s',
+  async (enabled) => {
+    const requests: { body: unknown; key: string | null }[] = [];
+    let resolve!: (value: Response) => void;
+    const transport = vi.fn<typeof fetch>(async (input, options) => {
+      if (options?.method === 'POST') {
+        requests.push({
+          body: JSON.parse(String(options.body)),
+          key: new Headers(options.headers).get('Idempotency-Key'),
+        });
+        if (requests.length === 1) throw new TypeError('Response lost');
+        return new Promise<Response>((done) => {
+          resolve = done;
+        });
+      }
+      if (String(input).includes('agent-lifecycle'))
+        return Response.json({
+          id: 'original-operation',
+          status: 'queued',
+          phase: 'queued',
+          events: [],
+        });
+      throw new Error('Unexpected read');
+    });
+    vi.stubGlobal('fetch', transport);
+    const client = taskClient(transport);
+    const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
+    const first = render(<TaskHome {...props} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('Your task'), {
+      target: { value: '  比较三个工具\nexact text  ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+    await screen.findByText('Response lost');
+    fireEvent.change(screen.getByLabelText('Your task'), {
+      target: { value: 'Next independent draft' },
+    });
+    first.unmount();
+    client.taskExperience = taskExperience('owner', enabled);
+    render(<TaskHome {...props} />);
+    expect(screen.getByLabelText('Your task')).toHaveValue('Next independent draft');
+    if (!enabled) expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    fireEvent.change(screen.getByLabelText('Your task'), {
+      target: { value: 'Newer draft while recovering' },
+    });
+    resolve(Response.json({ id: 'original-operation', status: 'provisioning' }, { status: 202 }));
+    await screen.findByText('Task accepted. Preparing your Agent.');
+    expect(requests[1]).toEqual(requests[0]);
+    expect(screen.getByLabelText('Your task')).toHaveValue('Newer draft while recovering');
+  },
+);
 
 it('explains that an older service cannot start tasks without silently creating an empty Agent', async () => {
   const writes: string[] = [];

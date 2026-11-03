@@ -1,6 +1,7 @@
 import type { Dispatch } from './context.js';
 
 export const agentEventsV2Dispatch: Record<string, Dispatch> = {
+  'GET /api/v2/ui/task-experience': ({ client }) => client.taskExperience.read(),
   'GET /api/v2/agents/{agent_id}/events/head': ({ client, param }) =>
     client.agentEventsV2.head(param('agent_id')),
   'GET /api/v2/ui/transport': ({ client }) => client.agentEventsV2.readTransportEligibility(),

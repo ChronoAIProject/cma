@@ -89,7 +89,10 @@ pub(crate) fn compose(
     let authority = Arc::new(Authority);
     let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
     state.reads = state.reads.with_resource_access(access.clone());
-    state.with_commands(AgentCommandService::new(store, access, authority))
+    state.with_commands(
+        AgentCommandService::new(store, access, authority)
+            .with_task_experience(crate::agent_v2::fixtures::task_policy()),
+    )
 }
 
 pub(crate) fn authenticate(request: &mut Request) {

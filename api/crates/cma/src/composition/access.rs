@@ -32,6 +32,7 @@ pub(super) struct ToolServices {
     pub documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
     pub deliverables: Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>,
     pub public_origin: String,
+    pub task_experience: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
 }
 
 pub(super) fn deliverables(
@@ -59,7 +60,8 @@ pub(super) fn compose(
     tools: ToolServices,
 ) -> AccessComposition {
     let commands =
-        AgentCommandService::new(stores.sandbox_model.clone(), resource_access, auth.clone());
+        AgentCommandService::new(stores.sandbox_model.clone(), resource_access, auth.clone())
+            .with_task_experience(tools.task_experience);
     let service = AgentAccessService::new(stores.sandbox_model.clone(), auth.clone(), policy);
     let worker = AgentAccessWorker::new(
         stores.sandbox_model.clone(),

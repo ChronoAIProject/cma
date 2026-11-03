@@ -13,6 +13,7 @@ pub(super) struct Files {
     pub kind: String,
     pub entries: Mutex<BTreeMap<String, Option<Vec<u8>>>>,
     pub browser_reply: Mutex<BrowserObservation>,
+    pub control_receipts: Mutex<BTreeMap<String, (BrowserControlRequest, BrowserControlReceipt)>>,
     pub root: Option<std::path::PathBuf>,
     pub browser_relay: Option<std::path::PathBuf>,
 }
@@ -21,6 +22,7 @@ impl Files {
         Self {
             kind: kind.into(),
             browser_reply: Mutex::new(BrowserObservation::idle(BrowserState::NotEnabled)),
+            control_receipts: Mutex::new(BTreeMap::new()),
             root: None,
             browser_relay: None,
             entries: Mutex::new(BTreeMap::from([
