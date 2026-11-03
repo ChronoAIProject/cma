@@ -86,7 +86,7 @@ const EXCHANGES: usize = 4;
 /// What the console is built from.
 pub struct ConsoleDeps {
     pub config: ConsoleConfig,
-    /// `CMAEG_PUBLIC_URL`: the only origin console forms may come from and
+    /// Configured console origin: the only origin forms may come from and
     /// redirects may point to.
     pub public_url: String,
     pub public_api_url: String,
@@ -219,7 +219,7 @@ impl Console {
         &self.inner.public_url
     }
 
-    /// Where NyxID sends the browser back: `{CMAEG_PUBLIC_URL}/console/callback`.
+    /// Where NyxID sends the browser back: `{console_origin}/console/callback`.
     pub(crate) fn redirect_uri(&self) -> String {
         format!("{}{}", self.inner.public_url, redirect::CALLBACK)
     }
@@ -398,7 +398,7 @@ pub(crate) fn compose(
     );
     let console = Console::new(ConsoleDeps {
         config: config.console.clone(),
-        public_url: config.management.public_url.clone(),
+        public_url: config.management.console_origin().to_owned(),
         public_api_url: state.advertised_api_url().to_owned(),
         nyxid_base_url: config.management.nyxid_base_url.clone(),
         clock: Arc::new(clock::SystemClock),
