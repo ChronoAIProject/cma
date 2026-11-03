@@ -218,7 +218,7 @@ test('real Web input exclusively controls the native Agent browser through publi
   const inputObservedAt = Date.now();
   await expect
     .poll(async () =>
-      Date.parse((await page.locator('.agent-browser time').getAttribute('datetime'))!),
+      Date.parse((await page.locator('.agent-browser figure time').getAttribute('datetime'))!),
     )
     .toBeGreaterThan(inputObservedAt);
   await expect(image).toHaveJSProperty('naturalWidth', 1280);
