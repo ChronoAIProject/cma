@@ -1,6 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { SuggestedReplySet } from './suggestions';
 import type { AgentController } from './controller';
+import type { MessageAcceptance } from './controllerTypes';
+import { confirmSuggestionSend, useSuggestionExposure } from './suggestionMetrics';
 import './SuggestedReplies.css';
 
 export function SuggestedReplies({
@@ -14,7 +16,7 @@ export function SuggestedReplies({
   readonly disabled: boolean;
   readonly onSend: (
     text: string,
-    accepted: () => void,
+    accepted: (receipt?: MessageAcceptance) => void,
     refused: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
   ) => void | Promise<void>;
 }) {
@@ -34,6 +36,17 @@ export function SuggestedReplies({
   const scopedRequest =
     retained?.answerContext?.turn_sequence === suggestions.scope.turn_sequence &&
     retained?.answerContext?.answer_sequence === suggestions.scope.answer_sequence;
+  const visible =
+    state !== 'accepted' &&
+    state !== 'expired' &&
+    !(scopedRequest && retained.state === 'accepted');
+  const exposure = useSuggestionExposure(suggestions, visible && !disabled);
+  useLayoutEffect(() => {
+    if (!scopedRequest || retained.state !== 'accepted') return;
+    const item = suggestions.items.find((candidate) => candidate.text === retained.input);
+    if (item)
+      confirmSuggestionSend(suggestions, item.id, 'original', retained.receipt ?? undefined);
+  }, [retained, scopedRequest, suggestions]);
   const effectiveState =
     state === 'unconfirmed' && requestKey !== undefined && !retained ? 'failed' : state;
   const status =
@@ -51,7 +64,7 @@ export function SuggestedReplies({
   )
     return null;
   return (
-    <section className="suggested-replies" aria-label="Next you can ask">
+    <section ref={exposure} className="suggested-replies" aria-label="Next you can ask">
       <span>Next you can ask</span>
       <span className="suggested-replies__source">
         {suggestions.source.kind === 'template' ? 'Scenario templates' : 'Suggested follow-ups'}
@@ -82,7 +95,8 @@ export function SuggestedReplies({
             void Promise.resolve(
               onSend(
                 item.text,
-                () => {
+                (receipt) => {
+                  confirmSuggestionSend(suggestions, item.id, 'original', receipt);
                   if (active.current) setState('accepted');
                 },
                 (reason) => {
