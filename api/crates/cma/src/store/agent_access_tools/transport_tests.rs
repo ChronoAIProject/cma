@@ -139,10 +139,37 @@ async fn mongo_retained_transport_uses_completed_connection_lease() {
         .save_agent(agent.revision - 1, agent.clone())
         .await
         .unwrap();
-    source
-        .confirm_transport(&migrated, "original-native", 1)
+    // The native reload can race a lineage writer. Confirmation must wait for
+    // the bounded conflict to settle without claiming installation beforehand.
+    let mut competing = store.client.start_session().await.unwrap();
+    start_transaction(&mut competing).await.unwrap();
+    store
+        .agents
+        .update_one(
+            doc! {"_id": agent.id.as_str()},
+            doc! {"$inc": {"resource_share_guard": 1_i64}},
+        )
+        .session(&mut competing)
         .await
         .unwrap();
+    let (confirmation, ()) = tokio::join!(
+        source.confirm_transport(&migrated, "original-native", 1),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let unconfirmed = store
+                .agent_access_tools
+                .find_one(doc! {"agent_id": agent.id.as_str()})
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!unconfirmed
+                .get_document("record")
+                .unwrap()
+                .contains_key("transport_origin"));
+            competing.abort_transaction().await.unwrap();
+        }
+    );
+    confirmation.unwrap();
     assert_eq!(
         source.authenticate(&bearer).await.unwrap().conversation,
         "original-native"
