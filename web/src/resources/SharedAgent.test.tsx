@@ -33,15 +33,15 @@ it('retains an unsaved file draft when write access is withdrawn but read access
     },
   });
   test.show();
-  await userEvent.click(await screen.findByRole('button', { name: 'Show files', exact: true }));
-  await userEvent.click(await screen.findByRole('button', { name: 'notes.txt', exact: true }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Show Agent computer' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'notes.txt' }));
   const editor = await screen.findByRole('textbox', { name: 'Contents of notes.txt' });
   fireEvent.change(editor, { target: { value: 'Keep this unsaved draft' } });
   test.state.capabilities = ['view_details', 'view_history', 'view_files'];
   test.state.policy += 1;
   fireEvent.focus(window);
   await waitFor(() =>
-    expect(screen.queryByRole('button', { name: 'Save', exact: true })).not.toBeInTheDocument(),
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument(),
   );
   expect(await screen.findByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
     'Keep this unsaved draft',
@@ -279,6 +279,55 @@ const sharedHistoryTranscript = {
     })),
   })),
 };
+
+it('shares the authorized conversation observation with the computer and clears revoked output', async () => {
+  let deliver: ((event: AgentLiveEvent) => void) | undefined;
+  const replayAgent = vi.fn(async (_id, options) => {
+    deliver = options.onEvent;
+    await new Promise<void>((resolve) =>
+      options.signal.addEventListener('abort', () => resolve(), { once: true }),
+    );
+  });
+  const test = fixture(['view_details', 'view_history'], {
+    readAgentTranscript: async () => sharedHistoryTranscript,
+    readAgentEvents: async () => ({
+      items: sharedHistoryEvents.map((event) =>
+        event.kind.type === 'tool_call_started'
+          ? { ...event, kind: { ...event.kind, kind: 'execute', title: 'printf shared-proof' } }
+          : event.kind.type === 'tool_call_updated'
+            ? {
+                ...event,
+                kind: { ...event.kind, output: { text: 'shared-proof', truncated: false } },
+              }
+            : event,
+      ),
+    }),
+    replayAgent,
+  });
+  test.show();
+  await userEvent.click(await screen.findByRole('button', { name: 'Show Agent computer' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Operation output' }));
+  expect(await screen.findByText('shared-proof', { exact: true })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('tab', { name: 'Browser' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Operation output' }));
+  expect(replayAgent).toHaveBeenCalledOnce();
+  test.state.capabilities = ['view_details'];
+  test.state.policy += 1;
+  fireEvent.focus(window);
+  await waitFor(() =>
+    expect(screen.queryByText('shared-proof', { exact: true })).not.toBeInTheDocument(),
+  );
+  await act(async () =>
+    deliver?.({
+      type: 'TOOL_CALL_END',
+      threadId: 'agt_1',
+      runId: '1',
+      toolCallId: 'read',
+      'cma:output': { text: 'shared-proof', truncated: false },
+    }),
+  );
+  expect(screen.queryByText('shared-proof', { exact: true })).not.toBeInTheDocument();
+});
 
 it('sends with current access before the shared transcript or rich history arrives', async () => {
   let finish!: (value: typeof AGENT_TRANSCRIPT) => void;

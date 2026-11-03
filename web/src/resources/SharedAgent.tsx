@@ -31,6 +31,7 @@ import '../agent/Agent.css';
 import './AgentShareLinks.css';
 
 interface Props {
+  readonly computerObservation?: AgentComputerObservation;
   readonly client: ResourceViewsClient;
   readonly web: CmaWebClient;
   readonly detail: SharedAgentDetail;
@@ -52,6 +53,7 @@ export function SharedAgent({
   detailsOpen,
   onDetailsOpenChange,
   onNavigate,
+  computerObservation,
 }: Props) {
   const agentId = detail.id;
   const title = agentDisplayTitle(detail);
@@ -91,6 +93,13 @@ export function SharedAgent({
     readonly conversation: ConversationState;
   }>();
   const [hydrationRevision, setHydrationRevision] = useState(0);
+  const observed = basis !== undefined && live?.basis === basis ? live.conversation : undefined;
+  const observedTools = observed?.toolCalls;
+  const observedRun = observed?.activeRunId;
+  useLayoutEffect(() => {
+    computerObservation?.publish(observedTools, observedRun);
+    return () => computerObservation?.publish(undefined);
+  }, [computerObservation, observedTools, observedRun]);
   const [historyError, setHistoryError] = useState<{
     readonly basis: typeof basis;
     readonly revision: number;
@@ -349,7 +358,7 @@ export function SharedAgent({
           { label: title },
         ]}
         filesOpen={filesOpen}
-        onFilesOpenChange={can('view_files') ? onFilesOpenChange : undefined}
+        onFilesOpenChange={onFilesOpenChange}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={onDetailsOpenChange}
         menu={[{ type: 'label', id: 'creation-origin', text: creationLabel(provenance) }]}
@@ -454,3 +463,5 @@ export function SharedAgent({
     </section>
   );
 }
+import { useLayoutEffect } from 'react';
+import type { AgentComputerObservation } from '../agent/environment/observation';

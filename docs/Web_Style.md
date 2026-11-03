@@ -3839,3 +3839,28 @@ purpose without repeating that explanation.
 | 2026-10-28 | Remove the redundant tool catalog heading and overview availability copy while retaining the Event tools section anchor and accessible catalog region. |
 
 | 2026-11-03 | Define the retained Agent computer, responsive default and return focus, shared selection, authorized mounted-home files, and read-only recorded operation output with explicit missing/truncated evidence and unavailable browser capabilities. |
+
+The Agent toolbar names its retained panel **Computer** (accessible name **Show
+Agent computer** / **Hide Agent computer**). Compact overlays trap focus in the
+visible panel, make background columns inert, and return focus to that control on
+Back or Escape. Hidden retained tabs are excluded from keyboard focus. A wide
+default panel does not take focus from the conversation.
+
+Computer availability comes from the authenticated Agent environment observation.
+Show checking, unsupported, not enabled, permission denied, and temporarily
+unavailable states distinctly. Older servers that do not report the capability
+show **Environment capabilities not reported**. The files surface continues to
+label the authorized mounted home; an unavailable capability never invents a
+browser image, live indicator, replay timeline, or interactive terminal. Readable
+file drafts survive changes to write authority and remain read-only while saving
+is unavailable. Shared operation output uses the same authorized observation as
+the conversation.
+
+| 2026-11-03 | Name the Computer entry, define compact keyboard containment and return focus, and render scoped public capability observations with distinct unavailable states. |
+
+Operation output displays at most 50 operations per page, in their recorded order,
+with Older/Newer controls and a visible range. It initially shows the newest page.
+Hidden output does not render historical operations. Assistant text streaming does
+not rebuild operation groups or replace the visible output DOM.
+
+| 2026-11-03 | Bound operation output to 50 visible records, retain chronological paging, and isolate hidden history from unrelated conversation text rendering. |
