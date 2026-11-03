@@ -3924,6 +3924,7 @@ only presentation: preserve the mounted conversation, composer, draft and focus.
 Reload and navigation restore names from authorized persisted resource metadata.
 
 | 2026-11-03 | Unify persisted real-task and owner names across navigation, conversation and browser tabs, with bounded fallback and setup exclusion. |
+
 ### Reported plan progress and turn outcomes (2026-11-03)
 
 The existing turn-scoped Plan card also shows **Completed 1/3 steps** and
