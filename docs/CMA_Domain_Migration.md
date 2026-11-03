@@ -386,3 +386,36 @@ callbacks themselves remain direct. An OAuth attempt begun immediately before
 the canonical cutover can require a fresh login because its original callback
 URI belongs to the previous configuration. Persisted Agent conversations and
 Sandbox resources are unaffected by this browser transaction retry.
+
+
+## Retained Agent authorization migration
+
+The CMA public origin also namespaces persisted Agent access-tool capabilities.
+Changing only `CHRONO_SERVER_PUBLIC_URL` invalidates those capabilities and blocks
+conversation reconnection, even while every runtime Pod and PVC remains healthy.
+Runtime identity checks, desktop WebSocket checks and browser login alone do not
+prove message execution. Never rewrite capability hashes, encryption keys, Agent
+IDs, creation provenance or native conversation IDs to change the domain.
+
+Deploy the compatibility reader first with the original public origin and
+`CHRONO_AGENT_ACCESS_RETAINED_ORIGINS=https://cma.nyxid.ai`. After every older API
+worker has drained, switch the public origin to `https://cma.nyxid.ai` and retain
+`https://bot.chrono-ai.fun`. Both phases verify both explicitly configured
+authorities. Existing records preserve their exact capability and installed
+tool endpoint; new runtime incarnations receive canonical authorization. The
+reader derives the authority from the stored credential hash and rejects ambiguous
+records. Owner, runtime, creation, conversation and writer-fence checks still apply.
+
+A running Agent has no verified live tool-endpoint rewrite operation. Keep
+`https://bot.chrono-ai.fun/api/v1/agent-tools` directly routed to CMA while retained
+Agents use it. A Cloudflare cross-host 301 is insufficient for authenticated MCP
+POSTs. This compatibility route does not require users to keep visiting the old
+website. Route API and WebSocket traffic directly; redirect browser pages only.
+
+Before announcing completion, prove old credentials authenticate through the new
+service, an existing Agent completes a newly admitted message in its original
+conversation, and runtime Pod UIDs, container IDs, images, restarts and PVCs remain
+unchanged. Pin the event cursor before the test so a historical reply cannot pass
+acceptance. Confirm no command is replayed after a possibly successful execution.
+A command that definitively expired before dispatch is a failed request, not proof
+of agent recovery. Rollback after canonical enrollment must keep both readers.

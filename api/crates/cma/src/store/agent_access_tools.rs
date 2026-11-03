@@ -20,7 +20,10 @@ use super::AuthEncryptionKey;
 mod authenticator;
 #[cfg(test)]
 pub(crate) mod fixtures;
+#[cfg(test)]
+mod migration_tests;
 mod operations;
+mod origins;
 mod records;
 #[cfg(test)]
 pub(in crate::store) mod tests;
@@ -37,35 +40,17 @@ pub(crate) struct MongoAgentAccessToolSource {
     store: Arc<MongoSandboxStore>,
     origin: String,
     signing_key: ring::hmac::Key,
+    retained_origins: Vec<origins::Authority>,
 }
 
 impl MongoAgentAccessToolSource {
+    #[cfg(test)]
     pub(crate) fn new(
         store: Arc<MongoSandboxStore>,
         public_origin: &str,
         encryption: &AuthEncryptionKey,
     ) -> std::result::Result<Arc<Self>, String> {
-        let origin = url::Url::parse(public_origin)
-            .map_err(|_| "Agent access tools need a valid HTTPS public origin")?;
-        if origin.scheme() != "https"
-            || origin.host_str().is_none()
-            || !origin.username().is_empty()
-            || origin.password().is_some()
-            || origin.query().is_some()
-            || origin.fragment().is_some()
-            || origin.path() != "/"
-        {
-            return Err("Agent access tools need a clean HTTPS public origin".into());
-        }
-        let origin = origin.to_string();
-        let namespace =
-            serde_json::to_string(&[store.agent_access_tools.namespace().db, origin.clone()])
-                .map_err(|_| "Agent access tools namespace could not be encoded")?;
-        Ok(Arc::new(Self {
-            store,
-            origin,
-            signing_key: encryption.agent_access_signing_key(&namespace),
-        }))
+        Self::with_retained_origins(store, public_origin, &[], encryption)
     }
 
     pub(crate) async fn authenticate(
