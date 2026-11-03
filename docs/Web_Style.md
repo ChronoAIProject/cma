@@ -3894,3 +3894,45 @@ statuses remain visible. At widths up to 30rem or on coarse pointers, keep all
 actions visible with at least 44px targets. Negative-reason details are separate.
 
 | 2026-11-03 | Restrict owner feedback to completed final answers; specify confirmed toggle/undo, exact retry, read recovery, permission isolation and accessible desktop/mobile status controls for ticket 09. |
+
+### Task navigation and environment settings (2026-11-03)
+
+Agent Manager navigation defaults to **Tasks**, without an Agents/Sandboxes
+switch. The sidebar **Settings** menu contains **Manage environments**, opening
+the existing Sandbox hierarchy. **Back to tasks** restores the task selection,
+scope, status filter, scroll position and keyboard focus. Environment navigation
+retains its own status filter and expansion. Existing resource links and scoped
+creation actions keep their public routes and lifecycle eligibility. Switching
+navigation modes does not replace the current conversation or its draft.
+
+Task rows use the existing stacked tree-row geometry: a truncated title with
+its full hover text, then a visible status word and the existing state dot.
+Manual title, eligible runtime description and configured title keep their
+existing priority; an empty title reads **Untitled task**, never an internal ID.
+Tasks use **Ready to start**, **Completed**, **Working**, **Waiting for approval**,
+**Preparing**, **Paused**, **Stopped**, and **Failed**. Ready to start requires
+confirmed absence of task turns. A completed first message explicitly recorded
+as setup, matched by turn sequence, still reads Ready to start. The same first
+turn with unknown legacy purpose reads Status unavailable; a later successful
+task turn reads Completed. Message text and title are never evidence of purpose.
+Completed requires a durable successful last task turn
+and no active, queued or admitted work. Missing evidence reads **Status
+unavailable**. Failure, interruption and parent lifecycle barriers take priority
+over an old success. These are task facts; resource lifecycle states are unchanged.
+Completed and Ready to start use the existing neutral tone, working/preparation
+the active tone, approval the warning tone, failure the error tone, and paused/
+stopped the muted tone. Color never replaces the visible word.
+
+The Settings and Back to tasks controls reuse quiet sidebar rows and shared
+menus, 32px on desktop and at least 44px below 30rem. The Tasks heading uses the
+existing 13px secondary filter label. Personal, Organization and Shared remain
+in Filter alongside task status. Long titles never displace status. Narrow
+screens retain the navigation sheet, Escape handling and focus return. Empty
+lists state that no tasks match; failed refreshes retain already shown tasks
+with an alert and retry. Stale scoped rows remain readable but cannot navigate
+or act until access is checked again; denied access removes them. Stale rows omit
+the state dot and keep the last known state word alongside the refresh warning.
+
+| 2026-11-03 | Make task navigation the default, move Sandbox browsing under Settings, display authorized last-turn state with visible words, and preserve navigation position and lifecycle barriers. |
+
+| 2026-11-03 | Distinguish completed setup from completed tasks using recorded first-message purpose and turn identity; leave unknown legacy first-turn purpose unavailable. |

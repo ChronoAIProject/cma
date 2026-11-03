@@ -5,6 +5,8 @@ use serde::Deserialize;
 /// Personal, organization or shared creation inventory, with optional category filtering.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentProvenanceInventoryOptions {
+    #[doc = "Filter the authorized task outcome independently of lifecycle status."]
+    pub task_status: Option<crate::instances::AgentTaskStatus>,
     /// Explicit incoming shares across current organizations; excludes personal
     /// ownership. Mutually exclusive with `scope.organization`.
     pub shared: bool,
@@ -21,6 +23,8 @@ pub struct AgentProvenanceInventoryOptions {
 /// Safe creation summary without private source or creator references.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentProvenanceInventoryItem {
+    #[doc = "Authorized task outcome; absent on older servers."]
+    pub task_status: Option<crate::instances::AgentTaskStatus>,
     /// CMA Agent identity.
     pub agent_id: String,
     /// Authorized Agent title when present.
