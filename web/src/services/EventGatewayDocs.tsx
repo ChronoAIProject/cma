@@ -81,6 +81,7 @@ export function gatewayDocLink(target: string, section: string): string | undefi
     target === '/openapi.json' ||
     target === '/event-gateway/openapi.json' ||
     target === 'https://bot.chrono-ai.fun/event-gateway/openapi.json' ||
+    target === 'https://cma.nyxid.ai/event-gateway/openapi.json' ||
     target === 'https://bot-gateway.chrono-ai.fun/openapi.json'
   )
     return '/event-gateway/openapi.json';
@@ -89,7 +90,7 @@ export function gatewayDocLink(target: string, section: string): string | undefi
     if (
       (url.origin === 'https://bot-gateway.chrono-ai.fun' &&
         /^\/docs(?:\/|$)/.test(url.pathname)) ||
-      (url.origin === 'https://bot.chrono-ai.fun' &&
+      (['https://bot.chrono-ai.fun', 'https://cma.nyxid.ai'].includes(url.origin) &&
         /^\/(?:event-gateway\/docs|docs\/event-gateway)(?:\/|$)/.test(url.pathname))
     ) {
       const page = url.pathname.split('/').at(-1);

@@ -24,7 +24,7 @@ it('resolves original names, deduplicates service reads, and links canonical ide
   );
   expect(await screen.findByRole('link', { name: 'GitHub' })).toHaveAttribute(
     'href',
-    'https://nyx.chrono-ai.fun/services/catalog-github',
+    'https://nyxid.ai/services/catalog-github',
   );
   expect(await screen.findByRole('link', { name: 'TypeScript' })).toHaveAttribute(
     'href',
@@ -78,7 +78,7 @@ it('drops previous-owner names and ignores late reads when the owner provider re
   await waitFor(() =>
     expect(screen.getByRole('link', { name: 'Other owner service' })).toHaveAttribute(
       'href',
-      'https://nyx.chrono-ai.fun/services/other-catalog',
+      'https://nyxid.ai/services/other-catalog',
     ),
   );
 });
@@ -99,7 +99,7 @@ it('restores a settled name synchronously when the same view returns', async () 
   view.rerender(draw(true));
   expect(screen.getByRole('link', { name: 'GitHub' })).toHaveAttribute(
     'href',
-    'https://nyx.chrono-ai.fun/services/catalog-github',
+    'https://nyxid.ai/services/catalog-github',
   );
   expect(screen.queryByText('Loading name')).not.toBeInTheDocument();
   expect(services).toHaveBeenCalledOnce();
@@ -126,6 +126,6 @@ it('drops resolved names immediately when the client changes without a provider 
   expect(screen.getByText('Loading name')).toBeVisible();
   expect(await screen.findByRole('link', { name: 'Replacement service' })).toHaveAttribute(
     'href',
-    'https://nyx.chrono-ai.fun/services/replacement-catalog',
+    'https://nyxid.ai/services/replacement-catalog',
   );
 });
