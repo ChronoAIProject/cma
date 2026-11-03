@@ -2269,7 +2269,8 @@
       "required_problems": [
         "not_authenticated",
         "forbidden",
-        "invalid_binding"
+        "invalid_binding",
+        "binding_skill_version_update_unsupported"
       ]
     },
     "GET /api/v1/cmaeg/bindings/{binding_id}": {
@@ -2753,6 +2754,7 @@
         "agent_not_found",
         "agent_not_ready",
         "agent_operation_in_flight",
+        "agent_skill_version_upgrade_unsupported",
         "connections_required",
         "forbidden",
         "hierarchy_service_unavailable",

@@ -3,6 +3,24 @@ import { isPendingTool } from './toolStatus';
 
 const groups = ['messages', 'toolCalls', 'reasoning', 'approvals', 'plans', 'recovery'] as const;
 
+const maximumOrders = new WeakMap<readonly { readonly order?: number }[], number>();
+const orderedGroups = new WeakSet<readonly { readonly order?: number }[]>();
+
+function maximumOrder(state: ConversationState) {
+  let maximum = 0;
+  for (const group of groups) {
+    const values = state[group];
+    let cached = maximumOrders.get(values);
+    if (cached === undefined) {
+      cached = 0;
+      for (const item of values) cached = Math.max(cached, item.order ?? 0);
+      maximumOrders.set(values, cached);
+    }
+    maximum = Math.max(maximum, cached);
+  }
+  return maximum;
+}
+
 interface Row {
   group: (typeof groups)[number];
   id: string;
@@ -52,30 +70,48 @@ export function orderEntries(
   sequence?: number,
 ): ConversationState {
   if (previous === next) return previous;
-  let order = Math.max(0, ...groups.flatMap((key) => previous[key].map((item) => item.order ?? 0)));
+  let order = maximumOrder(previous);
+  const nextOrder = () => ++order;
   const result = { ...next };
   for (const key of groups) {
-    const known = new Map(previous[key].map((item) => [item.id, item]));
+    const before = previous[key];
+    const after = next[key];
+    if (before === after && orderedGroups.has(after)) continue;
+    let known: Map<string, (typeof before)[number]> | undefined;
+    let groupMaximum = 0;
+    let unchanged = true;
+    const ordered = after.map((item, index) => {
+      const previousItem =
+        before[index]?.id === item.id
+          ? before[index]
+          : (known ??= new Map(before.map((entry) => [entry.id, entry]))).get(item.id);
+      if (item === previousItem && item.order !== undefined) {
+        groupMaximum = Math.max(groupMaximum, item.order);
+        return item;
+      }
+      const settled =
+        key === 'toolCalls' &&
+        'status' in item &&
+        previousItem !== undefined &&
+        'status' in previousItem &&
+        isPendingTool(previousItem) &&
+        !isPendingTool(item);
+      const itemSequence = settled
+        ? sequence
+        : (item.sequence ??
+          previousItem?.sequence ??
+          (item === previousItem ? undefined : sequence));
+      const itemOrder = settled ? nextOrder() : (item.order ?? previousItem?.order ?? nextOrder());
+      groupMaximum = Math.max(groupMaximum, itemOrder);
+      if (itemSequence === item.sequence && itemOrder === item.order) return item;
+      unchanged = false;
+      return { ...item, sequence: itemSequence, order: itemOrder };
+    });
+    const values = unchanged ? after : ordered;
+    orderedGroups.add(values);
+    maximumOrders.set(values, groupMaximum);
     Object.assign(result, {
-      [key]: next[key].map((item) => {
-        const previousItem = known.get(item.id);
-        const settled =
-          key === 'toolCalls' &&
-          'status' in item &&
-          previousItem !== undefined &&
-          'status' in previousItem &&
-          isPendingTool(previousItem) &&
-          !isPendingTool(item);
-        return {
-          ...item,
-          sequence: settled
-            ? sequence
-            : (item.sequence ??
-              known.get(item.id)?.sequence ??
-              (item === known.get(item.id) ? undefined : sequence)),
-          order: settled ? ++order : (item.order ?? known.get(item.id)?.order ?? ++order),
-        };
-      }),
+      [key]: values,
     });
   }
   return result;

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { ApprovalDecision } from './controller';
 import { IconRightUpOutline16, IconThinkOutline16, IconWarningOutline16 } from '../ui/icons';
 import { MessageContent } from './MessageContent';
@@ -13,7 +14,7 @@ import { MessageFooter } from './MessageFooter';
 import type { MessageFeedbackControls } from './useMessageFeedback';
 import type { Entry } from './timeline';
 
-export function StreamEntry({
+function StreamEntryView({
   entry,
   approvalBusy,
   approvalReadOnly = false,
@@ -138,3 +139,26 @@ export function StreamEntry({
     />
   );
 }
+
+export const StreamEntry = memo(StreamEntryView, (previous, next) => {
+  if (previous.entry.kind !== next.entry.kind || previous.entry.item !== next.entry.item)
+    return false;
+  if (next.entry.kind === 'message')
+    return (
+      previous.showUsage === next.showUsage &&
+      previous.usage === next.usage &&
+      previous.duration === next.duration &&
+      previous.user === next.user &&
+      previous.unknownUserName === next.unknownUserName &&
+      previous.feedback === next.feedback &&
+      previous.continued === next.continued
+    );
+  if (next.entry.kind === 'tool') return previous.activeRunId === next.activeRunId;
+  if (next.entry.kind === 'approval')
+    return (
+      previous.approvalBusy === next.approvalBusy &&
+      previous.approvalReadOnly === next.approvalReadOnly &&
+      previous.onApproval === next.onApproval
+    );
+  return true;
+});

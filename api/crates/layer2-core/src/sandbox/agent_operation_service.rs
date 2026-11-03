@@ -78,6 +78,14 @@ pub enum AgentOperationError {
     StaleWorkAuthority,
     #[error("agent request is invalid: {0}")]
     InvalidRequest(String),
+    #[error(
+        "skill {id:?} is installed at version {installed:?}; changing it to version {requested:?} is unsupported"
+    )]
+    SkillVersionUpgradeUnsupported {
+        id: String,
+        installed: String,
+        requested: String,
+    },
     #[error("agent changed while the operation was being fenced")]
     Conflict,
     #[error("sandbox checkpoint is in progress; input was not admitted")]
@@ -118,6 +126,9 @@ impl AgentOperationError {
             Self::QueueCapacityExceeded { .. } => "agent_message_queue_full",
             Self::StaleWorkAuthority => "agent_work_authority_stale",
             Self::InvalidRequest(_) => "invalid_agent_operation",
+            Self::SkillVersionUpgradeUnsupported { .. } => {
+                "agent_skill_version_upgrade_unsupported"
+            }
             Self::Conflict => "agent_operation_conflict",
             Self::CheckpointInProgress => "sandbox_checkpoint_in_progress",
             Self::PreviousTurnConflict => "agent_previous_turn_conflict",
