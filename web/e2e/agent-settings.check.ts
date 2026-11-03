@@ -74,17 +74,17 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   await expect
     .poll(() => actions.evaluate((element) => getComputedStyle(element).opacity))
     .toBe('1');
-  await reply.getByRole('button', { name: 'Upvote message' }).click();
-  await expect(reply.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
+  await reply.getByRole('button', { name: 'Helpful' }).click();
+  await expect(reply.getByRole('button', { name: 'Helpful' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  await reply.getByRole('button', { name: 'Downvote message' }).click();
-  await expect(reply.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
+  await reply.getByRole('button', { name: 'Needs improvement' }).click();
+  await expect(reply.getByRole('button', { name: 'Helpful' })).toHaveAttribute(
     'aria-pressed',
     'false',
   );
-  await expect(reply.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+  await expect(reply.getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
@@ -120,7 +120,7 @@ test('LOCAL composer settings and message feedback remain usable across screen s
     '0s',
   );
   await page.reload();
-  await expect(reply.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+  await expect(reply.getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
