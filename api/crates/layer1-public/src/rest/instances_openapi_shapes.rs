@@ -367,6 +367,8 @@ impl From<WorktreeHierarchySummary> for WorktreeView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct OwnerAgentSummaryView {
+    #[schema(value_type = String)]
+    pub task_status: layer2_core::sandbox::AgentTaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -386,6 +388,7 @@ pub struct OwnerAgentSummaryView {
 impl From<AgentHierarchySummary> for OwnerAgentSummaryView {
     fn from(value: AgentHierarchySummary) -> Self {
         Self {
+            task_status: value.task_status,
             runtime_metadata: value.runtime_metadata.map(Into::into),
             owner_title: value.owner_title,
             id: value.id.to_string(),
