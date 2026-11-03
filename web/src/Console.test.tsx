@@ -120,6 +120,7 @@ it('keeps composer settings available while Details and tree navigation remain u
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus());
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   const composer = within(screen.getByRole('form', { name: 'Message Agent' }));
+  await actor.click(await composer.findByRole('button', { name: /^Agent settings:/ }));
   expect(
     await composer.findByRole('button', { name: /^Model and reasoning effort/ }),
   ).toHaveTextContent('gpt-6 High');
