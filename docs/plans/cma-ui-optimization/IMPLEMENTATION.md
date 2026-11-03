@@ -194,6 +194,15 @@
 - 确认最终回答后同事务保存有界生成任务；既有授权模型代理异步生成；稳定 owner/Agent/canonical answer/strategy identity；GET/history 不生成、不启动 Agent turn。一次持久 claim、重启明确失败、晚到结果及新 input/authority fence、用量/延迟/provider 明示费用保存已实现。复用 11 `SuggestedReplySet` 和 conditional normal-send；12 独占编辑行为。
 - 固定 rubric 先于样本；最终 5 次实际调用覆盖比较、文档修改、中文澄清、无合适建议、错误成果声明，公开 GET 与重新打开的 Mongo store 核实保存值。共 2,200 input / 270 output tokens，35,629ms 总生成时间；实际费用字段缺失，保存 null，未推算费用。早期失败质量样本完整保留。样本已交 parent 独立复核，不将实现 AI 或 parent AI 评价称作人工审批。
 - 最终合并态：8 public generation tests、4 Mongo tests、6 条本票 public contract cases、53 Web U tests、7 选定 TypeScript SDK tests、2 Rust SDK tests 通过；Web/E2E types 与 focused lint 通过。此前合并态真实 Chrome 5 tests 通过，1440/320 px 双主题截图已保留。日志与明细见 [13-EVIDENCE](13-EVIDENCE.md)。不重复无改变风险的付费模型样本或广泛测试。
-- 状态保留 in-progress：literal human quality signoff、provider 实际金额确认、12 编辑/edited-normal-send 指标接线待验收。13 的生成、保存、读取和本地有界指标实现均已交付；不建立 analytics 平台。
+- 该早期 checkpoint 的 12 编辑接线已在下述最终整合中完成；状态仅为 literal human quality signoff 保留 in-progress。provider 实际金额仍未知，明确保留限制，不虚构费用。13 的生成、保存、读取和本地有界指标实现均已交付；不建立 analytics 平台。
 - 独立报告 incoming 14 的 shared public-contract inventory 缺口：`GET /api/v1/agents/{id}/environment` 无 entry/cases，合并态实际 229 vs inventory 228；本票 endpoint + 6 cases 完整通过。04 已修正 REST 文档 inventory 和 OpenAPI source-size，并修复其负责的 AppCreation/Console 问题；这些与原始 skill fixtures/format/508-line Agent service 基线分开记录，不扩大本票修复范围。
 - 自有 preview/model servers 已停止；本票测试数据库已清空，shared Mongo ping=1，未停止 VM/container。保留 worktree 和私有 Rust targets 供 parent 清理。独立人审样本入口：[13-MODEL-SAMPLES](13-MODEL-SAMPLES.md)。
+
+### Ticket 13 最终整合交接
+
+- 已合并最新 integration `f793a41518fa969af068d7913ff6310dee7e040b`，包括 07、12、10；`6de02dae9` 为最终基线合并。12 的编辑行为与正常 admission/recovery 保留，13 只接入保存建议和 edited receipt/outcome 指标，无重复 editor、answer identity 或消息协议。
+- 编辑指标先红后绿：直接确认及丢回执恢复两例最初因缺失指标失败；最终真实 AgentSurface/transport 证明未确认不计数、原 body/key/condition 恢复、新草稿保留、一次 edited confirmation 和独立的后续任务 outcome。组合 U 88 passed，最终 hook 生命周期复验 40 passed；Chrome 6 passed，含真实样本文本的编辑与 late-A。
+- 最新合并态 public lifecycle 8、Mongo 4、shared HTTP 1 test/6 cases、focused OpenAPI 10、REST docs 1、TS SDK 7、Rust SDK 2 named tests 均通过；types/lint/局部格式/secret scan 通过。精确日志和环境边界见 [13-EVIDENCE](13-EVIDENCE.md)。OpenAPI 13 新增一个 GET 的精确 count 已调为 65 paths / 80 operations；保留全部 identity/schema 检查。
+- parent 已独立读取固定 rubric、五例实际 raw output 与 saved public JSON，全部 v3 样本通过。报告原样保存在 [13-PARENT-AI-REVIEW](13-PARENT-AI-REVIEW.md)，仅为 AI review，绝不称 human approval。所有机器工作完成；仅 literal human 质量验收留待整套 19 交付用户评审，tracker 仍明确 in-progress。实际账单缺失仍为 null/unknown，不虚构费用，不阻塞 16–19。
+- 共享 inventory 235 actual / 230 declared 的缺口由 incoming 14 environment 和 07 四个 deliverable operation 组成；13 自身 entry/cases 完整。已报告 parent repair，未改 gate 或重复 CSS/size/task-status/AppPublic 修复。原始 baseline 限制仍分开记录。
+- 13 自有 source ≤500（AgentSurface/OpenAPI 均 495）、test ≤2000；owned preview/model proxy 已停止，无遗留 13 测试库，shared Mongo/VM 保留运行。保留 worktree/private targets 供 parent 清理；无 push、PR、部署或原/其他 worker 工作区修改。

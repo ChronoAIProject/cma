@@ -18,7 +18,7 @@
 - [x] 生成返回数据包含明确 answer scope，服务端校验身份，前端读取/发送再次校验；数据无效、生成失败和权限不足不阻塞正文与 composer。
 - [x] 生成不可用时只可采用 11 中明确适用且标注来源的模板，或隐藏；动态能力完整验收必须有实际生成样本，不能用模板通过其验收。
 - [ ] 典型样本覆盖比较、文档修改、需澄清、无合适建议及错误成果声明；质量由独立人工准则检查，不能以模型自己的评分作为唯一依据。
-- [ ] 编辑入口继续支持本组建议；指标区分有效曝光、发送确认、编辑后发送和后续任务结果，失败生成不计成功曝光。
+- [x] 编辑入口继续支持本组建议；指标区分有效曝光、发送确认、编辑后发送和后续任务结果，失败生成不计成功曝光。
 
 ## Testing boundaries（2026-11-03 已确认）
 
@@ -34,4 +34,6 @@
 
 Implementation, persistence, bounded real generation and focused A/U/browser evidence are delivered; see [13-EVIDENCE](../13-EVIDENCE.md) and [actual model samples](../13-MODEL-SAMPLES.md). The fixed rubric preceded sampling. Literal independent human/user quality signoff remains pending; implementation-agent judgments and any parent AI review are not human review. Actual provider billing cost is unknown and persisted as null; token usage and measured latency are retained without an invented monetary estimate.
 
-Ticket 13 implements generated-set fetch and receipt-bound local metric hooks. Ticket 12 separately owns append/replace/undo/cancel and edited normal-send recovery, including calling the shared edited-confirmation metric seam. The final combined edit criterion remains pending that integration; no duplicate editor or message protocol was introduced here. Status intentionally remains in-progress for these exact acceptance gaps.
+Ticket 12's editor and ticket 10's feedback are merged through integration `f793a41518fa969af068d7913ff6310dee7e040b`. Generated sets use the existing append/replace/undo/cancel and normal-send recovery. Ticket 13 observes actual edited acceptance, uncertain-request recovery and receipt-bound outcomes through the shared metric seam; no duplicate editor or message protocol was introduced. The combined edit criterion is complete.
+
+The [independent parent AI review](../13-PARENT-AI-REVIEW.md) passes all five actual v3 samples. This is explicitly AI review. Machine implementation and proof work are complete; status remains in-progress solely for literal human/user quality acceptance at the full-delivery review. Unknown actual billed cost remains an explicit evidence limitation, not a fabricated estimate or a reason to stall the remaining tickets.
