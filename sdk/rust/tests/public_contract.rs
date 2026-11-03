@@ -149,8 +149,8 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
     }
     for case in &corpus {
         let server = wire::WireServer::new().await;
-        let c = Context::new(&server.anonymous, &case);
-        if browser::owns(&case) {
+        let c = Context::new(&server.anonymous, case);
+        if browser::owns(case) {
             browser::verify(&c);
             assert_eq!(
                 server.request_count(),
@@ -161,7 +161,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
             browser_owned += 1;
             continue;
         }
-        if let Some(class) = classification::classify(&case) {
+        if let Some(class) = classification::classify(case) {
             if matches!(
                 class,
                 classification::Classification::Local | classification::Classification::TypedShape
@@ -182,7 +182,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
                     preflight += 1;
                 }
             } else {
-                classification::assert_unrepresentable(&case, class);
+                classification::assert_unrepresentable(case, class);
                 wire_shape += 1;
             }
             assert_eq!(
@@ -192,7 +192,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
                 case.id
             );
             check_error(
-                &case,
+                case,
                 Error::from_http_problem(
                     case.response.status,
                     case.response.headers.get("x-request-id").cloned(),
@@ -224,7 +224,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
         } else if case.response.status >= 400
             && !(case.operation == "GET /auth/session" && case.response.status == 401)
         {
-            check_error(&case, result.expect_err(&case.id));
+            check_error(case, result.expect_err(&case.id));
         } else {
             result.unwrap_or_else(|error| panic!("{}: {error:?}", case.id));
         }

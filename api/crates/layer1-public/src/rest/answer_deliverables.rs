@@ -71,7 +71,7 @@ fn access<'a>(
     caller: &'a layer2_core::Caller,
     resource: &'a Option<AuthenticatedResourceCaller>,
     headers: &'a HeaderMap,
-) -> Result<DeliverableAccess<'a>, Response> {
+) -> Result<DeliverableAccess<'a>, super::documents::DocumentProblem> {
     Ok(DeliverableAccess {
         caller,
         context: resource.as_ref().map(|resource| &resource.context),
@@ -79,8 +79,7 @@ fn access<'a>(
             .as_ref()
             .and_then(|resource| resource.credential.as_ref())
             .map(DelegatedCredential::value),
-        document_token: super::documents::share_token(headers)
-            .map_err(IntoResponse::into_response)?,
+        document_token: super::documents::share_token(headers)?,
     })
 }
 
@@ -102,7 +101,7 @@ pub(crate) async fn describe(
         .0;
     service
         .describe(
-            &access(&caller, &resource, &headers)?,
+            &access(&caller, &resource, &headers).map_err(IntoResponse::into_response)?,
             &AgentId(agent),
             body,
         )
@@ -124,9 +123,9 @@ pub(crate) async fn list(
 ) -> Result<Json<AnswerDeliverables>, Response> {
     service
         .list(
-            &access(&caller, &resource, &headers)?,
+            &access(&caller, &resource, &headers).map_err(IntoResponse::into_response)?,
             &AgentId(agent),
-            sequence(&answer)?,
+            sequence(&answer).map_err(problem)?,
         )
         .await
         .map(Json)
@@ -156,9 +155,9 @@ pub(crate) async fn read_item(
     let query = query.map_err(|_| problem(DeliverableError::Invalid))?.0;
     service
         .read_item(
-            &access(&caller, &resource, &headers)?,
+            &access(&caller, &resource, &headers).map_err(IntoResponse::into_response)?,
             &AgentId(agent),
-            sequence(&answer)?,
+            sequence(&answer).map_err(problem)?,
             &delivery,
             query.verify,
         )
@@ -181,9 +180,9 @@ pub(crate) async fn download(
 ) -> Result<Response, Response> {
     let (reference, bytes) = service
         .download(
-            &access(&caller, &resource, &headers)?,
+            &access(&caller, &resource, &headers).map_err(IntoResponse::into_response)?,
             &AgentId(agent),
-            sequence(&answer)?,
+            sequence(&answer).map_err(problem)?,
             &delivery,
         )
         .await
@@ -203,12 +202,12 @@ pub(crate) async fn download(
         .into_response())
 }
 
-fn sequence(answer: &str) -> Result<u64, Response> {
+fn sequence(answer: &str) -> Result<u64, DeliverableError> {
     answer
         .strip_prefix("event:")
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|sequence| *sequence > 0 && answer == format!("event:{sequence}"))
-        .ok_or_else(|| problem(DeliverableError::Invalid))
+        .ok_or(DeliverableError::Invalid)
 }
 
 fn problem(error: DeliverableError) -> Response {

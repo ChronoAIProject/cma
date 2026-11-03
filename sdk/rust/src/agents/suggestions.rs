@@ -110,8 +110,8 @@ impl Agents<'_> {
         {
             return Err(Error::validation("invalid suggestion state"));
         }
-        if let Some(set) = &reading.set {
-            if set.agent_id != id
+        if let Some(set) = &reading.set
+            && (set.agent_id != id
                 || set.scope != scope
                 || set.answer_id != format!("event:{}", scope.answer_sequence)
                 || set.id.trim().is_empty()
@@ -135,10 +135,9 @@ impl Agents<'_> {
                             || previous.text.trim().to_lowercase()
                                 == item.text.trim().to_lowercase()
                     })
-                })
-            {
-                return Err(Error::validation("invalid or mismatched suggestion scope"));
-            }
+                }))
+        {
+            return Err(Error::validation("invalid or mismatched suggestion scope"));
         }
         Ok(reading)
     }
