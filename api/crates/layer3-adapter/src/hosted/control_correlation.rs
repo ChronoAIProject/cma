@@ -5,6 +5,17 @@ use crate::{AdapterError, CommandReceipt, WriterState};
 
 pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crate::Result<()> {
     let correlated = match (request, response) {
+        (RequestFrame::BrowserControl(request), ResponseFrame::BrowserControl(receipt)) => {
+            request.agent_id == receipt.agent_id
+                && request.boot_id == receipt.boot_id
+                && request
+                    .context_id
+                    .as_ref()
+                    .is_none_or(|value| *value == receipt.context_id)
+                && receipt.control.operation_id == request.operation_id
+                && uuid::Uuid::parse_str(&receipt.context_id).is_ok()
+                && receipt.control.valid()
+        }
         (RequestFrame::Browser(request), ResponseFrame::Browser(receipt)) => {
             request.agent_id == receipt.agent_id
                 && request.boot_id == receipt.boot_id

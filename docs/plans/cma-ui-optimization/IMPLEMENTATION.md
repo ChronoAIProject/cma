@@ -331,6 +331,15 @@
 - 原工作区只读 preservation check 在 `2026-11-03T08:59:41.496Z` 返回 1：branch/HEAD 与 46 个原始文件 hashes 全部保持一致，19 ticket AC 检查也通过；但相对现有外部登记表发现 25 个额外 changed/untracked 路径，且已登记的 `docs/CMAEG_GitHub_Source_Tech_Design.md` hash 已变化。此为本次观察到的并发文件集漂移，已通知 parent；没有将失败称作完整 preservation pass，没有改写登记表、原文件或并发文档，没有把它们纳入本任务。
 - 仅写 integration 的 merge/ledger；无 original/其他 worker source 写入，无 push、PR、部署、服务或 VM 操作。保留 worktree 供 parent cleanup；原有 baseline 限制不在本次修复范围。
 
+## Ticket 17 完整浏览器控制交接（2026-11-03）
+
+- 运行时在同一 mediator 队列仲裁 Agent navigation/input 与用户 lease/input/return。15秒 monotonic 租约、128条有界 receipt/audit、账号/credential/private-client-key/context/incarnation/token/revision 绑定；公开 GET/POST control、两套 typed SDK、真实 Web 点击/键入/返回与原操作恢复一并完成。没有新增 PTY、任意脚本/CDP 或服务授权。
+- 原始八条 AC 原文保留并基于实际证据勾选。首个真实已知表单 red1→green1；父线程早期 P1 delayed-body 跨替换和 P2 无本地期限均通过实际回归关闭，Linux边界5/5。账户恢复及 acquisition/read 并发分别有 red/green；后者 focused3files/11tests。
+- 独立 immutable17 runtime SHA6283b369b5bedcd8c8d742786f061cce45fbcbb3ead18a2241db473286f624e3，生产构建源556aef8ba，baked proof源23d92fdcc，最终 image4ebc67d07fef6c471b433df01723b277a2db51a432df47a9523a5f8e68d8ca37。精确 API source manifest 及仅测试采样差异证明保留。ACP保持84f967...原字节，修正0755/test-x。uid10001/caps-empty/NNP/read-only/network-none/2GiB/512pids，实际本次cpu.max100000/100000；不改变15旧观测结论。
+- Actual runtime HTTP native1/1、公开handler1/1（0ignored）、Playwright1/1和native进程exit0。实际 USER-17→USER-1→USER-17→USER-17-ONCE→USER-17-ONCE-AGENT→USER-17-ONCE-AGENT-EXPIRED；两次native输入被拒绝，原页面一次加载，lost acquire/input/return、竞争client、旧token/incarnation/context、权限403、公开audit及零task输入均通过。1440/390/320截图实际查看，父线程独立review/hash保留；未把fixture背景连接错误包装成19完整产品成功。
+- 合并16 feature626679227后仅Web Style append冲突，保留16前缀再追加17；再合并最终integration3aff828c1eec7e0ddb07969a0b5977955f1ec810（ledger-only）。Canonical shared filesystem_runtime 与browser control corpus均保留。Combined host Web338files/3018tests、TS SDK3754tests、types/fullE2Etypes/lint/build/SDK consumer和control37/browser36/environment10/desktop13公共case dispatch及OpenAPI inventory通过；更多精确命令/结果/commit绑定见外部handoff。
+- 17:44已释放VM重槽，之后仅host合并/验证；Mongo、16证据、共享cache和daemon未改动。早期失败attempt完整保留。完整交付/安全边界/15和16 reader floor见17-EVIDENCE.md、17-CONTROL-CONTRACT.md；外部ticket17-proof/HANDOFF.md与manifest.json封存精确最终commit、changedpaths、逐文件SHA、各验证候选和证据。19整体发布、13人工验收、原baseline问题仍独立，不声明完成。
+
 ## 16 首页可选桌面创建完成（2026-11-03）
 
 - 独立 worktree `/Users/liuyitian/code/cma-ui-worktrees/ticket-16`、分支 `codex/cma-ui-16`；起点9bc2f04，已合入最新 integration6722f9b（含质量修复和15 E2E类型修复）。完整实现/证据见 `16-EVIDENCE.md`；原始7条AC逐字保留，只在证实后勾选，未改17/19状态。

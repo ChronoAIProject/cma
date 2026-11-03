@@ -554,7 +554,8 @@ reasons and scopes with a policy revision, opaque runtime incarnation and renewa
 deadline. The SDK validates the Agent identity. Each later operation still
 checks authorization. Files retain the mounted-home scope. Authorized operation
 record replay is available with `operation_records_only`, `agent_turn_history`
-and `writable: false`; browser and control remain unsupported.
+and `writable: false`; browser and control require verified runtime capabilities
+and explicit browser enablement.
 
 Use `SnapshotOptions { tool_output: true, ..Default::default() }` and
 `TailOptions { tool_output: true, ..Default::default() }` for Agent events v2, or
@@ -611,4 +612,29 @@ reuse one observer per mounted viewer and stop reads on Agent, account or access
 changes. Dropping the future cancels the read. Real frames expire after 3000 ms;
 duplicates never renew freshness. Poll no faster than 1000 ms and call
 `agent_browser().release(agent_id, incarnation, observer)` when hidden or closed.
-Release preserves the page. The browser API exposes no input or takeover.
+Release preserves the page. Observation grants no input authority.
+
+### Exclusive browser control
+
+Use `agent_browser_control().read(agent_id, &scope)` to read current control and
+its bounded audit, and `change(agent_id, &change)` for acquire, input, renew and
+return. `BrowserControlScope` pins the environment incarnation, browser context,
+unique client id and independent random UUID `client_key`. The SDK sends the
+private key in `X-CMA-Browser-Client`, never in the query or JSON body.
+
+Only a current owner may acquire, recover a selected receipt, input, renew or
+return. Every mutation needs an original UUID operation id and the last observed
+revision; input, renew and return also need the acquired lease token. The fixed
+15-second lease uses a monotonic runtime clock and requires explicit renewal.
+Inputs are viewport clicks, bounded text and supported keys without modifiers.
+Native Agent input is fenced while the user holds control. Return preserves the
+same browser context and page and creates no task or conversation input.
+
+After a lost response, read the original operation or resend the identical
+change. Do not issue another operation until its outcome is known. A receipt
+contains both the original operation revision and current control state; it may
+report an expired lease. Stop input/renewal on account, authority, incarnation,
+offline or visibility changes. Public audit contains at most 128 metadata entries
+and no input text, client keys or lease tokens. It is volatile per incarnation.
+See `docs/plans/cma-ui-optimization/17-CONTROL-CONTRACT.md` for reader floors and
+bounded revocation behavior.
