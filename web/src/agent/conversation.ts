@@ -80,6 +80,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           id,
           runId: next.activeRunId,
           title: text(kind.title) ?? 'Tool call',
+          sequence: event.seq,
           kind: text(kind.kind),
           status: text(kind.status) ?? 'running',
         },
@@ -90,10 +91,15 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       const id = text(kind.call_id);
       const current = next.toolCalls.find((tool) => tool.id === id);
       if (id === undefined || current === undefined) return next;
+      const output = object(kind.output);
       return updateTool(next, {
         ...current,
         title: text(kind.title) ?? current.title,
         status: text(kind.status) ?? current.status,
+        output:
+          typeof output?.text === 'string' && typeof output.truncated === 'boolean'
+            ? { text: output.text, truncated: output.truncated }
+            : current.output,
       });
     }
     case 'approval_requested': {

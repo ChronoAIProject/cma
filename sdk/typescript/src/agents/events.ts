@@ -1,6 +1,7 @@
 import { agentStatus, failure } from '../instances/types.js';
 import {
   array,
+  boolean,
   dictionary,
   enumeration,
   integer,
@@ -88,6 +89,7 @@ export const agentEventKind = tagged({
     call_id: text,
     status: text,
     title: optional(text),
+    output: optional(object({ text, truncated: boolean })),
   }),
   approval_requested: variant('approval_requested', {
     approval_id: text,

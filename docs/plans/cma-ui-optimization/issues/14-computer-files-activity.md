@@ -4,7 +4,13 @@
 
 **Blocked by:** None（复用现有文件侧栏和工具事件）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
+
+Implementation uses the approved U/A/R boundaries. The existing file contract is
+the authorized Sandbox `/home/`, not an isolated Agent directory; this ticket
+preserves that contract and labels it explicitly. Cross-Agent file isolation is
+not proved by that API. Runtime acceptance needs a separately isolated environment;
+local Chrome/HTTP fixtures cannot satisfy R.
 
 **优先级:** P3
 

@@ -9,8 +9,11 @@ import { AgentDetails } from './Details';
 import { FileExplorer } from './files/FileExplorer';
 import { Button } from '../ui/Button';
 import './files/AgentFiles.css';
+import type { ConversationState } from './model';
+import { OperationOutput } from './environment/OperationOutput';
+import './environment/AgentComputer.css';
 
-export type AgentPanel = 'details' | 'files' | undefined;
+export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
 
 /** Sibling of the conversation: resizing or switching this panel never remounts a stream. */
 export function AgentSidePanel({
@@ -24,6 +27,8 @@ export function AgentSidePanel({
   pending,
   historyLoading,
   publicationScope,
+  conversation,
+  onSelect,
 }: {
   readonly agentId: string;
   readonly shared: boolean;
@@ -35,13 +40,16 @@ export function AgentSidePanel({
   readonly pending?: AgentCommand;
   readonly historyLoading?: boolean;
   readonly publicationScope: ArtifactPublicationScope;
+  readonly conversation?: ConversationState;
+  readonly onSelect?: (panel: AgentPanel) => void;
 }) {
   const client = useCmaClient();
   const filesOpen = panel === 'files';
+  const computerOpen = panel !== undefined && panel !== 'details';
   const [visited, setVisited] = useState(false);
   if (filesOpen && !visited) setVisited(true);
   // Shared file access is independently renewed and never inferred from a visible toolbar.
-  const access = useAgentAccess(client.resourceViews, shared && filesOpen ? agentId : undefined);
+  const access = useAgentAccess(client.resourceViews, shared && visited ? agentId : undefined);
   const authorized = access.state.status === 'ready' ? access.state.value.access : undefined;
   const reloadAccess = access.reload;
   const accessChanged = useCallback(() => {
@@ -76,47 +84,110 @@ export function AgentSidePanel({
           />
         )}
       </div>
-      <div
+      <aside
+        aria-label="Agent computer"
         id="agent-files-panel"
-        className="agent-side-panel"
-        hidden={!filesOpen}
-        inert={!filesOpen || undefined}
+        className="agent-computer"
+        hidden={!computerOpen}
+        inert={!computerOpen || undefined}
       >
-        {visited && mayRead && client.files ? (
-          <FileExplorer
-            key={agentId}
-            panel
-            client={client.files}
-            agentId={agentId}
-            readOnly={!mayWrite}
-            onClose={onClose}
-            onAccessChanged={accessChanged}
-          />
-        ) : filesOpen ? (
-          <aside className="agent-files-panel" aria-label="Agent files">
-            <header className="agent-files-panel__header">
-              <h2>Files</h2>
-              <Button size="sm" onClick={onClose}>
-                Close files
-              </Button>
-            </header>
-            <div className="agent-files-panel__body">
-              <p role="status">
-                {shared && access.state.status === 'loading'
-                  ? 'Checking file access…'
-                  : access.state.status === 'error'
-                    ? access.state.message
-                    : 'File access is unavailable for this Agent.'}
-              </p>
-              {shared ? (
-                <Button size="sm" onClick={access.reload}>
-                  Check access again
+        <header className="agent-files-panel__header">
+          <h2>Agent computer</h2>
+          <Button size="sm" onClick={onClose}>
+            Back to conversation
+          </Button>
+        </header>
+        <div className="agent-computer__tabs" role="tablist" aria-label="Agent computer views">
+          {(['files', 'activity', 'browser'] as const).map((tab, index, tabs) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              id={`computer-tab-${tab}`}
+              aria-controls={`computer-page-${tab}`}
+              aria-selected={panel === tab}
+              tabIndex={panel === tab ? 0 : -1}
+              onClick={() => onSelect?.(tab)}
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                const next =
+                  event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                      ? 2
+                      : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
+                onSelect?.(tabs[next]);
+                document.getElementById(`computer-tab-${tabs[next]}`)?.focus();
+              }}
+            >
+              {tab === 'files' ? 'Files' : tab === 'activity' ? 'Operation output' : 'Browser'}
+            </button>
+          ))}
+        </div>
+        <div
+          id="computer-page-files"
+          role="tabpanel"
+          aria-labelledby="computer-tab-files"
+          className="agent-computer__page"
+          hidden={!filesOpen}
+          inert={!filesOpen || undefined}
+        >
+          {visited && mayRead && client.files ? (
+            <FileExplorer
+              key={`${agentId}:${shared}:${mayWrite}`}
+              panel
+              embedded
+              client={client.files}
+              agentId={agentId}
+              readOnly={!mayWrite}
+              onClose={onClose}
+              onAccessChanged={accessChanged}
+            />
+          ) : filesOpen ? (
+            <aside className="agent-files-panel" aria-label="Agent files">
+              <header className="agent-files-panel__header">
+                <h2>Files</h2>
+                <Button size="sm" onClick={onClose}>
+                  Close files
                 </Button>
-              ) : null}
-            </div>
-          </aside>
-        ) : null}
-      </div>
+              </header>
+              <div className="agent-files-panel__body">
+                <p role="status">
+                  {shared && access.state.status === 'loading'
+                    ? 'Checking file access…'
+                    : access.state.status === 'error'
+                      ? access.state.message
+                      : 'File access is unavailable for this Agent.'}
+                </p>
+                {shared ? (
+                  <Button size="sm" onClick={access.reload}>
+                    Check access again
+                  </Button>
+                ) : null}
+              </div>
+            </aside>
+          ) : null}
+        </div>
+        <div
+          id="computer-page-activity"
+          role="tabpanel"
+          aria-labelledby="computer-tab-activity"
+          className="agent-computer__page agent-computer__output"
+          hidden={panel !== 'activity'}
+        >
+          <OperationOutput conversation={conversation} />
+        </div>
+        <div
+          id="computer-page-browser"
+          role="tabpanel"
+          aria-labelledby="computer-tab-browser"
+          className="agent-computer__page agent-computer__output"
+          hidden={panel !== 'browser'}
+        >
+          <p>Browser observation is unsupported by this environment contract.</p>
+        </div>
+      </aside>
     </>
   );
 }
