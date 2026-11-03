@@ -2,7 +2,7 @@
 use super::*;
 use crate::auth::{session_routes::request_cookie, AUTH_COOKIE, AUTH_COOKIE_DOMAIN};
 use axum::{
-    extract::{Form, Path, State},
+    extract::{Form, OriginalUri, Path, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -16,7 +16,15 @@ pub(crate) fn routes() -> Router<Arc<AuthState>> {
         .route("/auth/bot-father/link/{link_id}/consent", post(consent))
         .route("/auth/bot-father/link/{link_id}/revoke", post(revoke))
 }
-async fn begin(State(auth): State<Arc<AuthState>>, Path(link_id): Path<String>) -> Response {
+async fn begin(
+    State(auth): State<Arc<AuthState>>,
+    Path(link_id): Path<String>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(redirect) = auth.canonical_login_redirect(&headers, &uri) {
+        return redirect;
+    }
     match auth.link_record(&link_id).await {
         Ok(row)
             if !row.active && !row.revoked && row.subject.is_none() && row.expires_at > now() =>
@@ -36,18 +44,7 @@ async fn revoke(
         if headers.contains_key(header::AUTHORIZATION) {
             return Err(BotError::Forbidden);
         }
-        let AuthMode::Provider { public_url, .. } = &auth.mode else {
-            return Err(BotError::Forbidden);
-        };
-        let expected = reqwest::Url::parse(public_url)
-            .map_err(|_| BotError::Forbidden)?
-            .origin()
-            .ascii_serialization();
-        if headers
-            .get(header::ORIGIN)
-            .and_then(|value| value.to_str().ok())
-            != Some(expected.as_str())
-        {
+        if !auth.permits_browser_origin(&headers) {
             return Err(BotError::Forbidden);
         }
         let request = auth

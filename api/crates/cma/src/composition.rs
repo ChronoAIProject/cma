@@ -413,7 +413,7 @@ impl ControlPlaneComposition {
             .merge(desktop::router(
                 projections.reads(),
                 adapter.clone(),
-                &config.public_url,
+                config,
             ))
             .merge(projections.conversation_router(
                 context,

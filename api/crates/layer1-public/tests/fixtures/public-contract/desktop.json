@@ -671,6 +671,34 @@
         "bodyKind": "empty"
       },
       "captures": {}
+    },
+    {
+      "id": "desktop-websocket-retained-browser-origin",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://legacy.example",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-accept": "3SC6TZx4582OZaOogPVxMx5CGS0="
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
     }
   ]
 }

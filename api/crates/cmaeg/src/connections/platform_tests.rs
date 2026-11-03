@@ -739,3 +739,32 @@ async fn phase_one_advertisement_installs_legacy_but_preserves_existing_canonica
         format!("https://gateway.example/v1/telegram/{channel_id}")
     );
 }
+
+#[tokio::test]
+async fn domain_migration_preserves_and_retires_each_known_webhook_base() {
+    for base in [
+        "https://gateway.example",
+        "https://bot.example/event-gateway",
+        "https://new-bot.example/event-gateway",
+    ] {
+        let mut app = Native::new().await;
+        app.service.management.public_api_url = "https://new-bot.example/event-gateway".into();
+        app.service.management.public_api_aliases =
+            vec!["https://bot.example/event-gateway".into()];
+        let (definition, channel_id) = app.reserve_child().await;
+        let original = format!("{base}/v1/telegram/{channel_id}");
+        *app.peer.webhook.lock().unwrap() = original.clone();
+        binding::activate(&app.service.management, &definition, &channel_id)
+            .await
+            .unwrap();
+        assert_eq!(*app.peer.webhook.lock().unwrap(), original);
+        if base != app.service.management.public_api_url {
+            assert!(!app.methods().contains(&"setWebhook".into()));
+        }
+        binding::disconnect(&app.service.management, &definition, &channel_id)
+            .await
+            .unwrap();
+        assert!(app.peer.webhook.lock().unwrap().is_empty());
+        assert!(app.methods().contains(&"deleteWebhook".into()));
+    }
+}

@@ -157,7 +157,7 @@ export function ReferenceLink({
     route !== undefined
       ? routePath(route)
       : kind === 'service'
-        ? `https://nyx.chrono-ai.fun/services/${encodeURIComponent(serviceId!)}`
+        ? `https://nyxid.ai/services/${encodeURIComponent(serviceId!)}`
         : `https://ornn.chrono-ai.fun/skills/${encodeURIComponent(id)}${version === undefined ? '' : `?version=${encodeURIComponent(version)}`}`;
   return (
     <a

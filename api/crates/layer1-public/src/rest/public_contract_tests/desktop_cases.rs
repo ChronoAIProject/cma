@@ -69,8 +69,14 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         None
     };
     Some(Scenario {
-        router: super::super::desktop_router(service, "https://cma.example".into())
-            .layer(Extension(Arc::new(Mutex::new(held)))),
+        router: super::super::desktop_router_with_origins(
+            service,
+            vec![
+                "https://cma.example".into(),
+                "https://legacy.example".into(),
+            ],
+        )
+        .layer(Extension(Arc::new(Mutex::new(held)))),
         subject: match name {
             "desktop_anonymous" => None,
             "desktop_other_owner" => Some("owner-b"),

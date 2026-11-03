@@ -38,6 +38,7 @@ pub(super) fn external_at(server: &Server, base: &str, public: &str) -> Arc<Gate
                 base_url: base.into(),
                 public_url: public.into(),
                 public_api_url: public.into(),
+                public_api_aliases: vec![],
             },
             "https://nyx.example".into(),
         )

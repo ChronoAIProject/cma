@@ -75,6 +75,7 @@ pub(crate) fn state(f: &FixtureState, enabled: bool) -> ToolsState {
         tracker: TurnTracker::new(http::readiness::Readiness::initialized()),
         public_origin: "https://gateway.example".into(),
         public_api_url: "https://gateway.example".into(),
+        public_api_aliases: vec![],
         advertise_public_api_url: true,
         media: None,
         downloads: Default::default(),

@@ -1,6 +1,5 @@
-//! Service composition: build every component from configuration, then serve
-//! HTTP until a termination signal drains turns, deliveries and connections.
-use std::{future::IntoFuture, net::SocketAddr, time::Instant};
+//! Compose CMAEG and drain turns, deliveries and connections on termination.
+use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Instant};
 use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
@@ -42,7 +41,7 @@ pub(crate) async fn serve(
     service_auth.bearer().await?;
     let (records, creator_auth, browser) =
         crate::serve_storage::compose(&config, service_auth.clone()).await?;
-    let providers = std::sync::Arc::new(
+    let providers = Arc::new(
         providers::ProviderClient::from_config(&config)?
             .with_service_auth(service_auth)
             .with_worker_credentials(records.worker_credentials()),
@@ -61,11 +60,11 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
-    observers.activity = std::sync::Arc::new(crate::activity::ObservedActivity::new(
+    observers.activity = Arc::new(crate::activity::ObservedActivity::new(
         state.activity.clone(),
         observers.activity.clone(),
     ));
-    let telegram = std::sync::Arc::new(telegram::TelegramClient::production(
+    let telegram = Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
     )?);
     state.telegram = Some(telegram.clone());
@@ -81,8 +80,8 @@ pub(crate) async fn serve(
         .with_whatsapp_templates(whatsapp_templates),
     );
     let whatsapp = crate::whatsapp::Client::production()?;
-    state.whatsapp = Some(std::sync::Arc::new(whatsapp.clone()));
-    let whatsapp_receipts = std::sync::Arc::new(crate::whatsapp::receipts::Store::new(
+    state.whatsapp = Some(Arc::new(whatsapp.clone()));
+    let whatsapp_receipts = Arc::new(crate::whatsapp::receipts::Store::new(
         (*state.records).clone(),
         state.master_keys.clone(),
     ));
@@ -90,19 +89,19 @@ pub(crate) async fn serve(
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
     let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> =
-        std::sync::Arc::new(delivery::router::ShardedScheduler::new(inbound));
-    let waiters = std::sync::Arc::new(delivery::sync::SyncRegistry::default());
+        Arc::new(delivery::router::ShardedScheduler::new(inbound));
+    let waiters = Arc::new(delivery::sync::SyncRegistry::default());
     let custom_delivery = delivery::custom::CustomDelivery::new(
         config.management.public_url.clone(),
         waiters.clone(),
     )
     .with_activity(observers.activity.clone());
-    let interactions = std::sync::Arc::new(interactions::InteractionStore::new(
+    let interactions = Arc::new(interactions::InteractionStore::new(
         (*state.records).clone(),
         state.master_keys.clone(),
         providers.clone(),
     ));
-    let whatsapp_forms = std::sync::Arc::new(crate::whatsapp::forms::service::Forms::new(
+    let whatsapp_forms = Arc::new(crate::whatsapp::forms::service::Forms::new(
         (*state.records).clone(),
         state.master_keys.clone(),
         state.resolver.clone(),
@@ -114,7 +113,7 @@ pub(crate) async fn serve(
     let native_typing = source_settings::native_typing(&config, &state)?;
     let (native_lark_controls, native_lark_thread_start) =
         source_settings::lark_issuance(&config, &state);
-    let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
+    let tool_providers = Arc::new(config.media.tool_providers.clone());
     // Installed before the media transformer's setup so its readiness gauge
     // is recorded; the metrics listener still binds after the gateway's.
     let metrics = telemetry::install()?;
@@ -144,7 +143,7 @@ pub(crate) async fn serve(
         )?
         .with_native_lark(
             crate::native_lark::Client::production()?,
-            std::sync::Arc::new(crate::native_lark::receipts::Store::new(
+            Arc::new(crate::native_lark::receipts::Store::new(
                 (*state.records).clone(),
                 state.master_keys.clone(),
             )),
@@ -154,7 +153,7 @@ pub(crate) async fn serve(
         .with_native_media_edits(
             config.native_telegram_media_edits_enabled,
             config.native_discord_media_edits_enabled,
-            std::sync::Arc::new(crate::native_media::store::Store::new(
+            Arc::new(crate::native_media::store::Store::new(
                 (*state.records).clone(),
                 state.master_keys.clone(),
             )),
@@ -205,7 +204,7 @@ pub(crate) async fn serve(
         },
     )
     .await?;
-    let runner = std::sync::Arc::new(
+    let runner = Arc::new(
         turns::TurnRunner::new(
             providers.clone(),
             tracker.clone(),
@@ -227,7 +226,7 @@ pub(crate) async fn serve(
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress.clone(),
-        std::sync::Arc::new(turns::observer::ObservedLauncher::new(
+        Arc::new(turns::observer::ObservedLauncher::new(
             runner.clone(),
             observers.activity.clone(),
         )),
@@ -257,12 +256,12 @@ pub(crate) async fn serve(
             .native_discord_thread_lifecycle_enabled
             .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreads::new))
             .transpose()?
-            .map(std::sync::Arc::new),
+            .map(Arc::new),
         discord_thread_history: config
             .native_discord_thread_history_enabled
             .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreadHistory::new))
             .transpose()?
-            .map(std::sync::Arc::new),
+            .map(Arc::new),
         complete_replies_enabled: complete_replies,
         routed_replies: routed
             .as_ref()
@@ -271,7 +270,7 @@ pub(crate) async fn serve(
         native_telegram_media_controls_enabled: config.native_telegram_media_controls_enabled,
         native_telegram_media_control_edits_enabled: config
             .native_telegram_media_control_edits_enabled,
-        native_media_edits: Some(std::sync::Arc::new(crate::native_media::Client::new(
+        native_media_edits: Some(Arc::new(crate::native_media::Client::new(
             telegram.clone(),
             crate::discord::DiscordRest::new()?,
             config.native_telegram_media_edits_enabled,
@@ -280,12 +279,12 @@ pub(crate) async fn serve(
         native_whatsapp_forms: Some(whatsapp_forms.clone()),
         native_lark_effects: Some(lark_effects),
         lark_effects_issuance_enabled: config.lark_message_effects_writes_enabled,
-        lark_effects: Some(std::sync::Arc::new(
+        lark_effects: Some(Arc::new(
             tools::message_effects::lark_transport::LarkEffectsClient::new(
                 &config.management.nyxid_base_url,
             )?,
         )),
-        telegram_effects: Some(std::sync::Arc::new(
+        telegram_effects: Some(Arc::new(
             tools::MessageEffectsClient::new(telegram)
                 .with_received_reactions(config.native_telegram_received_reactions_enabled),
         )),
@@ -317,7 +316,7 @@ pub(crate) async fn serve(
             && config.native_whatsapp_writes_enabled,
         native_telegram_albums_enabled: config.native_telegram_albums_enabled,
         native_whatsapp_outbound_media_enabled: config.native_whatsapp_outbound_media_enabled,
-        whatsapp_reactions: Some(std::sync::Arc::new(tools::WhatsappReactionsClient::new(
+        whatsapp_reactions: Some(Arc::new(tools::WhatsappReactionsClient::new(
             crate::whatsapp::Client::production()?,
             config.native_whatsapp_reactions_enabled,
         ))),
@@ -327,7 +326,7 @@ pub(crate) async fn serve(
         native_discord_edits_enabled: native_discord_edits || discord_card_edits,
         discord_effects_issuance_enabled: native_discord_effects
             && (native_discord_edits || native_discord_media_effects),
-        discord_effects: Some(std::sync::Arc::new(
+        discord_effects: Some(Arc::new(
             tools::DiscordEffectsClient::new(crate::discord::DiscordRest::new()?)
                 .with_card_effects(discord_card_effects)
                 .with_received_reactions(config.native_discord_received_reactions_enabled),
@@ -340,14 +339,15 @@ pub(crate) async fn serve(
         tracker: tracker.clone(),
         public_origin: config.management.public_url.clone(),
         public_api_url: config.management.public_api_url.clone(),
+        public_api_aliases: config.management.public_api_aliases.clone(),
         advertise_public_api_url: config.management.advertise_public_api_url,
         media,
-        downloads: std::sync::Arc::new(
+        downloads: Arc::new(
             tools::MediaDownloads::default().with_link_ttl(config.media.link_ttl_seconds),
         ),
     };
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
-    let ingress = ingress.with_receipt_observer(std::sync::Arc::new(connections.clone()));
+    let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
     let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;

@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 pub(super) mod inspection;
+mod native_endpoints;
+use native_endpoints::validate_native_endpoint;
 pub(super) mod preparation;
 
 #[derive(Deserialize, ToSchema)]
@@ -87,7 +89,7 @@ pub struct BindingConversationView {
 pub(super) struct BindingRouteState {
     service: Arc<BindingService>,
     native_endpoint: Option<String>,
-    native_advertisement_alias: Option<String>,
+    native_advertisement_aliases: Vec<String>,
     preparation_enabled: bool,
 }
 
@@ -95,7 +97,7 @@ pub fn binding_router(service: Arc<BindingService>) -> Router {
     routes(BindingRouteState {
         service,
         native_endpoint: None,
-        native_advertisement_alias: None,
+        native_advertisement_aliases: vec![],
         preparation_enabled: false,
     })
 }
@@ -130,37 +132,31 @@ pub fn binding_router_with_native_tools_alias_and_preparation(
     advertisement_alias: &str,
     preparation_enabled: bool,
 ) -> Result<Router, String> {
+    binding_router_with_native_tools_aliases_and_preparation(
+        service,
+        endpoint,
+        &[advertisement_alias.into()],
+        preparation_enabled,
+    )
+}
+
+/// Retain exact deployment-owned advertisements without changing runtime authority.
+pub fn binding_router_with_native_tools_aliases_and_preparation(
+    service: Arc<BindingService>,
+    endpoint: &str,
+    advertisement_aliases: &[String],
+    preparation_enabled: bool,
+) -> Result<Router, String> {
     validate_native_endpoint(endpoint)?;
-    validate_native_endpoint(advertisement_alias)?;
+    for alias in advertisement_aliases {
+        validate_native_endpoint(alias)?;
+    }
     Ok(routes(BindingRouteState {
         service,
         native_endpoint: Some(endpoint.into()),
-        native_advertisement_alias: (advertisement_alias != endpoint)
-            .then(|| advertisement_alias.into()),
+        native_advertisement_aliases: advertisement_aliases.to_vec(),
         preparation_enabled,
     }))
-}
-
-fn validate_native_endpoint(endpoint: &str) -> Result<(), String> {
-    let url = url::Url::parse(endpoint).map_err(|_| "invalid native tools endpoint")?;
-    let loopback = url.host_str().is_some_and(|host| {
-        host.trim_matches(['[', ']'])
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-    });
-    if endpoint.len() > 2_048
-        || url.as_str() != endpoint
-        || url.host_str().is_none()
-        || !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.port() == Some(0)
-    {
-        return Err("invalid native tools endpoint".into());
-    }
-    Ok(())
 }
 
 fn routes(state: BindingRouteState) -> Router {
@@ -220,7 +216,9 @@ async fn put_binding(
     }
     if state.native_endpoint.as_ref().is_some_and(|expected| {
         expected != &body.tools.native_mcp_url
-            && state.native_advertisement_alias.as_ref() != Some(&body.tools.native_mcp_url)
+            && !state
+                .native_advertisement_aliases
+                .contains(&body.tools.native_mcp_url)
     }) {
         return error(BindingError::InvalidRequest(
             "tools advertisement differs from the configured gateway".into(),

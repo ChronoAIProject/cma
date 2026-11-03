@@ -121,6 +121,7 @@ async fn fixture_app() -> (Server, ManagementState, LaunchRequest, Creator) {
             master_keys: Arc::new(fixture::keys()),
             public_url: "http://127.0.0.1:8090".into(),
             public_api_url: "http://127.0.0.1:8090".into(),
+            public_api_aliases: vec![],
             advertise_public_api_url: true,
             cma_base_url: url.origin().ascii_serialization(),
             tools_nyxid_slug: "cmaeg".into(),
