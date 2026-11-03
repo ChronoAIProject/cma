@@ -66,3 +66,24 @@
 - UI shared hunks：`StreamEntry` 只替换最终回答的显示/复制正文并插入独立 `AnswerDeliverables`，09 的 `canVote` eligibility 原样保留；`MessageStream` 新增稳定 resource context，未改 timeline/fold/跟随底部逻辑。`AgentSurface`、`SharedAgent`、`Console` 传递 viewer/client/current authority 并在权限不确定时撤掉 scope；08 preview 尚未实现。
 - 后续边界：超过单 turn 读取限额的真实最终回答原返回 404；公开测试 red 期望 503，改为明确 bounded-read unavailable 后 1 passed。流式 marker 的 red 证明半截协议文字会进入正文；在预先补充 Web_Style 后隐藏保留前缀的未完成 marker，仍不提前建卡，交付组件和长历史性能共 **9 tests passed**。
 - 本轮完整 web suite 初次 **317 files / 2843 tests passed，1 个 EventGateway.flows 5 秒超时**；该未修改文件单独重跑 **4 passed**。保留真实日志 `/Users/liuyitian/code/cma-ui-worktrees/ticket07-web-tests.log`，不把该次整体退出 1 报成通过。
+- R 证明现已真实执行：`native_answer_deliverables_prove_real_file_document_receipts_and_public_downloads` **1 passed**，其启动的 Chrome `NATIVE receipts reach answer cards and authenticated public downloads without invented associations` **1 passed**。macOS arm64 Codex **0.147.0**、ACP **1.4.0** 的精确八步 patch bridge（SHA-256 `84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c`），使用无生产凭据的 loopback model。实际原生 `exec_command` 写 `report.txt`，原生 MCP 调用候选 `describe_deliverable` 和 `publish_document`；最终回答仅复制真正工具 receipt 中的引用，未硬塞资源关联。
+- R 下载独立已知值：文件 `Native answer file\n`，**19 bytes**，SHA-256 `f6c042409c945c141af65759a07055f9589a486941a285d38d361db0bf3f8400`；持久文档 `# Native document\n\nKnown persistent content.\n`，**45 bytes**，SHA-256 `6f09a58c411f877c6926b5f4d711df6fb6c8229335bd77d3de54b95021130e92`。捕获实际 ACP 回答作为同一 native conversation 的 durable `event:5` / turn 3；真实公开列表/下载、重建 router、Chrome 实际文件下载和页面刷新均保持该关联。截图 `/tmp/cma-ticket07-evidence/native-api-cards.png`。候选 MCP/REST handlers 在显式 **2 MiB Tokio worker stack** 下执行并通过；大聚合 Rust 测试仍按记录使用 32 MiB 测试线程栈。
+- R 边界限制：控制模型、认证/账户导航边界、测试数据库及 path-confined 文件适配器受控；文件确由原生进程写入磁盘，文档由真实候选 DocumentService 持久化，浏览器交付列表和下载代理至真实候选公开 API。此证明不声称生产 OAuth、部署、Linux runtime image packaging 等价或 live model 质量；没有运行生产资源，也未把 baseline layer4 binary 说成含本票改动。初次 native fixture 缺少完整 Responses 文本流事件，补齐 `output_text.delta` 后 ACP 才实际发出正文；初次浏览器证明因 fixture 固定 Agent ID 失败，改为当前测试 Agent 的导航/路由身份后通过。
+- Mongo 元数据补充证明：仅本票容器 `cma-ticket07-mongo`，`colima-cma-ui-proof`，Mongo 8.0 replica set，loopback 27407，0.5 CPU / 512 MiB；`artifact_publication_replays_across_replicas_and_revocation_preserves_retained_bytes` **1 passed**。新增断言通过真实 AgentArtifactService 读回 Mongo 投影元数据，重开 store 后 owner 仍可读取，撤销的 recipient 不可读取。每次测试使用独立数据库并删除；无其他票或生产数据库写入。
+
+### 可复现 R 命令
+
+先在本 worktree `web/` 启动 `npm run dev -- --host 127.0.0.1 --port 4537 --strictPort`，再从本 worktree 根执行：
+
+```sh
+PATH=/Users/liuyitian/.cargo/bin:$PATH \
+CARGO_BUILD_JOBS=2 \
+CARGO_TARGET_DIR=/Users/liuyitian/code/cma-ui-worktrees/cargo-target-ticket07 \
+RUSTFLAGS='--cfg cma_ui_ticket07' RUST_MIN_STACK=33554432 \
+CMA_CODEX_TEST_BINARY=/Users/liuyitian/.npm/_npx/abfeab83ffa1581c/node_modules/@openai/codex/bin/codex.js \
+CMA_ACP_TEST_BRIDGE=/Users/liuyitian/code/cma-ui-worktrees/runtime-proof/bridge.mjs \
+CMA_NATIVE_WEB_URL=http://127.0.0.1:4537 \
+CMA_E2E_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
+cargo test --locked --manifest-path api/Cargo.toml -p layer1-public \
+  native_answer_deliverables -- --ignored --nocapture
+```
