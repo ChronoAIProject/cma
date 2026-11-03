@@ -3906,3 +3906,52 @@ Clients omitting a task retain setup behavior. Unsupported services show a clear
 unavailable explanation and never fall back to an unrecorded send.
 
 | 2026-11-03 | Define task-first Home and contextual creation, editable templates, exact durable initial-task admission, tab draft isolation and honest recovery states. |
+
+### Reported plan progress and turn outcomes (2026-11-03)
+
+The existing turn-scoped Plan card also shows **Completed 1/3 steps** and
+**Current step 2: <reported title>**. Count only exact `completed` entries and
+choose the first exact `in_progress` entry. A known plan with at most one current
+step has an accessible progress bar labelled **Reported plan progress**, with
+the completed count, total and equivalent text. Unknown or malformed statuses
+and multiple current steps keep their reported text, say **Progress unknown**,
+and omit the determinate bar. Empty reports clear the card. A replacement plan
+uses its new order, without inventing stable step identities. No plan means the
+existing Thinking/current tool activity, with no denominator or estimate.
+
+Use the existing card ground, hairline, radius 8 and padding 12; gaps are 8px.
+The summary and current step use 13/20 primary/secondary ink. The bar is 4px high,
+radius 8, on bg-layer-3 with business-primary fill; it has no animation. Each
+step has a decorative existing check, running, waiting or question glyph beside
+its explicit status word. The plan disclosure uses a chevron and a 44px target,
+inherits typography, and has the existing hover wash and focus outline. Titles
+wrap at mobile widths. Do not announce token-by-token updates as plan changes.
+
+On a recorded successful turn, fold the step list behind **View plan and
+operations**. Say **Completed all N steps** only if every reported step completed;
+otherwise say **Response finished · Plan completion not fully reported**. Failed
+and cancelled turns say **Response failed** and **Response cancelled** and retain
+the reported step states. Missing terminal evidence says **Outcome unknown**.
+The disclosure reopens the plan; adjacent operation disclosures retain their
+counts and visible failure summaries. A single operation also starts folded.
+Approvals and recovery notices remain independent and visible. Never mark
+pending work complete because a response ended.
+
+The compact toolbar has one optional progress slot between identity and actions,
+using 12/18 secondary ink, minimum width zero and a 44px link target. It describes
+only the active turn (**1/3 steps · Step 2**, or **Progress unknown**), links to that
+turn's Plan card, and disappears when the turn has no plan or ends. At narrow
+widths it may wrap onto its own row. Ticket 02 owns elapsed time and settings;
+its timer may share this slot without repeating plan or activity summaries.
+Plan changes never override the conversation's existing unpinned scroll position.
+Current activity remains the existing safe tool title/Thinking and never claims
+association with a plan step. There is no reliable ETA in the current public
+contract, so no estimated remaining time is rendered.
+
+| 2026-11-03 | Add factual turn-scoped plan counts, accessible progress, ambiguous-state fallback, terminal process disclosure and the shared compact header slot for ticket 06; keep approvals visible and omit unsupported ETA. |
+
+Plan counts, current-step text and terminal summaries share one atomic polite
+status region, using the card's existing 8px column gap. Only plan or turn-state
+changes update it; streamed message tokens do not rerender this region.
+
+| 2026-11-03 | Make reported plan updates and terminal summaries one atomic polite status announcement for ticket 06. |
