@@ -318,3 +318,106 @@ async fn sandbox_usage_raw_attachment_save_is_metered_atomically() {
     assert_eq!(store.usage(&parent.id).await.unwrap().unwrap(), before);
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_usage_metadata_revision_then_pause_keeps_the_entire_active_interval() {
+    let (client, name, store, mut parent) = fixture("usage_metadata").await;
+    // Lease/activity updates do not change allocation, but still advance revision.
+    parent.revision += 1;
+    parent.updated_at = MINUTE.into();
+    parent.last_activity_at = MINUTE.into();
+    store.save_sandbox(1, parent.clone()).await.unwrap();
+    let saved = store.usage(&parent.id).await.unwrap().unwrap();
+    assert!(saved.complete_lifecycle);
+    assert_eq!(saved.source_revision, parent.revision);
+    assert_eq!(saved.totals.uptime_seconds, 60);
+
+    let expected_revision = parent.revision;
+    parent.begin_pause(TWO_MINUTES.into(), None).unwrap();
+    store
+        .commit(SandboxTransaction::SaveSandboxAndAppend {
+            command_revival: None,
+            expected_revision,
+            sandbox: Box::new(parent.clone()),
+            event_at: TWO_MINUTES.into(),
+            event: SandboxEventKind::StatusChanged {
+                from: SandboxStatus::Active,
+                to: SandboxStatus::Pausing,
+            },
+        })
+        .await
+        .unwrap();
+    let paused = store.usage(&parent.id).await.unwrap().unwrap();
+    assert!(paused.complete_lifecycle);
+    assert_eq!(paused.totals.uptime_seconds, 120);
+    assert_eq!(paused.totals.cpu_millis_seconds, 120_000);
+    assert_eq!(paused.totals.memory_mib_seconds, 120 * 2_048);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_usage_checkpoint_and_multi_event_phase_preserve_watermarks() {
+    use super::sandbox_lifecycle_tests::{
+        checkpoint_for_agents, checkpoint_mutation, claimed_pause_fixture, pause_agents_mutation,
+    };
+    use layer2_core::sandbox::store::SandboxLifecycleExecutionStore;
+    use layer2_core::sandbox_usage::UsageEventKind;
+    let (client, name) = database("usage_lifecycle_phase").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (claimed, agents) = claimed_pause_fixture(&store, "usage_phase").await;
+    assert!(
+        store
+            .usage(&claimed.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .complete_lifecycle
+    );
+    store
+        .publish_sandbox_checkpoint(checkpoint_mutation(
+            &claimed,
+            &agents,
+            checkpoint_for_agents(&agents, 1),
+        ))
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .commit_sandbox_lifecycle(pause_agents_mutation(&claimed, &agents))
+        .await
+        .unwrap();
+    store
+        .checkpoint_usage_one(claimed.id.as_str(), TWO_MINUTES)
+        .await
+        .unwrap();
+    let current = store.get_sandbox(&claimed.id).await.unwrap().unwrap();
+    let usage = store.usage(&claimed.id).await.unwrap().unwrap();
+    assert!(usage.complete_lifecycle);
+    assert_eq!(usage.source_revision, current.revision);
+    assert_eq!(usage.totals.uptime_seconds, 120);
+    assert_eq!(usage.totals.cpu_millis_seconds, 120_000);
+    assert_eq!(usage.totals.memory_mib_seconds, 120 * 2_048);
+    let events = store
+        .usage_events(&claimed.id, &PageRequest::default())
+        .await
+        .unwrap();
+    assert!(events
+        .items
+        .iter()
+        .all(|event| event.kind != UsageEventKind::Baseline));
+    assert_eq!(
+        events
+            .items
+            .iter()
+            .map(|event| event.quantity.uptime_seconds)
+            .sum::<u64>(),
+        120
+    );
+    client.database(&name).drop().await.unwrap();
+}
