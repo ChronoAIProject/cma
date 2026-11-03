@@ -114,6 +114,9 @@ impl AgentFileService {
                 "view_history_required",
             ));
         }
+        if self.adapter.browser().is_none() {
+            return Ok(EnvironmentFeature::unsupported());
+        }
         if authorized.snapshot.lineage.sandbox.status != SandboxStatus::Active {
             return Ok(feature(
                 EnvironmentAvailability::TemporarilyUnavailable,
