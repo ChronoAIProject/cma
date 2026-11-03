@@ -297,3 +297,41 @@ pub(super) async fn verify_preflight(harness: &Harness<MongoSandboxStore>, agent
     assert_eq!(retained.runtime, original.runtime);
     assert_eq!(retained.status, original.status);
 }
+
+pub(super) async fn verify_existing_admission(
+    service: &Router,
+    harness: &Harness<MongoSandboxStore>,
+    original_id: &AgentId,
+) {
+    let original = harness.stored(original_id).await;
+    let before = harness
+        .store
+        .get_sandbox(&original.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let task = "  Use this existing Workspace desktop\nretain this task  ";
+    let body = json!({"name":"Existing desktop task", "workspace_id":original.workspace_id,
+        "initial_message":task, "desktop":true});
+    let (status, receipt) = create(service, &body, "existing-desktop-task").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+    let identity = admitted_identity(service, &receipt).await;
+    let retained = harness.stored(&identity).await;
+    assert_ne!(retained.id, original.id);
+    assert_eq!(retained.workspace_id, original.workspace_id);
+    assert_eq!(retained.sandbox_id, original.sandbox_id);
+    let first = retained.conversation.first_message.as_ref().unwrap();
+    assert!(first.desktop);
+    assert_eq!(first.text, task);
+    let (_, replay) = create(service, &body, "existing-desktop-task").await;
+    assert_eq!(receipt["id"], replay["id"]);
+    let after = harness
+        .store
+        .get_sandbox(&original.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(before.runtime, after.runtime);
+    assert_eq!(before.lifecycle, after.lifecycle);
+    assert_eq!(before.status, after.status);
+}
