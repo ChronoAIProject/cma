@@ -238,7 +238,8 @@ applies with all media flags off.**
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
-| `CMAEG_PUBLIC_URL` | origin URL | Required | Retained console OAuth/CSRF origin and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_PUBLIC_URL` | origin URL | Required | Retained event identity and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_CONSOLE_PUBLIC_URL` | origin URL | `CMAEG_PUBLIC_URL` | Browser console OAuth/CSRF origin. Production `https://cma.nyxid.ai`; register `/console/callback` on the existing OAuth client and route `/console` to CMAEG before enabling. Same strict origin rules as the public origin. Does not change event identities, master keys, or agent credentials. |
 | `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
 | `CMAEG_PUBLIC_API_ALIASES` | exact base list | empty | Comma-separated retained public API bases, at most eight; same validation as `CMAEG_PUBLIC_API_URL`. Used for existing webhooks, setup links/form Origins and MCP Origins. Keep all issued bases through rollout and rollback; this does not change advertisement. |
 | `CMAEG_ADVERTISE_PUBLIC_API_URL` | `true` or `false` | `true` | First-rollout switch: `false` keeps generated URLs and discovery on the legacy public origin while canonical routes, exact Origin checks and MCP compatibility remain available. Set `true` only after every serving replica supports the canonical namespace and the public routes have been verified. |
@@ -521,7 +522,7 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_console_sessions` | none | Console sessions held in memory. Sessions live only in the process: a restart or rollout signs everyone out, and the next page view shows the sign-in page. |
 | `cmaeg_console_session_evictions_total` | `reason` | Sessions ended by `subject_cap` (the account's oldest beyond `CMAEG_CONSOLE_SESSIONS_PER_SUBJECT`), `global_cap` (the least recently seen beyond `CMAEG_CONSOLE_SESSIONS_MAX`), `idle` or `absolute` expiry. A sweep every minute ends expired sessions nobody returns to. |
 | `cmaeg_console_revocations_total` | `outcome` | Best-effort revocations of an ended session's refresh token: `ok`, `failed`, or `dropped` when four are already in flight or no endpoint is known; a dropped token simply expires at NyxID. |
-| `cmaeg_console_rejections_total` | `reason` | Console form posts refused before any handler runs: `origin` when the request does not carry exactly one `Origin` equal to `CMAEG_PUBLIC_URL`, `csrf` when its per-session, per-form token is missing, duplicated or wrong. Every refusal answers a generic 403 page. |
+| `cmaeg_console_rejections_total` | `reason` | Console form posts refused before any handler runs: `origin` when the request does not carry exactly one `Origin` equal to the configured console origin, `csrf` when its per-session, per-form token is missing, duplicated or wrong. Every refusal answers a generic 403 page. |
 | `cmaeg_console_logins_total` | `outcome` | Console sign-in steps: `started` (the sign-in link sent the browser to NyxID), `ok` (a session was created), `expired` (a callback without a valid login cookie or with another `state`; no NyxID call is made), `denied` (NyxID returned no code), `failed` (NyxID refused the code or the identity), `unavailable` (NyxID or the four exchange permits were unavailable) and `rate_limited` (`CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE` reached). Logs carry only the outcome and, for `ok`, an 8-character subject hash prefix. |
 | `cmaeg_console_authorizations_total` | `outcome` | Console requests whose owner authority was derived: `ok`, `refreshed` (the access token was rotated first), `refresh_transient` (NyxID could not refresh a token expiring within 30 seconds; the request got the 503 page), `downgraded` (the selected organization's admin role ended and the session dropped to Personal), `ended` (NyxID refused the refresh token or the identity) and `unavailable` (NyxID could not answer the check; the request got the 503 page). See [Console authority](#console-authority). |
 | `cmaeg_console_observer_dropped_total` | none | Exported only while `CMAEG_CONSOLE_ENABLED=true`. Console observations dropped because the 4,096-entry observation queue was full. Ingress, launch, delivery, management and the resolver only `try_send` to the queue and never wait for it, so a burst the console's one drainer cannot keep up with loses console detail, never traffic. It should stay `0`; a rising count means the console shows gaps. |
@@ -749,9 +750,10 @@ callbacks, channel IDs, keys and cookies are not rewritten. Existing Telegram
 webhooks on the exact legacy channel URL stay installed until authorized cleanup;
 new webhooks use the canonical base. An unrelated URL is always refused.
 
-`CMAEG_PUBLIC_URL` remains the registered legacy console origin. The canonical
-legacy-console entry uses a fixed redirect to that origin; it cannot accept a
-caller-supplied destination. `/connect` capability tabs continue to work on the
+`CMAEG_CONSOLE_PUBLIC_URL` selects the browser console origin independently of
+the retained `CMAEG_PUBLIC_URL` event identity. When absent it defaults to that
+retained origin. The canonical legacy-console entry uses a fixed redirect to the
+configured console origin; it cannot accept a caller-supplied destination. `/connect` capability tabs continue to work on the
 old host, and new setup links use the prefixed canonical routes. The HTTP OpenAPI
 response advertises `{CMAEG_PUBLIC_API_URL}/v1` after phase two (the retained
 `{CMAEG_PUBLIC_URL}/v1` while the advertisement flag is false); the reviewed
@@ -948,10 +950,25 @@ POST {nyxid}/api/v1/developer/oauth-clients
   client, including rotating its secret. Keep the ChronoAI organization's admin
   set minimal.
 
-The redirect URI must be exactly `{CMAEG_PUBLIC_URL}/console/callback`. The
+The redirect URI must be exactly `{CMAEG_CONSOLE_PUBLIC_URL}/console/callback`
+(or `{CMAEG_PUBLIC_URL}/console/callback` when the console override is absent). The
 console requests `openid profile` and no service access: it sends no `resource`
 and no `requested_service_ids`, and approving the consent page without granting
 services is expected.
+
+**Moving the console to the canonical domain.** Preserve the existing client
+`85619590-ec86-40bb-a96b-657bb89b4aa8`, secret, scopes, owner and old redirect entries;
+add `https://cma.nyxid.ai/console/callback` through NyxID's supported client update.
+Apply the canonical HTTPRoute's `/console` prefix to the Gateway Service without
+rewriting its path. Deploy readers of `CMAEG_CONSOLE_PUBLIC_URL`, then set that
+key to `https://cma.nyxid.ai` and roll only CMAEG. Verify the legacy-console entry,
+sign-in authorization `redirect_uri`, PKCE/cookie callback and authenticated
+console page on the new host, plus exact new-origin POST/CSRF enforcement.
+Old host-only console cookies cannot move between domains, so users sign in
+again on the new console. Agent credentials, histories, PVs and API keys are
+independent of these browser sessions. Keep `CMAEG_PUBLIC_URL`, master keys and
+CMA's retained identity/audience values unchanged. Remove old public routes only
+after external callbacks and all running agent tool destinations are verified.
 
 **How sign-in works.** A visitor without a session sees a same-origin sign-in
 page; only its explicit "Sign in with NyxID" link leaves the site, so nothing
