@@ -43,6 +43,7 @@ export interface PlanEntry {
 
 /** One turn's latest reported plan; a provider restates the whole plan on every change. */
 export interface PlanSnapshot {
+  readonly incomplete?: boolean;
   readonly order?: number;
   readonly sequence?: number;
   readonly id: string;
@@ -74,6 +75,7 @@ export interface RecoveryNotice {
 }
 
 export interface ConversationState {
+  readonly turnOutcomes?: Readonly<Record<string, 'completed' | 'failed' | 'interrupted'>>;
   readonly agentCursor?: string;
   readonly agentIncarnation?: string;
   readonly responseBinding?: {
@@ -92,7 +94,7 @@ export interface ConversationState {
   readonly turnTiming?: Readonly<
     Record<string, { readonly startedAt: string; readonly finishedAt?: string }>
   >;
-  readonly lastTurn?: { readonly runId: string; readonly outcome: string };
+  readonly latestRunId?: string;
   /** Ephemeral visible text already covered by the latest provider usage report. */
   readonly visibleUsageAnchor?: {
     readonly turnSequence: number;

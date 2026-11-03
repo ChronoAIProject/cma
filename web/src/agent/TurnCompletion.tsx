@@ -1,11 +1,12 @@
 import type { ConversationState } from './model';
 
 export function TurnCompletion({ conversation }: { readonly conversation: ConversationState }) {
-  const last = conversation.lastTurn;
-  const timing = last === undefined ? undefined : conversation.turnTiming?.[last.runId];
+  const latest = conversation.latestRunId;
+  const outcome = latest === undefined ? undefined : conversation.turnOutcomes?.[latest];
+  const timing = latest === undefined ? undefined : conversation.turnTiming?.[latest];
   if (
     conversation.activeRunId !== undefined ||
-    last?.outcome !== 'completed' ||
+    outcome !== 'completed' ||
     !timing?.finishedAt
   )
     return null;
