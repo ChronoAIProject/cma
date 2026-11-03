@@ -230,16 +230,22 @@ impl SandboxResourceReader for TestResources {
     }
 }
 
-pub(super) struct Fixture {
+pub(crate) struct Fixture {
     pub(super) state: AgentRoutesState,
     pub(super) router: Router,
-    pub(super) store: Arc<InMemorySandboxStore>,
+    pub(crate) store: Arc<InMemorySandboxStore>,
     sandbox_id: SandboxId,
     workspace_id: WorkspaceId,
 }
 
-pub(super) async fn fixture() -> Fixture {
+pub(crate) async fn fixture() -> Fixture {
     fixture_with_registry(TestRegistry::new()).await
+}
+
+impl Fixture {
+    pub(crate) fn reads(&self) -> Arc<AgentReadService> {
+        self.state.reads.clone()
+    }
 }
 
 pub(super) async fn fixture_with_registry<R: AgentRuntimeRegistry + 'static>(

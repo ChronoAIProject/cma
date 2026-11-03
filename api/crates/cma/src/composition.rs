@@ -341,6 +341,21 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
         );
+        let deliverables =
+            layer2_core::sandbox::answer_deliverables::AnswerDeliverableService::new(
+                projections.reads(),
+                layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
+                    stores.sandbox_model.clone(),
+                    resource_access.clone(),
+                ),
+            )
+            .with_documents(documents.clone())
+            .with_files(
+                layer2_core::sandbox::agent_filesystem::AgentFileService::new(
+                    resource_access.clone(),
+                    adapter.clone(),
+                ),
+            );
         let agent_access = access::compose(
             &stores,
             auth.clone(),
@@ -351,6 +366,7 @@ impl ControlPlaneComposition {
             access::ToolServices {
                 source: access_tools,
                 documents: config.document_storage.as_ref().map(|_| documents.clone()),
+                deliverables: deliverables.clone(),
                 public_origin: config.public_url.clone(),
             },
         );
@@ -377,6 +393,7 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
+            .merge(rest::answer_deliverables_router(deliverables))
             .merge(rest::documents_router(documents.clone()))
             .merge(model_routes)
             .merge(agent_access.owner_routes)

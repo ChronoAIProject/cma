@@ -24,6 +24,7 @@ pub(super) struct AccessComposition {
 pub(super) struct ToolServices {
     pub source: Arc<MongoAgentAccessToolSource>,
     pub documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
+    pub deliverables: Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>,
     pub public_origin: String,
 }
 
@@ -51,10 +52,11 @@ pub(super) fn compose(
         worker,
         owner_routes: layer1_public::rest::agent_access_requests_router(service.clone()),
         // Tool capabilities authenticate independently from human browser auth.
-        tool_routes: layer1_public::mcp::agent_tools_router(
+        tool_routes: layer1_public::mcp::agent_delivery_tools_router(
             tools.source,
             service,
             tools.documents,
+            Some(tools.deliverables),
             &tools.public_origin,
         ),
     }

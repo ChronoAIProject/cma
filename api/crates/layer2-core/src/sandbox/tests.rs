@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+#[path = "answer_deliverables_tests.rs"]
+mod answer_deliverables;
+
 use super::store::{
     AgentLogStore, AgentStore, SandboxEventStore, SandboxStore, SandboxTransaction,
     SandboxTransactionStore, WorkspaceStore, WorktreeStore,
