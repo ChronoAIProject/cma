@@ -4,7 +4,7 @@
 
 **Blocked by:** 11（建议身份、资格校验和正常发送集成）。
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **优先级:** P1
 
@@ -27,3 +27,11 @@
 ## 范围与依赖说明
 
 不等待动态生成，模板与动态建议共用同一编辑行为。原因表单草稿与 composer 草稿分开，不互相覆盖。
+
+## Implementation checkpoint
+
+2026-11-03: `codex/cma-ui-12`, isolated worktree `ticket-12`, starts at
+integration `ef5e20c1f`. Approved seams are U (real AgentSurface and composer),
+A (existing public normal admission/history/recovery), and browser interaction.
+Ticket 13 owns generation/fetching; ticket 12 adds only the shared set's edit action
+and composer draft handling. No new suggestion identity or analytics path.
