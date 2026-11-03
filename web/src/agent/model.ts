@@ -94,7 +94,6 @@ export interface ConversationState {
   readonly turnTiming?: Readonly<
     Record<string, { readonly startedAt: string; readonly finishedAt?: string }>
   >;
-  readonly latestRunId?: string;
   /** Ephemeral visible text already covered by the latest provider usage report. */
   readonly visibleUsageAnchor?: {
     readonly turnSequence: number;
@@ -106,6 +105,7 @@ export interface ConversationState {
   readonly ownerTitle?: string;
   readonly availableCommands?: readonly SessionCommand[];
   readonly activeRunId?: string;
+  readonly latestTurnId?: string;
   /** Recorded turn start, independent of route mounts and stream reconnects. */
   readonly activeRunStartedAt?: string;
   readonly agentStatus?: AgentStatus;

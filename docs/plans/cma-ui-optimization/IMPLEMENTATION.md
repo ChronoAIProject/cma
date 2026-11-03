@@ -20,7 +20,8 @@
 - 已确认 19 张票及 22 条依赖，无循环；初始 frontier：01、02、03、05、06、07、09、11、14。
 - 已隔离并保存原工作区内容；原文件哈希清单保存在工作区外，交付时复核。
 - 首批任务 01、03、07、09、11、14 已在独立 worktree 启动；共享回答区域的改动合并时逐项检查。
-- 01、09 已验收合入，两个已完成 worker 的 worktree 已清理；02 已从含 01、09 的集成状态启动。当前实施：02、03、06、07、11、14；其余票依赖满足后排入可用执行槽。
+- 01、03、06、09、11 已验收合入，五个已完成 worker 的 worktree 已清理。当前实施：02、04、05、07、13、14；04 基于首页链路、13 基于建议身份与条件发送契约继续开发，其余票依赖满足后排入可用执行槽。
+- 11 的广泛验证暴露两处本轮集成遗漏：01 移动导航后 `AppCreation.test.tsx` 仍查找旧 Sandboxes 按钮，03 使 `Console.tsx` 增至 503 行。已交由 04 在首页上下文工作中修复并回归；这两项不是原始基线问题，不以单票通过掩盖它们。
 
 ## 基线验证
 
@@ -39,6 +40,8 @@
 - 09 合入前后的新增提交已通过带脱敏输出的 Gitleaks 检查。基线 fixture Vite 服务已停止，截图与测试记录保留在工作区外。
 - 01 的新增提交同样通过 Gitleaks 脱敏检查（6 commits，73.61 KB，无泄漏）。集成态源码行数检查发现 `agent_operation_service.rs` 为 508 行，超过 500 行限制；该文件与基线 `c9e2d7b91` 的 SHA-256 完全相同，属于原有工作，未混入无关拆分。
 - 隔离镜像中的 Chromium 156.0.8078.79 已通过私有 DevTools pipe 导航两个本地页面并产生不同截图，记录位于工作区外 `runtime-proof/browser-prerequisite.json`。这是浏览器基础条件验证，尚不证明 CMA 授权、Agent 工具接入、实时画面或接管能力；仅测试容器使用禁用 Chromium sandbox 的参数，不能作为生产安全配置依据。
+- 11 使用独立 `60fc98ee5` 基线归档及清理过的私有 target，另复现 Core `installed_skill_version_change_is_reported_as_unsupported` 在 fixture 创建时返回 Conflict；真实执行 1 个失败用例、1140 个被筛除，日志为 `runtime-proof/ticket11-evidence/ticket-11-core-baseline.log`。未修改这一原有技能测试。
+- 03、06 新增的 15 个提交通过 Gitleaks 脱敏扫描（178.53 KB，无泄漏）。01、09 的临时截图和证据已另存到工作区外 `evidence/ticket-01`、`evidence/ticket-09`，供整体验收使用。
 
 ## Ticket 09 集成（2026-11-03）
 
@@ -77,3 +80,13 @@
 - 合并态检查（集成工作区执行）：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/PlanProgress.test.tsx` 通过，1 文件 / 13 tests；`npm --prefix web run typecheck` 通过。
 - `git diff --check 3ceaac7e9558a8cd171ad931453a98764036f736 HEAD`、冲突解决后的 `git diff --cached --check` 及记录提交前的 `git diff --check` 通过。仅样式文档冲突，不扩大检查；未重复 worker 的广泛 U/A/R、Chrome 或 native provider 验证，本次没有 Rust 运行。
 - worker 的 Rust 证据使用独立 `--cfg cma_ui_ticket06` 和实际 23/23 测试数；原有格式、skill-error corpus、源文件行数及生产完整链路证据限制保持原状。本次仅写入集成 worktree，无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。
+
+## Ticket 11 集成（2026-11-03）
+
+- 合并前 `codex/cma-ui-optimization` 工作区干净，HEAD 为 `9a900786a99ee2bb9a05f56f68f2a62d61abf189`；票分支通过 `38418c436` 包含该集成状态。61 文件 diff 与 `runtime-proof/ticket11-evidence/changed-paths.txt` 去除绝对 worktree 前缀后的 manifest 完全匹配；已读取票文档、`11-EVIDENCE.md` 与 `SUGGESTION_CONTRACT.md`。
+- 普通 `--no-ff` merge 合入 `codex/cma-ui-11` 的 `43e8a7a0ab9db5dce2cc3c2275862ffcf9b778ea`，merge commit 为 `7c59f957d4891b7322f6e364cdfbc994dcdf7637`；无 merge 冲突，初始合并树与票分支完全一致。
+- 集成验证发现票 11 的 Web Style 块位于既有 09/01/03/06 条目之前，不满足本集成的严格追加顺序。独立文档修正提交 `56da4b424b0ce8f46ee04e146f316e39ecba6e14` 将该完整块原样移至末尾；已断言最终文件等于合并前全文加原样票 11 块和分隔空行，既有内容未修改或删除。除该顺序修正外，全部候选源码与票分支一致。
+- 09 的 canonical `finalAnswer`、06 的 PlanProgress/turnOutcomes、03 首页流程及 01 导航保留；`latestTurnId` 仅用于防止旧回答恢复建议资格。共享发送与保留输入的提取保持原样，AgentSurface 为 482 行、controller 为 496 行；12/13 继续使用交接契约。
+- 合并态检查（集成工作区执行）：`npm --prefix web test -- --maxWorkers=2 --configLoader=runner --no-cache src/agent/AgentSurface.suggestions.test.tsx` 通过，1 文件 / 15 tests；`npm --prefix web run typecheck` 通过。`git diff --check 9a900786a99ee2bb9a05f56f68f2a62d61abf189 HEAD` 与记录提交前的 `git diff --check` 通过。仅修正文档顺序，不重复广泛/native 检查，本次没有 Rust 运行。
+- 准确区分待处理问题：`AppCreation.test.tsx:86` 仍点击已移除的 Sandboxes，属于 01 引入的集成测试回归；`Console.tsx` 503 行属于 03 引入的集成行数超限。两项均不是原始基线问题，parent 已交由 04 修正，本 merger 未修改或重跑它们。原始 skill-error public contract、Core skill fixture 及 508 行 Agent service 是另行已有证据的前置问题，保持独立记录。
+- 本次仅写入集成 worktree；无原工作区或其他 worker 源码编辑，无推送、部署或生产操作。

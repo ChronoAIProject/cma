@@ -79,6 +79,9 @@ impl From<String> for ResponseInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateResponseRequest {
+    #[doc = "Optional final-answer admission condition, retained unchanged for recovery."]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_context: Option<crate::answer_context::AnswerContext>,
     /// Complete immutable event context; requires a current binding key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_context: Option<super::EventContext>,
@@ -106,6 +109,7 @@ impl CreateResponseRequest {
     /// Construct a streaming request to an existing Agent.
     pub fn new(conversation: impl Into<String>, input: impl Into<ResponseInput>) -> Self {
         Self {
+            answer_context: None,
             conversation: Some(ConversationReference::Id(conversation.into())),
             input: input.into(),
             stream: true,
@@ -117,6 +121,9 @@ impl CreateResponseRequest {
         }
     }
     pub(crate) fn validate(&self, alias: Option<&str>) -> Result<String> {
+        if let Some(context) = &self.answer_context {
+            context.validate()?;
+        }
         let id = self
             .conversation
             .as_ref()

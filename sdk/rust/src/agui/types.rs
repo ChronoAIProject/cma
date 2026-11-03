@@ -54,6 +54,9 @@ pub struct Resume {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunRequest {
+    #[doc = "Optional conditional-send fields; cannot override the Agent profile."]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarded_props: Option<ForwardedProps>,
     /// Existing Agent identity.
     pub thread_id: String,
     /// Optional caller run correlation identity.
@@ -65,6 +68,14 @@ pub struct RunRequest {
     /// At most one explicit approval answer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resume: Vec<Resume>,
+}
+
+#[doc = "Supported AG-UI conditional-send extension."]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForwardedProps {
+    #[doc = "The final answer required for admitting this message."]
+    pub answer_context: crate::answer_context::AnswerContext,
 }
 
 /// One typed AG-UI event envelope; payload preserves named protocol extensions.
