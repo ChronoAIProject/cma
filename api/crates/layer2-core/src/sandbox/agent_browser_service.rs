@@ -1,6 +1,7 @@
 use super::*;
 use crate::sandbox::agent_environment::{
-    BrowserObservationView, BrowserSelection, EnvironmentAvailability, EnvironmentFeature,
+    AgentEnvironment, BrowserObservationView, BrowserSelection, EnvironmentAvailability,
+    EnvironmentFeature,
 };
 use layer3_adapter::{
     AgentSlot, BrowserObservation, BrowserOperation, BrowserRequest, BrowserState,
@@ -41,7 +42,8 @@ impl AgentFileService {
             .authorize(caller, context, credential, agent_id, capability, purpose)
             .await?;
         let sandbox = &authorized.snapshot.lineage.sandbox;
-        let incarnation = incarnation(sandbox, agent_id).ok_or(AgentFileError::NotReady)?;
+        let incarnation =
+            AgentEnvironment::incarnation(agent_id, sandbox).ok_or(AgentFileError::NotReady)?;
         if incarnation != expected_incarnation {
             return Err(AgentFileError::Conflict);
         }
@@ -214,15 +216,4 @@ impl AgentFileService {
         }
         Ok(receipt.observation)
     }
-}
-
-fn incarnation(sandbox: &Sandbox, agent_id: &AgentId) -> Option<String> {
-    let binding = sandbox.runtime.as_ref()?;
-    let mut digest = Sha256::new();
-    digest.update(b"cma-agent-environment-v1\0");
-    digest.update(agent_id.as_str());
-    digest.update([0]);
-    digest.update(binding.provision_generation?.to_be_bytes());
-    digest.update(binding.boot_id.as_ref()?);
-    Some(format!("{:x}", digest.finalize()))
 }

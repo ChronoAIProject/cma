@@ -25,6 +25,7 @@ pub(super) async fn assert_authoritative_status_and_ready_evidence(
     store.agent_log.insert_one(completed.clone()).await.unwrap();
     save_fixture_agent(store, &agent).await;
     assert_status(store, &agent, AgentTaskStatus::Completed).await;
+    assert_gap_status(store, &agent).await;
 
     for corrupt_command in [false, true] {
         if corrupt_command {
@@ -96,6 +97,62 @@ async fn save_fixture_agent(store: &MongoSandboxStore, agent: &Agent) {
             doc! {"_id":agent.id.as_str()},
             crate::store::agents::agent_document(agent).unwrap(),
         )
+        .await
+        .unwrap();
+}
+
+async fn assert_gap_status(store: &MongoSandboxStore, original: &Agent) {
+    let mut agent = original.clone();
+    let mut inserted = Vec::new();
+    for incomplete in [true, false] {
+        let turn_sequence = agent.conversation.last_seq + 1;
+        let mut events = vec![
+            AgentLogKind::TurnStarted {
+                turn_sequence,
+                model: None,
+                origin_key: None,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "Read recorded result".into(),
+            },
+        ];
+        if incomplete {
+            events.push(AgentLogKind::ConversationGap { frames: 1 });
+        }
+        events.extend([
+            AgentLogKind::AgentMessage {
+                content: "Retained result".into(),
+            },
+            AgentLogKind::TurnCompleted { turn_sequence },
+        ]);
+        for kind in events {
+            agent.conversation.last_seq += 1;
+            let document = log_document(&AgentLogEntry {
+                agent_id: agent.id.clone(),
+                seq: agent.conversation.last_seq,
+                appended_at: NOW.into(),
+                kind,
+            })
+            .unwrap();
+            inserted.push(document.get_str("_id").unwrap().to_owned());
+            store.agent_log.insert_one(document).await.unwrap();
+        }
+        save_fixture_agent(store, &agent).await;
+        assert_status(
+            store,
+            &agent,
+            if incomplete {
+                AgentTaskStatus::Failed
+            } else {
+                AgentTaskStatus::Completed
+            },
+        )
+        .await;
+    }
+    save_fixture_agent(store, original).await;
+    store
+        .agent_log
+        .delete_many(doc! {"_id": {"$in": inserted}})
         .await
         .unwrap();
 }

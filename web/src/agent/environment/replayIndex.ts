@@ -41,7 +41,7 @@ function replayIndex(query: ReplayQuery, seed?: ReplayWindow) {
   );
   let turn = seed?.turn;
   let plan = seed?.plan;
-  let older = seed?.older;
+  let older = query.after ?? seed?.older;
   let newer = false;
   let gap = seed?.gap ?? false;
   const accept = (item: V2AgentEventItem) => {
@@ -56,8 +56,11 @@ function replayIndex(query: ReplayQuery, seed?: ReplayWindow) {
       plan = kind.entries;
     } else if (turn !== undefined && (query.turn === undefined || query.turn === turn)) {
       if (kind?.type === 'tool_started' && kind.kind === 'execute') {
-        if (query.after && item.sequence <= sequence(query.after)) return;
-        if (query.after && records.size === 50) {
+        if (
+          query.after &&
+          records.size === 50 &&
+          sequence(records.values().next().value!.cursor) > sequence(query.after)
+        ) {
           newer = true;
           return;
         }
@@ -90,7 +93,7 @@ function replayIndex(query: ReplayQuery, seed?: ReplayWindow) {
       }
       if (records.size > 50) {
         const first = records.values().next().value!;
-        older = first.cursor;
+        if (!query.after) older = first.cursor;
         records.delete(first.id);
       }
     }
@@ -98,7 +101,9 @@ function replayIndex(query: ReplayQuery, seed?: ReplayWindow) {
   return {
     accept,
     snapshot: (through: string): ReplayWindow => ({
-      records: [...records.values()],
+      records: [...records.values()].filter(
+        (record) => !query.after || sequence(record.cursor) > sequence(query.after),
+      ),
       through,
       older,
       newer,

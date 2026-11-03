@@ -49,7 +49,24 @@ impl AgentTaskStatus {
         )
     }
 
-    pub fn from_latest(agent: &Agent, latest: Option<&AgentLogEntry>, pending_work: bool) -> Self {
+    pub fn from_log(agent: &Agent, entries: &[AgentLogEntry], pending_work: bool) -> Self {
+        let latest = entries
+            .iter()
+            .rev()
+            .find(|entry| Self::relevant(&entry.kind));
+        let gap = entries
+            .iter()
+            .rev()
+            .find(|entry| matches!(entry.kind, AgentLogKind::ConversationGap { .. }));
+        Self::from_latest(agent, latest, gap, pending_work)
+    }
+
+    pub fn from_latest(
+        agent: &Agent,
+        latest: Option<&AgentLogEntry>,
+        gap: Option<&AgentLogEntry>,
+        pending_work: bool,
+    ) -> Self {
         match agent.status {
             AgentStatus::Starting => return Self::Starting,
             AgentStatus::Working => return Self::Working,
@@ -90,6 +107,14 @@ impl AgentTaskStatus {
         match latest.kind {
             AgentLogKind::Created { .. } => Self::NotStarted,
             AgentLogKind::TurnCompleted { turn_sequence } => {
+                if gap.is_some_and(|gap| {
+                    gap.agent_id == agent.id
+                        && gap.seq > turn_sequence
+                        && gap.seq < latest.seq
+                        && matches!(gap.kind, AgentLogKind::ConversationGap { .. })
+                }) {
+                    return Self::Failed;
+                }
                 match agent
                     .conversation
                     .first_message

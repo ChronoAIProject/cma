@@ -129,7 +129,12 @@ export function BrowserControl({
   const command = (command: BrowserControlChange['command'], input?: BrowserInput) => {
     if (command !== 'return' && !admission.current) return Promise.resolve(false);
     const value = current.current;
-    if (!ready.current || !visible() || value.phase !== 'ready' || !value.value)
+    if (
+      (command !== 'return' && !ready.current) ||
+      !visible() ||
+      value.phase !== 'ready' ||
+      !value.value
+    )
       return Promise.resolve(false);
     if (
       command !== 'acquire' &&
