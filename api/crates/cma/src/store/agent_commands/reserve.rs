@@ -155,14 +155,14 @@ pub(in crate::store) async fn apply(
         {
             return Err(CommandLedgerError::NotAdmissible.into());
         }
-        let mut answer = layer2_core::sandbox::agent_io::AnswerObservation::default();
+        let mut entries = Vec::new();
         super::super::agent_log::scan_complete_log_with_session(
             store,
             &agent.id,
             agent.conversation.last_seq,
             session,
             |entry| {
-                answer.observe(&entry);
+                entries.push(entry);
                 Ok(())
             },
         )
@@ -179,7 +179,7 @@ pub(in crate::store) async fn apply(
             request,
             &agent,
             waiting,
-            answer.current(),
+            layer2_core::sandbox::agent_io::answer_context_for_log(&agent, &entries)?,
         )?;
     }
     if store
