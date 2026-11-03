@@ -22,6 +22,14 @@ function recover(state: ConversationState, notice: RecoveryNotice): Conversation
   return { ...state, recovery: upsert(state.recovery, notice) };
 }
 
+function hasRecordedGap(state: ConversationState, runId: string | undefined): boolean {
+  return state.recovery.some(
+    (notice) =>
+      notice.runId === runId &&
+      (notice.id.startsWith('gap:') || notice.id.startsWith('history-gap:')),
+  );
+}
+
 export function foldAgentEvent(state: ConversationState, event: AgentEvent): ConversationState {
   return orderEntries(state, foldDurableEvent(state, event), event.seq);
 }
@@ -175,6 +183,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       };
     case 'turn_completed': {
       const runId = number(kind.turn_sequence)?.toString() ?? next.activeRunId;
+      const incomplete = hasRecordedGap(next, runId);
       const finalMessage = next.messages.reduce<ConversationState['messages'][number] | undefined>(
         (latest, message) =>
           message.runId === runId &&
@@ -187,12 +196,15 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       );
       return {
         ...finishTurn(next, runId, event.appendedAt),
-        turnOutcomes: { ...next.turnOutcomes, [runId ?? 'unattributed']: 'completed' },
+        turnOutcomes: {
+          ...next.turnOutcomes,
+          [runId ?? 'unattributed']: incomplete ? 'failed' : 'completed',
+        },
         messages: next.messages.map((message) =>
           message === finalMessage &&
           message.role === 'assistant' &&
           message.content.trim() !== '' &&
-          !next.recovery.some((notice) => notice.runId === runId && notice.id.startsWith('gap:'))
+          !incomplete
             ? { ...message, finalAnswer: true }
             : message,
         ),
@@ -435,7 +447,12 @@ function foldLive(
         interrupts.length === 0 && (outcome?.type === 'complete' || outcome?.type === 'interrupt')
           ? {
               ...next.turnOutcomes,
-              [event.runId]: outcome.type === 'complete' ? 'completed' : 'interrupted',
+              [event.runId]:
+                outcome.type === 'interrupt'
+                  ? 'interrupted'
+                  : hasRecordedGap(next, event.runId)
+                    ? 'failed'
+                    : 'completed',
             }
           : next.turnOutcomes,
       approvals,

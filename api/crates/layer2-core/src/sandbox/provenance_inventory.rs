@@ -240,7 +240,7 @@ impl AgentProvenanceInventoryService {
                     }) {
                     original.task_status
                 } else {
-                    super::AgentTaskStatus::from_latest(&agent, None, false)
+                    super::AgentTaskStatus::from_latest(&agent, None, None, false)
                 })
                 .in_sandbox(&snapshot.lineage.sandbox),
                 agent_id: record.agent_id,
