@@ -126,6 +126,87 @@ test('LOCAL browser availability comes from the scoped public environment observ
   }
 });
 
+test('LOCAL output-only updates retain the reported status and explicit missing or truncated evidence', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalAgentV2();
+  try {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    fixture.append({ type: 'turn_started', turn_sequence: 1 });
+    fixture.append({
+      type: 'tool_started',
+      call_id: 'partial',
+      title: 'printf partial',
+      kind: 'execute',
+      status: 'in_progress',
+    });
+    fixture.append({
+      type: 'tool_output_reported',
+      call_id: 'partial',
+      output: { text: 'reported prefix', truncated: true },
+    });
+    fixture.append({
+      type: 'tool_started',
+      call_id: 'failed',
+      title: 'failed command',
+      kind: 'execute',
+      status: 'failed',
+    });
+    fixture.append({
+      type: 'tool_started',
+      call_id: 'cancelled',
+      title: 'cancelled command',
+      kind: 'execute',
+      status: 'cancelled',
+    });
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.agent.event_head',
+          schema_version: 1,
+          agent_id: 'agt_contract',
+          incarnation: 'a'.repeat(64),
+          through_cursor: cursor(fixture.items.length),
+          active_turn: null,
+        },
+      }),
+    );
+    await page.route('**/api/v1/agents/agt_contract/files/tree**', (route) =>
+      route.fulfill({ json: { path: '', entries: [] } }),
+    );
+    await page.goto('/agents/agt_contract');
+    const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+    await computer.getByRole('tab', { name: 'Operation output' }).click();
+    const partial = computer.getByRole('article', {
+      name: 'Operation: printf partial',
+      exact: true,
+    });
+    await expect(partial.getByText('In progress', { exact: true })).toBeVisible();
+    await expect(partial.locator('pre')).toHaveText('reported prefix');
+    await expect(partial.getByText('Output truncated', { exact: true })).toBeVisible();
+    const failed = computer.getByRole('article', {
+      name: 'Operation: failed command',
+      exact: true,
+    });
+    await expect(failed.getByText('Failed', { exact: true })).toBeVisible();
+    await expect(failed.getByText('Output not reported', { exact: true })).toBeVisible();
+    await expect(
+      computer
+        .getByRole('article', { name: 'Operation: cancelled command', exact: true })
+        .getByText('Cancelled', { exact: true }),
+    ).toBeVisible();
+    fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
+    await expect(
+      partial.getByText('Outcome not reported (last status: in_progress)', { exact: true }),
+    ).toBeVisible();
+    expect(fixture.writes).toEqual([]);
+  } finally {
+    await fixture.close(page);
+  }
+});
+
 test('LOCAL ten thousand operation turns stay paged while assistant text streams', async ({
   page,
   baseURL,
