@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -109,10 +110,16 @@ test('NATIVE Agent navigation reaches authorized public browser observations and
     await expect(image).toHaveJSProperty('naturalHeight', 720);
     await expect(page.getByText('Live', { exact: true })).toBeVisible();
     previous = await image.getAttribute('src');
-    const encoded = previous!.split(',')[1];
+    assert(previous, 'Native navigation must display a browser image');
+    const encoded = previous.split(',')[1];
+    assert(encoded, 'Displayed browser image must contain base64 frame data');
     const bytes = Buffer.from(encoded, 'base64');
     expect(bytes.length).toBeLessThanOrEqual(262144);
-    const receipt = receipts.findLast((value) => value.frame?.data === encoded)!;
+    const receipt = receipts
+      .slice()
+      .reverse()
+      .find((value) => value.frame?.data === encoded);
+    assert(receipt?.frame, 'Displayed browser frame must have an authorized receipt');
     expect(receipt.agent_id).toBe('agt_shared_read');
     expect(receipt.runtime_incarnation).toBe(incarnation);
     expect(receipt.location).toBe('Local page');
@@ -121,8 +128,8 @@ test('NATIVE Agent navigation reaches authorized public browser observations and
       page: destination,
       sha256: createHash('sha256').update(bytes).digest('hex'),
       bytes: bytes.length,
-      sequence: receipt.frame!.sequence,
-      captured_at: receipt.frame!.captured_at,
+      sequence: receipt.frame.sequence,
+      captured_at: receipt.frame.captured_at,
       context_id: receipt.context_id,
       runtime_incarnation: incarnation,
     });
@@ -132,9 +139,11 @@ test('NATIVE Agent navigation reaches authorized public browser observations and
       fullPage: true,
     });
   }
-  expect(frames[0].sha256).not.toBe(frames[1].sha256);
-  expect(frames[0].context_id).toBe(frames[1].context_id);
-  expect(frames[1].sequence).toBeGreaterThan(frames[0].sequence);
+  const [pageA, pageB] = frames;
+  assert(pageA && pageB, 'Native navigation must produce evidence for both pages');
+  expect(pageA.sha256).not.toBe(pageB.sha256);
+  expect(pageA.context_id).toBe(pageB.context_id);
+  expect(pageB.sequence).toBeGreaterThan(pageA.sequence);
   const query = `?runtime_incarnation=${incarnation}&observer=chain-api`;
   expect((await request.get(origins.foreign + root + '/browser' + query)).status()).toBe(404);
   expect(
@@ -197,10 +206,10 @@ test('NATIVE Agent navigation reaches authorized public browser observations and
   const finalRead = await request.get(origins.owner + root + '/browser' + query);
   expect(finalRead.status()).toBe(200);
   const finalFrame = await finalRead.json();
-  expect(finalFrame.context_id).toBe(frames[1].context_id);
+  expect(finalFrame.context_id).toBe(pageB.context_id);
   expect(
     createHash('sha256').update(Buffer.from(finalFrame.frame.data, 'base64')).digest('hex'),
-  ).toBe(frames[1].sha256);
+  ).toBe(pageB.sha256);
   await request.delete(origins.owner + root + '/browser' + query);
   expect(boundary.errors).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
