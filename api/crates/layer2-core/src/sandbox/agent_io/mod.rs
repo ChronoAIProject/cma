@@ -6,6 +6,8 @@
 
 mod admission;
 mod admission_service;
+mod answer_context;
+pub use answer_context::{require_answer_context, AnswerContext, AnswerObservation};
 mod authorization;
 mod authorization_audit;
 mod binding;

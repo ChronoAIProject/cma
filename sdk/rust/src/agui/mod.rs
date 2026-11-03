@@ -102,6 +102,14 @@ impl Agui<'_> {
         self.submit(body, Some(key)).await
     }
     async fn submit(&self, body: &RunRequest, key: Option<&str>) -> Result<AgentStream> {
+        if let Some(props) = &body.forwarded_props {
+            props.answer_context.validate()?;
+            if !body.resume.is_empty() {
+                return Err(Error::validation(
+                    "answer context is only valid for user input",
+                ));
+            }
+        }
         if body.thread_id.is_empty()
             || body.resume.len() > 1
             || body
