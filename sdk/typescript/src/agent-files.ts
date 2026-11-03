@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from './config.js';
+import { agentEnvironment } from './agent-environment.js';
 import { ProtocolError, ValidationError } from './errors.js';
 import { requestBytes, type OperationOptions } from './http.js';
 import { input, query, read, segment } from './resources.js';
@@ -52,6 +53,16 @@ export type AgentFileMutation = Output<typeof agentFileMutation>;
 /** Persistent /home files. Paths are relative; every request rechecks current access. */
 export class AgentFiles {
   constructor(private readonly config: ResolvedConfig) {}
+  async environment(agentId: string, options: OperationOptions = {}) {
+    const value = await read(
+      this.config,
+      `/api/v1/agents/${segment(agentId)}/environment`,
+      agentEnvironment,
+      options,
+    );
+    if (value.agent_id !== agentId) throw new ProtocolError('Agent environment identity changed.');
+    return value;
+  }
   /** List one directory lazily. An empty path names /home; dotfiles are included. */
   list(agentId: string, path = '', options: OperationOptions = {}) {
     return read(this.config, query(this.path(agentId, '/tree'), { path }), agentFileList, options);
