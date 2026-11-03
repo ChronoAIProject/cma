@@ -1,0 +1,1170 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "browser-get-success",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_live",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "live",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "location": "Local page",
+          "frame": {
+            "sequence": 1,
+            "captured_at": "2026-11-03T05:02:55.559Z",
+            "media_type": "image/jpeg",
+            "width": 1280,
+            "height": 720,
+            "data": "/9j/AA=="
+          },
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-not-enabled",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_not_enabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "not_enabled",
+          "context_id": null,
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-unsupported",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_unsupported",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "unsupported",
+          "context_id": null,
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-foreign",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-anonymous",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-not_ready",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_not_ready",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_runtime_not_ready",
+          "title": "file_runtime_not_ready",
+          "status": 409,
+          "detail": "The Agent runtime is not ready.",
+          "code": "file_runtime_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-unavailable",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_unavailable",
+          "title": "file_unavailable",
+          "status": 503,
+          "detail": "Filesystem access is temporarily unavailable.",
+          "code": "file_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-adapter_unsupported",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_adapter_unsupported",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_runtime_unsupported",
+          "title": "file_runtime_unsupported",
+          "status": 409,
+          "detail": "This runtime does not expose its persistent home.",
+          "code": "file_runtime_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-stale",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_ready",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=stale&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_conflict",
+          "title": "file_conflict",
+          "status": 409,
+          "detail": "The file changed; refresh before saving.",
+          "code": "file_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-viewer",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_viewer",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "live",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "location": "Local page",
+          "frame": {
+            "sequence": 1,
+            "captured_at": "2026-11-03T05:02:55.559Z",
+            "media_type": "image/jpeg",
+            "width": 1280,
+            "height": 720,
+            "data": "/9j/AA=="
+          },
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-invalid-observer",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_ready",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=invalid%20observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_file_request",
+          "title": "invalid_file_request",
+          "status": 400,
+          "detail": "File path or content is invalid.",
+          "code": "invalid_file_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-success",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_ready",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "enabled": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "ready",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-not-enabled",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_not_enabled",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "enabled": false
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "not_enabled",
+          "context_id": null,
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-unsupported",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_unsupported",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "enabled": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "unsupported",
+          "context_id": null,
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-foreign",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_foreign",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "enabled": true
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-anonymous",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "enabled": true
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-not_ready",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_not_ready",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "enabled": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_runtime_not_ready",
+          "title": "file_runtime_not_ready",
+          "status": 409,
+          "detail": "The Agent runtime is not ready.",
+          "code": "file_runtime_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-unavailable",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "enabled": true
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_unavailable",
+          "title": "file_unavailable",
+          "status": 503,
+          "detail": "Filesystem access is temporarily unavailable.",
+          "code": "file_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-adapter_unsupported",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_adapter_unsupported",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "enabled": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_runtime_unsupported",
+          "title": "file_runtime_unsupported",
+          "status": 409,
+          "detail": "This runtime does not expose its persistent home.",
+          "code": "file_runtime_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-stale",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_ready",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "stale",
+          "enabled": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_conflict",
+          "title": "file_conflict",
+          "status": 409,
+          "detail": "The file changed; refresh before saving.",
+          "code": "file_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-put-viewer",
+      "operation": "PUT /api/v1/agents/{id}/browser",
+      "scenario": "browser_viewer",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_shared_read/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "enabled": true
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-success",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_ready",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "ready",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-not-enabled",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_not_enabled",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "not_enabled",
+          "context_id": null,
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-unsupported",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_unsupported",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "unsupported",
+          "context_id": null,
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-foreign",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_foreign",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-anonymous",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_anonymous",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-not_ready",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_not_ready",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_runtime_not_ready",
+          "title": "file_runtime_not_ready",
+          "status": 409,
+          "detail": "The Agent runtime is not ready.",
+          "code": "file_runtime_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-unavailable",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_unavailable",
+          "title": "file_unavailable",
+          "status": 503,
+          "detail": "Filesystem access is temporarily unavailable.",
+          "code": "file_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-adapter_unsupported",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_adapter_unsupported",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_runtime_unsupported",
+          "title": "file_runtime_unsupported",
+          "status": 409,
+          "detail": "This runtime does not expose its persistent home.",
+          "code": "file_runtime_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-stale",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_ready",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=stale&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_conflict",
+          "title": "file_conflict",
+          "status": 409,
+          "detail": "The file changed; refresh before saving.",
+          "code": "file_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-viewer",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_viewer",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "live",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "location": "Local page",
+          "frame": {
+            "sequence": 1,
+            "captured_at": "2026-11-03T05:02:55.559Z",
+            "media_type": "image/jpeg",
+            "width": 1280,
+            "height": 720,
+            "data": "/9j/AA=="
+          },
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-delete-invalid-observer",
+      "operation": "DELETE /api/v1/agents/{id}/browser",
+      "scenario": "browser_ready",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=invalid%20observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_file_request",
+          "title": "invalid_file_request",
+          "status": 400,
+          "detail": "File path or content is invalid.",
+          "code": "invalid_file_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-loading",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_loading",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "loading",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-paused",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_paused",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "paused",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-disconnected",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_disconnected",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "state": "disconnected",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "location": "Blank page",
+          "frame": null,
+          "observers": 0,
+          "captures": 0,
+          "bytes": 0,
+          "min_interval_ms": 1000,
+          "fresh_for_ms": 3000,
+          "max_frame_bytes": 262144,
+          "max_observers": 16
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-get-revoked",
+      "operation": "GET /api/v1/agents/{id}/browser",
+      "scenario": "browser_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&observer=observer",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

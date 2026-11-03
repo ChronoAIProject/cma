@@ -5,6 +5,21 @@ use crate::{AdapterError, CommandReceipt, WriterState};
 
 pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crate::Result<()> {
     let correlated = match (request, response) {
+        (RequestFrame::Browser(request), ResponseFrame::Browser(receipt)) => {
+            request.agent_id == receipt.agent_id
+                && request.boot_id == receipt.boot_id
+                && receipt.observation.valid()
+                && request.context_id.as_ref().is_none_or(|context| {
+                    receipt.observation.context_id.as_ref() == Some(context)
+                        || (receipt.observation.frame.is_none()
+                            && matches!(
+                                receipt.observation.state,
+                                crate::BrowserState::Paused
+                                    | crate::BrowserState::NotEnabled
+                                    | crate::BrowserState::Unsupported
+                            ))
+                })
+        }
         (
             RequestFrame::UploadAgentAttachment(upload),
             ResponseFrame::UploadAgentAttachment(receipt),

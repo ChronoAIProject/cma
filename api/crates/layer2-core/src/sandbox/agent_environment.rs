@@ -1,5 +1,22 @@
+pub use layer3_adapter::{BrowserFrame, BrowserObservation, BrowserState};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+
+pub struct BrowserSelection {
+    pub runtime_incarnation: String,
+    pub observer: Option<String>,
+    pub context_id: Option<String>,
+    pub enabled: Option<bool>,
+    pub release: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BrowserObservationView {
+    pub agent_id: String,
+    pub runtime_incarnation: String,
+    #[serde(flatten)]
+    pub observation: BrowserObservation,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]

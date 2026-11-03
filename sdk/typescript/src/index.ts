@@ -8,6 +8,7 @@ export * from './bots.js';
 export * from './bot-setups.js';
 export * from './agent-delegations.js';
 export * from './gateway-interactions.js';
+export type { AgentBrowserClient, BrowserObservation, BrowserScope } from './agent-browser.js';
 export {
   Agents,
   type AgentListOptions,
