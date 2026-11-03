@@ -17,7 +17,7 @@ import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
-import { presentAgent } from './presentation';
+import { presentAgent, presentRetainedInputs } from './presentation';
 import { useAgentSummary } from './useAgentSummary';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
 export type {
@@ -430,9 +430,7 @@ export function useAgentController(
     state.status === 'ready'
       ? currentAgentStatus(state.detail, state.conversation, summary)
       : undefined;
-  const retained = v2?.pending();
   const legacy = client.agentTransport?.legacySession(agentId, options.viewerId);
-  const legacyInput = legacy?.journal.legacySuggestion.read();
   const controlNotice = useControlStatus(v2, onIdentityChange);
   const queuedInputs = useQueuedInputs(
     v2,
@@ -442,15 +440,8 @@ export function useAgentController(
     onIdentityChange,
   );
   return {
-    readSuggestionRequest: () => v2?.journal.read() ?? legacy?.journal.legacySuggestion.read(),
+    ...presentRetainedInputs(v2, legacy),
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
-    pendingMessage:
-      retained?.input ?? (legacyInput?.state === 'pending' ? legacyInput.input : undefined),
-    acceptedMessage:
-      retained?.accepted ?? (legacyInput?.state === 'accepted' ? legacyInput.input : undefined),
-    acceptedSteeringMessage: retained?.acceptedSteering,
-    acceptedInterruptionMessage: retained?.acceptedInterruption,
-    pendingControl: retained?.control,
     controlNotice,
     controlsUnavailable:
       suspended ||
