@@ -428,9 +428,13 @@ it('renders three scoped candidates and sends the keyboard-selected full text wi
   });
   const group = screen.getByRole('region', { name: 'Next you can ask' });
   const buttons = within(group).getAllByRole('button');
-  expect(buttons).toHaveLength(3);
-  expect(buttons[2]).toHaveTextContent('Explain the cost of café hosting.');
-  buttons[2]!.focus();
+  expect(buttons).toHaveLength(6);
+  expect(
+    within(group).getAllByRole('button', { name: /Edit suggestion \d before sending/ }),
+  ).toHaveLength(3);
+  const selected = within(group).getByRole('button', { name: /Keep all constraints/ });
+  expect(selected).toHaveTextContent('Explain the cost of café hosting.');
+  selected.focus();
   await userEvent.setup().keyboard('{Enter}');
   await waitFor(() => expect(fixture.post).toHaveBeenCalledOnce());
   expect(JSON.parse(String(fixture.post.mock.calls[0]![0]!.body)).input).toBe(visible);
