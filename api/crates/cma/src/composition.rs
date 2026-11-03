@@ -181,6 +181,7 @@ impl ControlPlaneComposition {
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
+            Some(adapter::desktop_creation(config, adapter.clone())?),
         );
         inline_lifecycle.resume_pending();
         let projections = projections

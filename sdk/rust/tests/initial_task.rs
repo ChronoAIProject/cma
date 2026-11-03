@@ -1,9 +1,9 @@
 #[path = "support/wire.rs"]
 mod wire;
 
-use cma_sdk::{IdempotencyKey, agents::AgentLifecycleCreateRequest};
+use cma_sdk::{agents::AgentLifecycleCreateRequest, IdempotencyKey};
 use serde_json::json;
-use wire::{WireServer, json as response};
+use wire::{json as response, WireServer};
 
 #[tokio::test]
 async fn repository_task_reads_source_and_actual_checkout_as_distinct_public_facts() {
@@ -50,6 +50,7 @@ async fn lifecycle_replays_exact_task_bytes_and_keeps_legacy_omission() {
     let request = AgentLifecycleCreateRequest {
         name: "New task".into(),
         initial_message: Some("  比较三个工具\n保留原文。  ".into()),
+        desktop: None,
         workspace_id: None,
         sandbox_id: None,
         image: None,
