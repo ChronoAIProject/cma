@@ -7,7 +7,8 @@ import { liveTool, updateTool } from './toolCalls';
 import { setPlan } from './plans';
 import { descriptionSource, durableRuntimeMetadata, mergeRuntimeMetadata } from './runtimeMetadata';
 import { sessionCommands } from './slashCommands';
-import { number, object, text } from './conversationValues';
+import { number, object, text, upsert } from './conversationValues';
+import { liveReasoning } from './liveReasoning';
 import { startTurn, finishTurn } from './turnTiming';
 import type { ApprovalRequest, ConversationState, RecoveryNotice } from './model';
 export type {
@@ -16,12 +17,6 @@ export type {
   ConversationState,
   RecoveryNotice,
 } from './model';
-
-function upsert<T extends { readonly id: string }>(items: readonly T[], item: T): readonly T[] {
-  const at = items.findIndex(({ id }) => id === item.id);
-  if (at < 0) return [...items, item];
-  return items.map((current, index) => (index === at ? item : current));
-}
 
 function recover(state: ConversationState, notice: RecoveryNotice): ConversationState {
   return { ...state, recovery: upsert(state.recovery, notice) };
@@ -254,35 +249,6 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     default:
       return next;
   }
-}
-
-function liveReasoning(state: ConversationState, event: AgentLiveEvent): ConversationState {
-  const id = text(event.messageId) ?? `reasoning:${event.runId}`;
-  const current = state.reasoning.find((reasoning) => reasoning.id === id);
-  if (event.type.endsWith('START')) {
-    return {
-      ...state,
-      reasoning: upsert(state.reasoning, {
-        id,
-        runId: event.runId,
-        content: '',
-        status: 'streaming',
-      }),
-    };
-  }
-  if (event.type.includes('CONTENT')) {
-    const block = current ?? { id, runId: event.runId, content: '', status: 'streaming' as const };
-    return {
-      ...state,
-      reasoning: upsert(state.reasoning, {
-        ...block,
-        content: `${block.content}${text(event.delta) ?? text(event.content) ?? ''}`,
-      }),
-    };
-  }
-  return current === undefined
-    ? state
-    : { ...state, reasoning: upsert(state.reasoning, { ...current, status: 'complete' }) };
 }
 
 function approvalFrom(value: unknown): ApprovalRequest | undefined {

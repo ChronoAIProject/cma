@@ -1,5 +1,11 @@
 # 01：用任务名称与真实状态浏览 Agent
 
+集成修复交接：见 [INTEGRATION-REPAIRS](../INTEGRATION-REPAIRS.md)。Mongo 查询探针
+独立复现 10,000 个工具更新后扫描 10,001 个文档才能取回一条相关事件。非 Ready
+状态现在直接使用既有 domain projection；Ready 的完成、排队及损坏证据处理保留。
+既有 Mongo 共享 inventory 测试经真实 red → green 验证公开 hierarchy/inventory
+状态和 Ready 损坏拒绝；探针只证明查询规模，不宣称生产延迟。
+
 **What to build:** 用户在默认侧栏中找到任务、看懂是否正在工作或需要处理，并能从设置路径进入原有 Sandbox 管理。
 
 **Blocked by:** None（评审确认后可独立开始）。

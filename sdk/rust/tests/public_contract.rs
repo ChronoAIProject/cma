@@ -8,6 +8,8 @@ mod bindings;
 mod bots;
 #[path = "public_contract/context.rs"]
 mod context;
+#[path = "public_contract/deliverables.rs"]
+mod deliverables;
 #[path = "public_contract/documents.rs"]
 mod documents;
 #[path = "public_contract/event_workers.rs"]
@@ -28,10 +30,12 @@ mod wire;
 use cma_sdk::{Error, Result};
 use context::{Case, Context};
 
-async fn dispatch(c: &Context<'_>) -> Result<()> {
+async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
     let op = c.case.operation.as_str();
     if op.ends_with("/browser") && op.contains("/api/v1/agents/") {
         agent_browser::dispatch(c).await
+    } else if op.contains("/deliverable-references") || op.contains("/deliverables") {
+        deliverables::dispatch(c, corpus).await
     } else if op.contains("/api/v1/documents") {
         documents::dispatch(c).await
     } else if op.contains("/event-worker-profiles") {
@@ -143,7 +147,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
             );
         }
     }
-    for case in corpus {
+    for case in &corpus {
         let server = wire::WireServer::new().await;
         let c = Context::new(&server.anonymous, &case);
         if browser::owns(&case) {
@@ -162,7 +166,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
                 class,
                 classification::Classification::Local | classification::Classification::TypedShape
             ) {
-                let Err(Error::Validation { message }) = dispatch(&c).await else {
+                let Err(Error::Validation { message }) = dispatch(&c, &corpus).await else {
                     panic!("{} must reject before HTTP", case.id)
                 };
                 let fixture_shape = message.starts_with("fixture shape: ");
@@ -198,8 +202,11 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
             );
             continue;
         }
-        server.expect(context::wire(&case));
-        let result = dispatch(&c).await;
+        let exchange = deliverables::exchange(case, &corpus);
+        for step in &exchange {
+            server.expect(context::wire(step));
+        }
+        let result = dispatch(&c, &corpus).await;
         if case.response.status >= 400 && case.response.body_kind == "empty" {
             let error = result.expect_err(&case.id);
             assert!(
@@ -224,8 +231,8 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
         server.assert_drained();
         assert_eq!(
             server.request_count(),
-            1,
-            "{} must use exactly one typed HTTP request",
+            exchange.len(),
+            "{} must use the complete typed HTTP exchange",
             case.id
         );
         let _ = (&server.client, &server.base_url);

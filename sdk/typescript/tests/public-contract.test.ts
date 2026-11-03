@@ -16,6 +16,7 @@ import {
   type ContractCase,
 } from './public-contract/context.js';
 import { resourceDispatch } from './public-contract/resources.js';
+import { deliverableDispatch, deliveryExchange } from './public-contract/deliverables.js';
 import { eventWorkerDispatch } from './public-contract/event-workers.js';
 import { botDispatch } from './public-contract/bots.js';
 import { operatorDispatch } from './public-contract/operator.js';
@@ -33,7 +34,9 @@ import {
 } from './public-contract/expectations.js';
 import { browserOperations, verifyNavigation } from './public-contract/navigation.js';
 
+const corpus = loadCorpus();
 const dispatch = {
+  ...deliverableDispatch(corpus),
   ...documentDispatch,
   ...botDispatch,
   ...eventWorkerDispatch,
@@ -44,7 +47,6 @@ const dispatch = {
   ...agentEventsV2Dispatch,
   ...agentBrowserDispatch,
 };
-const corpus = loadCorpus();
 
 function response(fixture: ContractCase): Response {
   const { bodyKind, body, status, headers } = fixture.response;
@@ -144,18 +146,21 @@ describe('shared public contract', () => {
   for (const fixture of corpus)
     it(`${expectation(fixture)}: ${fixture.id}: ${fixture.operation}`, async () => {
       const mode = expectation(fixture);
+      const exchange = deliveryExchange(fixture, corpus);
       const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const currentFixture = exchange[fetch.mock.calls.length - 1]!;
+        expect(currentFixture, 'unexpected typed HTTP request').toBeDefined();
         const actual = new URL(String(url));
-        const expected = expectedRequestUrl(fixture);
+        const expected = expectedRequestUrl(currentFixture);
         expect(actual.pathname).toBe(expected.pathname);
         expect([...actual.searchParams].sort()).toEqual([...expected.searchParams].sort());
-        expect(init?.method).toBe(fixture.request.method);
+        expect(init?.method).toBe(currentFixture.request.method);
         const headers = new Headers(init?.headers);
-        if (mode === 'serializer-protection' && fixture.id.endsWith('-missing-media-type'))
+        if (mode === 'serializer-protection' && currentFixture.id.endsWith('-missing-media-type'))
           expect(headers.get('content-type')).toBe('application/json');
-        for (const [name, value] of Object.entries(fixture.request.headers)) {
+        for (const [name, value] of Object.entries(currentFixture.request.headers)) {
           if (
-            fixture.operation.endsWith('/entry-intent') &&
+            currentFixture.operation.endsWith('/entry-intent') &&
             ['origin', 'sec-fetch-site'].includes(name)
           ) {
             // Fetch metadata and Origin are supplied by the browser, not forged by the SDK.
@@ -167,21 +172,23 @@ describe('shared public contract', () => {
             // Cookies belong to the browser/host jar, never to SDK-managed header values.
             expect(headers.has('cookie')).toBe(false);
             expect(init?.credentials).toBe(
-              fixture.operation === 'GET /auth/signup-options' ? 'omit' : 'include',
+              currentFixture.operation === 'GET /auth/signup-options' ? 'omit' : 'include',
             );
             continue;
           }
           expect(headers.get(name), name).toBe(value);
         }
-        if (fixture.operation === 'POST /api/v1/agents/{id}/attachments') {
+        if (currentFixture.operation === 'POST /api/v1/agents/{id}/attachments') {
           expect(init?.body).toBeInstanceOf(Blob);
-          expect(await (init?.body as Blob).text()).toBe(fixture.request.rawBody);
+          expect(await (init?.body as Blob).text()).toBe(currentFixture.request.rawBody);
         } else {
           expect(init?.body === undefined ? undefined : JSON.parse(String(init.body))).toEqual(
-            fixture.id === 'responses-conversation-content-type' ? {} : fixture.request.body,
+            currentFixture.id === 'responses-conversation-content-type'
+              ? {}
+              : currentFixture.request.body,
           );
         }
-        return response(fixture);
+        return response(currentFixture);
       });
       const client = createClient({
         baseUrl: 'https://contract.example',
@@ -200,7 +207,7 @@ describe('shared public contract', () => {
         expect(fixture.response.status).toBe(403);
         expect(fixture.response.bodyKind).toBe('empty');
         await expect(invoke()).rejects.toBeInstanceOf(ProtocolError);
-        expect(fetch).toHaveBeenCalledOnce();
+        expect(fetch).toHaveBeenCalledTimes(exchange.length);
         return;
       }
       if (mode === 'raw-wire-only') {
@@ -227,7 +234,7 @@ describe('shared public contract', () => {
         });
       } else if (fixture.response.status >= 400 && fixture.response.bodyKind === 'empty') {
         await expect(invoke()).rejects.toBeInstanceOf(ProtocolError);
-        expect(fetch).toHaveBeenCalledOnce();
+        expect(fetch).toHaveBeenCalledTimes(exchange.length);
       } else if (
         fixture.response.status >= 400 &&
         !(fixture.operation === 'GET /auth/session' && fixture.response.status === 401)
@@ -242,13 +249,13 @@ describe('shared public contract', () => {
         expect(result).toBeInstanceOf(ApiError);
         expect(result).toMatchObject({ status: fixture.response.status, code: body.code });
         expect((result as ApiError).extensions).toEqual(problemExtensions(fixture));
-        expect(fetch).toHaveBeenCalledOnce();
+        expect(fetch).toHaveBeenCalledTimes(exchange.length);
       } else {
         const result = await invoke();
         expect(result === undefined ? undefined : JSON.parse(JSON.stringify(result))).toEqual(
           expectedProjection(fixture),
         );
-        expect(fetch).toHaveBeenCalledOnce();
+        expect(fetch).toHaveBeenCalledTimes(exchange.length);
       }
     });
 

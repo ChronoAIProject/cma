@@ -208,6 +208,11 @@
   padding: 8px 16px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
+.agent-files-panel--embedded {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
 .agent-files-panel__header h2 {
   margin: 0;
   font-size: 14px;
