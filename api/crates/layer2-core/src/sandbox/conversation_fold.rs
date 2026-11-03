@@ -307,7 +307,19 @@ fn fold_semantic_update(
         }
         SessionUpdate::ToolCallUpdate(update) => {
             let Some(output) = recorded_tool_output(&update.fields) else {
-                return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+                return if logs.is_empty() {
+                    Ok(FoldedConversationUpdate::Quiet(assembly.clone()))
+                } else {
+                    changed(
+                        agent,
+                        logs,
+                        AgentMessageAssembly::default(),
+                        None,
+                        current.conversation.active_turn,
+                        false,
+                        appended_at,
+                    )
+                };
             };
             AgentLogKind::ToolOutputReported {
                 call_id: update.tool_call_id.0.to_string(),
