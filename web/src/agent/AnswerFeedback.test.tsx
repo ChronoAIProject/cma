@@ -205,37 +205,52 @@ it('withholds feedback when a completed turn reports missing conversation output
   expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
 });
 
-it('retains an uncertain requested vote across reopening and retries it before allowing the opposite choice', async () => {
-  let available = false;
-  let saved: MessageVote = 'up';
-  vi.stubGlobal('fetch', async (_path: string, options?: RequestInit) => {
-    if (options?.method !== 'PUT')
-      return Response.json({ items: [{ message_id: 'event:5', vote: saved }], next: null });
-    if (!available) throw new TypeError('Connection lost');
-    const { vote } = JSON.parse(String(options.body)) as { vote: MessageVote };
-    saved = vote;
-    return Response.json({ message_id: 'event:5', vote });
-  });
-  const view = render(draw());
-  await waitFor(() =>
-    expect(answer().getByRole('button', { name: 'Needs improvement' })).toBeEnabled(),
-  );
-  await userEvent.click(answer().getByRole('button', { name: 'Needs improvement' }));
-  expect(await screen.findByRole('button', { name: 'Retry vote' })).toBeEnabled();
-  view.unmount();
-  render(draw());
-  const retry = await screen.findByRole('button', { name: 'Retry vote' });
-  expect(answer().getByRole('button', { name: 'Helpful' })).toHaveAttribute('aria-pressed', 'true');
-  expect(answer().getByRole('button', { name: 'Helpful' })).toBeDisabled();
-  available = true;
-  await userEvent.click(retry);
-  await waitFor(() =>
-    expect(answer().getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
+it.each(['available', 'rejecting writes'])(
+  'retains an uncertain requested vote across reopening with storage %s and retries it before allowing the opposite choice',
+  async (storageMode) => {
+    if (storageMode === 'rejecting writes')
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        setItem: () => {
+          throw new DOMException('Storage quota exceeded', 'QuotaExceededError');
+        },
+        removeItem: () => undefined,
+        clear: () => undefined,
+      });
+    let available = false;
+    let saved: MessageVote = 'up';
+    vi.stubGlobal('fetch', async (_path: string, options?: RequestInit) => {
+      if (options?.method !== 'PUT')
+        return Response.json({ items: [{ message_id: 'event:5', vote: saved }], next: null });
+      if (!available) throw new TypeError('Connection lost');
+      const { vote } = JSON.parse(String(options.body)) as { vote: MessageVote };
+      saved = vote;
+      return Response.json({ message_id: 'event:5', vote });
+    });
+    const view = render(draw({ viewer: storageMode }));
+    await waitFor(() =>
+      expect(answer().getByRole('button', { name: 'Needs improvement' })).toBeEnabled(),
+    );
+    await userEvent.click(answer().getByRole('button', { name: 'Needs improvement' }));
+    expect(await screen.findByRole('button', { name: 'Retry vote' })).toBeEnabled();
+    view.unmount();
+    render(draw({ viewer: storageMode }));
+    const retry = await screen.findByRole('button', { name: 'Retry vote' });
+    expect(answer().getByRole('button', { name: 'Helpful' })).toHaveAttribute(
       'aria-pressed',
       'true',
-    ),
-  );
-});
+    );
+    expect(answer().getByRole('button', { name: 'Helpful' })).toBeDisabled();
+    available = true;
+    await userEvent.click(retry);
+    await waitFor(() =>
+      expect(answer().getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
+    );
+  },
+);
 
 it('offers visible read recovery and restores the saved choice before allowing edits', async () => {
   let unavailable = true;
