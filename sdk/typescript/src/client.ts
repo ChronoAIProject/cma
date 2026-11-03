@@ -19,6 +19,7 @@ import { Agents } from './agents.js';
 import { AgentAttachments } from './agents/attachments.js';
 import { AgentFiles } from './agent-files.js';
 import { AgentBrowser } from './agent-browser.js';
+import { AgentBrowserControl } from './agent-browser-control.js';
 import { Marketplace } from './marketplace.js';
 import { Profiles } from './profiles.js';
 import { Sandboxes } from './sandboxes.js';
@@ -52,6 +53,7 @@ export class Cma {
   readonly agentAttachments: AgentAttachments;
   readonly agentFiles: AgentFiles;
   readonly agentBrowser: AgentBrowser;
+  readonly agentBrowserControl: AgentBrowserControl;
   readonly resourceAccess: ResourceAccess;
   readonly sandboxes: Sandboxes;
   readonly workspaces: Workspaces;
@@ -91,6 +93,7 @@ export class Cma {
     this.agentAttachments = new AgentAttachments(this.#config);
     this.agentFiles = new AgentFiles(this.#config);
     this.agentBrowser = new AgentBrowser(this.#config);
+    this.agentBrowserControl = new AgentBrowserControl(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);
     this.sandboxes = new Sandboxes(this.#config);
     this.workspaces = new Workspaces(this.#config);

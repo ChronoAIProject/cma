@@ -9,6 +9,13 @@ export * from './bot-setups.js';
 export * from './agent-delegations.js';
 export * from './gateway-interactions.js';
 export type { AgentBrowserClient, BrowserObservation, BrowserScope } from './agent-browser.js';
+export type {
+  AgentBrowserControlClient,
+  BrowserControl,
+  BrowserControlScope,
+  BrowserControlChange,
+  BrowserInput,
+} from './agent-browser-control.js';
 export {
   Agents,
   type AgentListOptions,
