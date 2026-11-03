@@ -89,7 +89,9 @@ impl WorkerFailure {
 
 pub(super) fn failure(error: AdapterError) -> WorkerFailure {
     match error {
-        AdapterError::InputAuthorityUnavailable(_) | AdapterError::Unavailable(_) => {
+        AdapterError::InputAuthorityUnavailable(_)
+        | AdapterError::PromptNotWritten(_)
+        | AdapterError::Unavailable(_) => {
             WorkerFailure::retryable("workspace runtime is temporarily unavailable")
         }
         AdapterError::AtCapacity(_) => WorkerFailure::terminal(

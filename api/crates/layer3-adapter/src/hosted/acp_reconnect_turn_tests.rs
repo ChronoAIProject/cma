@@ -1,5 +1,106 @@
 use super::*;
 
+#[tokio::test]
+async fn retired_prompt_is_proven_unwritten_at_both_writer_guards() {
+    for during_admission in [false, true] {
+        let (client, mut server) = socket_pair().await;
+        send_ready(&mut server, "agent-1").await;
+        let (release, held) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let initialize = receive_json(&mut server).await;
+            respond(&mut server, &initialize, serde_json::json!({})).await;
+            let open = receive_json(&mut server).await;
+            respond(
+                &mut server,
+                &open,
+                serde_json::json!({"sessionId":"original"}),
+            )
+            .await;
+            tokio::select! {
+                _ = held => {},
+                frame = server.next() => panic!("retired prompt reached the socket: {frame:?}"),
+            }
+        });
+        let (updates, _receiver) = mpsc::channel(4);
+        let opened = Bridge::open(
+            client,
+            "agent-1",
+            "/workspace".into(),
+            settings(None, false),
+            None,
+            updates,
+        )
+        .await
+        .unwrap();
+        if during_admission {
+            // Pause after the first retired check but before the frame writer.
+            let pending = opened.bridge.pending.lock().await;
+            let attempt = opened.bridge.begin_prompt(
+                serde_json::json!({"sessionId":"original","prompt":[]}),
+                None,
+            );
+            tokio::pin!(attempt);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), &mut attempt)
+                    .await
+                    .is_err()
+            );
+            opened.bridge.retired.store(true, Ordering::SeqCst);
+            drop(pending);
+            assert!(matches!(
+                attempt.await,
+                Err(crate::AdapterError::PromptNotWritten(_))
+            ));
+        } else {
+            opened.bridge.retired.store(true, Ordering::SeqCst);
+            let result = opened
+                .channel
+                .input
+                .send_classified(ConversationInput::RecoverablePrompt {
+                    content: vec![ContentBlock::from("must remain unwritten")],
+                    prompt_id: crate::PromptIdentity::new("original", 1, 2),
+                })
+                .await;
+            assert!(matches!(
+                result,
+                crate::ConversationSendOutcome::PreWriteFailure(
+                    crate::AdapterError::PromptNotWritten(_)
+                )
+            ));
+        }
+        assert!(opened.bridge.pending.lock().await.is_empty());
+        release.send(()).unwrap();
+        server.await.unwrap();
+        stop(opened).await;
+    }
+}
+
+#[tokio::test]
+async fn prompt_prewrite_category_does_not_reclassify_other_operations_or_transport_errors() {
+    let input = crate::ConversationInputSender::spawn(1, |_| async {
+        Err(crate::AdapterError::PromptNotWritten(
+            "later RPC refused".into(),
+        ))
+    });
+    assert!(matches!(
+        input.send_classified(ConversationInput::Cancel).await,
+        crate::ConversationSendOutcome::Ambiguous(_)
+    ));
+    let input = crate::ConversationInputSender::spawn(1, |_| async {
+        Err(crate::AdapterError::Unavailable(
+            "conversation write failed: connection closed".into(),
+        ))
+    });
+    assert!(matches!(
+        input
+            .send_classified(ConversationInput::Prompt(vec![ContentBlock::from(
+                "maybe written"
+            )]))
+            .await,
+        crate::ConversationSendOutcome::Ambiguous(_)
+    ));
+}
+
 /// The runtime still owns the original native prompt after its API socket is
 /// replaced. The new adapter must consume that prompt's result without sending
 /// the user input again or requiring an unrelated permission answer.
