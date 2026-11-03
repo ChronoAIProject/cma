@@ -9,6 +9,7 @@ const { createInterface } = require('node:readline');
 const { test } = require('node:test');
 const { setTimeout: delay } = require('node:timers/promises');
 const { processRpc } = require('../../../layer3-adapter/src/codex/native_tools_fixture.cjs');
+const { runtimeFixture, conversation } = require('./native-http-fixture.cjs');
 
 test('acquired user lease writes a known form while concurrent native Agent input is fenced; return preserves the page', { timeout: 90000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY;
@@ -20,17 +21,25 @@ test('acquired user lease writes a known form while concurrent native Agent inpu
   const directory = await mkdtemp(join(tmpdir(), 'cma-control-native-'));
   const home = join(directory, 'agent');
   await mkdir(home);
-  const mediator = spawn(process.execPath, [join(__dirname, 'mediator.cjs'), directory], {
+  let runtime;
+  const mediator = process.env.CMA_CONTROL_RUNTIME_HTTP ? undefined : spawn(process.execPath, [join(__dirname, 'mediator.cjs'), directory], {
     env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'],
   });
-  mediator.stderr.resume();
+  mediator?.stderr.resume();
   const pending = new Map();
   let serial = 0;
-  createInterface({ input: mediator.stdout }).on('line', line => {
+  if (mediator) createInterface({ input: mediator.stdout }).on('line', line => {
     const response = JSON.parse(line);
     pending.get(response.id)?.(response);
   });
   const call = async (operation, parameters = {}) => {
+    if (runtime) {
+      if (operation !== 'control') return runtime.browser(operation, parameters);
+      const result = await runtime.control({ t: 'browser_control', sandbox_id: 'browser-proof', runtime_generation: 1,
+        boot_id: runtime.boot, agent_id: 'browser-agent', ...parameters });
+      assert.equal(result.t, 'browser_control', JSON.stringify(result));
+      return { ...result.control, context_id: result.context_id };
+    }
     const identifier = ++serial;
     let deadline;
     const response = new Promise(resolve => pending.set(identifier, resolve));
@@ -93,6 +102,7 @@ test('acquired user lease writes a known form while concurrent native Agent inpu
   const origin = `http://127.0.0.1:${server.address().port}`;
   let bridge;
   try {
+    if (process.env.CMA_CONTROL_RUNTIME_HTTP) runtime = await runtimeFixture(origin);
     const enabled = await call('enable');
     assert.equal(enabled.state, 'loading');
     await writeFile(join(home, 'config.toml'), [
@@ -101,12 +111,12 @@ test('acquired user lease writes a known form while concurrent native Agent inpu
       '[model_providers.browser_test]', 'name = "Local browser proof"',
       `base_url = "${origin}/v1"`, 'wire_api = "responses"', 'requires_openai_auth = false',
     ].join('\n'));
-    bridge = processRpc(process.execPath, [bridgePath], {
+    bridge = runtime ? await conversation(runtime.origin, notifications) : processRpc(process.execPath, [bridgePath], {
       cwd: directory, env: { PATH: process.env.PATH, CODEX_HOME: home, CODEX_PATH: binary,
         CMA_BROWSER_SOCKET: join(directory, 'browser.sock') },
     }, notification => notifications.push(notification));
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
-    const session = await bridge.call('session/new', { cwd: directory, mcpServers: [] });
+    const session = await bridge.call('session/new', { cwd: runtime?.cwd ?? directory, mcpServers: [] });
     await bridge.call('session/set_mode', { sessionId: session.sessionId, modeId: 'agent-full-access' });
     const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
     const agent = async (operation, value) => {
@@ -145,14 +155,19 @@ test('acquired user lease writes a known form while concurrent native Agent inpu
       await mkdir(process.env.CMA_CONTROL_PROOF_DIRECTORY, { recursive: true });
       await writeFile(join(process.env.CMA_CONTROL_PROOF_DIRECTORY, 'native-control.json'), JSON.stringify({
         context_id: enabled.context_id, values, pages, modelRound, control, notifications,
+        transport: runtime ? 'actual-runtime-http' : 'mediator-pipe',
+        runtime_sha256: runtime ? createHash('sha256').update(await readFile(runtime.binary)).digest('hex') : null,
       }, null, 2));
       await writeFile(join(process.env.CMA_CONTROL_PROOF_DIRECTORY, 'user.jpg'), Buffer.from(frame.frame.data, 'base64'));
       await writeFile(join(process.env.CMA_CONTROL_PROOF_DIRECTORY, 'returned.jpg'), Buffer.from(returned.frame.data, 'base64'));
     }
   } finally {
     await bridge?.close();
-    mediator.stdin.end();
-    await new Promise(resolve => mediator.exitCode !== null ? resolve() : mediator.once('exit', resolve));
+    if (mediator) {
+      mediator.stdin.end();
+      await new Promise(resolve => mediator.exitCode !== null ? resolve() : mediator.once('exit', resolve));
+    }
+    await runtime?.close();
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
