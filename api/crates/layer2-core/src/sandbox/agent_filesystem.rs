@@ -17,6 +17,8 @@ use layer3_adapter::{
 use std::sync::Arc;
 use std::time::SystemTime;
 
+mod read_check;
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentFileError {
     #[error(transparent)]
@@ -67,39 +69,6 @@ pub struct AgentFileService {
 impl AgentFileService {
     pub fn new(access: Arc<ResourceAccessService>, adapter: Arc<dyn SandboxAdapter>) -> Arc<Self> {
         Arc::new(Self { access, adapter })
-    }
-
-    pub async fn check_read(
-        &self,
-        caller: &crate::Caller,
-        context: Option<&CallerContext>,
-        credential: Option<&str>,
-        agent_id: &AgentId,
-        path: &str,
-    ) -> Result<(), AgentFileError> {
-        let authorized = self
-            .authorize(
-                caller,
-                context,
-                credential,
-                agent_id,
-                ResourceCapability::ViewFiles,
-                AccessPurpose::Read,
-            )
-            .await?;
-        runtime_request(
-            &authorized.snapshot.lineage.sandbox,
-            agent_id,
-            path,
-            false,
-            |sandbox, _| {
-                runtime(sandbox)?;
-                generation(sandbox)?;
-                Ok(())
-            },
-        )?;
-        self.finish(&authorized, agent_id, ResourceCapability::ViewFiles)
-            .await
     }
 
     pub async fn environment(
