@@ -241,10 +241,11 @@
 
 ## Ticket 18 完成与交接（2026-11-03）
 
-- 分支 `codex/cma-ui-18`，独立 `ticket-18` worktree，自 `d19c225bd` 开始；`1dd75c6f4` 合并最新集成 `a2965df09`，实现与 shared-corpus 验证提交 `bb139fbf8`。未改原验收文本，8 项原 AC 均有证据；见 [18-EVIDENCE](18-EVIDENCE.md) 和精确 [18-FILE-SCOPE](18-FILE-SCOPE.md)。
+- 分支 `codex/cma-ui-18`，独立 `ticket-18` worktree，自 `d19c225bd` 开始；`1dd75c6f4` 合并 `a2965df09`，`d4cc51f0a` 再合并最新集成 `7cd701d0f`（含 08），实现与 shared-corpus 验证提交 `bb139fbf8`。未改原验收文本，8 项原 AC 均有证据；见 [18-EVIDENCE](18-EVIDENCE.md) 和精确 [18-FILE-SCOPE](18-FILE-SCOPE.md)。
 - 复用已有 public v2 event snapshot/head/finite tail、类型化 SDK 和 14 panel/observation。按 Agent incarnation、实际 turn、tool id、durable cursor 回放已记录命令/输出/状态/时间与当时计划；50 条窗口、公开有界分页、缺口/到期/截断明示。键盘 Previous/Next/Return Live；历史停留不受 live 新事件拖动，刷新按当前授权重读，账号/权限切换取消旧请求。06 plan 与 completed answer 定位同一实际 turn，无计划也可回放。
 - 首个 red/green 覆盖停在操作 2、新操作 4 到达仍在 2、Return Live 到 4 且无额外执行。最终 focused U 20 passed，合并 Console/shared seam 34 passed，public v2 26 passed（native 单独显式运行），core 权限 4 named tests passed。types/build/目标 lint/format 通过；memo/performance 保留。
 - shared JSON inventory 已补充复用 route 的 replay 语义；新增六个 shared corpus case，经真实 public handler、TS typed dispatch（6 cases + 1 coverage）、Rust typed dispatch（6 HTTP cases）通过。SDK dispatch 显式使用 typed toolOutput。Markdown API 文档及 standalone SDK 103 TS / 10 Rust tests 为独立证据；不引入 private API、新 Chat model 或 inventory 豁免。07/14 缺项由 parent repair worker 独立处理，保留最新合并 entries。
 - 实际 Codex 0.147 / patched ACP 1.4 在已固定 ticket04+14 测试镜像内执行四个无害命令，真实输出经过 recorder/public HTTP/Chrome reload，执行计数 **4→4**，无额外 API 写请求；native、public-native、Chrome 均显式 1 passed。镜像为最小测试包装，模型边界受控，HTTP 使用测试 owner/in-memory store；不称 production/Mongo restart/录像证据。没有 L4 修改或 Linux build，无视频/PTY/Browser private context/control。
 - 仅 ticket18 路径符合 500 source / 2000 test gate；全仓三个超限文件与 `a2965df09` 字节一致（508-line Agent service、503-line conversation、556-line feedback test 的现有 gate 分类），既有 skill/format/LocalAgentV2 head-404 问题单独保留，不宣称全仓绿色。最新 integration 保留 07/10/12/13 交付、反馈、编辑和建议逻辑，13 的待人工验收状态未改。
+- 08 合并后针对 replay/Console preview/panel/memo 再验 4 文件 / 15 passed，types/build/Console format 通过；Console 500 行。真实 native→public HTTP→Chrome reload 全链再次通过，执行计数仍 4→4；最新证据在 `ticket18-proof/merged08-runtime/`，此前证明日志保留。Web Style 和 ledger 严格保留最新 integration 前缀，再追加 18。
 - 自有 preview/native/public 服务已停止；shared Colima/Mongo 保持运行。保留 worktree/private target/proof artifacts，交由 parent cleanup 和独立 merger；无 push、PR、部署，未写原工作区、integration 或其他 worker 源码。

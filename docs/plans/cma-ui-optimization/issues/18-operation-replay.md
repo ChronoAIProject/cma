@@ -4,7 +4,7 @@
 
 **Blocked by:** 14（电脑面板及已授权的操作数据范围）。
 
-**Status:** done — `codex/cma-ui-18`；已合并集成 `a2965df09`，U/A/R 证据见 [18-EVIDENCE](../18-EVIDENCE.md)，路径清单见 [18-FILE-SCOPE](../18-FILE-SCOPE.md)。
+**Status:** done — `codex/cma-ui-18`；已合并集成 `7cd701d0f`，U/A/R 证据见 [18-EVIDENCE](../18-EVIDENCE.md)，路径清单见 [18-FILE-SCOPE](../18-FILE-SCOPE.md)。
 
 **优先级:** P3
 

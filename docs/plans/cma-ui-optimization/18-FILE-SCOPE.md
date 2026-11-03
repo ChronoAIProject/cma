@@ -1,7 +1,7 @@
 # Ticket 18: final file scope
 
 Branch: `codex/cma-ui-18`; worktree: `/Users/liuyitian/code/cma-ui-worktrees/ticket-18`.
-Started at `d19c225bd`; latest merged integration is `a2965df09`.
+Started at `d19c225bd`; latest merged integration is `7cd701d0f`.
 The original ticket and U/A/R seams were user-approved. Completion evidence is
 [18-EVIDENCE.md](18-EVIDENCE.md); the original acceptance text is unchanged.
 
@@ -18,7 +18,7 @@ source, original workspace or integration worktree was edited.
 
 ## Exact manifest
 
-Relative to integration `a2965df09581de5fa0fa35af54b69db56cd83ab9`, including this
+Relative to integration `7cd701d0fe6c2496256a01eca59919ee8d899c82`, including this
 manifest and completion documentation, the ticket changes these 37 paths:
 
 - `api/crates/layer1-public/src/agent_v2/mod.rs`
