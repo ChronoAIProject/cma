@@ -80,7 +80,9 @@ impl AnswerDeliverableService {
         self.reads.read(access.caller, agent).await?;
         let reference = match &resource {
             DeliverableResource::LiveFile { path } => {
-                let receipt = self.file(access, agent, path).await?;
+                let receipt = self
+                    .file(access, agent, path, layer3_adapter::MAX_AGENT_FILE_BYTES)
+                    .await?;
                 DeliverableReference {
                     agent_id: agent.clone(),
                     name: types::file_name(path.rsplit('/').next().unwrap_or("deliverable")),
@@ -338,7 +340,15 @@ impl AnswerDeliverableService {
     ) -> Result<(Vec<u8>, DeliverableStatus), DeliverableError> {
         let (bytes, status) = match &reference.resource {
             DeliverableResource::LiveFile { path } => {
-                let receipt = self.file(access, agent, path).await?;
+                let receipt = self
+                    .file(access, agent, path, reference.size_bytes.max(1))
+                    .await
+                    .map_err(|error| match error {
+                        DeliverableError::File(AgentFileError::TooLarge) => {
+                            DeliverableError::Changed
+                        }
+                        error => error,
+                    })?;
                 (
                     receipt.content().map_err(AgentFileError::from)?,
                     DeliverableStatus::Ready,
@@ -381,6 +391,7 @@ impl AnswerDeliverableService {
         access: &DeliverableAccess<'_>,
         agent: &AgentId,
         path: &str,
+        max_bytes: u64,
     ) -> Result<layer3_adapter::AgentFileReadReceipt, DeliverableError> {
         let files = self.files.as_ref().ok_or(DeliverableError::Unavailable)?;
         let receipt = files
@@ -390,7 +401,7 @@ impl AnswerDeliverableService {
                 access.credential,
                 agent,
                 path,
-                layer3_adapter::MAX_AGENT_FILE_BYTES,
+                max_bytes,
             )
             .await?;
         if receipt.path != path {
