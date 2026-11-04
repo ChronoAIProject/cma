@@ -99,3 +99,23 @@ fn startup_failure_cannot_relabel_an_attempted_first_message_as_undispatched() {
     assert!(first.fail_startup(RETRY_AT.into()).is_err());
     assert_eq!(first, original);
 }
+
+#[test]
+fn startup_failure_preserves_an_already_settled_creation_command() {
+    let mut first = FirstMessageRecord::new("first", "Wait for input", NOW).unwrap();
+    first.state = crate::sandbox::FirstMessageDelivery::Failed;
+    first.failed_at = Some(AT.into());
+    first.failure = Some(
+        crate::sandbox::FirstMessageFailure::new(
+            "trigger_command_refused_before_dispatch",
+            "the accepted creation command ended before dispatch",
+            false,
+            AT,
+        )
+        .unwrap(),
+    );
+    first.validate().unwrap();
+    let settled = first.clone();
+    first.fail_startup(RETRY_AT.into()).unwrap();
+    assert_eq!(first, settled);
+}
