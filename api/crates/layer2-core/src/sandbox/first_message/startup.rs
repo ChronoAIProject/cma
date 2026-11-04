@@ -5,6 +5,11 @@ impl FirstMessageRecord {
     /// This does not authorize retry on the failed Agent or invent a turn.
     pub fn fail_startup(&mut self, at: String) -> Result<(), SandboxModelError> {
         self.validate()?;
+        // A bound creation command can finish before startup does. Keep its
+        // terminal evidence while allowing the Agent's failure to publish.
+        if self.state == FirstMessageDelivery::Failed && self.unattempted() {
+            return Ok(());
+        }
         if self.state != FirstMessageDelivery::Queued || !self.unattempted() {
             return Err(SandboxModelError::invalid_value(
                 "first_message.startup_failure",
