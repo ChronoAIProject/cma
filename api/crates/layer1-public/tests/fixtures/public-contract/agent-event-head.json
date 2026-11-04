@@ -20,7 +20,7 @@
           "schema_version": 1,
           "agent_id": "agt_fixture",
           "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
           "object": "cma.agent.event_head",
           "active_turn": {
             "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
@@ -62,7 +62,7 @@
           "schema_version": 1,
           "agent_id": "agt_fixture",
           "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
           "object": "cma.agent.event_head",
           "active_turn": {
             "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",

@@ -2,10 +2,8 @@ use super::Scenario;
 use crate::responses::v2::binding_tests as conversation;
 use crate::rest::bindings_tests as management;
 use axum::Extension;
-use layer2_core::{
-    profiles::content_digest, resource_access::CallerContext, sandbox::binding::*, Authorization,
-};
-use serde_json::{json, Value};
+use layer2_core::{resource_access::CallerContext, sandbox::binding::*, Authorization};
+use serde_json::json;
 use tower::ServiceExt;
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
@@ -64,12 +62,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     }
     let mode = name.strip_prefix("binding_management_")?;
     let (router, store) = management::app();
-    if ["ready", "pending", "skill_version", "conversation"].contains(&mode) {
-        let body = if mode == "skill_version" {
-            skill_version_body("1.0")
-        } else {
-            management::body()
-        };
+    if ["ready", "pending", "conversation"].contains(&mode) {
+        let body = management::body();
         let response = router
             .clone()
             .oneshot(management::request(
@@ -116,16 +110,4 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         },
         symbols: Default::default(),
     })
-}
-
-fn skill_version_body(version: &str) -> Value {
-    let mut body = management::body();
-    body["profile"]["context"]["skills"] = json!([{
-        "id": "research",
-        "source": "ornn",
-        "version": version,
-    }]);
-    let digest = content_digest(&body["profile"]).unwrap();
-    body["profile_digest"] = json!(format!("sha256:{digest}"));
-    body
 }

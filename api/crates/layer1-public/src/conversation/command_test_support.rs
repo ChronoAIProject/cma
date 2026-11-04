@@ -154,10 +154,12 @@ pub(crate) fn router(state: AgentConversationState, store: Arc<InMemorySandboxSt
     let execution = Arc::new(Execution(state.clone()));
     let worker =
         AgentCommandWorker::new(store, execution, "protocol-contract-worker".into()).unwrap();
-    let v2 = crate::responses::v2::router(crate::responses::v2::ResponsesV2State::new(
-        state.commands.clone().unwrap(),
-        state.reads.clone(),
-    ));
+    let v2 = state.commands.clone().map_or_else(Router::new, |commands| {
+        crate::responses::v2::router(crate::responses::v2::ResponsesV2State::new(
+            commands,
+            state.reads.clone(),
+        ))
+    });
     crate::agui::router(state.clone())
         .merge(crate::responses::router(state))
         .merge(v2)
