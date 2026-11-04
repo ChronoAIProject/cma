@@ -17,6 +17,7 @@ mod agent_conversation_store;
 mod agent_lifecycle_operations;
 mod agent_log;
 mod agent_log_integrity;
+mod agent_log_reads;
 mod agent_profiles;
 mod agent_provenance;
 mod agent_provenance_backfill;
