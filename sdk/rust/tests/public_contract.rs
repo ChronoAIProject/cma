@@ -18,6 +18,8 @@ mod documents;
 mod event_workers;
 #[path = "public_contract/experience.rs"]
 mod experience;
+#[path = "public_contract/metrics.rs"]
+mod metrics;
 #[path = "public_contract/operator.rs"]
 mod operator;
 #[path = "public_contract/resources.rs"]
@@ -42,6 +44,8 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
         agent_browser::dispatch(c).await
     } else if op.contains("/deliverable-references") || op.contains("/deliverables") {
         deliverables::dispatch(c, corpus).await
+    } else if op.contains("/usage/metrics") {
+        metrics::dispatch(c).await
     } else if op.contains("/api/v1/usage") || op.contains("/api/v1/admin/usage") {
         usage::dispatch(c).await
     } else if op.contains("/api/v1/documents") {
