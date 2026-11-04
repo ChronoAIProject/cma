@@ -1,6 +1,7 @@
 //! Public-boundary foundations retained while the resource APIs are rebuilt.
 
 pub mod a2a;
+pub mod agent_page;
 pub mod agent_v2;
 pub mod agui;
 pub mod auth;

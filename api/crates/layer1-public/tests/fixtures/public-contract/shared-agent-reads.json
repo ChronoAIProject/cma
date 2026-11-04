@@ -16,6 +16,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "callback_url": "https://cma.example/agents/agt_shared_read",
           "access": "shared",
           "id": "agt_shared_read",
           "status": "ready",
@@ -969,6 +970,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "callback_url": "https://cma.example/agents/agt_shared_read",
           "id": "agt_shared_read",
           "status": "ready",
           "profile": {
@@ -1048,6 +1050,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "callback_url": "https://cma.example/agents/agt_shared_read",
           "id": "agt_shared_read",
           "status": "ready",
           "profile": {

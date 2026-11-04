@@ -22,6 +22,7 @@ impl OperationStore for Operations {
 
 fn router(harness: &Harness) -> Router {
     crate::projections::AgentProjectionServices::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         harness.store.clone(),
         Arc::new(layer2_core::profiles::store::InMemoryProfileStore::default()),
         harness.registry.clone(),

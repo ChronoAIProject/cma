@@ -65,8 +65,14 @@ fn router(store: Arc<MongoSandboxStore>) -> Router {
     let reads = AgentReadService::new(store.clone(), runtime.clone());
     let operations = AgentOperationService::new(store.clone(), runtime);
     layer1_public::rest::agent_router(
-        layer1_public::rest::AgentRoutesState::new(agents, reads, operations, Arc::new(NoRuntime))
-            .with_suggestions(store),
+        layer1_public::rest::AgentRoutesState::new(
+            layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
+            agents,
+            reads,
+            operations,
+            Arc::new(NoRuntime),
+        )
+        .with_suggestions(store),
     )
 }
 

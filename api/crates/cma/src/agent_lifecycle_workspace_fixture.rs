@@ -54,11 +54,13 @@ pub(super) fn facade(
         ),
         WorkspaceService::new(store.clone(), profiles.clone()),
         AgentService::new(
-            store,
+            store.clone(),
             profiles.clone(),
             Arc::new(Registry),
             RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         ),
+        store,
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
         ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
         ProfileCapacityBounds {

@@ -10,7 +10,17 @@ use super::agent_openapi_shapes::{AgentListItemView, AgentView};
 #[serde(untagged)]
 pub(crate) enum AccessibleAgentView {
     Personal(Box<AgentView>),
-    Shared(SharedAgentView),
+    Shared(Box<SharedAgentView>),
+}
+
+impl AccessibleAgentView {
+    pub(super) fn with_agent_page(mut self, origin: &crate::agent_page::AgentPageOrigin) -> Self {
+        match &mut self {
+            Self::Personal(view) => view.callback_url = origin.agent_url(&view.id),
+            Self::Shared(view) => view.callback_url = origin.agent_url(&view.id),
+        }
+        self
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -21,6 +31,9 @@ enum SharedAccess {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct SharedAgentView {
+    /// Browser page for this CMA Agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    callback_url: Option<String>,
     access: SharedAccess,
     id: String,
     #[schema(value_type = String)]
@@ -57,7 +70,8 @@ impl From<AgentDetailReading> for AccessibleAgentView {
                     stopped_at,
                     deleted_at,
                 } = *detail;
-                Self::Shared(SharedAgentView {
+                Self::Shared(Box::new(SharedAgentView {
+                    callback_url: None,
                     access: SharedAccess::Shared,
                     id: id.to_string(),
                     status,
@@ -68,7 +82,7 @@ impl From<AgentDetailReading> for AccessibleAgentView {
                     ready_at,
                     stopped_at,
                     deleted_at,
-                })
+                }))
             }
         }
     }
@@ -78,7 +92,7 @@ impl From<AgentDetailReading> for AccessibleAgentView {
 #[serde(untagged)]
 pub(crate) enum AccessibleAgentListItemView {
     Personal(Box<AgentListItemView>),
-    Shared(SharedAgentView),
+    Shared(Box<SharedAgentView>),
 }
 
 #[derive(Debug, Serialize, ToSchema)]

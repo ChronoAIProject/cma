@@ -66,6 +66,7 @@ impl Browser {
         resources.create_agent(agent.clone()).await.unwrap();
         let runtimes = Arc::new(crate::sandbox::LiveAgentRegistry::default());
         let routes = AgentRoutesState::new(
+            layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
             AgentService::new(
                 resources.clone(),
                 Arc::new(InMemoryProfileStore::default()),
