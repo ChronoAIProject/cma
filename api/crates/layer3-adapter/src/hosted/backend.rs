@@ -112,6 +112,25 @@ pub trait HostedBackend: Send + Sync {
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         Ok(None)
     }
+    async fn validate_funding(&self, request: &ProviderSandboxRequest) -> Result<()> {
+        if request.funded_until.is_some() {
+            return Err(crate::AdapterError::Unsupported(
+                "funded provider deadlines are unavailable".into(),
+            ));
+        }
+        Ok(())
+    }
+    async fn set_runtime_deadline(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _until: u64,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "funded provider deadlines are unavailable".into(),
+        ))
+    }
+
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;
     /// Carry persisted home identity through provisioning without rediscovering it.
     /// Backends must still prove current resource authority before any effect.

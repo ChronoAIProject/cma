@@ -408,3 +408,6 @@ async fn pvc_mount_requires_the_exact_admitted_uid_even_with_identical_labels() 
 
 #[path = "suspension_http_tests.rs"]
 mod suspension;
+
+#[path = "funding_http_tests.rs"]
+mod funding_http_tests;

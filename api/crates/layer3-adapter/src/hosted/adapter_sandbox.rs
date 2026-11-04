@@ -88,8 +88,21 @@ impl SandboxAdapter for HostedAdapter {
         self.home_volumes.as_deref()
     }
 
+    async fn set_runtime_deadline(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        until: u64,
+    ) -> crate::Result<()> {
+        let rendered = self
+            .deployment
+            .render_adoption(request, request.generation)?;
+        self.backend
+            .set_runtime_deadline(&request.handle, &rendered, until)
+            .await
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
-        self.provision_exact(spec, 1).await
+        self.provision_exact(spec, 1, None).await
     }
 
     async fn provision_runtime_receipted(
@@ -162,7 +175,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         request: &RuntimeProvisionRequest,
     ) -> crate::Result<RuntimeHandle> {
-        self.provision_exact(&request.spec, request.generation)
+        self.provision_exact(&request.spec, request.generation, request.funded_until)
             .await
     }
 

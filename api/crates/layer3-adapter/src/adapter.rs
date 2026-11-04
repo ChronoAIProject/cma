@@ -67,6 +67,16 @@ pub trait SandboxAdapter: Send + Sync {
         Ok(None)
     }
 
+    /// Bound an adopted runtime to confirmed prepaid coverage. Unsupported
+    /// providers must fail closed; callers cannot replace this with a timer.
+    async fn set_runtime_deadline(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+        _until: u64,
+    ) -> Result<()> {
+        Err(unsupported("funded runtime deadlines are unavailable"))
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
 
     /// Stop the exact runtime Pod while retaining its provider object and volume.
@@ -129,6 +139,9 @@ pub trait SandboxAdapter: Send + Sync {
 
     /// Provision an exact non-zero runtime generation.
     async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
+        if request.funded_until.is_some() {
+            return Err(unsupported("funded provider creation is unavailable"));
+        }
         if request.generation == 0 {
             return Err(crate::AdapterError::Rejected(
                 "runtime generation must be non-zero".into(),
