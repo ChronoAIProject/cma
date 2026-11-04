@@ -37,7 +37,7 @@ impl ReportingStore {
         let mut reservations = self.collection(JOBS).aggregate([
             doc! {"$match":{"reserved":true}},
             doc! {"$group":{"_id":null,"global":{"$sum":"$reserved_bytes"},
-                "tenant":{"$sum":{"$cond":[{"$eq":["$principal",&scope.principal]},"$reserved_bytes",0_i64]}}}},
+                "tenant":{"$sum":{"$cond":[{"$eq":["$principal",{"$literal":&scope.principal}]},"$reserved_bytes",0_i64]}}}},
         ]).max_time(DB_DEADLINE).session(&mut session).await.map_err(unavailable)?;
         let occupied = reservations
             .next(&mut session)
