@@ -31,29 +31,34 @@ impl ReportingStore {
             .session(&mut session)
             .await
             .map_err(unavailable)?;
-        let occupied = doc! {"reserved":true};
-        let count = self
-            .collection(JOBS)
-            .count_documents(occupied.clone())
-            .session(&mut session)
+        // Sum each job's admitted reservation, including during a rolling
+        // budget change. Counting jobs with this replica's current budget can
+        // undercount existing larger reservations or exceed a nonmultiple cap.
+        let mut reservations = self.collection(JOBS).aggregate([
+            doc! {"$match":{"reserved":true}},
+            doc! {"$group":{"_id":null,"global":{"$sum":"$reserved_bytes"},
+                "tenant":{"$sum":{"$cond":[{"$eq":["$principal",&scope.principal]},"$reserved_bytes",0_i64]}}}},
+        ]).max_time(DB_DEADLINE).session(&mut session).await.map_err(unavailable)?;
+        let occupied = reservations
+            .next(&mut session)
             .await
+            .transpose()
             .map_err(unavailable)?;
-        let mut tenant = occupied;
-        tenant.insert("principal", &scope.principal);
-        let owned = self
-            .collection(JOBS)
-            .count_documents(tenant)
-            .session(&mut session)
-            .await
-            .map_err(unavailable)?;
+        let reserved = |key| -> Result<i64> {
+            occupied
+                .as_ref()
+                .map_or(Ok(0), |d| d.get_i64(key).map_err(unavailable))
+        };
+        let global = reserved("global")?;
+        let tenant = reserved("tenant")?;
         let queued = self
             .collection(JOBS)
             .count_documents(doc! {"state":"pending","logical_expires_at":{"$gt":at as i64}})
             .session(&mut session)
             .await
             .map_err(unavailable)?;
-        if count as i64 * self.budgets.report_bytes >= self.budgets.global_bytes
-            || owned as i64 * self.budgets.report_bytes >= self.budgets.tenant_bytes
+        if global > self.budgets.global_bytes - self.budgets.report_bytes
+            || tenant > self.budgets.tenant_bytes - self.budgets.report_bytes
             || queued >= self.budgets.queue
         {
             session.abort_transaction().await.map_err(unavailable)?;
@@ -88,7 +93,7 @@ impl ReportingStore {
         };
         let d = doc! {"_id":&id,"document_schema_version":1_i64,"query_hash":hash,"principal":&scope.principal,"admin":scope.admin,
         "state":"pending","created_at":at as i64,"lease_until":0_i64,"lease_holder":"","generation":0_i64,
-        "logical_expires_at":report.expires_at as i64,"reserved":true,
+        "logical_expires_at":report.expires_at as i64,"reserved":true,"reserved_bytes":self.budgets.report_bytes,
         "expires_at":expires(report.expires_at+86_400),"bytes":0_i64,"record":encode(&report)?};
         self.collection(JOBS)
             .insert_one(d)
@@ -98,7 +103,7 @@ impl ReportingStore {
         session.commit_transaction().await.map_err(unavailable)?;
         tracing::info!(
             queued_jobs = queued + 1,
-            reserved_bytes = (count + 1) * self.budgets.report_bytes as u64,
+            reserved_bytes = global + self.budgets.report_bytes,
             "sandbox report admitted"
         );
         Ok(report)
