@@ -355,6 +355,7 @@ fn sandbox(
             id: profile_id.clone(),
             revision: profile_revision,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

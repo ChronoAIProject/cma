@@ -32,6 +32,13 @@ pub struct SandboxAgentActivity {
     pub work_pending: bool,
     pub stop_requested: bool,
     pub queued_messages_present: bool,
+    /// Durable user/channel/trigger activity observed outside the Agent log.
+    /// The projection remains content-free; any positive value blocks pause.
+    #[serde(default)]
+    pub external_activity_present: bool,
+    /// Open terminal or desktop leases associated with this Sandbox.
+    #[serde(default)]
+    pub open_terminal_or_desktop_session: bool,
     pub newest_log: Option<SandboxAgentLogActivity>,
 }
 
@@ -57,6 +64,8 @@ impl SandboxAgentActivity {
             work_pending: agent.work.step.is_pending(),
             stop_requested: agent.requested_stop_reason.is_some(),
             queued_messages_present: !agent.conversation.queued_messages.is_empty(),
+            external_activity_present: false,
+            open_terminal_or_desktop_session: false,
             newest_log: newest_log.map(|entry| SandboxAgentLogActivity {
                 agent_id: entry.agent_id.clone(),
                 seq: entry.seq,
@@ -102,6 +111,8 @@ pub fn is_inactivity_pause_candidate(
             && !activity.work_pending
             && !activity.stop_requested
             && !activity.queued_messages_present
+            && !activity.external_activity_present
+            && !activity.open_terminal_or_desktop_session
             && activity.newest_log.as_ref().is_some_and(|newest| {
                 newest.agent_id == activity.agent_id
                     && newest.seq == activity.last_seq

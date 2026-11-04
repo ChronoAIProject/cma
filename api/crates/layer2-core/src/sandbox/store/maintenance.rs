@@ -19,6 +19,9 @@ pub struct SandboxInactivityPauseRequest {
     pub sandbox_id: SandboxId,
     pub requested_at: String,
     pub pause_after_seconds: u64,
+    /// When true, historical profile `always_keep_alive` is migrated to the
+    /// new per-Sandbox preference: only an explicit `always_on: true` remains.
+    pub auto_pause_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +163,16 @@ pub trait SandboxMaintenanceStore: Send + Sync {
         &self,
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError>;
+
+    /// Change the durable owner preference through an operator-authorized
+    /// path. The caller performs capability checks; the store supplies the
+    /// same revision compare-and-swap used by owner controls.
+    async fn set_sandbox_always_on(
+        &self,
+        sandbox_id: SandboxId,
+        expected_revision: u64,
+        always_on: bool,
+    ) -> Result<Sandbox, SandboxStoreError>;
 
     async fn schedule_image_rotation(
         &self,

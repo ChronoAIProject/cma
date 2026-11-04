@@ -372,6 +372,22 @@ impl SandboxReconciler {
                     "sandbox maintenance policy is unavailable: {error}"
                 ))
             })?;
+        let now_rfc3339 = rfc3339_at(now);
+        if !self
+            .policy
+            .automatic_pause_allowed(&now_rfc3339)
+            .await
+            .map_err(|error| {
+                SandboxStoreError::Unavailable(format!(
+                    "automatic pause enablement policy is unavailable: {error}"
+                ))
+            })?
+        {
+            tracing::debug!(
+                "automatic sandbox pause is disabled or outside its enablement grace period"
+            );
+            return Ok(());
+        }
         let mut page = PageRequest::default();
         let mut seen = BTreeSet::new();
         loop {
@@ -385,13 +401,22 @@ impl SandboxReconciler {
                 if self.reconcile_runtime_update(&sandbox_id, now).await? {
                     continue;
                 }
-                self.store
+                let decision_id = sandbox_id.clone();
+                let outcome = self
+                    .store
                     .schedule_inactivity_pause(SandboxInactivityPauseRequest {
                         sandbox_id,
-                        requested_at: rfc3339_at(now),
+                        requested_at: now_rfc3339.clone(),
                         pause_after_seconds: policy.inactivity_pause_after_seconds,
+                        auto_pause_enabled: true,
                     })
                     .await?;
+                tracing::info!(
+                    sandbox_id = %decision_id,
+                    outcome = ?outcome,
+                    threshold_seconds = policy.inactivity_pause_after_seconds,
+                    "automatic sandbox pause decision"
+                );
             }
             let Some(next) = candidates.next else {
                 return Ok(());
