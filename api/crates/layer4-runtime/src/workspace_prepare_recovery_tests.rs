@@ -1,6 +1,9 @@
 use super::*;
 use layer3_adapter::{WorkspaceRequest, WorkspaceSource};
 
+#[path = "workspace_prepare_recovery_snapshot_tests.rs"]
+mod snapshot_tests;
+
 struct Fixture {
     root: PathBuf,
     config: RuntimeConfig,
@@ -231,6 +234,11 @@ async fn snapshot_recovery_pins_source_commit_through_publication_and_terminal_r
         reference: Some("main".into()),
     });
     let paths = Paths::new(&fixture.config, &fixture.request);
+    std::fs::write(
+        paths.staged.join(".git/info/cma-source-commit"),
+        "c".repeat(40),
+    )
+    .unwrap();
     assert!(execute(&fixture.config, &fixture.request).await.is_err());
     let terminal_path = paths.attempt(&fixture.request).join("terminal.json");
     std::fs::remove_file(&terminal_path).unwrap();

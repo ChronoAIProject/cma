@@ -1,5 +1,5 @@
 use std::io::{Cursor, Read};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::time::Duration;
 
@@ -17,6 +17,27 @@ pub(crate) async fn prepare(
     config: &RuntimeConfig,
     home: &Path,
     request: &WorkspaceRequest,
+) -> Result<WorkspaceReceipt> {
+    prepare_source(config, home, request, None).await
+}
+
+pub(crate) async fn prepare_pinned(
+    config: &RuntimeConfig,
+    home: &Path,
+    request: &WorkspaceRequest,
+    source_commit: &str,
+) -> Result<WorkspaceReceipt> {
+    if !valid_commit(source_commit) {
+        return Err(invalid("original source commit is invalid"));
+    }
+    prepare_source(config, home, request, Some(source_commit)).await
+}
+
+async fn prepare_source(
+    config: &RuntimeConfig,
+    home: &Path,
+    request: &WorkspaceRequest,
+    pinned_commit: Option<&str>,
 ) -> Result<WorkspaceReceipt> {
     let WorkspaceSource::RepositorySnapshot { url, reference } = &request.source else {
         return Err(invalid("repository source is missing"));
@@ -43,31 +64,35 @@ pub(crate) async fn prepare(
     let parsed = url::Url::parse(url).map_err(|_| invalid("invalid repository URL"))?;
     let repository = parsed.path().trim_matches('/').trim_end_matches(".git");
     let endpoint = format!("http://api.github.com/repos/{repository}");
-    let bytes = fetch(client.get(&endpoint), "repository_unavailable").await?;
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|_| invalid("invalid repository metadata"))?;
-    let reference = match reference {
-        Some(reference) => reference.clone(),
-        None => metadata["default_branch"]
+    let source_commit = if let Some(commit) = pinned_commit {
+        commit.to_owned()
+    } else {
+        let bytes = fetch(client.get(&endpoint), "repository_unavailable").await?;
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| invalid("invalid repository metadata"))?;
+        let reference = match reference {
+            Some(reference) => reference.clone(),
+            None => metadata["default_branch"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| invalid("repository has no default branch"))?
+                .to_owned(),
+        };
+        let commits = fetch(
+            client
+                .get(format!("{endpoint}/commits"))
+                .query(&[("sha", reference.as_str()), ("per_page", "1")]),
+            "repository_ref_not_found",
+        )
+        .await?;
+        let commits: serde_json::Value = serde_json::from_slice(&commits)
+            .map_err(|_| invalid("invalid repository commit response"))?;
+        commits[0]["sha"]
             .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| invalid("repository has no default branch"))?
-            .to_owned(),
+            .filter(|value| valid_commit(value))
+            .ok_or_else(|| invalid("repository ref did not resolve to a commit"))?
+            .to_owned()
     };
-    let commits = fetch(
-        client
-            .get(format!("{endpoint}/commits"))
-            .query(&[("sha", reference.as_str()), ("per_page", "1")]),
-        "repository_ref_not_found",
-    )
-    .await?;
-    let commits: serde_json::Value = serde_json::from_slice(&commits)
-        .map_err(|_| invalid("invalid repository commit response"))?;
-    let source_commit = commits[0]["sha"]
-        .as_str()
-        .filter(|value| valid_commit(value))
-        .ok_or_else(|| invalid("repository ref did not resolve to a commit"))?
-        .to_owned();
     let path = home.join(&request.name);
     std::fs::create_dir(&path).map_err(|_| {
         RuntimeError::rejected("workspace_exists", "repository destination already exists")
@@ -302,8 +327,25 @@ pub(crate) fn source_commit(path: &Path, source: &WorkspaceSource) -> Result<Opt
     if !matches!(source, WorkspaceSource::RepositorySnapshot { .. }) {
         return Ok(None);
     }
-    let value =
-        std::fs::read_to_string(path.join(".git/info/cma-source-commit")).map_err(io_error)?;
+    for directory in [path.join(".git"), path.join(".git/info")] {
+        if !std::fs::symlink_metadata(directory)
+            .map_err(io_error)?
+            .is_dir()
+        {
+            return Err(invalid("source commit directory is unsafe"));
+        }
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path.join(".git/info/cma-source-commit"))
+        .map_err(io_error)?;
+    let metadata = file.metadata().map_err(io_error)?;
+    if !metadata.is_file() || metadata.len() > 64 {
+        return Err(invalid("source commit evidence is unsafe or oversized"));
+    }
+    let mut value = String::new();
+    file.take(65).read_to_string(&mut value).map_err(io_error)?;
     if !valid_commit(&value) {
         return Err(invalid("source commit evidence is invalid"));
     }
