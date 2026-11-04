@@ -16,6 +16,13 @@ afterEach(() => sessionStorage.clear());
 const incarnation = 'a'.repeat(64);
 const cursor = (sequence: number) => `ag1.${incarnation}.${sequence}`;
 
+async function revealRecord(text: string) {
+  const content = await screen.findByText(text);
+  const disclosure = content.closest('details');
+  if (disclosure && !disclosure.open) fireEvent.click(disclosure.querySelector('summary')!);
+  return content;
+}
+
 function fixture(subject = 'owner') {
   let historyStatus = 200;
   let environmentStatus = 200;
@@ -178,15 +185,37 @@ function fixture(subject = 'owner') {
   };
 }
 
+it('collapses commands and output, seeks within the loaded window, and resets disclosure on navigation', async () => {
+  const scenario = fixture();
+  scenario.command(1);
+  scenario.command(2);
+  scenario.command(3);
+  scenario.renderPanel();
+  expect(await screen.findByText('known-output-3')).not.toBeVisible();
+  expect(screen.getByText('printf operation-3')).not.toBeVisible();
+  expect(await revealRecord('known-output-3')).toBeVisible();
+  const position = screen.getByRole('slider', { name: 'Recorded operation in this window' });
+  fireEvent.change(position, { target: { value: '1' } });
+  expect(screen.getByText('known-output-1')).not.toBeVisible();
+  expect(screen.getByText('History · Read only')).toBeVisible();
+  expect(position).toHaveValue('1');
+  expect(await revealRecord('known-output-1')).toBeVisible();
+  expect(screen.getByText(`Cursor ${cursor(3)}`)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Return Live' }));
+  expect(await screen.findByText('known-output-3')).not.toBeVisible();
+  expect(screen.getByText('Live · Recorded operations')).toBeVisible();
+  expect(scenario.requests.every((request) => request.startsWith('GET '))).toBe(true);
+});
+
 it('holds operation 2 when operation 4 arrives, then returns Live to 4 without executing', async () => {
   const scenario = fixture();
   scenario.command(1);
   scenario.command(2);
   scenario.command(3);
   scenario.renderPanel();
-  expect(await screen.findByText('known-output-3')).toBeVisible();
+  expect(await revealRecord('known-output-3')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Previous operation' }));
-  expect(screen.getByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
   await act(async () => {
     scenario.command(4);
     scenario.observation.publish([
@@ -199,11 +228,11 @@ it('holds operation 2 when operation 4 arrives, then returns Live to 4 without e
       },
     ]);
   });
-  expect(screen.getByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
   expect(screen.queryByText('known-output-4')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Return Live' }));
-  expect(await screen.findByText('known-output-4')).toBeVisible();
-  expect(screen.getByText(`Cursor ${cursor(9)}`)).toBeVisible();
+  expect(await revealRecord('known-output-4')).toBeVisible();
+  expect(await revealRecord(`Cursor ${cursor(9)}`)).toBeVisible();
   expect(
     scenario.events.filter((event) => 'type' in event.kind && event.kind.type === 'tool_started'),
   ).toHaveLength(4);
@@ -221,16 +250,16 @@ it('reloads only the saved cursor from freshly authorized pages without future p
   const view = scenario.renderPanel();
   await screen.findByText('known-output-2');
   fireEvent.click(screen.getByRole('button', { name: 'Previous operation' }));
-  expect(screen.getByText('known-output-1')).toBeVisible();
+  expect(await revealRecord('known-output-1')).toBeVisible();
   view.unmount();
   scenario.append({ type: 'plan_set', entries: [{ title: 'Future plan', status: 'completed' }] });
   scenario.command(3);
   const reloaded = scenario.renderPanel();
-  expect(await screen.findByText('known-output-1')).toBeVisible();
+  expect(await revealRecord('known-output-1')).toBeVisible();
   expect(screen.getByText('Original plan: in_progress')).toBeVisible();
   expect(screen.queryByText(/Future plan/)).not.toBeInTheDocument();
   fireEvent.keyDown(screen.getByRole('button', { name: 'Next operation' }), { key: 'ArrowRight' });
-  expect(await screen.findByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
   reloaded.unmount();
   scenario.denyHistory();
   scenario.renderPanel();
@@ -263,9 +292,9 @@ it('finds the recorded completion of an overlapping operation after restoring th
   const original = scenario.renderPanel();
   await screen.findByText('known-output-1');
   fireEvent.click(screen.getByRole('button', { name: 'Previous operation' }));
-  expect(screen.getByText(`Cursor ${cursor(4)}`)).toBeVisible();
+  expect(await revealRecord(`Cursor ${cursor(4)}`)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Next operation' }));
-  expect(screen.getByText(`Cursor ${cursor(5)}`)).toBeVisible();
+  expect(await revealRecord(`Cursor ${cursor(5)}`)).toBeVisible();
   original.unmount();
   scenario.append({
     type: 'tool_updated',
@@ -275,16 +304,16 @@ it('finds the recorded completion of an overlapping operation after restoring th
     output: { text: 'known-output-2', truncated: false },
   });
   scenario.renderPanel();
-  expect(await screen.findByText('known-output-1')).toBeVisible();
-  expect(screen.getByText(`Cursor ${cursor(5)}`)).toBeVisible();
+  expect(await revealRecord('known-output-1')).toBeVisible();
+  expect(await revealRecord(`Cursor ${cursor(5)}`)).toBeVisible();
   expect(screen.queryByText('known-output-2')).not.toBeInTheDocument();
   fireEvent.keyDown(screen.getByRole('button', { name: 'Next operation' }), { key: 'ArrowRight' });
-  expect(await screen.findByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
   expect(screen.getByRole('article')).toHaveAccessibleName(
     'Recorded operation: printf operation-2',
   );
-  expect(screen.getByText(`Cursor ${cursor(6)}`)).toBeVisible();
-  expect(screen.getByText('Status: completed')).toBeVisible();
+  expect(await revealRecord(`Cursor ${cursor(6)}`)).toBeVisible();
+  expect(screen.getByText('completed', { exact: true })).toBeVisible();
   expect(screen.getByText('Parallel work: in_progress')).toBeVisible();
   await act(async () => {
     scenario.command(3);
@@ -298,11 +327,11 @@ it('finds the recorded completion of an overlapping operation after restoring th
       },
     ]);
   });
-  expect(screen.getByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
   expect(screen.queryByText('known-output-3')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Return Live' }));
-  expect(await screen.findByText('known-output-3')).toBeVisible();
-  expect(screen.getByText(`Live cursor ${cursor(8)}`)).toBeVisible();
+  expect(await revealRecord('known-output-3')).toBeVisible();
+  expect(await revealRecord(`Cursor ${cursor(8)}`)).toBeVisible();
   expect(scenario.events).toHaveLength(8);
   expect(scenario.requests.every((request) => request.startsWith('GET '))).toBe(true);
 });
@@ -320,7 +349,7 @@ it('shows explicit gaps and truncated output and never inherits a previous turn 
     output: { text: 'bounded output', truncated: true },
   });
   scenario.renderPanel();
-  expect(await screen.findByText('bounded output')).toBeVisible();
+  expect(await revealRecord('bounded output')).toBeVisible();
   expect(screen.getByText('Output truncated')).toBeVisible();
   expect(screen.getByText(/History gap:/)).toBeVisible();
   expect(screen.getByText('Plan not recorded at this operation')).toBeVisible();
@@ -335,11 +364,11 @@ it('keeps bounded pages navigable with keyboard controls across the 50-operation
   await screen.findByText('known-output-52');
   const previous = screen.getByRole('button', { name: 'Previous operation' });
   for (let count = 0; count < 49; count += 1) fireEvent.click(previous);
-  expect(screen.getByText('known-output-3')).toBeVisible();
+  expect(await revealRecord('known-output-3')).toBeVisible();
   fireEvent.keyDown(previous, { key: 'ArrowLeft' });
-  expect(await screen.findByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
   fireEvent.keyDown(previous, { key: 'End' });
-  expect(await screen.findByText('known-output-52')).toBeVisible();
+  expect(await revealRecord('known-output-52')).toBeVisible();
   expect(screen.getAllByRole('article')).toHaveLength(1);
 });
 
@@ -353,18 +382,18 @@ it('keeps both navigation directions ordered across a restored 50-operation forw
   original.unmount();
   for (let number = 3; number <= 53; number += 1) scenario.command(number);
   scenario.renderPanel();
-  expect(await screen.findByText('known-output-1')).toBeVisible();
+  expect(await revealRecord('known-output-1')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Next operation' }));
-  expect(await screen.findByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
   expect(screen.getByText('Record 1 of 50 in this window')).toBeVisible();
   for (let step = 0; step < 49; step += 1)
     fireEvent.click(screen.getByRole('button', { name: 'Next operation' }));
-  expect(screen.getByText('known-output-51')).toBeVisible();
+  expect(await revealRecord('known-output-51')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Next operation' }));
-  expect(await screen.findByText('known-output-52')).toBeVisible();
+  expect(await revealRecord('known-output-52')).toBeVisible();
   expect(screen.getByText('Record 1 of 2 in this window')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Previous operation' }));
-  expect(await screen.findByText('known-output-51')).toBeVisible();
+  expect(await revealRecord('known-output-51')).toBeVisible();
   expect(screen.getAllByRole('article')).toHaveLength(1);
   expect(scenario.events).toHaveLength(107);
   expect(scenario.requests.every((request) => request.startsWith('GET '))).toBe(true);
@@ -386,11 +415,12 @@ it('opens the plan actual turn and returns Live to a newer turn without changing
     />,
   );
   await screen.findByText('known-output-3');
+  fireEvent.click(screen.getByRole('button', { name: 'View plan and operations' }));
   fireEvent.click(screen.getByRole('button', { name: 'View plan and replay' }));
-  expect(await screen.findByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
   expect(screen.getByText('Turn 1')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Return Live' }));
-  expect(await screen.findByText('known-output-3')).toBeVisible();
+  expect(await revealRecord('known-output-3')).toBeVisible();
   expect(screen.getByText('Turn 7')).toBeVisible();
 });
 
@@ -401,7 +431,7 @@ it('withdraws history when environment authority is revoked and keeps all histor
   scenario.renderPanel();
   await screen.findByText('known-output-2');
   fireEvent.click(screen.getByRole('button', { name: 'Previous operation' }));
-  expect(screen.getByText('known-output-1')).toBeVisible();
+  expect(await revealRecord('known-output-1')).toBeVisible();
   expect(screen.getByText(/History controls unavailable:/)).toBeVisible();
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   scenario.denyEnvironment();
@@ -425,11 +455,12 @@ it('does not show another turn operations when the chosen completed turn has no 
     />,
   );
   await screen.findByText('known-output-1');
+  fireEvent.click(screen.getByRole('button', { name: 'View plan and operations' }));
   fireEvent.click(screen.getByRole('button', { name: 'View plan and replay' }));
   expect(await screen.findByText('No command operations recorded for this turn.')).toBeVisible();
   expect(screen.queryByText('known-output-1')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Return Live' }));
-  expect(await screen.findByText('known-output-1')).toBeVisible();
+  expect(await revealRecord('known-output-1')).toBeVisible();
 });
 
 it('advances Live with bounded unread public events instead of rescanning the historical prefix', async () => {
@@ -450,10 +481,10 @@ it('advances Live with bounded unread public events instead of rescanning the hi
       },
     ]);
   });
-  expect(await screen.findByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
   expect(scenario.requests.filter((path) => path.endsWith('/snapshot'))).toHaveLength(snapshots);
   expect(scenario.requests).toContain('GET /api/v2/agents/agt_1/events');
-  expect(screen.getByText(`Live cursor ${cursor(5)}`)).toBeVisible();
+  expect(await revealRecord(`Cursor ${cursor(5)}`)).toBeVisible();
 });
 
 it('names expired history explicitly and does not silently replace the saved operation', async () => {
@@ -485,7 +516,7 @@ it('clears another account results and rejects its late authorized response', as
   await screen.findByText('known-output-2');
   await act(async () => original.releaseHistory());
   expect(screen.queryByText('known-output-1')).not.toBeInTheDocument();
-  expect(screen.getByText('known-output-2')).toBeVisible();
+  expect(await revealRecord('known-output-2')).toBeVisible();
 });
 
 it('opens a completed answer actual turn even when it reported no plan', async () => {
@@ -516,7 +547,7 @@ it('opens a completed answer actual turn even when it reported no plan', async (
   );
   await screen.findByText('known-output-2');
   fireEvent.click(screen.getByRole('button', { name: 'View plan and replay' }));
-  expect(await screen.findByText('known-output-1')).toBeVisible();
+  expect(await revealRecord('known-output-1')).toBeVisible();
   expect(screen.getByText('Turn 1')).toBeVisible();
   expect(screen.getByText('Plan not recorded at this operation')).toBeVisible();
 });

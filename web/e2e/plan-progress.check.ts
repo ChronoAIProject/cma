@@ -110,7 +110,7 @@ for (const width of [1440, 390]) {
       expect(filled!.height).toBeGreaterThan(0);
       await expect(bar.locator('span')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
       await expect(plan).toContainText('Current step 2: Implement the change');
-      const header = page.getByRole('link', { name: 'Current plan: 1/3 steps · Step 2' });
+      const header = page.getByRole('link', { name: 'Current plan: Working · step 2 of 3' });
       await expect(header).toBeVisible();
       const draft = page.getByRole('textbox', { name: 'Message', exact: true });
       await draft.fill('Keep my next task draft');
@@ -124,7 +124,7 @@ for (const width of [1440, 390]) {
       await header.focus();
       await page.keyboard.press('Enter');
       await expect(plan).toBeFocused();
-      const toggle = plan.getByRole('button', { name: 'View plan and operations' });
+      const toggle = plan.getByRole('button', { name: /^(Hide|Show) plan$/ });
       await toggle.focus();
       await page.keyboard.press('Enter');
       await expect(toggle).toHaveAttribute('aria-expanded', 'false');
