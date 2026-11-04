@@ -1843,6 +1843,28 @@ billing integration and TypeScript examples. Responses are private and no-store.
 | `GET /api/v1/admin/usage` | - | owner | 200 UsageSummaryView |
 | `GET /api/v1/admin/usage/sandboxes` | - | owner, cursor, limit | 200 UsagePageView |
 
+### Measured Sandbox usage
+
+These reports expose observed CPU, working-set memory and home filesystem
+usage with independent coverage and allocated period quantities. See
+[measured usage semantics and rollout](CMA_Sandbox_Metrics.md). Owner routes
+require own-usage authority; administrator routes require `ReadAllSandboxes`.
+All report, row, chart and owner-search reads reauthorize current access.
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `POST /api/v1/usage/metrics/reports` | UsageMetricQuery | - | 200/202 UsageMetricReport |
+| `GET /api/v1/usage/metrics/reports/{report}` | - | - | 200 UsageMetricReport |
+| `GET /api/v1/usage/metrics/reports/{report}/sandboxes` | - | limit, cursor, sort, order | 200 UsageMetricPage |
+| `GET /api/v1/usage/metrics/reports/{report}/series` | - | metric*, group_by, series_id, top | 200 UsageMetricSeries |
+| `GET /api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}` | - | - | 200 UsageMetricRow |
+| `POST /api/v1/admin/usage/metrics/reports` | UsageMetricQuery | - | 200/202 UsageMetricReport |
+| `GET /api/v1/admin/usage/metrics/reports/{report}` | - | - | 200 UsageMetricReport |
+| `GET /api/v1/admin/usage/metrics/reports/{report}/sandboxes` | - | limit, cursor, sort, order | 200 UsageMetricPage |
+| `GET /api/v1/admin/usage/metrics/reports/{report}/series` | - | metric*, group_by, series_id, top | 200 UsageMetricSeries |
+| `GET /api/v1/admin/usage/metrics/reports/{report}/sandboxes/{sandbox}` | - | - | 200 UsageMetricRow |
+| `GET /api/v1/admin/usage/metrics/reports/{report}/owners` | - | search, cursor, limit | 200 UsageMetricOwners |
+
 ### Agent usage
 
 | Operation | Body / Key | Query | Response |
