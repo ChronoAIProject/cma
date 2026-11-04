@@ -65,22 +65,7 @@ async fn hierarchy_children_use_one_read_only_snapshot_and_preserve_retained_sta
                 doc! {"find": "workspaces", "filter": {"_id": workspace.id.as_str()}, "limit": 1_i64, "singleBatch": true},
                 doc! {"find": "worktrees", "filter": {"workspace_id": workspace.id.as_str()}, "sort": {"_id": 1}},
                 doc! {"find": "agents", "filter": {"workspace_id": workspace.id.as_str()}, "sort": {"_id": 1}},
-                doc! {
-                    "find": "agent_log",
-                    "filter": {
-                        "agent_id": agent.id.as_str(),
-                        "record.kind.type": {"$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"]},
-                    },
-                    "sort": {"seq": -1}, "limit": 1_i64, "singleBatch": true,
-                },
-                doc! {
-                    "find": "agent_commands",
-                    "filter": {
-                        "agent_id": agent.id.as_str(),
-                        "status": {"$in": ["queued", "in_progress", "waiting_action"]},
-                    },
-                    "limit": 1_i64, "singleBatch": true,
-                },
+                doc! {"aggregate": "agents"},
             ]
         };
         let commands = trace.lock().unwrap().clone();
@@ -108,11 +93,19 @@ async fn hierarchy_children_use_one_read_only_snapshot_and_preserve_retained_sta
             assert!(!command.contains_key("readConcern"));
         }
         for ((command_name, command), expected) in commands.iter().zip(&expected_reads) {
-            assert_eq!(command_name, "find");
+            assert_eq!(
+                command_name,
+                if expected.contains_key("aggregate") {
+                    "aggregate"
+                } else {
+                    "find"
+                }
+            );
             assert_eq!(command.get_str("$db").unwrap(), name);
             assert_eq!(command.get_i32("maxTimeMS").unwrap(), 10_000);
             for field in [
                 "find",
+                "aggregate",
                 "filter",
                 "sort",
                 "limit",
