@@ -160,8 +160,12 @@ pub(crate) async fn execute(
         ));
     }
     preserve_original(&paths, &original)?;
-    if original_source_commit(&paths.preserved, request)? != original.source_commit {
-        return Err(invalid("original source pin changed or was not recorded"));
+    let source_commit = original_source_commit(&paths.preserved, request)?;
+    if original.source_commit.is_some() && source_commit != original.source_commit {
+        return Err(invalid("original source pin changed"));
+    }
+    if let Some(pin) = &source_commit {
+        append(&paths.evidence.join("source-commit.json"), pin)?;
     }
     let attempt_dir = paths.attempt(request);
     let attempt = admit(&paths, request, &journal_sha256)?;
@@ -181,7 +185,7 @@ pub(crate) async fn execute(
         &paths,
         &attempt_dir,
         &journal_sha256,
-        original.source_commit.as_deref(),
+        source_commit.as_deref(),
     )
     .await;
     match result {
