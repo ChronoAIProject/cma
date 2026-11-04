@@ -118,6 +118,10 @@ impl ReportingStore {
         session.start_transaction().await.map_err(unavailable)?;
         let mut fence = lease.fence();
         fence.insert("bytes", doc! {"$lte":self.budgets.report_bytes-bytes});
+        fence.insert(
+            "$expr",
+            doc! {"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]},
+        );
         let updated = self
             .collection(JOBS)
             .update_one(fence, doc! {"$inc":{"bytes":bytes}})
