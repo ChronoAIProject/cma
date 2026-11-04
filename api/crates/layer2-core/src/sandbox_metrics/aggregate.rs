@@ -175,27 +175,41 @@ fn gauges(
             .map_or(range.to as f64, |next| next.at)
             .min(sample.at + 90.0)
             .min(range.to as f64);
-        let capacity = if metric == Metric::Disk {
-            capacities
-                .iter()
-                .rev()
-                .find(|s| s.at <= sample.at && sample.at - s.at <= 90.0)
-                .map(|s| s.value)
-        } else {
-            memory_capacity
-        };
-        add(
-            minutes,
-            Segment {
-                from: sample.at.max(range.from as f64),
-                to: end,
-                value: sample.value,
-                envelope: sample.value,
-                observed_at: sample.at,
-                capacity,
-            },
-            metric,
-        );
+        let mut from = sample.at.max(range.from as f64);
+        while from < end {
+            let mut to = end;
+            let capacity = if metric == Metric::Disk {
+                // Capacity has its own scrape clock. Split at changes and
+                // expiry so its denominator covers precisely the same time
+                // as the corresponding usage numerator, with no stale hold.
+                let next = capacities.partition_point(|s| s.at <= from);
+                if let Some(sample) = capacities.get(next) {
+                    to = to.min(sample.at);
+                }
+                next.checked_sub(1).and_then(|i| {
+                    let sample = capacities[i];
+                    (from < sample.at + 90.0).then(|| {
+                        to = to.min(sample.at + 90.0);
+                        sample.value
+                    })
+                })
+            } else {
+                memory_capacity
+            };
+            add(
+                minutes,
+                Segment {
+                    from,
+                    to,
+                    value: sample.value,
+                    envelope: sample.value,
+                    observed_at: sample.at,
+                    capacity,
+                },
+                metric,
+            );
+            from = to;
+        }
     }
 }
 struct Segment {

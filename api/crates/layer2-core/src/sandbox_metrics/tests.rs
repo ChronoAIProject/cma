@@ -103,6 +103,27 @@ fn irregular_gauges_hold_at_most_ninety_seconds_and_clip_edges() {
     assert_eq!(t[1].expected_seconds, 230.);
 }
 #[test]
+fn disk_capacity_changes_and_expires_independently_of_usage() {
+    let values = [
+        series(SourceMetric::PvcUsed, &[(30., 100.), (90., 200.)]),
+        series(SourceMetric::PvcCapacity, &[(0., 1000.), (60., 2000.)]),
+    ];
+    let totals = aggregate::totals(
+        &aggregate::aggregate(
+            &[binding(BindingKind::Home)],
+            &values,
+            Range { from: 30, to: 180 },
+        )
+        .unwrap(),
+    );
+    let disk = &totals[2];
+    assert_eq!(disk.covered_seconds, 150.);
+    assert_eq!(disk.integral, 100. * 60. + 200. * 90.);
+    assert_eq!(disk.capacity_covered_seconds, 120.);
+    assert_eq!(disk.capacity_integral, 1000. * 30. + 2000. * 90.);
+    assert_eq!(disk.capacity_usage_integral, 100. * 60. + 200. * 60.);
+}
+#[test]
 fn shared_pvc_is_counted_once_and_conflicting_attachments_are_refused() {
     let b = binding(BindingKind::Home);
     let s = series(SourceMetric::PvcUsed, &[(0., 100.)]);
