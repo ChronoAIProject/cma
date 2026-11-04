@@ -2,6 +2,8 @@
 use super::*;
 use layer2_core::sandbox::store::{AgentWorkerStore, SandboxStore};
 
+mod capacity_tests;
+
 fn at() -> SystemTime {
     SystemTime::UNIX_EPOCH
         + std::time::Duration::from_secs(

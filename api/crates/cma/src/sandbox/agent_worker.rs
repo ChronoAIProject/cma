@@ -9,6 +9,7 @@ use layer3_adapter::SandboxAdapter;
 use super::agent_skills::AgentSkillResolver;
 use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 
+mod capacity;
 mod cleanup;
 mod connection;
 mod connection_output;
@@ -183,7 +184,9 @@ impl AgentWorker {
     }
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
-        match agent.work.step {
+        let started = tokio::time::Instant::now();
+        let claimed = agent.clone();
+        let result = match agent.work.step {
             AgentWorkStep::InstallSkill => self.install_skill(agent, now).await,
             AgentWorkStep::WaitForWorkspace => self.wait_for_workspace(agent, now).await,
             AgentWorkStep::AddWorktree => self.add_worktree(agent, now).await,
@@ -200,6 +203,8 @@ impl AgentWorker {
             AgentWorkStep::RemoveWorktree => self.remove_worktree(agent, now).await,
             AgentWorkStep::PublishDeleted => self.publish_deleted(agent, now).await,
             AgentWorkStep::None => Err(SandboxStoreError::Conflict),
-        }
+        };
+        self.finish_capacity_attempt(&claimed, result, now + started.elapsed())
+            .await
     }
 }
