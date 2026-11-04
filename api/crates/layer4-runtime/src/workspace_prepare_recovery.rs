@@ -12,9 +12,12 @@ use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 #[path = "workspace_prepare_recovery_io.rs"]
 mod io;
+#[path = "workspace_prepare_recovery_publish.rs"]
+mod publish;
 use io::{
     append, directory, ensure_directory, invalid, io_error, read, require_absent, DirectoryIdentity,
 };
+use publish::prepare_and_publish;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +28,8 @@ struct Original {
     request: layer3_adapter::WorkspaceRequest,
     journal_sha256: String,
     directory: DirectoryIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_commit: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +143,7 @@ pub(crate) async fn execute(
                 request: request.original.clone(),
                 journal_sha256: journal_sha256.clone(),
                 directory: identity,
+                source_commit: original_source_commit(&paths.staged, request)?,
             };
             append(&original_path, &original)?;
             original
@@ -154,6 +160,9 @@ pub(crate) async fn execute(
         ));
     }
     preserve_original(&paths, &original)?;
+    if original_source_commit(&paths.preserved, request)? != original.source_commit {
+        return Err(invalid("original source pin changed or was not recorded"));
+    }
     let attempt_dir = paths.attempt(request);
     let attempt = admit(&paths, request, &journal_sha256)?;
     if let Some(terminal) = read::<Terminal>(&attempt_dir.join("terminal.json"))? {
@@ -166,7 +175,15 @@ pub(crate) async fn execute(
             Err(error)
         }
     })?;
-    let result = prepare_and_publish(config, request, &paths, &attempt_dir, &journal_sha256).await;
+    let result = prepare_and_publish(
+        config,
+        request,
+        &paths,
+        &attempt_dir,
+        &journal_sha256,
+        original.source_commit.as_deref(),
+    )
+    .await;
     match result {
         Ok(receipt) => {
             append(
@@ -200,6 +217,14 @@ pub(crate) async fn execute(
             terminal_result(&paths, request, &journal_sha256, terminal)
         }
     }
+}
+
+fn original_source_commit(
+    path: &Path,
+    request: &WorkspacePrepareRecoveryRequest,
+) -> Result<Option<String>> {
+    crate::repository_snapshot::source_commit(path, &request.original.source)
+        .map_err(|_| invalid("original repository source pin cannot be established"))
 }
 
 fn require_incomplete_original(path: &Path) -> Result<()> {
@@ -346,113 +371,6 @@ fn admit(
     Ok(attempt)
 }
 
-async fn prepare_and_publish(
-    config: &RuntimeConfig,
-    request: &WorkspacePrepareRecoveryRequest,
-    paths: &Paths,
-    attempt: &Path,
-    journal_sha256: &str,
-) -> Result<WorkspacePrepareRecoveryReceipt> {
-    let mut staged_request = request.original.clone();
-    staged_request
-        .name
-        .clone_from(&request.original.workspace_id);
-    let publication_path = attempt.join("publication.json");
-    let publication = if let Some(publication) = read::<Publication>(&publication_path)? {
-        publication
-    } else {
-        require_absent(&paths.published)?;
-        let candidates = paths.candidate_root.parent().unwrap();
-        ensure_directory(candidates)?;
-        ensure_directory(&paths.candidate_root)?;
-        let started = attempt.join("started.json");
-        let receipt = if read::<bool>(&started)?.is_some() {
-            crate::workspace_source::inspect_prepared(
-                &paths.candidate_root,
-                config.allow_local_git,
-                &staged_request,
-            )
-            .await?
-            .ok_or_else(|| invalid("interrupted recovery candidate has no completion proof"))?
-        } else {
-            require_absent(&paths.candidate)?;
-            append(&started, &true)?;
-            if matches!(
-                staged_request.source,
-                layer3_adapter::WorkspaceSource::RepositorySnapshot { .. }
-            ) {
-                crate::repository_snapshot::prepare(config, &paths.candidate_root, &staged_request)
-                    .await?
-            } else {
-                crate::workspace_source::prepare(
-                    &paths.candidate_root,
-                    config.allow_local_git,
-                    &staged_request,
-                )
-                .await?
-            }
-        };
-        let publication = Publication {
-            directory: directory(&paths.candidate)?
-                .ok_or_else(|| invalid("prepared recovery candidate disappeared"))?,
-            resolved_commit: receipt.resolved_commit,
-            source_commit: receipt.source_commit,
-        };
-        append(&publication_path, &publication)?;
-        publication
-    };
-    match (directory(&paths.candidate)?, directory(&paths.published)?) {
-        (Some(candidate), None) if candidate == publication.directory => {
-            let inspected = crate::workspace_source::inspect_prepared(
-                &paths.candidate_root,
-                config.allow_local_git,
-                &staged_request,
-            )
-            .await?
-            .ok_or_else(|| invalid("prepared recovery candidate disappeared"))?;
-            if inspected.resolved_commit != publication.resolved_commit
-                || inspected.source_commit != publication.source_commit
-            {
-                return Err(invalid("prepared recovery candidate changed commit"));
-            }
-            crate::fs_durability::rename(&paths.candidate, &paths.published).map_err(io_error)?;
-        }
-        (None, Some(published)) if published == publication.directory => {}
-        _ => {
-            return Err(invalid(
-                "recovery publication does not match its exact prepared directory",
-            ))
-        }
-    }
-    let inspected = crate::workspace_source::inspect_prepared(
-        &config.home,
-        config.allow_local_git,
-        &request.original,
-    )
-    .await?
-    .ok_or_else(|| invalid("recovered Workspace publication disappeared"))?;
-    if inspected.resolved_commit != publication.resolved_commit
-        || inspected.source_commit != publication.source_commit
-    {
-        return Err(invalid(
-            "recovered Workspace commit changed before completion",
-        ));
-    }
-    Ok(WorkspacePrepareRecoveryReceipt {
-        prepared: WorkspaceReceipt {
-            operation_id: request.operation_id.clone(),
-            request_sha256: request.request_sha256.clone(),
-            workspace_id: request.original.workspace_id.clone(),
-            name: request.original.name.clone(),
-            path: paths.published.to_string_lossy().into_owned(),
-            resolved_commit: publication.resolved_commit,
-            source_commit: publication.source_commit,
-        },
-        preserved_path: paths.preserved.to_string_lossy().into_owned(),
-        original_journal_sha256: journal_sha256.into(),
-    })
-}
-
 fn terminal_result(
     paths: &Paths,
     request: &WorkspacePrepareRecoveryRequest,
@@ -476,6 +394,7 @@ fn terminal_result(
                 || receipt.original_journal_sha256 != digest
                 || receipt.prepared.resolved_commit != publication.resolved_commit
                 || receipt.prepared.source_commit != publication.source_commit
+                || publication.source_commit != original_source_commit(&paths.preserved, request)?
                 || directory(&paths.published)?.as_ref() != Some(&publication.directory)
             {
                 return Err(invalid(
