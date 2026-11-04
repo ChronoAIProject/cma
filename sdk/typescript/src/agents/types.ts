@@ -112,6 +112,7 @@ export const agentSummary = object({
 });
 export type AgentSummary = Output<typeof agentSummary>;
 export const agent = object({
+  callback_url: optional(nullable(text)),
   runtime_metadata: optional(agentRuntimeMetadata),
   owner_title: optional(text),
   id: text,

@@ -10,6 +10,8 @@ Legacy response POSTs also enter common durable command admission. The v1 contra
 to apply to those routes; changing a client's base URL requires adopting the
 v2 rules in this section.
 
+Both Responses versions include optional `callback_url` in response objects and their SSE frames, derived from `CHRONO_SERVER_PUBLIC_URL` and the actual Agent ID as described in [REST Agent links](API_REST.md#inline-agent-creation).
+
 ## Responses v2
 
 Conditional follow-ups may include

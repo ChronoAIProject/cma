@@ -104,6 +104,9 @@ impl OutputItem {
 /// Durable response resource reconstructed from one Agent turn.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ResponseObject {
+    /// Browser page for the actual CMA Agent, when available.
+    #[serde(default)]
+    pub callback_url: Option<String>,
     /// Existing Agent conversation retained across every turn.
     pub conversation: ResponseConversation,
     /// Epoch seconds when the durable turn completed, when present.

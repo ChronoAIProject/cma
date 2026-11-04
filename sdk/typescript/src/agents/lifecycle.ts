@@ -7,6 +7,7 @@ import {
   boolean,
   enumeration,
   integer,
+  nullable,
   object,
   optional,
   positiveInteger,
@@ -68,6 +69,7 @@ export const agentLifecycleEvent = object({
 export type AgentLifecycleEvent = Output<typeof agentLifecycleEvent>;
 
 export const agentLifecycleOperation = object({
+  callback_url: optional(nullable(text)),
   id: text,
   status: enumeration('queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'),
   phase: text,
