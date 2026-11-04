@@ -19,11 +19,12 @@ impl Bridge {
         let protected = settings.channel_tool.is_some()
             || settings.provider_tool.is_some()
             || settings.access_tool.is_some();
-        self.handshake_inner(resume, cwd, settings, updates)
+        let mut phase = "settings_validation";
+        self.handshake_inner(resume, cwd, settings, updates, &mut phase)
             .await
             .map_err(|error| {
                 if protected {
-                    protected_setup_failure(error)
+                    protected_setup_failure(error, phase)
                 } else {
                     error
                 }
@@ -36,9 +37,11 @@ impl Bridge {
         cwd: String,
         settings: HostedAgentOpenSettings,
         updates: &UpdateRelay,
+        phase: &mut &'static str,
     ) -> crate::Result<()> {
         validate_settings(&cwd, &settings)?;
         let mut timing = super::startup_timing::StartupTiming::new();
+        *phase = "protocol_initialize";
         let greeting = self
             .greet(serde_json::json!({
                 "protocolVersion": PROTOCOL_VERSION,
@@ -73,6 +76,7 @@ impl Bridge {
                     .map(|binding| binding.acp_server()),
             )
             .collect();
+        *phase = "open_completion";
         let completion = if let (Greeting::Existing, Some(conversation), Some(protocol)) =
             (&greeting, resume.as_deref(), settings.open_completion)
         {
@@ -102,6 +106,11 @@ impl Bridge {
         };
         let completed = completion.is_some();
 
+        *phase = if matches!(greeting, Greeting::Existing) {
+            "channel_tool_confirmation"
+        } else {
+            "channel_tool_capability"
+        };
         if let Some(binding) = &settings.channel_tool {
             match &greeting {
                 Greeting::Fresh(hello)
@@ -111,6 +120,7 @@ impl Bridge {
                     if resume
                         .as_deref()
                         .is_some_and(|id| binding.retained_for(id) || completed) => {}
+                Greeting::Existing => return Err(unconfirmed_setup()),
                 _ => {
                     return Err(AdapterError::Unsupported(
                         "runtime cannot establish the required channel reply tool connection"
@@ -119,6 +129,11 @@ impl Bridge {
                 }
             }
         }
+        *phase = if matches!(greeting, Greeting::Existing) {
+            "provider_tool_confirmation"
+        } else {
+            "provider_tool_capability"
+        };
         if let Some(binding) = &settings.provider_tool {
             match &greeting {
                 Greeting::Fresh(hello)
@@ -130,6 +145,7 @@ impl Bridge {
                         && resume
                             .as_deref()
                             .is_some_and(|id| binding.retained_for(id) || completed) => {}
+                Greeting::Existing => return Err(unconfirmed_setup()),
                 _ => {
                     return Err(AdapterError::Unsupported(
                         "runtime cannot establish the required provider tools".into(),
@@ -137,6 +153,11 @@ impl Bridge {
                 }
             }
         }
+        *phase = if matches!(greeting, Greeting::Existing) {
+            "access_tool_confirmation"
+        } else {
+            "access_tool_capability"
+        };
         if let Some(binding) = &settings.access_tool {
             match &greeting {
                 Greeting::Fresh(hello)
@@ -146,6 +167,7 @@ impl Bridge {
                     if resume.as_deref().is_some_and(|id| {
                         binding.retained_for(id) || binding.prepared_for(id) || completed
                     }) => {}
+                Greeting::Existing => return Err(unconfirmed_setup()),
                 _ => {
                     return Err(AdapterError::Unsupported(
                         "runtime cannot establish the required service access request tool".into(),
@@ -153,6 +175,7 @@ impl Bridge {
                 }
             }
         }
+        *phase = "authentication";
         if settings.own_credential && self.subscription.is_some() {
             self.call("cma/codex/authenticate", serde_json::json!({}))
                 .await?;
@@ -171,6 +194,7 @@ impl Bridge {
             matches!(greeting, Greeting::Existing) && settings.recovered_context_sequence.is_some();
         let session = match (greeting, resume) {
             (Greeting::Fresh(_), Some(conversation)) => {
+                *phase = "session_load";
                 self.activate_session(conversation.clone(), updates).await?;
                 self.call(
                     "session/load",
@@ -185,6 +209,7 @@ impl Bridge {
                 conversation
             }
             (Greeting::Fresh(_), None) => {
+                *phase = "session_new";
                 let started = self
                     .call(
                         "session/new",
@@ -200,6 +225,7 @@ impl Bridge {
                 conversation
             }
             (Greeting::Existing, Some(conversation)) => {
+                *phase = "session_rejoin";
                 if settings
                     .access_tool
                     .as_ref()
@@ -220,12 +246,14 @@ impl Bridge {
                     // A source-issued receipt is required before this branch;
                     // ordinary retained conversations never take it.
                     let mut rebinding = super::startup_timing::StartupTiming::new();
+                    *phase = "prepared_session_close";
                     self.call(
                         "session/close",
                         serde_json::json!({ "sessionId": conversation }),
                     )
                     .await?;
                     rebinding.completed("prepared_protocol_close");
+                    *phase = "prepared_session_load";
                     self.activate_session(conversation.clone(), updates).await?;
                     self.call(
                         "session/load",
@@ -257,6 +285,7 @@ impl Bridge {
         // can restore it. The restricted input accepts only the original refresh,
         // which loads this same ID and acknowledges all settings before publication.
         if let Some(mode) = settings.permission_mode.filter(|_| !defer_settings) {
+            *phase = "permission_mode";
             self.call(
                 "session/set_mode",
                 serde_json::json!({ "sessionId": session, "modeId": mode }),
@@ -278,6 +307,7 @@ impl Bridge {
         }
         timing.completed("protocol_settings");
         if let Some((protocol, receipt)) = completion {
+            *phase = "open_completion_recheck";
             self.recheck_open_completion(protocol, receipt).await?;
         }
         Ok(())
@@ -374,8 +404,8 @@ impl Bridge {
 
 /// MCP setup carries a limited CMA bearer. Runtimes may echo that descriptor in
 /// error JSON; preserve only the category before worker logs retain the failure.
-fn protected_setup_failure(error: AdapterError) -> AdapterError {
-    let detail = "channel tool session setup did not complete".to_string();
+fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterError {
+    let detail = format!("channel tool session setup did not complete (phase: {phase})");
     match error {
         AdapterError::InputAuthorityUnavailable(_) => {
             AdapterError::InputAuthorityUnavailable(detail)
@@ -390,6 +420,15 @@ fn protected_setup_failure(error: AdapterError) -> AdapterError {
         AdapterError::Unsupported(_) => AdapterError::Unsupported(detail),
         AdapterError::RuntimeContractMismatch(_) => AdapterError::Rejected(detail),
     }
+}
+
+fn unconfirmed_setup() -> AdapterError {
+    // An earlier initialize/open can have succeeded after its reply was lost.
+    // Missing confirmation is not evidence that this runtime lacks an ability.
+    // Without a known identity and a supported exact completion proof there is
+    // no safe automatic recovery. Never create a substitute session or loop
+    // indefinitely while the undispatched creation input remains queued.
+    AdapterError::Rejected("existing conversation tool setup cannot be confirmed".into())
 }
 
 fn validate_settings(cwd: &str, settings: &HostedAgentOpenSettings) -> crate::Result<()> {
