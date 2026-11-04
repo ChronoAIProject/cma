@@ -22,6 +22,7 @@ mod agent_v2;
 
 pub(crate) struct AgentProjectionServices {
     suggestions: Option<Arc<dyn layer2_core::sandbox::suggestions::SuggestionStore>>,
+    agent_page_origin: layer1_public::agent_page::AgentPageOrigin,
     message_feedback: Option<Arc<dyn layer2_core::sandbox::message_feedback::MessageFeedbackStore>>,
     skill_support: Option<Arc<dyn layer1_public::rest::AgentSkillRuntimeSupport>>,
     commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
@@ -101,6 +102,7 @@ impl AgentProjectionServices {
     }
 
     pub(crate) fn new<S, P, R, Q>(
+        agent_page_origin: layer1_public::agent_page::AgentPageOrigin,
         store: Arc<S>,
         profiles: Arc<P>,
         runtimes: Arc<R>,
@@ -125,6 +127,7 @@ impl AgentProjectionServices {
         );
         Self {
             suggestions: None,
+            agent_page_origin,
             message_feedback: None,
             skill_support: None,
             commands: None,
@@ -151,6 +154,7 @@ impl AgentProjectionServices {
 
     pub(crate) fn router(&self, operation_records: Arc<dyn OperationStore>) -> Router {
         let agent_routes = AgentRoutesState::new(
+            self.agent_page_origin.clone(),
             Arc::clone(&self.agents),
             Arc::clone(&self.reads),
             Arc::clone(&self.operations),
@@ -196,6 +200,7 @@ impl AgentProjectionServices {
         public_base: &str,
     ) -> Router {
         let state = layer1_public::AgentConversationState::new(
+            self.agent_page_origin.clone(),
             self.reads.clone(),
             self.operations.clone(),
             context,

@@ -37,6 +37,7 @@ mod commands_tests;
 
 #[derive(Clone)]
 pub struct AgentConversationState {
+    pub(crate) agent_page_origin: crate::agent_page::AgentPageOrigin,
     pub(crate) reads: Arc<AgentReadService>,
     #[cfg(test)]
     pub(crate) operations: Arc<AgentOperationService>,
@@ -47,11 +48,13 @@ pub struct AgentConversationState {
 
 impl AgentConversationState {
     pub fn new(
+        agent_page_origin: crate::agent_page::AgentPageOrigin,
         reads: Arc<AgentReadService>,
         _operations: Arc<AgentOperationService>,
         context: Arc<AgentContextService>,
     ) -> Self {
         Self {
+            agent_page_origin,
             reads,
             #[cfg(test)]
             operations: _operations,

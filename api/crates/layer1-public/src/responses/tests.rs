@@ -264,6 +264,10 @@ async fn stream_retrieve_and_items_project_the_same_durable_turn() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(values.last().unwrap()["response"], retrieved);
+    assert_eq!(
+        retrieved["callback_url"],
+        "https://cma.example/agents/agt_response"
+    );
     assert_eq!(retrieved["metadata"]["project"], "proof");
     assert_eq!(retrieved["usage"]["total_tokens"], 17);
     let (_, items) = json_response(

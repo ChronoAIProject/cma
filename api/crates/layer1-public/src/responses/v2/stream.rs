@@ -31,7 +31,7 @@ pub(super) async fn snapshot(
         .event_stream_snapshot(authorization)
         .await
         .map_err(error::read)?;
-    projection::project(reading, &history)
+    projection::project(&state.agent_page_origin, reading, &history)
         .map(|response| (response, bound))
         .ok_or_else(error::unavailable)
 }
