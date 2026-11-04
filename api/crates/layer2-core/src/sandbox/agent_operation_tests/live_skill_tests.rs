@@ -57,8 +57,10 @@ async fn live_skill_admission_is_durable_idempotent_and_blocks_conversation_inpu
 
 #[tokio::test]
 async fn installed_skill_version_change_is_reported_as_unsupported() {
-    let store = Arc::new(InMemorySandboxStore::default());
     let mut ready = test_agent(AgentStatus::Ready, None);
+    let mut selected = reference();
+    selected.version = None;
+    ready.profile.content.skills = vec![selected];
     ready.work.resolved_skills = Some(vec![ResolvedAgentSkill {
         source: SkillSource::Ornn,
         id: crate::SkillId::new("research"),
@@ -66,8 +68,8 @@ async fn installed_skill_version_change_is_reported_as_unsupported() {
         version: "1.0".into(),
         archive_sha256: "a".repeat(64),
     }]);
+    let store = Arc::new(InMemorySandboxStore::with_agent_fixture(ready.clone()));
     seed_active_parent(&store).await;
-    store.create_agent(ready.clone()).await.unwrap();
     let (sender, inputs) = recording_sender(Ok(()));
     let service = AgentOperationService::new(
         store.clone(),
