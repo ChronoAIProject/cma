@@ -1,6 +1,9 @@
 use layer2_core::{sandbox::agent_io::AgentCommand, AgentId};
 use serde_json::json;
 
+#[path = "startup_failure_tests.rs"]
+mod startup_failure_tests;
+
 #[test]
 fn conversation_only_forms_canonicalize_and_aliases_select_the_same_command() {
     for input in [
