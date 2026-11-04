@@ -215,3 +215,47 @@ async fn snapshot_recovery_refuses_an_interrupted_candidate_with_a_different_sou
         .exists());
     fixture.assert_original();
 }
+
+#[tokio::test]
+async fn snapshot_recovery_preserves_a_valid_pin_from_a_legacy_recovery_admission() {
+    let mut fixture = Fixture::new(WorkspaceSource::RepositorySnapshot {
+        url: "https://github.com/example/project".into(),
+        reference: Some("main".into()),
+    });
+    let paths = Paths::new(&fixture.config, &fixture.request);
+    std::fs::write(
+        paths.staged.join(".git/info/cma-source-commit"),
+        "a".repeat(40),
+    )
+    .unwrap();
+    assert_eq!(
+        execute(&fixture.config, &fixture.request)
+            .await
+            .unwrap_err()
+            .code,
+        "workspace_recovery_attempt_failed"
+    );
+    let admission = paths.evidence.join("original.json");
+    let mut legacy: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&admission).unwrap()).unwrap();
+    legacy.as_object_mut().unwrap().remove("source_commit");
+    let before = serde_json::to_vec(&legacy).unwrap();
+    std::fs::write(&admission, &before).unwrap();
+    let repository = Repository::serve(&mut fixture.config).await;
+    *repository.reference.lock().unwrap() = "b".repeat(40);
+    let retry = fixture.retry("recovery-second");
+    let receipt = execute(&fixture.config, &retry).await.unwrap();
+    assert_eq!(receipt.prepared.source_commit, Some("a".repeat(40)));
+    assert_eq!(std::fs::read(&admission).unwrap(), before);
+    assert_eq!(execute(&fixture.config, &retry).await.unwrap(), receipt);
+    std::fs::write(
+        paths.preserved.join(".git/info/cma-source-commit"),
+        "b".repeat(40),
+    )
+    .unwrap();
+    assert_eq!(
+        execute(&fixture.config, &retry).await.unwrap_err().code,
+        "workspace_recovery_ineligible"
+    );
+    fixture.assert_original();
+}
