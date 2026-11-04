@@ -80,6 +80,31 @@ starts a CLI Agent. Raw reasoning payloads and credentials are not retained.
 
 ## Tests and artifacts
 
+### Explicit real-model sample invocation
+
+The five-case external-model proof is compiled only with the test-only
+`real-model-suggestion-samples` Cargo feature and remains ignored. Default Mongo
+selection retains the deterministic suggestion HTTP/persistence/lifecycle tests.
+After explicit authorization for the real model and its cost, configure
+`CMA_SUGGESTION_SAMPLE_PROXY` with the authorized loopback proxy,
+`CMA_SUGGESTION_SAMPLE_MODEL` with the approved model,
+`CMA_SUGGESTION_SAMPLE_OUTPUT` with an evidence path outside the repository, and
+`CHRONO_TEST_MONGODB_URI` with an owned isolated replica set. From `api/`, run:
+
+```sh
+cargo +1.96.1 test -p cma --bin cma --locked \
+  --features real-model-suggestion-samples \
+  store::sandbox_mongo_integration_tests::command_ledger_tests::contextual_suggestions::samples::contextual_suggestions_real_samples_are_saved_and_read_through_the_public_route \
+  -- --ignored --exact --test-threads=1
+```
+
+Missing sample configuration still fails before database or model access. Enabling
+the feature alone does not run the proof; `--all-features` compilation/lint covers
+it. A successful run records real samples for review and does not supply human
+quality signoff.
+
+### Recorded delivery results
+
 All logs below live under `/Users/liuyitian/code/cma-ui-worktrees/` unless
 otherwise noted. Rust builds use private `cargo-target-ticket13` and
 `cargo-target-ticket13-sdk`, two jobs, and verified named nonzero test counts.
