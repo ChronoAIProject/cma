@@ -50,6 +50,7 @@ const requiredPrefixes = [
   'sandbox::agent_worker::prepared_open_ready::',
   'store::mongo_latency::tests::',
   'store::sandbox_mongo_integration_tests::agent_worker_tests::reconciliation_context_tests::',
+  'store::sandbox_mongo_integration_tests::agent_transaction_tests::capacity_tests::',
 ];
 
 function fixture(scenario) {

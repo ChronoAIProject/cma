@@ -7,6 +7,41 @@ The cleanup Agent has failed `CloseProcess` since October 19; the reconnect
 Agent repeatedly fails `PublishConnection` at approximately 18-minute intervals.
 No production changes are authorized by this document.
 
+## Observed production scope and cause
+
+Read-only VictoriaLogs investigation searched October 1 through November 4,
+16:15 UTC. That is the search window, not a claim of complete archive retention.
+Diagnostic downloads matched server-side aggregate counts. Each capacity error
+paired with a unique failed work attempt on the same pod within 20 ms.
+
+| Lifecycle step | Capacity failures | Agents / Sandboxes | Earliest retained error (UTC) | Public state at cutoff |
+|---|---:|---:|---|---|
+| `CloseProcess` | 1,271 | 1 / 1 | Oct 19 18:46:30.248 | `paused`, log head 10,000 |
+| `PublishConnection` | 5 | 1 / 1 | Nov 4 14:50:52.647 | `ready`, log head 10,000 |
+
+Of 1,276 observed failures, 1,159 explicitly carry the northeast1 production
+cluster label. The 117 earlier AM records lack that label and identify the same
+cleanup Agent. The two Sandbox bindings were established from complete runtime
+inspection diagnostic sets; no resource IDs or user content are retained here.
+Reconnect gaps were 1,078.081–1,080.753 seconds; the cleanup median was 1,080
+seconds. Both Agents' last public update matched their 10,000th log entry.
+
+`store/agent_log_integrity.rs` bounds complete, gap-free history validation.
+The limits are application safety budgets, already present in September, and
+are not a Mongo collection/document-count restriction. Bytes include complete
+BSON envelopes and records. No arithmetic or off-by-one accounting defect was
+found. The defects are stranded leases after deterministic rejection and
+reserves that excluded the preceding cleanup steps needed to reach a terminal
+publication. A failed close publication cannot establish whether the native
+close already happened; retain its original identity and reconcile its receipt.
+
+#1316 addresses repeated full-history validation during range reads. It does
+not replenish append capacity. #1311 can grow logs faster: it retains output
+bytes on tool updates and appends output-only events, bounded to 16 KiB per
+update. The October 19 incident predates that deployment. Redacted public event
+kinds prevent quantifying #1311's contribution to either affected Agent; no
+such attribution is inferred from the roughly 30-second tail cadence.
+
 ## Owner decision: can an exhausted Agent ever continue?
 
 **Under the current design, reaching 10,000 entries permanently exhausts an
@@ -38,6 +73,16 @@ the same Agent would require an explicit, tested recovery operation as well as
 additional append capacity; ambiguous prior input must never be replayed as
 new input. A new Agent is a separate owner decision, with a distinct identity
 and history; it is not a transparent continuation of the old Agent.
+
+Existing command reconciliation rejects still-queued input as
+`agent_unavailable`. A response already bound to native dispatch becomes
+`Failed` / `runtime_lost` under the existing terminal-Agent rule; its original
+receipt, dispatch binding and observed delivery remain intact, and the command
+is not sent again. Here `runtime_lost` is the existing response classification
+for a terminal Agent, not proof that its native process was physically removed
+or that its input was never executed. The Agent's named capacity failure gives
+the specific cause. Recovery must inspect the retained delivery facts and must
+not infer that resending the same text is safe from that response code.
 
 The owner chooses the long-term capacity policy. This PR does not implement any
 of the following options without an explicit go:
@@ -78,10 +123,11 @@ per-document and 64-entry per-batch checks remain independent.
    each transition and effect receipt before reserve selection. A completed
    close is never fabricated to work around capacity.
 5. Repeated cleanup failures must not consume terminal reserves indefinitely.
-   The integration stage will record bounded capacity evidence and retry state
-   without requiring an ever-growing identical failure history. Durable retry
-   timing and attempt accounting remain; successful cleanup still appends its
-   authoritative completion event. This must be proved with a transient
+   Record one fixed capacity marker per cleanup step, then update only retry
+   timing and attempt counts while that marker remains the history head. Both
+   stores verify the exact retained marker and proposed retry in the same
+   snapshot; an absent marker or duplicate marker is a conflict. Successful
+   cleanup still appends its authoritative completion event. Prove transient
    failure followed by success beyond the normal budget.
 6. Keep every retained entry and reader, including #1311 tool output. No new
    log segmentation, physical history removal or implicit replacement Agent.
@@ -93,6 +139,15 @@ budget. Reconnect success events and ordinary retry events must not borrow it.
 If physical capacity is exhausted or history is corrupt, do not overwrite old
 evidence or invent successful settlement; return a distinct actionable failure
 and retain the original recovery facts for operator repair.
+
+The capacity diagnostic reuses `WorkStepFailed` and the existing string-valued
+failure class; retry metadata uses the existing work record. There is no new
+serialized field, event variant, log segment or sequence reset. Metadata-only
+publication already exists for lifecycle intent and parent waiting. Unknown
+commit reconciliation must still verify the exact aggregate and full retained
+history, including when the new log batch is empty. Older writers can read this
+retry state but would reintroduce the original capacity loop. First-input
+failure settlement must use #1318's compatible reader contract after integration.
 
 ## Integration boundary
 
