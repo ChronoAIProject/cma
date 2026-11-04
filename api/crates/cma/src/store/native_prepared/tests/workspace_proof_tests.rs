@@ -23,6 +23,7 @@ fn proof(record: &Record) -> NativePreparedWorkspaceProof {
             name: prepare.name,
             path: "/home/cma/workspace".into(),
             resolved_commit: partial.workspaces[0].resolved_commit.clone().unwrap(),
+            source_commit: None,
         },
     )
     .unwrap();

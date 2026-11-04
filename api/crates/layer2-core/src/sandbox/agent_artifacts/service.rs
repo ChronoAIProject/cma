@@ -13,6 +13,36 @@ pub struct AgentArtifactService {
     access: Arc<ResourceAccessService>,
 }
 impl AgentArtifactService {
+    pub async fn metadata(
+        &self,
+        caller: &Caller,
+        context: Option<&CallerContext>,
+        credential: Option<&str>,
+        id: &AgentId,
+        artifact_id: &str,
+    ) -> Result<AgentArtifactMetadata, ResourceAccessError> {
+        tokio::time::timeout(ArtifactPublication::LIFETIME, async {
+            let authorized = self.authorize(caller, context, credential, id).await?;
+            if !valid_artifact_id(artifact_id) {
+                return Err(ResourceAccessStoreError::NotFound.into());
+            }
+            let binding = ArtifactBinding::from_snapshot(&authorized.snapshot)?;
+            let row = self
+                .store
+                .agent_artifact_metadata(&binding, artifact_id)
+                .await?
+                .ok_or(ResourceAccessStoreError::NotFound)?;
+            row.validate()?;
+            if row.binding != binding || row.metadata.id != artifact_id {
+                return Err(ResourceAccessStoreError::Corrupt.into());
+            }
+            self.finish(&authorized, id).await?;
+            Ok(row.metadata)
+        })
+        .await
+        .map_err(|_| ResourceAccessStoreError::Unavailable)?
+    }
+
     pub fn new(
         store: Arc<dyn AgentArtifactStore>,
         access: Arc<ResourceAccessService>,

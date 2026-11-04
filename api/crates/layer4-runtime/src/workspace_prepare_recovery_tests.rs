@@ -1,6 +1,9 @@
 use super::*;
 use layer3_adapter::{WorkspaceRequest, WorkspaceSource};
 
+#[path = "workspace_prepare_recovery_snapshot_tests.rs"]
+mod snapshot_tests;
+
 struct Fixture {
     root: PathBuf,
     config: RuntimeConfig,
@@ -222,4 +225,85 @@ async fn preserving_recovery_allows_transport_failure_without_runtime_admission(
     fixture.request.request_sha256 = fixture.request.computed_sha256();
     execute(&fixture.config, &fixture.request).await.unwrap();
     fixture.assert_original();
+}
+
+#[tokio::test]
+async fn snapshot_recovery_pins_source_commit_through_publication_and_terminal_replay() {
+    let fixture = Fixture::new(WorkspaceSource::RepositorySnapshot {
+        url: "https://github.com/example/project".into(),
+        reference: Some("main".into()),
+    });
+    let paths = Paths::new(&fixture.config, &fixture.request);
+    std::fs::write(
+        paths.staged.join(".git/info/cma-source-commit"),
+        "c".repeat(40),
+    )
+    .unwrap();
+    assert!(execute(&fixture.config, &fixture.request).await.is_err());
+    let terminal_path = paths.attempt(&fixture.request).join("terminal.json");
+    std::fs::remove_file(&terminal_path).unwrap();
+    let staged = WorkspaceRequest::new(
+        "local-snapshot-candidate",
+        "wks_recover",
+        "wks_recover",
+        WorkspaceSource::Init,
+    );
+    crate::workspace_source::prepare(&paths.candidate_root, true, &staged)
+        .await
+        .unwrap();
+    let source_commit = "c".repeat(40);
+    std::fs::write(
+        paths.candidate.join(".git/info/cma-source-commit"),
+        &source_commit,
+    )
+    .unwrap();
+    let receipt = execute(&fixture.config, &fixture.request).await.unwrap();
+    assert_eq!(
+        receipt.prepared.source_commit.as_deref(),
+        Some(source_commit.as_str())
+    );
+    let publication: Publication = read(&paths.attempt(&fixture.request).join("publication.json"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(publication.source_commit, receipt.prepared.source_commit);
+    std::fs::write(
+        paths.published.join(".git/info/cma-source-commit"),
+        "d".repeat(40),
+    )
+    .unwrap();
+    assert_eq!(
+        execute(&fixture.config, &fixture.request).await.unwrap(),
+        receipt
+    );
+    std::fs::remove_file(&terminal_path).unwrap();
+    assert!(execute(&fixture.config, &fixture.request).await.is_err());
+    std::fs::write(
+        paths.published.join(".git/info/cma-source-commit"),
+        source_commit,
+    )
+    .unwrap();
+    assert_eq!(
+        execute(&fixture.config, &fixture.request).await.unwrap(),
+        receipt
+    );
+    let mut changed = receipt.clone();
+    changed.prepared.source_commit = Some("d".repeat(40));
+    std::fs::write(
+        &terminal_path,
+        serde_json::to_vec(&Terminal::Completed { receipt: changed }).unwrap(),
+    )
+    .unwrap();
+    assert!(execute(&fixture.config, &fixture.request).await.is_err());
+    fixture.assert_original();
+}
+
+#[test]
+fn legacy_recovery_publication_keeps_its_original_shape() {
+    let legacy = serde_json::json!({
+        "directory": { "device": 1, "inode": 2 },
+        "resolved_commit": "a".repeat(40),
+    });
+    let publication: Publication = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(publication.source_commit, None);
+    assert_eq!(serde_json::to_value(publication).unwrap(), legacy);
 }

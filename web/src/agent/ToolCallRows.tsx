@@ -57,9 +57,15 @@ export function ToolCallRow({
   readonly activeRunId: string | undefined;
 }) {
   return (
-    <div className="tool-calls">
-      <ToolCallLine tool={tool} activeRunId={activeRunId} />
-    </div>
+    <ToolCallGroup
+      group={{
+        kind: 'tools',
+        id: `tools:${tool.id}`,
+        items: [tool],
+        failed: toolOutcome(tool, activeRunId) === 'failed',
+      }}
+      activeRunId={activeRunId}
+    />
   );
 }
 
@@ -70,9 +76,12 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   readonly group: ToolGroup;
   readonly activeRunId: string | undefined;
 }) {
-  // Until the reader chooses, a failure that joins the group opens it.
   const [chosen, setChosen] = useState<boolean>();
-  const open = chosen ?? group.failed;
+  const open =
+    chosen ??
+    (group.failed &&
+      activeRunId !== undefined &&
+      group.items.some((tool) => tool.runId === activeRunId));
   const rowsId = useId();
   // A settled group repeats no command line: only work still running or calls that
   // failed are worth a reader's glance before they choose to open it.
@@ -91,7 +100,9 @@ export const ToolCallGroup = memo(function ToolCallGroup({
         <span className="tool-calls__chevron" aria-hidden="true">
           {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
         </span>
-        <span className="tool-calls__count">{group.items.length} tool calls</span>
+        <span className="tool-calls__count">
+          {group.items.length} tool call{group.items.length === 1 ? '' : 's'}
+        </span>
         {/* Spaces between the parts keep the accessible name readable; flex drops them visually. */}
         {running === undefined ? null : (
           <>

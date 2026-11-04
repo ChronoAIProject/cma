@@ -21,6 +21,7 @@ const READ_CAPABILITY: ResourceCapability = ResourceCapability::ViewDetails;
 
 #[derive(Debug, Clone, Default)]
 pub struct AgentProvenanceInventoryQuery {
+    pub task_status: Option<super::AgentTaskStatus>,
     pub organization: Option<SubjectId>,
     /// Explicit shares to current organizations, excluding the caller's own resources.
     /// Mutually exclusive with `organization`.
@@ -34,6 +35,7 @@ pub struct AgentProvenanceInventoryQuery {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentProvenanceInventoryRow {
+    pub task_status: super::AgentTaskStatus,
     pub agent_id: AgentId,
     pub title: Option<String>,
     pub status: AgentStatus,
@@ -137,7 +139,8 @@ impl AgentProvenanceInventoryService {
         // A category filter may return a partial/empty page with continuation.
         // Its scan always advances and never accumulates an unbounded inventory.
         let scan = PageRequest::new(
-            if query.creation_origin.is_some()
+            if query.task_status.is_some()
+                || query.creation_origin.is_some()
                 || query.channel_active.is_some()
                 || query.channel_history.is_some()
             {
@@ -213,7 +216,9 @@ impl AgentProvenanceInventoryService {
         }
         let records = records?;
         let mut rows = Vec::with_capacity(records.len());
-        for ((record, channel_usage), snapshot) in records.into_iter().zip(current) {
+        for (((record, channel_usage), snapshot), original) in
+            records.into_iter().zip(current).zip(snapshots.iter())
+        {
             super::provenance_service::require_identity(&record, &snapshot)?;
             let agent = snapshot
                 .lineage
@@ -223,8 +228,23 @@ impl AgentProvenanceInventoryService {
                 return Err(ResourceAccessStoreError::Conflict.into());
             }
             rows.push(AgentProvenanceInventoryRow {
+                task_status: (if original
+                    .provenance
+                    .resource
+                    .lineage
+                    .agent
+                    .as_ref()
+                    .is_some_and(|previous| {
+                        previous.revision == agent.revision
+                            && previous.conversation.last_seq == agent.conversation.last_seq
+                    }) {
+                    original.task_status
+                } else {
+                    super::AgentTaskStatus::from_latest(&agent, None, None, false)
+                })
+                .in_sandbox(&snapshot.lineage.sandbox),
                 agent_id: record.agent_id,
-                title: agent.title,
+                title: navigation_title(&agent),
                 status: agent.status,
                 created_at: record.agent_created_at,
                 updated_at: agent.updated_at,
@@ -320,8 +340,11 @@ fn filtered_page(
         .into_iter()
         .filter(|row| {
             query
-                .creation_origin
-                .is_none_or(|category| row.creation_origin == category)
+                .task_status
+                .is_none_or(|status| row.task_status == status)
+                && query
+                    .creation_origin
+                    .is_none_or(|category| row.creation_origin == category)
                 && query
                     .channel_active
                     .is_none_or(|active| row.channel_usage.active == active)
@@ -342,6 +365,35 @@ fn filtered_page(
         items: matches,
         next,
     }
+}
+
+fn navigation_title(agent: &super::Agent) -> Option<String> {
+    let metadata = &agent.conversation.observations.metadata;
+    let setup_preview = metadata.description_source
+        == Some(super::AgentDescriptionSource::PromptPreview)
+        && metadata.description_is_setup_preview;
+    agent
+        .conversation
+        .preferences
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .or_else(|| {
+            (!setup_preview)
+                .then_some(metadata.description.as_deref())
+                .flatten()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+        })
+        .or_else(|| {
+            agent
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+        })
+        .map(str::to_owned)
 }
 
 fn store_error(error: SandboxStoreError) -> ResourceAccessError {

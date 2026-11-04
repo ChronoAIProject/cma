@@ -1,5 +1,7 @@
 use super::*;
 
+mod task_status;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn shared_provenance_inventory_merges_orgs_and_excludes_owner_before_paging() {
@@ -180,6 +182,7 @@ async fn shared_provenance_inventory_rejects_corrupt_lookahead_and_removed_grant
         )
         .await
         .unwrap();
+    task_status::assert_authoritative_status_and_ready_evidence(&store, &target).await;
     for (index, grant) in grants.into_iter().enumerate() {
         let grant_target = match &grant.selector {
             ResourceSelector::Agent { agent_id } => ResourceTarget::Agent {

@@ -29,6 +29,7 @@ mod cancellation_tests;
 mod cross_interface_tests;
 mod mongo_tests;
 mod runtime_tests;
+mod task_home_tests;
 mod terminal_failure_tests;
 mod v2_tests;
 
@@ -296,6 +297,7 @@ async fn projection_components<S: FixtureStore>(
         None => runtime_tests::SdkRegistry::new(harness.registry.clone(), harness.updates.clone()),
     };
     let services = AgentProjectionServices::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         harness.store.clone(),
         profiles.clone(),
         registry,

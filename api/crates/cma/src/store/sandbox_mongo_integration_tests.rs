@@ -593,6 +593,7 @@ mod sandbox_lifecycle_tests;
 mod sandbox_usage_tests;
 mod service_access_tests;
 mod skill_material_tests;
+mod task_title_tests;
 mod transaction_reconciliation_tests;
 mod warm_hierarchy_tests;
 #[tokio::test]

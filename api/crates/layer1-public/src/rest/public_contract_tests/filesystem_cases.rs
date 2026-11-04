@@ -14,19 +14,173 @@ use layer2_core::{
 };
 use std::sync::Arc;
 
-#[path = "filesystem_runtime.rs"]
-mod runtime;
+use super::filesystem_runtime as runtime;
+
+#[cfg(test)]
+#[path = "native_deliverables.rs"]
+mod native_deliverables;
+#[path = "filesystem_scope_tests.rs"]
+mod scope_tests;
+
+#[path = "browser_cases.rs"]
+mod browser_cases;
+#[path = "browser_control_cases.rs"]
+mod browser_control_cases;
+#[path = "native_browser_chain.rs"]
+mod native_browser_chain;
+
+#[tokio::test]
+async fn browser_public_contract_requires_explicit_owner_enablement_and_current_incarnation() {
+    use crate::rest::agents_tests::request;
+    use axum::{
+        body::to_bytes,
+        http::{Method, StatusCode},
+    };
+    use tower::ServiceExt as _;
+    let fixture = scenario("filesystem_owner").await.unwrap();
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/v1/agents/agt_shared_read/environment",
+            "owner-a",
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    let environment: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+    let incarnation = environment["runtime_incarnation"].as_str().unwrap();
+    let path = format!("/api/v1/agents/agt_shared_read/browser?runtime_incarnation={incarnation}&observer=browser-proof");
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request(Method::GET, &path, "owner-a", None, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let observed: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 400000).await.unwrap()).unwrap();
+    assert_eq!(observed["state"], "unsupported");
+    assert!(observed["frame"].is_null());
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/v1/agents/agt_shared_read/browser?runtime_incarnation=old&observer=browser-proof",
+            "owner-a",
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let foreign = scenario("filesystem_foreign").await.unwrap();
+    let response = foreign
+        .router
+        .oneshot(request(Method::GET, &path, "foreign", None, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let viewer = scenario("filesystem_viewer").await.unwrap();
+    let response = viewer
+        .router
+        .oneshot(request(
+            Method::PUT,
+            "/api/v1/agents/agt_shared_read/browser",
+            "link-recipient",
+            None,
+            Some(serde_json::json!({"runtime_incarnation":incarnation,"enabled":true})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn computer_environment_public_route_preserves_file_scope_and_denies_foreign_readers() {
+    use crate::rest::agents_tests::request;
+    use axum::{
+        body::to_bytes,
+        http::{Method, StatusCode},
+    };
+    use tower::ServiceExt;
+    for (name, writable) in [("filesystem_owner", true), ("filesystem_viewer", false)] {
+        let fixture = scenario(name).await.unwrap();
+        let response = fixture
+            .router
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/agents/agt_shared_read/environment",
+                fixture.subject.unwrap(),
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+        assert_eq!(body["agent_id"], "agt_shared_read");
+        assert_eq!(body["files"]["scope"], "mounted_home");
+        assert_eq!(body["files"]["writable"], writable);
+        assert_eq!(body["operation_output"]["scope"], "agent_turn_history");
+        assert_eq!(body["browser"]["state"], "unsupported");
+        assert!(!body.to_string().contains("runtime_address"));
+    }
+    let fixture = scenario("filesystem_foreign").await.unwrap();
+    let response = fixture
+        .router
+        .oneshot(request(
+            Method::GET,
+            "/api/v1/agents/agt_shared_read/environment",
+            "foreign",
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if name.starts_with("browser_control_") {
+        return browser_control_cases::scenario(name).await;
+    }
+    if name.starts_with("browser_") {
+        return browser_cases::scenario(name).await;
+    }
+    let kind = name.strip_prefix("filesystem_")?;
+    scenario_with_runtime(name, Arc::new(runtime::Files::new(kind))).await
+}
+
+async fn scenario_with_runtime(
+    name: &str,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Option<Scenario> {
+    scenario_with_runtime_boot(name, adapter, &"b".repeat(32)).await
+}
+
+async fn scenario_with_runtime_boot(
+    name: &str,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+    boot: &str,
+) -> Option<Scenario> {
     let kind = name.strip_prefix("filesystem_")?;
     assert!([
         "owner",
+        "policy_off",
         "viewer",
         "writer",
         "revoked",
         "foreign",
         "anonymous",
         "not_ready",
+        "paused",
         "unsupported",
         "runtime_unsupported",
         "runtime_conflict",
@@ -58,7 +212,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         .unwrap()
         .unwrap();
     let revision = sandbox.revision;
-    sandbox.runtime.as_mut().unwrap().boot_id = Some("b".repeat(32));
+    sandbox.runtime.as_mut().unwrap().boot_id = Some(boot.into());
     if matches!(kind, "not_ready" | "unsupported") {
         sandbox.runtime.as_mut().unwrap().boot_id = None;
     }
@@ -66,6 +220,9 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         sandbox.lifecycle.home = Some(Box::new(runtime::persistent_home()));
     }
     sandbox.revision += 1;
+    if kind == "paused" {
+        sandbox.status = layer2_core::sandbox::SandboxStatus::Paused;
+    }
     fixture.store.save_sandbox(revision, sandbox).await.unwrap();
     let subject = if matches!(kind, "viewer" | "writer" | "revoked") {
         "link-recipient"
@@ -123,7 +280,15 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         }
     }
     let caller = context(subject);
-    let service = AgentFileService::new(access, Arc::new(runtime::Files::new(kind)));
+    let service = AgentFileService::new(access, adapter).with_task_experience(Arc::new(
+        if kind == "policy_off" {
+            Default::default()
+        } else {
+            serde_json::from_value(serde_json::json!({"mode":"all","accounts":[],
+                "capabilities":["desktop_enable","browser_takeover"]}))
+            .unwrap()
+        },
+    ));
     let mut router = super::super::agent_filesystem_router(service);
     if kind != "anonymous" {
         router = router.layer(Extension(caller.clone())).layer(Extension(

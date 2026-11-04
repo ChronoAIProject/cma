@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+mod contextual_suggestions;
 mod conversation_fixtures;
 mod creation_delegation;
 mod lifecycle;
@@ -11,8 +12,11 @@ mod models;
 mod settings;
 mod shared_settings;
 mod skills;
+mod task_titles;
 pub(super) mod worktree_recovery;
-pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
+pub(crate) use conversation_fixtures::{
+    authorized_conversation_fixture, conversation_fixture, conversation_fixture_with_registry,
+};
 
 use async_trait::async_trait;
 use axum::{
@@ -231,16 +235,22 @@ impl SandboxResourceReader for TestResources {
     }
 }
 
-pub(super) struct Fixture {
+pub(crate) struct Fixture {
     pub(super) state: AgentRoutesState,
     pub(super) router: Router,
-    pub(super) store: Arc<InMemorySandboxStore>,
+    pub(crate) store: Arc<InMemorySandboxStore>,
     sandbox_id: SandboxId,
     workspace_id: WorkspaceId,
 }
 
-pub(super) async fn fixture() -> Fixture {
+pub(crate) async fn fixture() -> Fixture {
     fixture_with_registry(TestRegistry::new()).await
+}
+
+impl Fixture {
+    pub(crate) fn reads(&self) -> Arc<AgentReadService> {
+        self.state.reads.clone()
+    }
 }
 
 pub(super) async fn fixture_with_registry<R: AgentRuntimeRegistry + 'static>(
@@ -288,7 +298,13 @@ async fn fixture_with_ports<R: AgentRuntimeRegistry + 'static>(
     let agent_operations = AgentOperationService::new(store.clone(), registry.clone());
     let operation_records: Arc<dyn OperationStore> =
         operations.unwrap_or_else(|| Arc::new(MemoryOperationStore::default()));
-    let state = AgentRoutesState::new(agents, reads, agent_operations, operation_records);
+    let state = AgentRoutesState::new(
+        crate::agent_page::AgentPageOrigin::test(),
+        agents,
+        reads,
+        agent_operations,
+        operation_records,
+    );
     let router = agent_router(state.clone());
     Fixture {
         state,
@@ -801,6 +817,10 @@ async fn detail_and_read_refusals_use_the_frozen_capability_grants() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        detail["callback_url"],
+        "https://cma.example/agents/agt_grants"
+    );
     assert_eq!(
         detail["conforms_to"],
         json!([

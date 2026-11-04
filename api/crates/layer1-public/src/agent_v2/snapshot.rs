@@ -43,6 +43,7 @@ pub(super) async fn read(
         AgentId(id),
         raw,
         projection::message_bindings(&headers),
+        projection::tool_output(&headers),
     )
     .await
     {
@@ -63,6 +64,7 @@ async fn page(
     id: AgentId,
     raw: Option<String>,
     message_bindings: bool,
+    tool_output: bool,
 ) -> Result<EventPage, Error> {
     let (limit, page_cursor) = parse::snapshot(raw)?;
     let authorization = authorize(state, auth, &id).await?;
@@ -81,7 +83,7 @@ async fn page(
         message_bindings,
     )
     .await?;
-    let items = projection::items(&window, &identity)?;
+    let items = projection::items(&window, &identity, tool_output)?;
     let delivered = items.last().map_or(after, |item| item.sequence);
     let page = EventPage {
         object: "cma.agent.event_page",

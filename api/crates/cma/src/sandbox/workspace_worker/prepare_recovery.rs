@@ -72,6 +72,11 @@ impl WorkspaceWorker {
             .await
         {
             Ok(receipt) if valid_receipt(&request, &receipt, &workspace.path) => {
+                if let WorkspaceSource::RepositorySnapshot { source_commit, .. } =
+                    &mut workspace.source
+                {
+                    source_commit.clone_from(&receipt.prepared.source_commit);
+                }
                 workspace
                     .record_resolved_commit(receipt.prepared.resolved_commit.clone())
                     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -88,6 +93,7 @@ impl WorkspaceWorker {
                     preserved_path: receipt.preserved_path,
                     original_journal_sha256: receipt.original_journal_sha256,
                 });
+                workspace.validate_prepare_recovery_binding()?;
                 self.advance(workspace, WorkspaceWorkStep::Setup, now).await
             }
             Ok(_) => {
@@ -110,18 +116,15 @@ fn valid_receipt(
     receipt: &WorkspacePrepareRecoveryReceipt,
     path: &str,
 ) -> bool {
-    let prepared = &receipt.prepared;
-    prepared.operation_id == request.operation_id
-        && prepared.request_sha256 == request.request_sha256
-        && prepared.workspace_id == request.original.workspace_id
-        && prepared.name == request.original.name
-        && prepared.path == path
+    let mut prepared_request = request.original.clone();
+    prepared_request
+        .operation_id
+        .clone_from(&request.operation_id);
+    prepared_request
+        .request_sha256
+        .clone_from(&request.request_sha256);
+    valid_prepare_receipt(&prepared_request, &receipt.prepared, path)
         && receipt.preserved_path == request.preserved_path()
-        && matches!(prepared.resolved_commit.len(), 40 | 64)
-        && prepared
-            .resolved_commit
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit())
         && receipt.original_journal_sha256.len() == 64
         && receipt
             .original_journal_sha256
@@ -149,6 +152,7 @@ mod tests {
                 name: request.original.name.clone(),
                 path: "/home/cma/project".into(),
                 resolved_commit: "a".repeat(40),
+                source_commit: None,
             },
             preserved_path: request.preserved_path(),
             original_journal_sha256: "b".repeat(64),
@@ -167,6 +171,58 @@ mod tests {
             let mut changed = receipt.clone();
             mutation(&mut changed);
             assert!(!valid_receipt(&request, &changed, "/home/cma/project"));
+        }
+    }
+
+    #[test]
+    fn snapshot_recovery_requires_a_source_commit_and_other_sources_refuse_one() {
+        for source in [
+            RuntimeWorkspaceSource::Init,
+            RuntimeWorkspaceSource::Clone {
+                url: "https://github.com/example/project".into(),
+                reference: None,
+            },
+            RuntimeWorkspaceSource::RepositorySnapshot {
+                url: "https://github.com/example/project".into(),
+                reference: None,
+            },
+        ] {
+            let snapshot = matches!(source, RuntimeWorkspaceSource::RepositorySnapshot { .. });
+            let original = WorkspaceRequest::new(
+                "workspace:wks_test:prepare:v1",
+                "wks_test",
+                "project",
+                source,
+            );
+            let request = WorkspacePrepareRecoveryRequest::new("first", original, None);
+            let mut receipt = WorkspacePrepareRecoveryReceipt {
+                prepared: layer3_adapter::WorkspaceReceipt {
+                    operation_id: request.operation_id.clone(),
+                    request_sha256: request.request_sha256.clone(),
+                    workspace_id: request.original.workspace_id.clone(),
+                    name: request.original.name.clone(),
+                    path: "/home/cma/project".into(),
+                    resolved_commit: "a".repeat(40),
+                    source_commit: None,
+                },
+                preserved_path: request.preserved_path(),
+                original_journal_sha256: "b".repeat(64),
+            };
+            assert_eq!(
+                valid_receipt(&request, &receipt, "/home/cma/project"),
+                !snapshot
+            );
+            for commit in [String::new(), "x".repeat(40), "a".repeat(39)] {
+                receipt.prepared.source_commit = Some(commit);
+                assert!(!valid_receipt(&request, &receipt, "/home/cma/project"));
+            }
+            for length in [40, 64] {
+                receipt.prepared.source_commit = Some("c".repeat(length));
+                assert_eq!(
+                    valid_receipt(&request, &receipt, "/home/cma/project"),
+                    snapshot
+                );
+            }
         }
     }
 }

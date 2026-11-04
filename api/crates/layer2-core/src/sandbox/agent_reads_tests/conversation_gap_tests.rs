@@ -55,6 +55,101 @@ fn answer(content: &str) -> AgentLogKind {
 }
 
 #[tokio::test]
+async fn task_navigation_preserves_current_turn_gap_evidence_and_resets_at_the_next_turn() {
+    use crate::resource_access::ResourceOwner;
+    use crate::sandbox::store::AgentProvenanceInventoryStore;
+    for later_turn in [false, true] {
+        let mut kinds = vec![
+            opened(),
+            start(3),
+            owner(),
+            AgentLogKind::ConversationGap { frames: 1 },
+            answer("Incomplete answer"),
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        ];
+        if later_turn {
+            kinds.extend([
+                start(8),
+                owner(),
+                answer("Complete answer"),
+                AgentLogKind::TurnCompleted { turn_sequence: 8 },
+            ]);
+        }
+        let (store, current) = gap_history(kinds, None).await;
+        let hierarchy = store
+            .read_workspace_hierarchy(&current.workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            hierarchy.task_statuses.get(&current.id),
+            Some(&if later_turn {
+                AgentTaskStatus::Completed
+            } else {
+                AgentTaskStatus::Failed
+            }),
+        );
+        let inventory = store
+            .scan_agent_provenance_inventory(
+                &ResourceOwner::Person {
+                    subject: current.owner.clone(),
+                },
+                &AgentListQuery::default(),
+                &PageRequest::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(
+            inventory[0].task_status,
+            if later_turn {
+                AgentTaskStatus::Completed
+            } else {
+                AgentTaskStatus::Failed
+            },
+        );
+    }
+}
+
+#[tokio::test]
+async fn selected_final_answer_rejects_current_turn_gaps_before_and_after_the_message() {
+    for gap_after_answer in [false, true] {
+        let mut kinds = vec![opened(), start(3), owner()];
+        let gap = AgentLogKind::ConversationGap { frames: 1 };
+        if !gap_after_answer {
+            kinds.push(gap.clone());
+        }
+        kinds.push(answer("Incomplete answer"));
+        if gap_after_answer {
+            kinds.push(gap);
+        }
+        kinds.extend([
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+            start(8),
+            owner(),
+            answer("Later complete answer"),
+            AgentLogKind::TurnCompleted { turn_sequence: 8 },
+        ]);
+        let (store, current) = gap_history(kinds, None).await;
+        let reads = service(store);
+        let caller = caller("owner", true);
+        let sequence = if gap_after_answer { 5 } else { 6 };
+        assert!(matches!(
+            reads
+                .final_answer(&caller, None, None, &current.id, sequence)
+                .await,
+            Err(AgentReadError::NotFound)
+        ));
+        let later = reads
+            .final_answer(&caller, None, None, &current.id, 10)
+            .await
+            .unwrap();
+        assert_eq!(later.turn_sequence, 8);
+        assert_eq!(later.message.content, "Later complete answer");
+    }
+}
+
+#[tokio::test]
 async fn declared_gap_preserves_history_and_marks_only_affected_completion_incomplete() {
     let kinds = vec![
         opened(),
