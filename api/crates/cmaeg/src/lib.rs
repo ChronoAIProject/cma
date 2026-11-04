@@ -85,12 +85,7 @@ pub use openapi::ApiDoc;
 /// Build the stateless HTTP router.
 pub fn router() -> Router {
     telemetry::http::instrument(
-        Router::new()
-            .route("/healthz", get(healthz))
-            .route(
-                "/readyz",
-                get(http::readiness::readyz).with_state(http::readiness::Readiness::default()),
-            )
+        probe_router(http::readiness::Readiness::default())
             .route("/openapi.json", get(openapi))
             .merge(http::docs::router())
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
@@ -112,11 +107,7 @@ pub fn router_with_state(state: http::ManagementState) -> Router {
     ))]);
     telemetry::http::instrument(
         http::management::management_router(state)
-            .route("/healthz", get(healthz))
-            .route(
-                "/readyz",
-                get(http::readiness::readyz).with_state(readiness),
-            )
+            .merge(probe_router(readiness))
             .route(
                 "/openapi.json",
                 get(move || {
@@ -131,6 +122,17 @@ pub fn router_with_state(state: http::ManagementState) -> Router {
     )
     // Outermost backstop: a panic in any middleware is answered too.
     .layer(CatchPanicLayer::custom(http::problems::panic_response))
+}
+
+fn probe_router(readiness: http::readiness::Readiness) -> Router {
+    // NyxID's /event-gateway/v1 base is rewritten to /v1 by the HTTPRoute.
+    // Keep exact public aliases alongside the root infrastructure probes.
+    let readyz = get(http::readiness::readyz).with_state(readiness);
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/v1/healthz", get(healthz))
+        .route("/readyz", readyz.clone())
+        .route("/v1/readyz", readyz)
 }
 
 async fn healthz() -> Json<StatusResponse> {
