@@ -1,6 +1,15 @@
 import { ProtocolError } from '../errors.js';
 import { profileReference } from '../profiles/types.js';
-import { boolean, integer, object, optional, record, text, type Output } from '../schema.js';
+import {
+  boolean,
+  integer,
+  nullable,
+  object,
+  optional,
+  record,
+  text,
+  type Output,
+} from '../schema.js';
 
 const u32 = (value: unknown) => {
   const number = integer(value);
@@ -22,7 +31,7 @@ const sections = {
   inactivity: object({
     auto_pause_enabled: optional(boolean),
     pause_after_seconds: pauseSeconds,
-    grace_started_at: optional(text),
+    grace_started_at: optional(nullable(text)),
   }),
   retention: object({ agent_log_days: u32 }),
   limits: object({

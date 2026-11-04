@@ -47,7 +47,36 @@ pub struct Sandboxes<'a> {
     client: &'a Client,
 }
 
+/// Owner or operator automatic-pause whitelist update.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AlwaysOnRequest {
+    /// Whether this Sandbox should remain running while idle.
+    pub always_on: bool,
+    /// Exact Sandbox revision being changed.
+    pub expected_revision: u64,
+}
+
 impl Sandboxes<'_> {
+    /// Set the owner's explicit automatic-pause whitelist preference.
+    pub async fn set_always_on(
+        &self,
+        id: &str,
+        body: &AlwaysOnRequest,
+        key: &IdempotencyKey,
+    ) -> Result<Sandbox> {
+        let value: Sandbox = self
+            .client
+            .command(
+                Method::POST,
+                &["sandboxes", id, "always-on"],
+                Some(body),
+                key,
+                StatusCode::OK,
+            )
+            .await?;
+        identity(&value.id, id)?;
+        Ok(value)
+    }
     /// List personally owned Sandboxes or current organization-visible metadata.
     pub async fn list_accessible(
         &self,
