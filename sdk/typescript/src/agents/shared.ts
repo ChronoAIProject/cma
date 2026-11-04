@@ -2,6 +2,7 @@ import { ProtocolError } from '../errors.js';
 import { agentStatus } from '../instances/types.js';
 import {
   enumeration,
+  nullable,
   object,
   optional,
   record,
@@ -21,6 +22,7 @@ import {
 
 /** Safe detail for a reader whose authority does not include personal ownership. */
 export const sharedAgent = object({
+  callback_url: optional(nullable(text)),
   access: enumeration('shared'),
   id: text,
   status: agentStatus,

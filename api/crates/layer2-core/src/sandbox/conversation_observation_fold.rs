@@ -22,7 +22,11 @@ pub(super) fn metadata(
         .description
         .filter(|d| !d.trim().is_empty() && d.len() <= 4096 && !d.chars().any(char::is_control))
     {
-        if metadata.description_source != Some(super::AgentDescriptionSource::ProviderTitle)
+        let has_task_title = metadata.description_source
+            == Some(super::AgentDescriptionSource::ProviderTitle)
+            || (metadata.description_source == Some(super::AgentDescriptionSource::PromptPreview)
+                && !metadata.description_is_setup_preview);
+        if !has_task_title
             || observation.description_source == Some(super::AgentDescriptionSource::ProviderTitle)
         {
             let retained_setup = observation.description_input.is_none()

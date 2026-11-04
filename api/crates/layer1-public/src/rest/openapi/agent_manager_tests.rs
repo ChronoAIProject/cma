@@ -1,4 +1,27 @@
 use super::*;
+
+#[test]
+fn message_feedback_reason_schema_is_in_focused_agent_manager_contract() {
+    let contract = document();
+    assert!(
+        contract["paths"]["/api/v1/agents/{id}/messages/{message_id}/feedback"]["get"].is_object()
+    );
+    assert!(
+        contract["paths"]["/api/v1/agents/{id}/messages/{message_id}/feedback/reasons"]["put"]
+            .is_object()
+    );
+    assert_eq!(
+        contract["components"]["schemas"]["FeedbackReasonView"]["enum"],
+        json!([
+            "inaccurate",
+            "unanswered",
+            "unusable_steps",
+            "incomplete",
+            "unclear",
+            "other"
+        ])
+    );
+}
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
@@ -10,6 +33,32 @@ mod routes;
 
 fn full() -> Value {
     serde_json::to_value(super::super::document()).unwrap()
+}
+
+#[test]
+fn focused_contract_exposes_answer_bound_deliverables_without_implicit_publication() {
+    let contract = document();
+    for (path, method) in [
+        ("/api/v1/agents/{id}/deliverable-references", "post"),
+        (
+            "/api/v1/agents/{id}/answers/{answer_id}/deliverables",
+            "get",
+        ),
+        (
+            "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+            "get",
+        ),
+        (
+            "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+            "get",
+        ),
+    ] {
+        assert!(
+            contract["paths"][path][method].is_object(),
+            "missing {method} {path}"
+        );
+    }
+    assert!(contract["paths"]["/api/v1/agents/{id}/artifacts"]["post"].is_null());
 }
 
 #[test]
@@ -32,8 +81,8 @@ fn focused_contract_preserves_existing_operations_and_identities() {
             operation_count += 1;
         }
     }
-    assert_eq!(focused["paths"].as_object().unwrap().len(), 69);
-    assert_eq!(operation_count, 83);
+    assert_eq!(focused["paths"].as_object().unwrap().len(), 76);
+    assert_eq!(operation_count, 91);
     assert_eq!(focused["servers"][0]["url"], "/");
     assert_eq!(focused["info"]["title"], "CMA Agent Manager API");
     assert!(focused["info"]["description"]
@@ -113,6 +162,38 @@ fn focused_contract_has_one_creation_and_interaction_model() {
     }
     assert!(full["paths"].get("/api/v1/agent-profiles").is_some());
     assert!(full["paths"].get("/api/v1/responses").is_some());
+}
+
+#[test]
+fn public_contract_preserves_optional_task_and_desktop_creation_contracts() {
+    for contract in [full(), document()] {
+        assert_eq!(contract["x-cma-task-repository"], json!(true));
+        let schema = &contract["components"]["schemas"]["AgentLifecycleCreateRequest"];
+        for (field, expected_type) in [
+            ("initial_message", "string"),
+            ("desktop", "boolean"),
+            ("machine_included", "boolean"),
+        ] {
+            let kind = &schema["properties"][field]["type"];
+            assert!(
+                kind == expected_type
+                    || kind
+                        .as_array()
+                        .is_some_and(|types| types.contains(&json!(expected_type))),
+                "{field}: {schema}"
+            );
+            assert!(!schema["required"]
+                .as_array()
+                .is_some_and(|fields| fields.contains(&json!(field))));
+        }
+        let response = &contract["components"]["schemas"]["CreateV2ResponseRequest"];
+        for field in ["answer_context", "binding_generation"] {
+            assert!(
+                response["properties"].get(field).is_some(),
+                "{field}: {response}"
+            );
+        }
+    }
 }
 
 fn assert_references_resolve(value: &Value, document: &Value) {
@@ -207,7 +288,7 @@ fn pruning_removes_all_unreachable_components_and_tags_without_dangling_referenc
         "projection must materially shrink the full contract"
     );
     println!(
-        "Agent Manager contract: paths={}, operations=45, schemas={}, bytes={focused_bytes}; full paths={}, schemas={}, bytes={full_bytes}",
+        "Agent Manager contract: paths={}, schemas={}, bytes={focused_bytes}; full paths={}, schemas={}, bytes={full_bytes}",
         focused["paths"].as_object().unwrap().len(),
         focused["components"]["schemas"].as_object().unwrap().len(),
         full["paths"].as_object().unwrap().len(),

@@ -23,6 +23,7 @@ mod bot_setup_cases;
 mod channel_usage_cases;
 mod creation_inventory_cases;
 mod credential_cases;
+mod deliverable_cases;
 mod desktop_cases;
 mod document_cases;
 mod domains;
@@ -30,6 +31,7 @@ mod event_worker_cases;
 mod experience_cases;
 mod fault_cases;
 mod filesystem_cases;
+mod filesystem_runtime;
 mod gateway_cases;
 mod gateway_interaction_cases;
 mod inventory;
@@ -54,7 +56,9 @@ mod shared_source_cases;
 mod shared_stream_cases;
 mod source_cases;
 mod state_cases;
+mod suggestion_cases;
 mod symbols;
+mod task_experience_cases;
 mod trigger_cases;
 mod usage_cases;
 mod warm_pool_cases;
@@ -157,6 +161,12 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = task_experience_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = Box::pin(deliverable_cases::scenario(name)).await {
+        return scenario;
+    }
     if let Some(scenario) = usage_cases::scenario(name) {
         return scenario;
     }
@@ -182,6 +192,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = message_feedback_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = suggestion_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = runtime_update_cases::scenario(name).await {

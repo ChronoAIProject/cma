@@ -95,3 +95,20 @@ Select default capacity only when both digests are present and equal;
 matching only image and resources can select a retained older policy.
 Use a new idempotency key to create a target after policy changes. Replaying an
 old key and resizing an old target preserve that target's original policy.
+
+## Task experience policy
+
+`await client.taskExperience.read()` dispatches authenticated
+`GET /api/v2/ui/task-experience` on every call. Its version1 result contains only
+the caller's `account_id` and boolean `capabilities`: `task_home_admission`,
+`suggested_followup_admission`, `desktop_enable`, `browser_takeover`, and
+`replay_presentation`. Responses are private/no-store; malformed/unknown schemas
+raise `ProtocolError`. Compare the caller id to the current viewer and refresh
+after identity/focus changes. Unavailable/older services keep ordinary manual
+conversation usable and do not authorize new task features.
+
+These are policy permissions, separate from environment support and fresh resource
+authority. Closing new admission preserves exact accepted operations and request
+keys. Browser status/receipt recovery and explicit return remain available while
+new acquire/input/renew is disabled; do not hide a held browser or assume release.
+Replay eligibility affects presentation, not retained authorized history reads.

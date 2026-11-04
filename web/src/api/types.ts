@@ -150,6 +150,12 @@ export interface SandboxDetail extends SandboxSummary {
 }
 
 export type WorkspaceSource =
+  | {
+      readonly type: 'repository_snapshot';
+      readonly url: string;
+      readonly reference?: string;
+      readonly source_commit?: string;
+    }
   | { readonly type: 'git_repository'; readonly url: string; readonly reference?: string }
   | { readonly type: 'empty' };
 
@@ -173,6 +179,7 @@ export interface AgentRuntimeMetadata {
   readonly descriptionIsSetupPreview?: boolean;
 }
 export interface AgentSummary {
+  readonly taskStatus?: import('@chronoai/cma-sdk').AgentTaskStatus;
   readonly ownerTitle?: string;
   readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly id: string;
@@ -247,6 +254,7 @@ export interface AgentDetail {
     readonly status: WorkspaceStatus;
     readonly profile: ProfileReference;
     readonly resolvedCommit?: string;
+    readonly source?: WorkspaceSource;
   };
   readonly sandbox: {
     readonly id: string;
@@ -328,6 +336,7 @@ export interface AgentLiveEvent {
 }
 
 export interface AgentRunRequest {
+  readonly forwardedProps?: { readonly answerContext: import('@chronoai/cma-sdk').AnswerContext };
   readonly threadId: string;
   readonly runId: string;
   readonly messages?: readonly {

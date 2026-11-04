@@ -63,12 +63,13 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("binding_management_")?;
     let (router, store) = management::app();
     if ["ready", "pending", "conversation"].contains(&mode) {
+        let body = management::body();
         let response = router
             .clone()
             .oneshot(management::request(
                 "PUT",
                 "/api/v1/cmaeg/bindings/binding-contract",
-                Some(management::body()),
+                Some(body),
                 Some(management::authority()),
             ))
             .await

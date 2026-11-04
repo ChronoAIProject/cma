@@ -79,6 +79,16 @@ async fn publishes_large_private_document_replays_and_updates_with_cas() {
     let document = first["result"]["structuredContent"]["document"].clone();
     assert_eq!(document["owner_subject"], "owner");
     assert_eq!(document["access"], "owner");
+    let delivery = &first["result"]["structuredContent"]["deliverable"];
+    assert_eq!(
+        delivery["reference"]["resource"],
+        json!({"kind":"document","id":document["id"],"revision":1})
+    );
+    assert_eq!(delivery["reference"]["sha256"], document["sha256"]);
+    assert!(delivery["marker"]
+        .as_str()
+        .unwrap()
+        .starts_with("<!--cma-deliverable:v1:"));
     assert_eq!(
         first["result"]["structuredContent"]["url"],
         format!(

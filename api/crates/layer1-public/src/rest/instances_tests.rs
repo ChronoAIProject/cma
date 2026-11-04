@@ -881,6 +881,54 @@ async fn sandbox_create_enforces_auth_key_trust_limit_and_exact_replay() {
 }
 
 #[tokio::test]
+async fn task_navigation_workspace_list_reports_completion_without_reading_conversations() {
+    use layer2_core::sandbox::{store::AgentLogStore, AgentLogKind};
+    let fixture = fixture(10);
+    let sandbox = stored_sandbox("sbx_tasks", "owner", SandboxStatus::Active, 4);
+    let workspace = stored_workspace(&sandbox, "wks_tasks");
+    let tree = stored_worktree(&workspace, "wkt_tasks", "agt_tasks");
+    let mut agent = stored_agent(&workspace, &tree, "agt_tasks");
+    agent.status = AgentStatus::Ready;
+    agent.work = AgentWorkState::new(AgentWorkStep::None, NOW.into());
+    agent.conversation.conversation_id = Some("tasks-conversation".into());
+    agent.conversation.runtime_generation = Some(1);
+    agent.conversation.last_seq = 3;
+    insert_hierarchy(
+        &fixture.store,
+        &sandbox,
+        Some(&workspace),
+        Some(&tree),
+        Some(&agent),
+    )
+    .await;
+    for kind in [
+        AgentLogKind::Created {
+            workspace_id: workspace.id.clone(),
+            worktree_id: tree.id.clone(),
+        },
+        AgentLogKind::TurnStarted {
+            turn_sequence: 2,
+            model: None,
+            origin_key: None,
+        },
+        AgentLogKind::TurnCompleted { turn_sequence: 2 },
+    ] {
+        fixture
+            .store
+            .append_agent_log(&agent.id, NOW.into(), kind)
+            .await
+            .unwrap();
+    }
+    let (status, body) = json_response(
+        &fixture.router,
+        authenticated(Method::GET, "/api/v1/workspaces/wks_tasks", None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agents"][0]["task_status"], "completed");
+}
+
+#[tokio::test]
 async fn hierarchy_reads_filter_page_count_and_replay_events() {
     let fixture = fixture(10);
     let first = stored_sandbox("sbx_1", "owner", SandboxStatus::Active, 4);

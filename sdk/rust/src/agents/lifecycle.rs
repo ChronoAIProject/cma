@@ -18,6 +18,12 @@ fn is_false(value: &bool) -> bool {
 pub struct AgentLifecycleCreateRequest {
     /// Agent display name.
     pub name: String,
+    /// Exact initial task, up to 262144 UTF-8 bytes; omission retains setup behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_message: Option<String>,
+    /// Prepare the Agent browser before its first task; omission preserves existing behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop: Option<bool>,
     /// Provision an immutable Linux desktop runtime shared by the owner and Agent.
     #[serde(default, skip_serializing_if = "is_false")]
     pub machine_included: bool,
@@ -176,6 +182,9 @@ pub struct AgentLifecycleEvent {
 /// Owner-visible durable provisioning progress.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentLifecycleOperation {
+    /// Browser page for the actual CMA Agent, when available.
+    #[serde(default)]
+    pub callback_url: Option<String>,
     /// Durable operation identity.
     pub id: String,
     /// Global provisioning state.

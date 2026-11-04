@@ -69,17 +69,17 @@ it('uses one personal identity for recorded and optimistic messages and one Agen
   expect(agents[1]).toHaveAttribute('data-streaming');
 });
 
-it('offers votes only for Agent replies while retaining copy and timestamps on every message', () => {
+it('retains copy and timestamps without votes when no owned final answer is confirmed', () => {
   render(draw(user));
   for (const row of screen.getAllByRole('article', { name: 'Ada Lovelace' })) {
-    expect(within(row).queryByRole('button', { name: 'Upvote message' })).toBeNull();
-    expect(within(row).queryByRole('button', { name: 'Downvote message' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: 'Helpful' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: 'Needs improvement' })).toBeNull();
     expect(within(row).getByRole('button', { name: 'Copy content' })).toBeEnabled();
     expect(within(row).getByText('Time unavailable')).toBeInTheDocument();
   }
   for (const row of screen.getAllByRole('article', { name: 'Chrono Agent' })) {
-    expect(within(row).getByRole('button', { name: 'Upvote message' })).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: 'Downvote message' })).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Helpful' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: 'Needs improvement' })).toBeNull();
     expect(within(row).getByRole('button', { name: 'Copy content' })).toBeEnabled();
   }
 });
@@ -160,6 +160,10 @@ describe('identity runs', () => {
     expect(agent.map(named)).toEqual(['Chrono Agent', null]);
     expect(own[1]!.querySelector('img')).toBeNull();
     expect(agent[1]!.querySelector('.message__avatar svg')).toBeNull();
+    const process = screen.getByRole('button', { name: /^1 tool call$/ });
+    expect(process).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(process);
+    expect(process).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('article', { name: 'Tool call: Check status' })).toBeInTheDocument();
   });
 

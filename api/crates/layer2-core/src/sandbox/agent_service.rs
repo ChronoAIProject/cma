@@ -230,6 +230,7 @@ impl AgentService {
             .map(|text| {
                 let mut record = FirstMessageRecord::new(creation_key.clone(), text, now.clone())?;
                 record.purpose = Some(attribution.first_message_purpose);
+                record.desktop = attribution.desktop;
                 Ok::<_, super::SandboxModelError>(record)
             })
             .transpose()

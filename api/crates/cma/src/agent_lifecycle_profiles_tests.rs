@@ -326,17 +326,40 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
 
 #[tokio::test]
 async fn machine_included_profiles_pin_the_desktop_image_and_marker() {
-    let store = Arc::new(InMemoryProfileStore::default());
-    let profiles =
-        PrivateProfileCreationService::new(store.clone(), bounds(), Arc::new([] as [String; 0]));
-    let caller = Caller::new(SubjectId::new("owner"), Authorization::new([]));
-    let request = serde_json::from_value(json!({
-        "name": "Desktop Agent",
-        "machine_included": true
-    }))
-    .unwrap();
-    validate_request(&request).unwrap();
-    let (_, _, sandbox_ref) = create_profiles(
+    for desktop in [false, true] {
+        let store = Arc::new(InMemoryProfileStore::default());
+        let profiles = PrivateProfileCreationService::new(
+            store.clone(),
+            bounds(),
+            Arc::new([] as [String; 0]),
+        );
+        let caller = Caller::new(SubjectId::new("owner"), Authorization::new([]));
+        let request = serde_json::from_value(json!({
+            "name": "Desktop Agent",
+            "machine_included": true,
+            "desktop": desktop,
+            "initial_message": "  Keep the exact task\nwith both independent options  "
+        }))
+        .unwrap();
+        validate_request(&request).unwrap();
+        assert_eq!(request.desktop, desktop);
+        assert!(request.machine_included);
+        assert_eq!(
+            validation::admitted_first_message(&LifecycleInput {
+                behavior: LifecycleBehavior::PromptRepository,
+                managed_agent_instructions: None,
+                setup_message: Some("Readiness is not the task".into()),
+                request: request.clone(),
+                resolved_image: None,
+                capacity: None,
+                sandbox_availability: Default::default(),
+                capabilities: vec![],
+                actor: None,
+            })
+            .as_deref(),
+            Some("  Keep the exact task\nwith both independent options  ")
+        );
+        let (_, _, sandbox_ref) = create_profiles(
         &profiles,
         &caller,
         &request,
@@ -349,21 +372,22 @@ async fn machine_included_profiles_pin_the_desktop_image_and_marker() {
     )
     .await
     .unwrap();
-    let sandbox = store
-        .sandbox_profile_revision(&sandbox_ref.id, sandbox_ref.revision)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(sandbox.content.runtime_image.as_deref(), Some("ghcr.io/chronoaiproject/cma-runtime-desktop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
-    assert_eq!(sandbox.content.cpu_millis, 2_000);
-    assert_eq!(sandbox.content.memory_mib, 8_192);
-    assert_eq!(
-        sandbox.content.environment_variables,
-        vec![layer2_core::profiles::EnvironmentVariable {
-            name: "CMA_MACHINE_INCLUDED".into(),
-            value: "1".into()
-        }]
-    );
+        let sandbox = store
+            .sandbox_profile_revision(&sandbox_ref.id, sandbox_ref.revision)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(sandbox.content.runtime_image.as_deref(), Some("ghcr.io/chronoaiproject/cma-runtime-desktop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert_eq!(sandbox.content.cpu_millis, 2_000);
+        assert_eq!(sandbox.content.memory_mib, 8_192);
+        assert_eq!(
+            sandbox.content.environment_variables,
+            vec![layer2_core::profiles::EnvironmentVariable {
+                name: "CMA_MACHINE_INCLUDED".into(),
+                value: "1".into()
+            }]
+        );
+    }
 }
 
 #[test]

@@ -28,6 +28,9 @@ mod queued_cancellations;
 #[path = "command_model_tests.rs"]
 mod models;
 
+#[path = "suggested_reply_tests.rs"]
+mod suggested_replies;
+
 fn context(subject: &str) -> CallerContext {
     CallerContext {
         credential_source: crate::resource_access::CredentialSource::Retained,
@@ -142,7 +145,13 @@ async fn setup(
     .await;
     let authority = Arc::new(authority);
     let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
-    let service = AgentCommandService::new(store.clone(), access, authority.clone());
+    let service = AgentCommandService::new(store.clone(), access, authority.clone())
+        .with_task_experience(Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "mode": "all", "accounts": [], "capabilities": ["suggested_followup_admission"]
+            }))
+            .unwrap(),
+        ));
     (store, service, authority, agent)
 }
 

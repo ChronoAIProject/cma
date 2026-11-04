@@ -9,6 +9,13 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct RecordedToolOutput {
+    pub text: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentPlanStep {
     pub title: String,
     pub status: String,
@@ -95,6 +102,12 @@ pub enum AgentLogKind {
         status: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<RecordedToolOutput>,
+    },
+    ToolOutputReported {
+        call_id: String,
+        output: RecordedToolOutput,
     },
     ApprovalRequested {
         approval_id: String,

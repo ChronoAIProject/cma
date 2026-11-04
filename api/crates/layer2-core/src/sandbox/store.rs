@@ -365,6 +365,10 @@ pub trait SandboxTransactionStore: Send + Sync {
 
 #[derive(Clone, Default)]
 pub struct InMemorySandboxStore {
+    #[cfg(test)]
+    log_rows_read: Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(test)]
+    artifact_body_reads: Arc<std::sync::atomic::AtomicUsize>,
     managed_runtime_version: Option<String>,
     state: Arc<Mutex<State>>,
     profiles: crate::profiles::InMemoryProfileStore,
@@ -372,6 +376,7 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
     binding_key_history: std::collections::HashSet<String>,
     bindings: std::collections::BTreeMap<String, super::binding::ProviderBinding>,
@@ -411,6 +416,28 @@ struct State {
 }
 
 impl InMemorySandboxStore {
+    #[cfg(test)]
+    pub(crate) fn with_agent_fixture(agent: Agent) -> Self {
+        agent
+            .work
+            .validate_resolved_skills(&agent.profile.content.skills)
+            .expect("valid stored skill material");
+        let store = Self::default();
+        store.lock().agents.insert(agent.id.clone(), agent);
+        store
+    }
+
+    #[cfg(test)]
+    pub(crate) fn artifact_body_reads(&self) -> usize {
+        self.artifact_body_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn log_rows_read(&self) -> usize {
+        self.log_rows_read.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn with_profiles(profiles: crate::profiles::InMemoryProfileStore) -> Self {
         Self {
             profiles,

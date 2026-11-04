@@ -327,6 +327,7 @@ impl AgentAdmission {
             .first_message
             .as_ref()
             .map(|message| FirstMessageIdentity {
+                desktop: message.desktop,
                 origin_key: &message.origin_key,
                 text: &message.text,
                 payload_sha256: &message.payload_sha256,
@@ -355,6 +356,8 @@ struct AdmissionIdentity<'a> {
 
 #[derive(Serialize)]
 struct FirstMessageIdentity<'a> {
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    desktop: bool,
     origin_key: &'a str,
     text: &'a str,
     payload_sha256: &'a str,

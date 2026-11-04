@@ -101,5 +101,26 @@ pub(super) fn authentication(
             .as_ref()
             .map(|father| father.username.clone()),
     )?;
+    if !auth.requires_credential() {
+        tracing::warn!(
+            "running with a trusted fixed subject; this mode is for local development only"
+        );
+    }
     Ok(auth)
+}
+
+pub(super) fn agent_skills(
+    config: &Config,
+    credentials: Arc<dyn crate::sandbox::SandboxCredentialController>,
+) -> Result<Arc<crate::sandbox::OrnnAgentSkillResolver>, String> {
+    use crate::sandbox::OrnnAgentSkillResolver;
+
+    match &config.auth_mode {
+        AuthMode::Provider { .. } => {
+            OrnnAgentSkillResolver::scoped(&config.runtime.platform_base_url, credentials)
+        }
+        AuthMode::Trusted { .. } => {
+            OrnnAgentSkillResolver::anonymous(&config.runtime.platform_base_url)
+        }
+    }
 }

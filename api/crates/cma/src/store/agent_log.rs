@@ -244,7 +244,7 @@ async fn append_in_transaction(
     store
         .agent_log
         .insert_one(log_document(&entry).map_err(TransactionLogError::Domain)?)
-        .session(session)
+        .session(&mut *session)
         .await
         .map_err(|error| {
             if is_duplicate_key(&error) {
@@ -253,6 +253,17 @@ async fn append_in_transaction(
                 TransactionLogError::Driver(error)
             }
         })?;
+    if matches!(entry.kind, AgentLogKind::TurnCompleted { .. }) {
+        let row = store
+            .agents
+            .find_one(doc! {"_id":agent_id.as_str()})
+            .session(&mut *session)
+            .await
+            .map_err(TransactionLogError::Driver)?
+            .ok_or(TransactionLogError::Domain(SandboxStoreError::NotFound))?;
+        let agent = read_agent(&row).map_err(TransactionLogError::Domain)?;
+        super::suggestions::enqueue(store, &agent, std::slice::from_ref(&entry), session).await?;
+    }
     Ok(entry)
 }
 

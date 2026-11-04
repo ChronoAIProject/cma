@@ -18,15 +18,15 @@ it('loads composer settings independently of optional creation provenance', asyn
   });
   const draw = (open: boolean) => (
     <CmaClientProvider client={client}>
-      <SessionSettings agentId={AGENT_DETAIL.id} active={open} busy={false} />
+      <SessionSettings agentId={AGENT_DETAIL.id} active={open} runtimeReady busy={false} />
     </CmaClientProvider>
   );
   const view = render(draw(false));
   expect(readAgentSettings).not.toHaveBeenCalled();
   view.rerender(draw(true));
-  expect(
-    await screen.findByRole('button', { name: /^Model and reasoning effort/ }),
-  ).toHaveTextContent('gpt-6 High');
+  expect(await screen.findByRole('button', { name: /^Agent settings:/ })).toHaveTextContent(
+    'gpt-6 · High · Autonomous',
+  );
   expect(readAgentProvenance).not.toHaveBeenCalled();
   view.rerender(draw(false));
   expect(readAgentSettings.mock.calls[0]?.[1].signal.aborted).toBe(true);

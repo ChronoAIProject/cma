@@ -165,8 +165,19 @@ impl AgentOperationService {
             {
                 return if existing.reference == reference {
                     Ok(current)
-                } else {
+                } else if existing.status == AgentSkillInstallStatus::Pending {
                     Err(AgentOperationError::Conflict)
+                } else {
+                    Err(AgentOperationError::SkillVersionUpgradeUnsupported {
+                        id: reference.id.as_str().into(),
+                        installed: existing
+                            .material
+                            .as_ref()
+                            .map(|material| material.version.clone())
+                            .or_else(|| existing.reference.version.clone())
+                            .unwrap_or_default(),
+                        requested: reference.version.clone().unwrap_or_default(),
+                    })
                 };
             }
             if let Some(existing) = current
@@ -178,7 +189,30 @@ impl AgentOperationService {
                 return if reference.version.as_ref() == Some(&existing.version) {
                     Ok(current)
                 } else {
-                    Err(AgentOperationError::Conflict)
+                    Err(AgentOperationError::SkillVersionUpgradeUnsupported {
+                        id: reference.id.as_str().into(),
+                        installed: existing.version.clone(),
+                        requested: reference.version.clone().unwrap_or_default(),
+                    })
+                };
+            }
+            if let Some(existing) = current
+                .profile
+                .content
+                .skills
+                .iter()
+                .find(|skill| skill.id == reference.id)
+            {
+                return if existing.version == reference.version {
+                    Err(AgentOperationError::InvalidRequest(
+                        "skill already selected or skill limit reached".into(),
+                    ))
+                } else {
+                    Err(AgentOperationError::SkillVersionUpgradeUnsupported {
+                        id: reference.id.as_str().into(),
+                        installed: existing.version.clone().unwrap_or_default(),
+                        requested: reference.version.clone().unwrap_or_default(),
+                    })
                 };
             }
             if !idle(&current) {

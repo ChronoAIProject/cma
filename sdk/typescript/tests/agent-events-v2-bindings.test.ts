@@ -11,6 +11,26 @@ import {
   cursor,
 } from './agent-events-v2-fixtures.js';
 import { ProtocolError } from '../src/index.js';
+it.each([
+  [{}, null],
+  [{ toolOutput: false, messageBindings: false }, null],
+  [{ toolOutput: true }, 'cma-tool-output'],
+  [{ toolOutput: true, messageBindings: true }, 'cma-message-bindings, cma-tool-output'],
+] as const)('sends only requested replay preferences for %j', async (options, expected) => {
+  const test = harness();
+  test.fetch.mockResolvedValueOnce(json(page(1)));
+  await test.api.snapshot(agent, options);
+  expect(new Headers(test.fetch.mock.lastCall?.[1]?.headers).get('Prefer')).toBe(expected);
+  test.fetch.mockResolvedValueOnce(sse(frame('cma.agent.event', durable(2), cursor(2))));
+  await test.api.events(agent, {
+    ...options,
+    afterCursor: cursor(1),
+    follow: false,
+    onEvent: vi.fn(),
+  });
+  expect(new Headers(test.fetch.mock.lastCall?.[1]?.headers).get('Prefer')).toBe(expected);
+});
+
 it('opts into exact message identities on snapshots and streams while accepting old responses', async () => {
   const t = harness();
   const value = page(1);
