@@ -14,13 +14,13 @@ impl HostedAdapter {
             .deployment
             .render_runtime(&request.spec, request.generation)?;
         rendered.funded_until = request.funded_until;
-        self.backend.validate_funding(&rendered).await?;
         self.verify_spec_home(&request.spec).await?;
         if let Some(home) = &request.spec.home_volume {
             self.backend
                 .verify_home_route(&rendered, &home.request)
                 .await?;
         }
+        self.backend.validate_funding(&rendered, None).await?;
         let identity = provider_request_identity(&rendered)?;
         let request_sha256 = crate::provider_request_digest(request)?;
         let receipt = self
@@ -157,7 +157,9 @@ impl HostedAdapter {
         }
         let mut next = self.retained_request(&resumed, successor.generation)?;
         next.funded_until = successor.funded_until;
-        self.backend.validate_funding(&next).await?;
+        self.backend
+            .validate_funding(&next, Some(&request.handle))
+            .await?;
         let previous_identity = provider_request_identity(&previous)?;
         let next_identity = provider_request_identity(&next)?;
         self.verify_spec_home(&request.spec).await?;
@@ -198,13 +200,13 @@ impl HostedAdapter {
     ) -> crate::Result<RuntimeHandle> {
         let mut request = self.deployment.render_runtime(spec, generation)?;
         request.funded_until = funded_until;
-        self.backend.validate_funding(&request).await?;
         self.verify_spec_home(spec).await?;
         if let Some(home) = &spec.home_volume {
             self.backend
                 .verify_home_route(&request, &home.request)
                 .await?;
         }
+        self.backend.validate_funding(&request, None).await?;
         let identity = provider_request_identity(&request)?;
         let handle = match spec.home_volume.as_deref() {
             Some(home) => self.backend.provision_with_home(request, home).await?,
