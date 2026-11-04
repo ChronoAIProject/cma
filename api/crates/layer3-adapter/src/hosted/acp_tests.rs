@@ -22,6 +22,8 @@ mod initialize_tests;
 mod open_completion_tests;
 #[path = "acp_provider_tool_tests.rs"]
 mod provider_tool_tests;
+#[path = "acp_startup_failure_tests.rs"]
+mod startup_failure_tests;
 
 #[path = "acp_reconnect_turn_tests.rs"]
 mod reconnect_turn_tests;
