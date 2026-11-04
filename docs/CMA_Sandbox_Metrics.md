@@ -257,6 +257,53 @@ that 20,001 dense 30-day histories fit the same budget. Broader reports can retu
 an explicit retryable error with a narrower-range suggestion. Reports never
 truncate their matched cohort to fit a page or silently treat absent data as zero.
 
+## Local validation outcome (2026-11-05)
+
+The implementation includes the `develop` merge at `ecfb557b6` (#1316).
+Workspace formatting, Clippy, locked builds, dependency audits, source-size and
+structure checks, secret scanning, API/configuration documentation checks,
+manifest validation and policy checks passed. The workspace run covered 7,157
+tests; three OpenAPI inventory assertions were corrected and all 21 OpenAPI
+checks then passed. After the merge, all 2,939 affected-crate tests passed.
+All 463 disposable Mongo contracts passed, followed by all nine reporting
+contracts on the merged source, including the scale fixture above.
+
+The TypeScript SDK passed 4,109 tests with 96.59% line coverage; the Rust SDK
+passed 251 tests and 37 doctests with 93.12% line coverage. SDK formatting,
+lint, type/build, package/consumer and dependency checks passed. Frontend
+validation accounted for all 3,279 unit cases, ten desktop browser cases and
+five browser-guard cases. Temporary-directory and occupied-port fixture
+failures passed isolated reruns; browser teardown passed using the repository's
+supported Node 24.15.0 harness runtime. The ignored Linux writer-boundary test
+executed on native ARM64 Linux and passed one actual test.
+
+Image validation on this Apple Silicon machine had these results:
+
+| Image | Build / execution result | HIGH/CRITICAL vulnerability scan |
+| --- | --- | --- |
+| Web | Passed for Linux AMD64 and ARM64 | AMD64 passed |
+| API | Linux AMD64 passed | Passed |
+| Image Manager | Linux AMD64 passed | Passed |
+| CMAEG | Rust release compiled; required sandbox check exited 125 at `close_range` | Not reached |
+| Runtime | Rust release compiled; recovery test failed at `pidfd_open` | Not reached |
+| Desktop runtime | Same recovery test failed at `pidfd_open` | Not reached |
+
+Both runtime variants passed the preceding 42 Node tests. The failing Python
+case was `Proc.test_real_linux_socket_peer_and_pidfd_available`, which raised
+`OSError: [Errno 38] Function not implemented`. A minimal probe in the same
+builder isolated the architecture-dependent syscall behavior:
+
+| Execution environment | `close_range` | `pidfd_open` |
+| --- | --- | --- |
+| Native ARM64 Linux | Success | Success |
+| AMD64 user-mode emulation | `ENOSYS` (38) | `ENOSYS` (38) |
+
+The CMAEG and runtime checks remain unchanged and fail closed. These attempts
+did not produce final images for their scans or built-image contracts, so those
+gates are not recorded as passing. They require a suitable Linux AMD64 runner;
+this local run does not satisfy an all-local-gates-before-PR requirement.
+No production configuration or workload was changed during verification.
+
 ## Production verification
 
 After deployment, the lead uses existing workloads and read-only Kubernetes
