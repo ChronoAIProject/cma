@@ -248,6 +248,7 @@ impl MongoSandboxStore {
             .map_err(|error| unavailable("Agent access tool index", error))?;
         super::trigger_first_messages::ensure_indexes(&store).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
+        super::agent_task_status::ensure_indexes(&store.agent_log).await?;
         super::suggestions::ensure_indexes(&store.suggestions).await?;
         super::agent_channel_usage::ensure_indexes(&store.channel_usage_events).await?;
         super::agent_commands::ensure_indexes(&store.agent_commands).await?;
