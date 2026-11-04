@@ -4,6 +4,8 @@ use layer2_core::sandbox::{AgentLogEntry, RecordedToolOutput};
 use mongodb::bson::{doc, serialize_to_bson, Document};
 use mongodb::Client;
 
+mod settlement_tests;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn full_history_worker_closes_and_deletes_with_original_runtime_effects() {
