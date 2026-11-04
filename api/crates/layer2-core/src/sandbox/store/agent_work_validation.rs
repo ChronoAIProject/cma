@@ -423,12 +423,12 @@ fn validate_agent_delta(
         && current.conversation.runtime_generation.is_none()
         && next.conversation.conversation_id.is_some()
         && next.conversation.runtime_generation == Some(1);
-    let conversation_unchanged = current.conversation.first_message
-        == next.conversation.first_message
-        && current.conversation.active_turn == next.conversation.active_turn
-        && current.conversation.operation == next.conversation.operation
-        && current.conversation.queued_messages == next.conversation.queued_messages
-        && (!identity_changed || opened);
+    let conversation_unchanged =
+        super::agent_work_identity::first_message_matches(current, next, mutation, kind)?
+            && current.conversation.active_turn == next.conversation.active_turn
+            && current.conversation.operation == next.conversation.operation
+            && current.conversation.queued_messages == next.conversation.queued_messages
+            && (!identity_changed || opened);
     if !conversation_unchanged {
         return Err(SandboxStoreError::Conflict);
     }
