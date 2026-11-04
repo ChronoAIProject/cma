@@ -73,6 +73,13 @@ pub(crate) fn inspect(bytes: &[u8]) -> Option<Document> {
     text(bytes).then_some(Document::Text)
 }
 
+/// Shared archive transport validation; callers still own their accepted MIME policy.
+pub(crate) fn zip_archive(bytes: &[u8]) -> bool {
+    !bytes.is_empty()
+        && bytes.len() as u64 <= crate::media::outbound::MAX_OUTBOUND_BYTES
+        && package::archive(bytes)
+}
+
 fn text(bytes: &[u8]) -> bool {
     let permitted = |c: char| !c.is_control() || matches!(c, '\t' | '\n' | '\r' | '\u{c}');
     if bytes.starts_with(b"\xff\xfe") || bytes.starts_with(b"\xfe\xff") {

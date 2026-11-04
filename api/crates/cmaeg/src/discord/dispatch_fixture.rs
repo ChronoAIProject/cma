@@ -97,6 +97,8 @@ impl Setup {
         let selection = super::selection::Selection::new(&crate::NativeDiscordConfig {
             enabled: true,
             discovery_enabled: discovery,
+            rich_content_enabled: false,
+            forwards_enabled: false,
             records: selected.clone(),
         });
         let routing = RoutedIngress::new(

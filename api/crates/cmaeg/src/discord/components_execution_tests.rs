@@ -390,6 +390,7 @@ async fn replaced_card(
         .finish_discord_edit(
             claim,
             &IntentReceipt {
+                message_parts: vec![],
                 message_ref: Some(reference),
                 rendering,
                 delivery: DeliveryOutcome::Confirmed {

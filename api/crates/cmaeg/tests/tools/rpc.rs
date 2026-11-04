@@ -143,7 +143,7 @@ async fn tools_list_matches_the_pre_refactor_golden_with_reviewed_extensions() {
     assert_tools_with_reviewed_extensions(&mut list["result"]);
 }
 
-/// Preserve recorded schemas apart from reviewed optional key/history, media and docs.
+/// Preserve recorded schemas apart from reviewed optional key/history, media, stickers and docs.
 pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
     let golden: Value = serde_json::from_str(TOOLS_LIST_GOLDEN).unwrap();
     for (tool, previous) in list["tools"]
@@ -152,6 +152,27 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
         .iter_mut()
         .zip(golden["tools"].as_array().unwrap())
     {
+        let structured = tool["inputSchema"]["$defs"]
+            .as_object_mut()
+            .unwrap()
+            .remove("StructuredContent")
+            .unwrap();
+        assert_eq!(
+            structured,
+            serde_json::from_str::<Value>(include_str!(
+                "../fixtures/structured-content-schema.json"
+            ))
+            .unwrap()
+        );
+        let selector = tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("structured_content")
+            .unwrap();
+        assert_eq!(
+            selector,
+            json!({"$ref":"#/$defs/StructuredContent", "description":"Exclusive contact card, static location or venue; only when advertised for the original event."})
+        );
         let mut context = tool["inputSchema"]["$defs"]
             .as_object_mut()
             .unwrap()
@@ -180,7 +201,11 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
         }
         let media_kinds = &mut tool["inputSchema"]["$defs"]["NativeMediaKind"]["enum"];
         let mut expanded = previous["inputSchema"]["$defs"]["NativeMediaKind"]["enum"].clone();
-        expanded.as_array_mut().unwrap().push(json!("sticker"));
+        expanded.as_array_mut().unwrap().extend([
+            json!("voice"),
+            json!("animation"),
+            json!("sticker"),
+        ]);
         assert_eq!(*media_kinds, expanded);
         *media_kinds = previous["inputSchema"]["$defs"]["NativeMediaKind"]["enum"].clone();
         let media_description =
@@ -193,6 +218,37 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
                     == "The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy."
         );
         *media_description = previous_description.clone();
+        let sticker = tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reply_with_received_sticker")
+            .unwrap();
+        assert_eq!(
+            sticker,
+            json!({
+                "type": "boolean",
+                "description": "Resend only the exact retained native Lark sticker received in this event."
+            })
+        );
+        let clear = tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("clear_native_attachments")
+            .unwrap();
+        assert_eq!(clear["type"], "boolean");
+        assert_eq!(
+            clear["description"],
+            "Explicitly remove every native attachment; updateMessage only when advertised."
+        );
+        let thread_description = &mut tool["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            ["thread_reply"]["description"];
+        assert_eq!(
+            *thread_description,
+            "Request the verified source thread; native Lark may start the exact admitted\ngroup root thread with one text reply when explicitly advertised. Never fall back."
+        );
+        *thread_description = previous["inputSchema"]["$defs"]["OutboundMessage"]["properties"]
+            ["thread_reply"]["description"]
+            .clone();
         let key = tool["inputSchema"]["$defs"]["ReplyArguments"]["properties"]
             .as_object_mut()
             .unwrap()

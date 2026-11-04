@@ -5,6 +5,10 @@ impl SandboxAdapter for HostedAdapter {
     fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
         Some(self)
     }
+    async fn open_desktop(&self, handle: &RuntimeHandle) -> crate::Result<DesktopConnectionHandle> {
+        self.open_desktop(handle).await
+    }
+
     async fn upload_agent_attachment(
         &self,
         handle: &RuntimeHandle,
@@ -77,12 +81,7 @@ impl SandboxAdapter for HostedAdapter {
         request: &RuntimeProvisionRequest,
         home: &crate::HomeVolumeRequest,
     ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
-        let rendered = self
-            .deployment
-            .render_runtime(&request.spec, request.generation)?;
-        self.backend
-            .select_native_pool(&rendered, &self.deployment.image, home)
-            .await
+        self.select_native_pool_request(request, home).await
     }
     fn capabilities(&self) -> AdapterCapabilities {
         self.deployment.capabilities()
@@ -213,27 +212,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         frame: CredentialFrame,
     ) -> crate::Result<()> {
-        if frame.operation_id.trim().is_empty()
-            || frame.value.expose().is_empty()
-            || frame.custody_generation == Some(0)
-        {
-            return Err(AdapterError::Rejected(
-                "credential operation id, value, and non-zero generation are required".into(),
-            ));
-        }
-        self.verify_bound_home(handle).await?;
-        let operation_id = frame.operation_id.clone();
-        match self.exchange(handle, RequestFrame::Credential(frame)).await {
-            Ok(ResponseFrame::Credential(CredentialReceipt {
-                operation_id: returned,
-                installed: true,
-            })) if returned == operation_id => Ok(()),
-            Ok(ResponseFrame::Credential(_)) => Err(AdapterError::Rejected(
-                "runtime did not acknowledge the exact credential operation".into(),
-            )),
-            Ok(_) => unreachable!("exchange verifies response operation"),
-            Err(error) => Err(error),
-        }
+        self.deliver_credential_exact(handle, frame).await
     }
 
     async fn prepare_workspace(
@@ -259,6 +238,14 @@ impl SandboxAdapter for HostedAdapter {
                 "skill cache receipt changed its digest".into(),
             )),
         }
+    }
+
+    async fn recover_workspace_prepare(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::WorkspacePrepareRecoveryRequest,
+    ) -> crate::Result<crate::WorkspacePrepareRecoveryReceipt> {
+        workspace::recover_prepare(self, handle, request).await
     }
 
     async fn run_workspace_setup(
@@ -291,6 +278,16 @@ impl SandboxAdapter for HostedAdapter {
         request: &WorkspaceRemoveRequest,
     ) -> crate::Result<crate::WorkspaceRemovalObservation> {
         workspace::reconcile_removal(self, handle, expected_runtime, request).await
+    }
+
+    async fn prepare_agent_resources(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        worktree: &WorktreeRequest,
+        home: &AgentHomeRequest,
+    ) -> crate::Result<WorktreeReceipt> {
+        agent_resources::prepare(self, handle, authority_fence, worktree, home).await
     }
 
     async fn add_worktree(
@@ -356,7 +353,7 @@ impl SandboxAdapter for HostedAdapter {
         conversation_id: &str,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<ConversationChannel> {
-        let recovery = (conversation_id, None);
+        let recovery = (conversation_id, None, None);
         agent::reconnect_agent(self, handle, authority_fence, request, recovery, updates).await
     }
 
@@ -374,7 +371,27 @@ impl SandboxAdapter for HostedAdapter {
             handle,
             authority_fence,
             request,
-            (conversation_id, recovered_prompt),
+            (conversation_id, recovered_prompt, None),
+            updates,
+        )
+        .await
+    }
+
+    async fn reconnect_agent_with_context(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        operation_sequence: u64,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<ConversationChannel> {
+        agent::reconnect_agent(
+            self,
+            handle,
+            authority_fence,
+            request,
+            (conversation_id, None, Some(operation_sequence)),
             updates,
         )
         .await
@@ -462,16 +479,7 @@ impl SandboxAdapter for HostedAdapter {
     }
 
     async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> crate::Result<()> {
-        self.known_state(handle).await?;
-        if !valid_checkpoint_reference(&request.object_reference, &request.sha256) {
-            return Err(AdapterError::Rejected(
-                "restore object reference or digest is invalid".into(),
-            ));
-        }
-        expect_ack(
-            self.exchange(handle, RequestFrame::Restore(request.clone()))
-                .await?,
-        )
+        self.restore_checkpoint(handle, request).await
     }
 
     async fn resources(&self, handle: &RuntimeHandle) -> crate::Result<ResourceReading> {

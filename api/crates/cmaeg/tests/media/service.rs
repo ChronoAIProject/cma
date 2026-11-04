@@ -239,6 +239,7 @@ async fn audio_is_transcribed_normalized_and_paged() {
     let derived = ready(service.derive(&target, 0, Artifact::Transcript, LONG).await);
     let Derived::Transcript {
         document,
+        source_sha256,
         usage_seconds,
         truncated_at_seconds,
     } = &*derived
@@ -246,6 +247,10 @@ async fn audio_is_transcribed_normalized_and_paged() {
         panic!("{derived:?}");
     };
     assert_eq!(document.pages, ["line one\nline two"]);
+    assert_eq!(
+        source_sha256,
+        &cmaeg_core::media_continuation::sha256(&mp3())
+    );
     assert_eq!(*usage_seconds, Some(7));
     assert_eq!(*truncated_at_seconds, None);
     // Text is not audio, whatever the transcriber accepts.

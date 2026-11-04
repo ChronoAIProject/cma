@@ -12,7 +12,11 @@ use layer2_core::{Authorization, Capability, CoreError, SandboxId, ServiceId, Su
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
+mod inspection;
+mod preparation;
+pub(super) mod preparation_contract;
 mod readiness;
+mod retry;
 pub(super) use readiness::create_backing_resources;
 
 struct Registry;
@@ -28,7 +32,10 @@ impl AgentRuntimeRegistry for Registry {
         Ok(())
     }
 }
-struct Custody;
+struct Custody {
+    store: Arc<InMemorySandboxStore>,
+    keys: std::sync::Mutex<std::collections::HashMap<SandboxId, String>>,
+}
 #[async_trait::async_trait]
 impl BindingCredentialCustody for Custody {
     async fn retain(
@@ -45,7 +52,45 @@ impl BindingCredentialCustody for Custody {
         value: &ProviderBinding,
         key: &ProvidedCredential,
     ) -> Result<(), CoreError> {
-        value.require_credential_admission(key)
+        value.require_credential_admission(key)?;
+        self.keys
+            .lock()
+            .unwrap()
+            .insert(value.sandbox_id.clone(), key.sha256());
+        Ok(())
+    }
+    async fn retry_recovered_binding(
+        &self,
+        binding: &ProviderBinding,
+        key: &ProvidedCredential,
+    ) -> Result<ProviderBinding, CoreError> {
+        use layer2_core::sandbox::store::{SandboxStore, WorkspaceStore};
+        if self.keys.lock().unwrap().get(&binding.sandbox_id) != Some(&key.sha256()) {
+            return Err(CoreError::InvalidState("missing custody".into()));
+        }
+        let sandbox = self
+            .store
+            .get_sandbox(&binding.sandbox_id)
+            .await
+            .unwrap()
+            .ok_or_else(|| CoreError::InvalidState("missing sandbox".into()))?;
+        let workspace = self
+            .store
+            .get_workspace(&binding.workspace_id)
+            .await
+            .unwrap()
+            .ok_or_else(|| CoreError::InvalidState("missing workspace".into()))?;
+        let next = binding.retry_recovered_hierarchy(
+            &sandbox,
+            &workspace,
+            key,
+            layer2_core::now_rfc3339(),
+        )?;
+        self.store
+            .save_binding(Some(binding.revision), next.clone())
+            .await
+            .map_err(|_| CoreError::InvalidState("binding changed".into()))?;
+        Ok(next)
     }
 }
 pub(super) fn app() -> (Router, Arc<InMemorySandboxStore>) {
@@ -57,6 +102,13 @@ fn app_with_tools(endpoint: Option<&str>) -> (Router, Arc<InMemorySandboxStore>)
 fn app_with_tools_alias(
     endpoint: Option<&str>,
     alias: Option<&str>,
+) -> Result<(Router, Arc<InMemorySandboxStore>), String> {
+    app_config(endpoint, alias, false)
+}
+fn app_config(
+    endpoint: Option<&str>,
+    alias: Option<&str>,
+    preparation_enabled: bool,
 ) -> Result<(Router, Arc<InMemorySandboxStore>), String> {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
@@ -80,7 +132,10 @@ fn app_with_tools_alias(
             BindingService::new(
                 store.clone(),
                 resources,
-                Arc::new(Custody),
+                Arc::new(Custody {
+                    store: store.clone(),
+                    keys: Default::default(),
+                }),
                 BindingPolicy {
                     provider: AgentProvider::default(),
                     supported_model_api: "responses".into(),
@@ -95,6 +150,7 @@ fn app_with_tools_alias(
             ),
             endpoint,
             alias,
+            preparation_enabled,
         )?,
         store,
     ))
@@ -103,10 +159,28 @@ fn route_service(
     service: Arc<BindingService>,
     endpoint: Option<&str>,
     alias: Option<&str>,
+    preparation_enabled: bool,
 ) -> Result<Router, String> {
+    if preparation_enabled {
+        let endpoint = endpoint.unwrap_or("https://gateway.example/mcp");
+        return super::binding_router_with_native_tools_alias_and_preparation(
+            service,
+            endpoint,
+            alias.unwrap_or(endpoint),
+            true,
+        );
+    }
     match (endpoint, alias) {
         (Some(endpoint), Some(alias)) => {
-            super::binding_router_with_native_tools_alias(service, endpoint, alias)
+            super::binding_router_with_native_tools_aliases_and_preparation(
+                service,
+                endpoint,
+                &[
+                    alias.into(),
+                    "https://new-bot.example/event-gateway/mcp".into(),
+                ],
+                false,
+            )
         }
         (Some(endpoint), None) => super::binding_router_with_native_tools(service, endpoint),
         (None, _) => Ok(binding_router(service)),
@@ -306,12 +380,21 @@ async fn native_tools_accept_only_the_configured_destination_and_retain_it_on_re
 async fn native_tools_alias_keeps_binding_identity_across_both_advertisement_phases() {
     let legacy = "https://gateway.example/mcp";
     let canonical = "https://bot.example/event-gateway/mcp";
-    for first_url in [legacy, canonical] {
+    for first_url in [
+        legacy,
+        canonical,
+        "https://new-bot.example/event-gateway/mcp",
+    ] {
         let (app, store) = app_with_tools_alias(Some(legacy), Some(canonical)).unwrap();
         let path = "/api/v1/cmaeg/bindings/domain-binding";
         let mut input = body();
         let mut retained = None;
-        for advertised in [first_url, canonical, legacy] {
+        for advertised in [
+            first_url,
+            canonical,
+            legacy,
+            "https://new-bot.example/event-gateway/mcp",
+        ] {
             input["tools"]["native_mcp_url"] = json!(advertised);
             let response = app
                 .clone()

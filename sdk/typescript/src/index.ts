@@ -8,6 +8,7 @@ export type {
 } from './task-experience.js';
 export { answerContext, type AnswerContext } from './answer-context.js';
 export * from './resource-access.js';
+export * from './usage.js';
 export * from './agent-files.js';
 export * from './bots.js';
 export * from './bot-setups.js';
@@ -59,6 +60,7 @@ export type * from './agents/deliverables.js';
 export { DeliverableUnavailable } from './agents/deliverables.js';
 export type * from './agents/attachments.js';
 export type * from './agents/channel-usage.js';
+export type * from './agents/provider-associations.js';
 export type * from './instances/shared.js';
 export type * from './agents/events.js';
 export type * from './instances/types.js';

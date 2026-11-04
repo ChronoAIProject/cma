@@ -1,5 +1,4 @@
 //! Model-owned transitions for one claimed sandbox lifecycle phase.
-
 use super::lifecycle_execution_support::{
     invalid_execution, lifecycle_failure_class, queued_message_phase, valid_runtime_binding,
 };
@@ -162,6 +161,11 @@ impl Sandbox {
                 _ => return Err(invalid_execution()),
             }
             next.runtime = Some(binding);
+            if next.lifecycle.unpublished_recovery.is_some() {
+                next.require_unpublished_runtime_quiescence()?;
+                next.lifecycle.unpublished_recovery = None;
+                next.lifecycle.unpublished_recovery_attempted = true;
+            }
             next.lifecycle.suspended_runtime = None;
             next.lifecycle.runtime_provision = None;
             Ok(())
@@ -437,6 +441,8 @@ impl Sandbox {
             }
             next.lifecycle.operation = None;
             next.lifecycle.home_recovery = None;
+            next.lifecycle.unpublished_recovery = None;
+            next.lifecycle.unpublished_recovery_attempted = false;
             next.lifecycle.paused_notice = None;
             if let Some(pause) = resume_pause {
                 next.lifecycle
@@ -449,7 +455,7 @@ impl Sandbox {
         })
     }
 
-    /// Fail the current lifecycle with a stable phase-derived class.
+    /// Fail with a phase-derived class, preserving uncompleted retained allocation evidence.
     pub fn fail_lifecycle(
         &mut self,
         detail: String,
@@ -457,6 +463,11 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<TypedFailure, SandboxModelError> {
+        if self.lifecycle.unpublished_recovery_attempted
+            || self.lifecycle.unpublished_recovery.is_some()
+        {
+            return Err(invalid_execution());
+        }
         if detail.trim().is_empty()
             || detail.len() > MAX_FAILURE_DETAIL_BYTES
             || detail.chars().any(char::is_control)
@@ -470,6 +481,7 @@ impl Sandbox {
                 .ok_or_else(invalid_execution)?,
         );
         let failure = class.typed_failure(detail);
+        let failed_provision = self.failed_provision_evidence();
         self.apply_claimed_with_step(
             holder,
             fence,
@@ -478,6 +490,7 @@ impl Sandbox {
             at.clone(),
             |next| {
                 next.lifecycle.cancel_operation();
+                next.lifecycle.failed_provision = failed_provision;
                 next.transition(SandboxStatus::Failed, at, Some(failure.clone()))?;
                 Ok(())
             },

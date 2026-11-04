@@ -44,10 +44,18 @@ with its exact request and key to resume the same operation and child resources.
 the original idempotent request. It must contain non-whitespace text and fit
 262144 UTF-8 bytes. The server queues it durably as `purpose: task` after
 environment preparation, replacing the readiness prompt. Omission retains
-legacy `setup` behavior. Do not combine it with `repository` or send a separate
-first message after creation. Discover support in the served OpenAPI request
-schema; older services cannot admit this field. Read Agent detail/transcript
-for delivery, recovery and results.
+legacy `setup` behavior. With `repository`, a new Sandbox prepares the pinned
+source checkout before delivering the task; omit existing Workspace and Sandbox
+IDs in this mode. Discover support in the served OpenAPI request schema and its
+`x-cma-task-repository` extension. Do not send a separate first message after
+creation. Read Agent detail/transcript for delivery, recovery and results.
+
+For a new desktop Sandbox, set `machine_included: true` and omit `image`.
+`agents.read(id).desktop` reports its desktop capability. Call `agents.desktop(id)`
+to discover the same-origin `websocket_url`; your browser or host WebSocket
+implementation carries binary RFB frames on that path using owner authentication.
+Browser connections require the exact CMA Origin, and one viewer may connect to
+a Sandbox at a time. Discovery and upgrade return named refusals when unavailable.
 
 Set `workspace_id` to add an Agent to an existing Workspace owned by the caller.
 The Workspace must be ready. Omit `image` and `repository` because the selected
@@ -81,6 +89,15 @@ export async function inspectAgent(agentId: string) {
 `agents.create(workspaceId, body, options)` takes a pinned Agent Profile and may
 include a first message. The HTTP 201 result does not imply that message has
 finished; inspect its recorded delivery state.
+
+`agents.recoverWorktree(agentId, { idempotencyKey })` retries failed initial
+worktree preparation only for an Agent that has never become ready. The owner or
+a CMA administrator can request recovery. It preserves the Agent identity and
+persistent volume, retains the failed worktree and its recovery evidence, and
+allocates a fresh worktree for the same Agent. HTTP 202 acknowledges admission;
+use `read` to observe readiness. Reuse the exact key after an uncertain response.
+Already-ready or otherwise ineligible Agents return HTTP 409
+`agent_worktree_recovery_conflict`.
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
@@ -722,3 +739,70 @@ expired. Audit retains at most 128 metadata entries per volatile browser context
 without input text, client keys or tokens. See
 `docs/plans/cma-ui-optimization/17-CONTROL-CONTRACT.md` for compatibility floors
 and bounded revocation behavior.
+
+## Binding event media continuations
+
+A bound consumer Agent Key can publish an original event attachment, read its
+completed receipt, and admit a separate supplementary response. It cannot select
+another Agent or an arbitrary filesystem path. The current binding and Gateway
+artifact authority are revalidated by the server on every operation.
+
+Use `client.providerBindings.media.upload(bindingId, conversationId, eventId,
+attachmentIndex, blob, { name, sha256, event_expires_at, gateway_binding_generation })`.
+The frozen filename and original SHA-256 travel with the unmodified bytes. The SDK
+supplies Content-Type and exact Content-Length and enforces the 20 MiB limit.
+`get(bindingId, conversationId, eventId, attachmentIndex)` recovers a completed
+receipt without downloading or publishing the source again.
+
+`supplement(bindingId, conversationId, eventId, attachmentIndex, body)` accepts
+`BindingMediaSupplement`: original expiry, optional/null Gateway generation,
+attested artifact identity, and exact derived text (at most 64 KiB). Its 202
+receipt contains a separate command and response with parent provenance.
+
+These routes need no caller-generated idempotency key: the original parent event
+and artifact slot identify the operation. Preserve the same slot, hashes, bytes
+and text after an uncertain result. The SDK does not automatically retry or
+create replacement events. A supplement uses Append ordering and leaves the
+original response intact. A 202 receipt acknowledges admission, not completion;
+follow its `response_url` through the Responses API. Typed media refusals retain
+the stable server code and Retry-After metadata, including temporary source
+unavailability and current authority revocation.
+
+Gateway channel owners can read retained supplementary response metadata with
+`gateway.getEventMediaResponses(channelId, eventId, { owner, cursor })`.
+Follow `next_cursor` until absent or null. Each page covers up to sixteen original
+attachment slots and contains only consumer/response identities and status.
+Activity snapshots also retain each consumer's optional `media_responses`.
+These reads remain useful after the original event capability expires. They do
+not grant access to response text: every returned Manager `response_url` still
+requires existing Agent response authorization. The SDK never follows those URLs
+or replays an event automatically.
+
+## Retained provider associations
+
+**Coverage:** `channel-usage` and its history describe the legacy explicit Bridge
+usage projection only. Provider binding/conversation admission does not populate
+that projection. An empty result does not establish that the Agent was never
+associated with a provider, and must not be used as deletion eligibility. Use
+`provider-associations` for retained Manager membership; neither route invents
+missing event-use history.
+
+`client.agents.providerAssociations(id, { limit, cursor })` reads retained
+membership under current Agent management authority. This includes retired and
+borrowed relationships without changing Agent origin or runtime state. Parent
+state and generation describe the database snapshot for that page; subsequent
+pages use fresh snapshots. `association_created_at` and `association_updated_at`
+are reservation timestamps, not first/last message usage. Keep the cursor with
+its exact Agent; restart pagination when a fresh complete traversal is needed.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+const client = createClient({ baseUrl: 'https://cma.nyxid.ai', credential: () => 'token' });
+const first = await client.agents.providerAssociations('agt_example', { limit: 50 });
+for (const item of first.items) {
+  console.log(item.relationship, item.binding_id, item.conversation_state);
+}
+if (first.next) {
+  await client.agents.providerAssociations('agt_example', { limit: 50, cursor: first.next });
+}
+```

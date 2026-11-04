@@ -16,7 +16,8 @@ metadata read. See [Answer deliverables](agents.md#answer-deliverables).
 | `profileAuthoring`                                      | `bounds`, `services`, `searchSkills`, read-only `resolveRepository`                                                                                                                                                                                                                                                           |
 | `marketplace.agent`, `.workspace`, `.sandbox`           | `list`, `read`, `fork`                                                                                                                                                                                                                                                                                                        |
 | `sandboxes`                                             | `list`, `read`, `create`, `pause`, `revive`, `updateRuntime`, `delete`, `events`                                                                                                                                                                                                                                              |
-| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `delete`                                                                                                                                                                                                                                                       |
+| `usage`                                                 | `summary`, `sandboxes`, `sandbox`, `events`, `adminSummary`, `adminSandboxes`                                                                                                                                                                                                                                                 |
+| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `recoverPrepare`, `delete`                                                                                                                                                                                                                                     |
 | `worktrees`                                             | `list(workspaceId)`, `read`                                                                                                                                                                                                                                                                                                   |
 | `agents`                                                | `list`, `read`, `create(workspaceId, body, options)`, `input`, `steer`, `interrupt`, `answerApproval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `updateSettings`, `skills`, `installSkill`, `accessRequests`, `approveAccessRequest`, `denyAccessRequest`, `updateServiceAccess` |
 | `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                                                                                                    |
@@ -82,6 +83,11 @@ Sandbox and Workspace creation return base views with HTTP 201. Use `read` for
 expanded hierarchy detail. Their lifecycle commands return base views with
 HTTP 202; acceptance does not mean the lifecycle has completed. Agent operations
 likewise return HTTP 202, with only `input` carrying `{ queued: boolean }`.
+
+`workspaces.recoverPrepare(id, { idempotencyKey })` sends a keyed, bodyless command for the same failed,
+never-ready Workspace. HTTP 202 confirms recovery admission; read the original
+Workspace for readiness. Reuse the same key after an uncertain response; a new
+key cannot bypass active work and is eligible only after a terminal failed attempt.
 
 Profile `save` and `publish` require the last observed `draft_version` for
 compare-and-swap. `marketplace.*.read` returns a complete immutable revision and
@@ -205,7 +211,7 @@ export const publishedButton = (
 `label` is `open_in_cma`, `chat_with_this`, `run_with_cma`, or `try_it`; `theme`
 is `auto`, `light`, or `dark`. Their defaults are `open_in_cma` and `auto`.
 `baseUrl` must be an absolute HTTP(S) origin with no credentials, path, query or
-fragment; its default is `https://bot.chrono-ai.fun`. Prefer the exact supplied
+fragment; its default is `https://cma.nyxid.ai`. Prefer the exact supplied
 descriptor props for non-production deployments. Package checks compile and
 render the backend-generated snippet against the packed SDK.
 
@@ -419,6 +425,15 @@ Legacy encrypted Gateway storage methods remain for older installations and migr
 
 Provider binding management uses `client.providerBindings.put/get/delete/ensureConversation/deleteConversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
 
+`client.providerBindings.inspectPreparation(bindingId, request)` inspects the
+generation for an authenticated, durably admitted event without changing resources.
+When it returns `state: 'pending'`, retain its exact intent and use
+`client.providerBindings.prepare(bindingId, { schema_version: 1, intent, agent_key },
+{ idempotencyKey })` with the operation key belonging to that intent. This requires
+enabled server preparation and management authority. An uncertain response must
+reuse the same intent and key; this operation never recovers or reattaches the
+original released home. Credential-bearing requests must not be logged.
+
 ## CMA Event Gateway
 
 `Cmaeg` is an independent client configured with the gateway origin, without a
@@ -536,6 +551,17 @@ every platform can edit every message. For Discord and WhatsApp sources,
 `verify_raw_event: true` opts into signed raw-event correlation and requires the
 deployment's extended-source writer support; omission preserves existing trust.
 
+When native split-text receipt issuance is enabled, an ordinary Telegram or
+Discord reply can also return `message_parts`. Each entry has a zero-based
+rendered `index` and an opaque `message_ref` for one confirmed part. Older
+receipts omit the field. Keep the existing singular `message_ref` separately;
+its meaning is unchanged. An `unknown` / `partial_delivery` receipt can contain
+confirmed earlier parts, but those entries do not prove that the whole reply
+completed. Preserve the exact operation key and never resend an unknown reply.
+Retained receipt replay preserves the original part tokens and does not renew
+their authority or expiry. Existing edit/effect gates and consumer ownership
+still apply to each reference.
+
 An enabled native Discord upload can return an opaque `message_ref` for delete
 and own-reaction effects when the complete upload fits one confirmed Discord
 message. This reference does not authorize text or attachment updates. Query its
@@ -562,6 +588,21 @@ stable event/conversation identity, and treats EOF before completion as uncertai
 `timeoutMs` bounds the complete stream, and `signal` cancels observation. Neither
 cancellation nor early iterator return cancels the admitted provider turn. Streams
 have no Last-Event-ID replay and are never automatically retried or reconnected.
+
+Attachment response streaming is explicit: `streamEvent(channelId, event,
+{ mediaResponses: true, timeoutMs: 180_000 })` adds `media_responses=true`. Omitted
+or false preserves the existing URL and original-turn completion behavior.
+Opted-in streams continue through `cmaeg.response.completed` / `.failed` and
+separate `cmaeg.media.response` frames until final `cmaeg.completed` / `.failed`.
+The final frame retains the original text/error, with `status` and `media_complete`;
+attachment responses retain their own response, parent, delivery and slot identities.
+Slots range from 0 through 31; response status preserves `completed`, `failed`,
+`incomplete` or `cancelled` exactly as recorded by the Gateway.
+`cmaeg.media.pending` closes observation after the server's 120-second deadline
+following original-response completion;
+inspect channel Activity or `getEventMediaResponses` instead of resubmitting the
+event. Response URLs are never followed automatically. Select a caller timeout
+covering the expected original turn duration plus the 120-second supplementary wait.
 
 Replies and updates return delivery/rendering receipts; inspect `delivery.outcome`
 and `rendering` before claiming delivery or native UI support. Typing can return
@@ -679,8 +720,11 @@ app's webhook would redirect its traffic. This source supports native text
 replies, retained recall notifications with unknown actors, and human reaction
 add/remove deltas. `SourceKind` carries the same regional app/tenant/bot identity.
 Targets retain the original conversation and consumer authority; these incoming
-notifications confer no outgoing delete/edit/reaction authority. Thread history
-and incoming edit propagation are not advertised for this source. Live platform
+notifications confer no outgoing delete/edit/reaction authority. Incoming edit
+propagation remains unsupported; original-conversation history has separate consent.
+Native received personal/group cards and locations become bounded message text
+without changing the authenticated sender, conversation, admission or reply target.
+Shared identities do not grant directory, group or attachment access. Live platform
 acceptance remains separate from local contract tests. See the repository's
 native Lark setup document and preserved incoming-event audit for provisioning
 and limits.
@@ -713,7 +757,9 @@ PDF `file` and bounded `audio` attachments. Audio supports AAC-LC ADTS (`audio/a
 `.aac`), AMR narrowband (`audio/amr`, `.amr`), MPEG Layer III (`audio/mpeg`, `.mp3`),
 single-track self-contained AAC-LC M4A (`audio/mp4`, `.m4a`) and mono Opus Ogg
 (`audio/ogg`, `.ogg`). Audio captions are refused; text is a separate message,
-and voice-note presentation is not exposed. The additive optional `mime_types`, `max_total_bytes`,
+and ordinary `audio` does not request voice-note presentation. The separately gated
+`voice` kind supports mono Opus Ogg through `audio.voice=true`; inspect the optional
+`presentation_profiles` capability before requesting it. The additive optional `mime_types`, `max_total_bytes`,
 `max_image_bytes` and `max_caption_chars` fields report that exact subset: 8 MiB
 aggregate bytes, 5,000,000 bytes per image and 1024 caption characters; shared
 metadata still limits captions to 1024 UTF-8 bytes. Existing limits remain four
@@ -929,9 +975,13 @@ See `docs/CMAEG_Native_WhatsApp_Forms.md` for the supported subset and retained 
 ### Native Telegram forum topic lifecycle
 
 The source's independent `topic_lifecycle: true` consent and the gateway's
-separate default-off topic gate enable exact original non-General forum-topic
-close/reopen. Check `context.capabilities.topic_lifecycle` for
-`manage_original_topic`, `actions` and `expires_at`. Both default and named
+separate default-off topic gate enable exact original numbered forum-topic
+rename/close/reopen. Rename uses the existing manage-thread request with `action: "rename"`
+and a required `name` of 1–100 printable characters. It changes only the original
+topic name, preserving its icon and open/closed state. Check `context.capabilities.topic_lifecycle` for
+`manage_original_topic`, `actions` and `expires_at`. The action list stays the
+conservative `["close", "reopen"]` subset for strict older readers; it is not an
+exhaustive operation list. Both default and named
 consumers retain only their original admitted authority. Enabling consent
 transparently enrolls a previously unrouted channel in default-only durable
 routing when authoring prerequisites are available; it does not enable incoming
@@ -950,9 +1000,13 @@ export function closeOriginalTopic(client: Cmaeg, eventRef: string) {
 }
 ```
 
-Use `reopen` / `ThreadAction::Reopen` for reopening. Telegram accepts only the
-original Event target and issues no `thread_ref`. There is no list, create,
-private-chat or General-topic operation. Discord rejects the additive Close
+Use `reopen` / `ThreadAction::Reopen` for reopening. Original-topic lifecycle uses
+the Event target. Independent topic-creation consent can also grant a scoped
+created-topic reference, described below. General uses the same Event request only when
+`relay_authoring.native_telegram_general_topic_lifecycle_enabled` is true and
+the retained native human message proves the original forum. It keeps the public
+thread absent; clients must never synthesize topic ID `1` from a missing thread.
+General reopen also unhides General. Discord rejects the additive Close
 action before platform IO. A confirmed receipt can omit `thread`.
 
 Keep a stable idempotency key. Same-key replay returns the saved outcome;
@@ -961,3 +1015,182 @@ fence across process restart, different keys and event expiry. Never retry an
 unknown result with a new key. Discovery describes scope; current Telegram bot
 administrator topic permissions are checked at execution. Source support and
 local tests do not establish connected-account native acceptance.
+
+### Native Telegram forum topic creation
+
+The independent source consent `topic_creation: true` and default-off operator
+capability `native_telegram_topic_creation_enabled` enable empty named topics in
+the original admitted human message's forum supergroup. Check ordinary context
+for `capabilities.topic_creation: true`. Existing topic-lifecycle consent is not
+required, and creation does not move the original conversation or send a message.
+
+```ts
+import { Cmaeg } from '@chronoai/cma-sdk';
+
+export async function createForumTopic(client: Cmaeg, eventRef: string) {
+  const receipt = await client.createEventThread(eventRef, 'stable-create', {
+    name: 'Release planning',
+  });
+  if (receipt.outcome.status === 'confirmed' && receipt.thread) {
+    await client.manageThread('stable-close-created', {
+      target: { type: 'thread', thread_ref: receipt.thread.thread_ref },
+      action: 'close',
+    });
+  }
+}
+```
+
+Omit `auto_archive_duration` for Telegram; Discord still requires its existing
+supported duration. Names use the neutral 1–100 printable-character bound.
+The confirmed receipt may contain a sealed `thread_ref` usable for rename,
+close and reopen, tied to the original consumer, custody and event expiry.
+A confirmed receipt can omit that reference if custody changed during creation.
+Current bot identity, forum state and administrator `can_manage_topics` permission
+are checked before the provider write.
+
+Keep the same request and idempotency key for replay. An unknown create holds a
+persistent bot/chat creation fence across new keys, process restart and event
+expiry; never retry it under a new key. CMA currently does not expose private
+chat creation, icon selection or topic listing. Telegram supports private-chat
+creation and icons, while the reviewed Bot API has no generic topic-list method.
+See [the topic-creation contract](../../../docs/CMAEG_Native_Telegram_Topic_Creation.md).
+
+### Native WhatsApp incoming message changes
+
+Native WhatsApp incoming changes use optional source `message_events` consent and
+optional discovery `native_whatsapp_message_events_enabled`. Both default off.
+Meta supplies private edit/revoke callbacks only for Business App coexistence
+accounts. Events use existing `cma.message.updated.v1` (`data.patch.text`) and
+`cma.message.deleted.v1`, bound to the retained incoming message and its original
+consumer/conversation. Caption changes preserve original attachments; outgoing
+edit/delete and history import are outside this feature. See
+[the incoming-change contract](../../../docs/CMAEG_Native_WhatsApp_Message_Events.md).
+
+`readEventHistory(eventRef, cursor?, options?)` returns one bounded history page and never
+fetches a continuation automatically. Set `{ includeMedia: true }` in options to
+opt in to native Lark/Feishu mixed posts, which may preserve
+their textual content with `omitted_content: ['media']` and empty `attachments`;
+this marker conveys no media count, type, keys or download authority. Whole-row
+omission counts exclude retained mixed posts, while `text_truncated` independently
+reports clipped or sanitized text. Absent/false options retain whole-row omission
+even when the gateway's `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` flag is enabled,
+preserving old strict decoders. Opt-in requires that flag and original history
+consent. Repeat the same mode for each cursor page; mismatches return 400 before
+platform I/O. This does not provide media downloads. See
+[native history](../../../docs/CMAEG_Native_Lark_History.md).
+
+### Native Lark and Feishu document files
+
+Use the existing `native_attachments` `file` kind for TXT/PDF, DOC/DOCX,
+XLS/XLSX, PPT/PPTX, ZIP and generic binary files when the event's native media
+capability advertises the corresponding MIME. Typed documents are checked from
+complete bytes; opaque `application/octet-stream` files preserve arbitrary bytes
+and safe filenames. Legacy Office uses native `doc`/`xls`/`ppt`; modern Office,
+ZIP and opaque files use native `stream`. The existing four-attachment, 64 KiB
+inline and 8 MiB aggregate transport limits still apply. Files are never converted
+or re-encoded; this grants no new source, recipient or consumer authority.
+See [native file profiles](../../../docs/CMAEG_Native_Lark_Outbound_Media.md).
+
+### Native media with controls
+
+Check the optional `capabilities.native_media.controls` object before combining
+`native_attachments` with buttons or choices. It declares `max_attachments`,
+`buttons`, `choices`, `caption_max_chars` and `update`. Optional `kinds` restricts
+the combination to those attachment kinds; when absent, the parent kinds apply.
+Absence of `controls` grants no combined send capability. The gated Telegram and Discord combinations each use one upload and one
+native message/card. Its `update: false` excludes media-card edits. Existing
+attachment bounds and event/consumer authority still apply.
+
+Native private WhatsApp media headers advertise `kinds: ["image", "file", "video"]`,
+`buttons: true`, `choices: false`, `max_attachments: 1`, `caption_max_chars: 0`,
+and `update: false` only with the independent native media-controls gate and
+existing media/interactions/consumer authority. Use one captionless attachment
+and one buttons block, with explanation text in the body. Lists, audio/sticker
+headers, groups, relay, albums and media/form mixtures remain unsupported.
+
+For native Discord, `native_media.controls.update` is true only with the separate
+media-card-edit gates. It permits changing message content/controls while keeping
+the exact confirmed upload. Its independent replacement gate may additionally
+advertise `replace_media: true` for one same-card upload replacement with complete
+content/controls. Media/form combinations remain unsupported. Historical cards without a retained native file proof
+remain callback-only.
+
+The additional Discord attachment-set gate can raise `controls.max_attachments`
+to four. Send the complete new set to replace all previous files on one confirmed
+card. When `controls.clear_media` is true, `updateMessage` also accepts
+`clear_native_attachments: true` with complete replacement text/controls to remove
+every upload. Clear plus nonempty attachments is invalid; omitted/false clear and
+empty attachments retain the previous set. Ordinary sends and unsupported
+platforms reject clear intent. A confirmed clear returns an ordinary card reference
+with no media authority; uncertain results must not be replayed as a new write.
+New-card issuance gates do not revoke retained edits or otherwise enabled
+replacements. See [Discord attachment sets](../../../docs/CMAEG_Native_Discord_Card_Edits.md#complete-attachment-sets-and-explicit-removal).
+
+For native Lark/Feishu, the separate image-card issuance gate adds
+`native_media.controls.kinds: ["image"]`, `max_attachments: 1`,
+`caption_max_chars: 0` and `update: true`. This narrows the combination to one
+PNG/JPEG even when ordinary media lists file/audio/video. Supply explanatory
+message text instead of an attachment caption. Content/control edits retain the
+confirmed image. Binary replacement requires the independent gate described below;
+image removal and forms are not supported.
+The optional `kinds` field remains absent for older responses. See
+[native Lark image controls](../../../docs/CMAEG_Native_Lark_Image_Controls.md).
+
+An independent replacement gate can advertise `replace_media: true` for a retained
+native Lark image card. Pass the complete replacement set of 1–4 PNG/JPEG
+`native_attachments` with full text/control content to `updateMessage`. Image-count
+changes are supported, including one to four and four to one. The parent
+`native_media.max_attachments` bounds replacement sets; `controls.max_attachments`
+continues to limit new-card issuance. Omitted attachments preserve all old images.
+Failed preflight/upload preserves the old card; unknown PATCH results are fenced
+and must not be blindly retried. Use the newly confirmed message reference after
+success. Destination, consumer and original expiry cannot change.
+
+The additional multi-image gate can raise `controls.max_attachments` to `4`;
+check discovery before combining two to four PNG/JPEG images with controls.
+Content/control edits preserve every confirmed image in its original order.
+
+### Native Lark / Feishu thread starts
+
+When verified context advertises `capabilities.native_thread_start: true`, `replyToEvent` may send one plain-text reply with `thread_reply: true` to start the exact originally admitted group message thread. The text must contain 1–4,000 characters and no blocks, attachments or explicit reply target. Only that root can be selected; no caller-selected chat, message or thread ID is accepted. The operation may continue that same root’s thread if it already exists, confirms the returned root/parent/chat/thread identity, and never falls back to top-level delivery. The feature is independently default-off; existing retained-thread replies keep their behavior. This is not the Discord `createThread` name/archive operation and grants no list/manage authority. See [native thread starts](../../../docs/CMAEG_Native_Lark_Thread_Start.md).
+
+### Native Telegram albums
+
+The optional `capabilities.native_media.albums` object describes ordered album
+support for the current native Telegram destination. It declares two to four
+attachments and `kind_groups: [["image", "video"], ["file"], ["audio"]]`.
+`controls: false` and `message_operations: false` mean album delivery provides no
+interactive controls or editable/deletable/reactable message references. Use the
+existing ordered `native_attachments` array. Single-upload requests and their
+references are unchanged. Captions stay per attachment and top-level text is
+separate. Preserve the exact idempotency key on unknown outcomes; never resend an
+uncertain album under another key. The field is omitted when issuance is disabled.
+
+### Explicit native media presentation
+
+The additive `voice` and `animation` kinds preserve ordinary `audio`/`video`
+semantics. Discover `native_media.presentation_profiles`: Telegram can advertise
+mono Opus Ogg voice, GIF/silent H.264 MP4 animation and static 512×512 WebP
+stickers; WhatsApp private destinations can advertise mono Opus Ogg voice.
+These presentations do not grant message operation references or combine with
+controls/albums. Existing WhatsApp stickers keep their prior behavior. See
+[the exact profiles and rollout contract](../../../docs/CMAEG_Native_Media_Presentations.md).
+
+Native Discord has an independent voice gate and a narrower declared profile:
+canonical mono signed 16-bit little-endian PCM WAV at 16kHz, 0.1–120 seconds.
+Discover `presentation_profiles` before sending `kind: "voice"`; its optional
+`max_attachments: 1` and `text: false` require one file without text, blocks or
+caption. The server derives duration and the complete preview waveform from
+actual PCM samples. Generic `audio` is unchanged. No message-operation reference
+is issued, and an uncertain result must not be retried under a new operation ID.
+Other codecs, including Ogg/Opus, are refused for this Discord voice profile.
+[Discord voice limits and acceptance status](../../../docs/CMAEG_Native_Discord_Voice.md).
+
+`StructuredContent` describes exclusive contact, static location and venue data in `OutboundMessage.structured_content`. Use only the original event's advertised `structured_replies` capability with a stable reply idempotency key. Omission preserves legacy message bytes; this adds no recipient or live-location fields.
+
+The Gateway-only worker credential classifier is `client.providerBindings.classifyWorkerCredential({ sha256 })`. It sends a bare
+lowercase SHA-256 digest and returns `known_worker` or `unknown` only after a
+successful lookup. It requires the verified Gateway service-account access bearer
+and both management capabilities. Ordinary owner, browser and worker credentials
+are refused, and unavailable authentication or storage is an HTTP error. A caller
+must never treat that error as `unknown` or reuse a negative result as a cache.

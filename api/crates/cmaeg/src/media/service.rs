@@ -6,6 +6,8 @@
 //! never see the reply token: they hold a [`MediaTarget`] whose Debug omits
 //! it, and every fetch happens inside a job. [`compose`] is the only place
 //! that chooses implementations; everything else depends on the seams.
+#[path = "service_continuations.rs"]
+mod continuations;
 #[path = "service_native_lark.rs"]
 mod native_lark;
 use super::{
@@ -14,38 +16,20 @@ use super::{
     cache::DerivedCache,
     derive::{Artifact, DeriveError, Derived, Pipeline},
     jobs::{JobMap, JobOutcome, JOB_CAP},
-    source::{
-        inline::InlineSource,
-        nyxid::NyxidSource,
-        telegram::TelegramFileSource,
-        url::{PinnedTransport, UrlSource},
-        SourceRegistry,
-    },
+    source::SourceRegistry,
     target::{MediaTarget, TargetError},
-    transcribe::{
-        meter::SttSpend,
-        openai::OpenAiCompatibleTranscriber,
-        upload::{AudioTranscoder, NoTranscoder},
-        DisabledTranscriber, Transcriber,
-    },
-    transform::{
-        adapters::{TransformerKeyframes, TransformerTranscoder},
-        ffmpeg::FfmpegJobTransformer,
-        scheduler::TransformScheduler,
-        setup::TransformerRuntime,
-        MediaTransformer,
-    },
-    visual::{PlatformThumbnail, VisualExtractor, VisualKind},
+    transcribe::{meter::SttSpend, upload::AudioTranscoder, Transcriber},
+    visual::{VisualExtractor, VisualKind},
     MediaLimits,
 };
 use crate::{
     ingress::launch::LaunchRequest,
-    telegram::TelegramClient,
     telemetry::{self, names},
     turns::render_media::Audience,
-    Config, ConfigError, MediaToolProviders,
+    MediaToolProviders,
 };
 use cmaeg_core::{channel::ConsumerView, seal::MasterKeyRing};
+pub use continuations::ContinuationOriginal;
 use futures_util::future::BoxFuture;
 use std::{
     fmt,
@@ -82,6 +66,7 @@ pub struct MediaCapabilities {
 
 /// The single media facade: targets, derivations and shared budgets.
 pub struct MediaService {
+    voice_decoder: Option<crate::discord::voice::Decoder>,
     lark_resolver: Option<crate::channels::resolver::ChannelResolver>,
     pipeline: Arc<Pipeline>,
     keys: Arc<MasterKeyRing>,
@@ -114,6 +99,7 @@ impl MediaService {
             limiter.clone(),
         );
         Self {
+            voice_decoder: None,
             lark_resolver: None,
             pipeline: Arc::new(Pipeline {
                 sources: deps.sources,
@@ -132,6 +118,18 @@ impl MediaService {
             responses: ResponseBudget::new(&limits),
             limiter,
         }
+    }
+
+    pub(crate) fn voice_decoder(&self) -> Option<crate::discord::voice::Decoder> {
+        self.voice_decoder.clone()
+    }
+
+    pub(crate) fn with_voice_decoder(
+        mut self,
+        decoder: Option<crate::discord::voice::Decoder>,
+    ) -> Self {
+        self.voice_decoder = decoder;
+        self
     }
 
     /// New proxy resource locators require current authority even on cache hits.
@@ -392,104 +390,6 @@ impl Drop for Record {
     }
 }
 
-/// What [`compose`] needs beyond the configuration.
-pub struct ComposeDeps {
-    pub resolver: crate::channels::resolver::ChannelResolver,
-    pub keys: Arc<MasterKeyRing>,
-    pub tool_providers: Arc<MediaToolProviders>,
-    pub telegram: Arc<TelegramClient>,
-    /// The media transformer's launcher and root once its startup setup
-    /// passed; `None` while it is not configured.
-    pub transformer: Option<TransformerRuntime>,
-}
-
-/// The media service, or `None` while media is off, so that no budget or
-/// cache is allocated and the pod's memory needs do not change.
-///
-/// This is the only place that chooses implementations.
-pub fn compose(
-    config: &Config,
-    deps: ComposeDeps,
-) -> Result<Option<Arc<MediaService>>, ConfigError> {
-    if !config.media.enabled {
-        tracing::debug!("inbound media is disabled; no media service composed");
-        return Ok(None);
-    }
-    let limits = MediaLimits::from_config(&config.media);
-    let sources = Arc::new(
-        SourceRegistry::new(
-            Arc::new(
-                NyxidSource::new(&config.management.nyxid_base_url)?
-                    .with_resolver(deps.resolver.clone()),
-            ),
-            Arc::new(TelegramFileSource::new(deps.telegram)),
-            Arc::new(UrlSource::new(Arc::new(PinnedTransport))),
-            Arc::new(InlineSource),
-        )
-        .with_discord(Arc::new(super::source::discord::DiscordFileSource::new(
-            crate::discord::DiscordRest::new()?,
-        )))
-        .with_whatsapp(Arc::new(super::source::whatsapp::WhatsappFileSource::new()))
-        .with_native_lark(Arc::new(
-            super::source::native_lark::NativeLarkFileSource::new(
-                crate::native_lark::Client::production()?,
-                deps.resolver.clone(),
-            ),
-        )),
-    );
-    let decode = Arc::new(Semaphore::new(1));
-    // An empty CMAEG_STT_URL leaves speech-to-text off.
-    let transcriber: Arc<dyn Transcriber> = match &config.stt.endpoint {
-        Some(endpoint) => Arc::new(OpenAiCompatibleTranscriber::new(endpoint, &config.stt)?),
-        None => Arc::new(DisabledTranscriber),
-    };
-    let inflight = InflightBytes::new(&limits);
-    // Without the transformer, platform thumbnails and the direct upload
-    // path; with it, keyframes and PCM, each keeping the former as fallback.
-    let (visuals, transcoder): (Arc<dyn VisualExtractor>, Arc<dyn AudioTranscoder>) =
-        match deps.transformer {
-            None => (
-                Arc::new(PlatformThumbnail::new(sources.clone(), decode.clone())),
-                Arc::new(NoTranscoder::new(&config.stt, transcriber.clone())),
-            ),
-            Some(runtime) => {
-                let transformer: Arc<dyn MediaTransformer> = Arc::new(FfmpegJobTransformer::new(
-                    runtime.launcher,
-                    runtime.root,
-                    TransformScheduler::new(),
-                    inflight.clone(),
-                    config.transformer.video_frames,
-                ));
-                (
-                    Arc::new(TransformerKeyframes::new(
-                        transformer.clone(),
-                        sources.clone(),
-                        decode.clone(),
-                        limits.max_bytes,
-                        config.transformer.video_frames,
-                    )),
-                    Arc::new(TransformerTranscoder::new(
-                        transformer,
-                        &config.stt,
-                        transcriber.clone(),
-                        limits.max_bytes,
-                    )),
-                )
-            }
-        };
-    let service = MediaService::new(MediaDeps {
-        visuals,
-        sources,
-        transcoder,
-        stt: Arc::new(SttSpend::new(&config.stt)),
-        transcriber,
-        limits,
-        keys: deps.keys,
-        tool_providers: deps.tool_providers,
-        decode,
-        inflight,
-    })
-    .with_resolver(deps.resolver);
-    tracing::info!(?limits, capabilities = ?service.capabilities(), "inbound media service composed");
-    Ok(Some(Arc::new(service)))
-}
+#[path = "service_compose.rs"]
+mod composition;
+pub use composition::{compose, ComposeDeps};

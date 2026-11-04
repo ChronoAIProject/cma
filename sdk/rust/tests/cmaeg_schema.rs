@@ -13,6 +13,21 @@ fn fixtures() -> Value {
 }
 
 #[test]
+fn telegram_rename_keeps_strict_legacy_discovery_bytes_and_existing_request_shape() {
+    let legacy =
+        r#"{"manage_original_topic":true,"actions":["close","reopen"],"expires_at":1800000600}"#;
+    let caps: TopicLifecycleCapabilities = serde_json::from_str(legacy).unwrap();
+    assert_eq!(serde_json::to_string(&caps).unwrap(), legacy);
+    assert!(
+        serde_json::from_str::<TopicLifecycleCapabilities>(&legacy.replace("reopen", "rename"))
+            .is_err()
+    );
+    let request = r#"{"target":{"type":"event","event_ref":"cmaeg1.ev.fixture"},"action":"rename","name":"Incident triage"}"#;
+    let decoded: ManageThreadRequest = serde_json::from_str(request).unwrap();
+    assert_eq!(serde_json::to_string(&decoded).unwrap(), request);
+}
+
+#[test]
 fn historical_activity_receipts_roundtrip_without_inventing_event_facts() {
     let mut page = fixtures()["ActivityPage"][0].clone();
     for row in page["items"].as_array_mut().unwrap() {
@@ -22,6 +37,18 @@ fn historical_activity_receipts_roundtrip_without_inventing_event_facts() {
     }
     let decoded: ActivityPage = serde_json::from_value(page.clone()).unwrap();
     assert_eq!(serde_json::to_value(decoded).unwrap(), page);
+}
+
+#[test]
+fn historical_media_capabilities_do_not_advertise_native_presentations() {
+    let mut legacy = fixtures()["NativeMediaCapabilities"][0].clone();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("presentation_profiles");
+    let decoded: NativeMediaCapabilities = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(decoded.presentation_profiles.is_none());
+    assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
 }
 
 #[test]
@@ -50,6 +77,13 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
     let mut inventory = Vec::new();
     macro_rules! check { ($($ty:ident),+ $(,)?) => {$({ inventory.push(stringify!($ty)); roundtrip::<$ty>(stringify!($ty), &examples); })+}; }
     check!(
+        ActivityMediaResponse,
+        EventAttestationRequest,
+        EventAttestationResponse,
+        MediaArtifactClaim,
+        MediaContinuationKind,
+        MediaResponsePage,
+        RetainedMediaResponse,
         FormCustomerMessage,
         FormPreparationReceipt,
         FormPreparationState,
@@ -148,6 +182,8 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ConversationHistoryCapabilities,
         ThreadHistoryMessage,
         ConversationId,
+        ConversationInspection,
+        PartitionInspection,
         ConversationKind,
         CredentialPatch,
         CredentialsRequest,
@@ -169,6 +205,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         HmacSecretRequest,
         IdentityAdmission,
         InboundMediaCapabilities,
+        ConfirmedMessagePart,
         IntentReceipt,
         EmptyEffectRequest,
         MessageEffectReceipt,
@@ -205,6 +242,13 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         PublicActivity,
         PublicChannelDefinition,
         PublicSecrets,
+        QuoteRelation,
+        QuoteTextOrigin,
+        QuotedContent,
+        QuotedContentKind,
+        QuotedContextSummary,
+        QuotedMessage,
+        QuotedText,
         RecordId,
         Refusal,
         RekeyResponse,
@@ -272,6 +316,10 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         NativeMediaKind,
         NativeMediaSource,
         NativeMediaCapabilities,
+        NativePresentationProfile,
+        NativeAlbumCapabilities,
+        MediaControlsCapabilities,
+        StructuredContent,
         NativeMediaUpdate,
         NativeMediaReplacement,
         NativeMediaEditCapabilities,
@@ -367,9 +415,15 @@ fn check_shape(schema: &Value, example: &Value, schemas: &Value, path: &str) -> 
             .as_object()
             .ok_or_else(|| format!("{path}: expected object"))?;
         for (key, field) in fields {
-            let value = object
-                .get(key)
-                .ok_or_else(|| format!("{path}/{key}: missing example property"))?;
+            let Some(value) = object.get(key) else {
+                if schema["required"]
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|field| field == key))
+                {
+                    return Err(format!("{path}/{key}: missing required example property"));
+                }
+                continue;
+            };
             check_shape(field, value, schemas, &format!("{path}/{key}"))?;
         }
         if schema
@@ -393,6 +447,59 @@ fn check_shape(schema: &Value, example: &Value, schemas: &Value, path: &str) -> 
     Ok(())
 }
 
+// Optional additive fields may be absent from legacy examples. Require their
+// coverage across the complete example set, while check_shape validates every
+// present field and recursively rejects properties removed from the snapshot.
+fn check_property_coverage(schema: &Value, examples: &[Value], schemas: &Value, path: &str) {
+    // Referenced types have their own complete top-level example collection.
+    if schema["$ref"].is_string() {
+        return;
+    }
+    let schema = properties(schema, schemas);
+    if let Some(variants) = schema["oneOf"].as_array() {
+        for variant in variants.iter().filter(|variant| variant["type"] != "null") {
+            if variant["$ref"].is_string() {
+                continue;
+            }
+            let expanded = properties(variant, schemas);
+            let discriminator = expanded["properties"]
+                .as_object()
+                .and_then(|fields| fields.iter().find(|(_, field)| field["enum"].is_array()));
+            let matching: Vec<_> = examples
+                .iter()
+                .filter(|example| {
+                    discriminator.is_none_or(|(key, field)| example[key] == field["enum"][0])
+                })
+                .cloned()
+                .collect();
+            assert!(!matching.is_empty(), "{path}: missing variant examples");
+            check_property_coverage(&expanded, &matching, schemas, path);
+        }
+    }
+    if let Some(fields) = schema["properties"].as_object() {
+        for (key, field) in fields {
+            let values: Vec<_> = examples
+                .iter()
+                .filter_map(|example| example.get(key).cloned())
+                .collect();
+            assert!(
+                !values.is_empty(),
+                "{path}/{key}: missing example property coverage"
+            );
+            check_property_coverage(field, &values, schemas, &format!("{path}/{key}"));
+        }
+    }
+    if let Some(items) = schema.get("items") {
+        let values: Vec<_> = examples
+            .iter()
+            .filter_map(Value::as_array)
+            .flatten()
+            .cloned()
+            .collect();
+        check_property_coverage(items, &values, schemas, path);
+    }
+}
+
 #[test]
 fn examples_exercise_every_snapshot_property_including_optional_and_nested_fields() {
     let snapshot = snapshot();
@@ -403,6 +510,7 @@ fn examples_exercise_every_snapshot_property_including_optional_and_nested_field
         fixtures.as_object().unwrap().keys().collect::<Vec<_>>()
     );
     for (name, examples) in fixtures.as_object().unwrap() {
+        check_property_coverage(&schemas[name], examples.as_array().unwrap(), schemas, name);
         for example in examples.as_array().unwrap() {
             check_shape(&schemas[name], example, schemas, name).unwrap();
         }
@@ -427,6 +535,18 @@ fn removing_a_snapshot_property_fails_the_sdk_contract_check() {
         .unwrap_err()
         .contains("removed schema property")
     );
+}
+
+#[test]
+#[should_panic(expected = "quoted_message: missing example property coverage")]
+fn omitting_an_optional_property_from_every_example_fails_contract_coverage() {
+    let snapshot = snapshot();
+    let schemas = &snapshot["components"]["schemas"];
+    let mut examples = fixtures()["ActivityKind"].as_array().unwrap().clone();
+    for example in &mut examples {
+        example.as_object_mut().unwrap().remove("quoted_message");
+    }
+    check_property_coverage(&schemas["ActivityKind"], &examples, schemas, "ActivityKind");
 }
 
 #[test]
@@ -566,4 +686,73 @@ fn legacy_native_media_capabilities_omit_unknown_transport_limits() {
     let legacy = json!({"kinds":["image","file","audio","video"],"sources":["url","base64"],"max_attachments":4,"max_inline_bytes":65536});
     let decoded: NativeMediaCapabilities = serde_json::from_value(legacy.clone()).unwrap();
     assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
+}
+
+#[test]
+fn native_media_control_capabilities_round_trip_without_changing_legacy_shape() {
+    let value = json!({"kinds":["image"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "controls":{"max_attachments":1,"buttons":true,"choices":true,"caption_max_chars":1024,"update":false}});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert!(!decoded.controls.as_ref().unwrap().update);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
+fn lark_multi_image_controls_preserve_bound_without_inventing_replacement_authority() {
+    let value = json!({"kinds":["image"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "controls":{"kinds":["image"],"max_attachments":4,"buttons":true,"choices":true,"caption_max_chars":0,"update":true}});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(decoded.controls.as_ref().unwrap().max_attachments, 4);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
+fn lark_replacement_capabilities_preserve_the_separate_issuance_bound() {
+    let value = json!({"kinds":["image"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "controls":{"kinds":["image"],"max_attachments":1,"buttons":true,"choices":true,"caption_max_chars":0,"update":true,"replace_media":true}});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(decoded.controls.as_ref().unwrap().replace_media, Some(true));
+    assert_eq!(decoded.controls.as_ref().unwrap().max_attachments, 1);
+    assert_eq!(decoded.max_attachments, 4);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
+fn native_album_capabilities_preserve_exact_groups_without_operation_authority() {
+    let value = serde_json::json!({
+        "kinds":["image","file","audio","video"], "sources":["base64"],
+        "max_attachments":4, "max_inline_bytes":65536,
+        "albums":{"min_attachments":2,"max_attachments":4,
+            "kind_groups":[["image","video"],["file"],["audio"]],
+            "controls":false,"message_operations":false}
+    });
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    let albums = decoded.albums.as_ref().unwrap();
+    assert!(!albums.controls && !albums.message_operations);
+    assert_eq!(albums.kind_groups[0], ["image", "video"]);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
+fn explicit_media_presentations_preserve_legacy_audio_and_optional_discovery() {
+    for kind in ["audio", "video", "voice", "animation", "sticker"] {
+        let wire = json!({"native_attachments":[{"kind":kind,"source":{"type":"base64","data":"AQIDBA=="}}]});
+        let decoded: OutboundMessage = serde_json::from_value(wire.clone()).unwrap();
+        let encoded = serde_json::to_value(decoded).unwrap();
+        assert_eq!(encoded["native_attachments"], wire["native_attachments"]);
+    }
+    let value = json!({"kinds":["audio","voice"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "presentation_profiles":[{"kind":"voice","mime_types":["audio/ogg"],"max_bytes":8388608,"caption":false,
+        "profile":"One complete mono Opus Ogg stream; no transcoding","message_operations":false}]});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(value.clone()).unwrap();
+    assert!(!decoded.presentation_profiles.as_ref().unwrap()[0].message_operations);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
+fn discord_voice_constraints_round_trip_and_older_profile_omits_new_fields() {
+    for value in fixtures()["NativePresentationProfile"].as_array().unwrap() {
+        let decoded: NativePresentationProfile = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), *value);
+    }
 }

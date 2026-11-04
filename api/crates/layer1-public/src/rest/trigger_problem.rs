@@ -49,6 +49,12 @@ impl From<ServiceConnectionServiceError> for TriggerProblem {
 impl IntoResponse for TriggerProblem {
     fn into_response(self) -> Response {
         let (status, code, detail, evidence) = match self {
+            Self::Launch(LaunchServiceError::VisitorQuota { limit, reset_at }) => {
+                return super::LaunchQuotaError::ResourceQuota(
+                    super::LaunchQuotaRefusal::visitor_launches(limit, reset_at),
+                )
+                .into_response();
+            }
             Self::Trigger(error) => trigger_problem(error),
             Self::Launch(error) => launch_problem(error),
             Self::Connection(error) => connection_problem(error),
@@ -143,6 +149,9 @@ fn trigger_problem(error: TriggerServiceError) -> ProblemParts {
 
 fn launch_problem(error: LaunchServiceError) -> ProblemParts {
     match error {
+        LaunchServiceError::VisitorQuota { .. } => {
+            unreachable!("quota response carries Retry-After above")
+        }
         LaunchServiceError::CredentialSetupRequired => conflict(
             "sandbox_credential_setup_required",
             super::problems::SANDBOX_CREDENTIAL_SETUP_DETAIL,

@@ -1,4 +1,6 @@
 //! Durable retained-route contracts through the native admission seam.
+#[path = "native_lark_quote_tests.rs"]
+mod quote_tests;
 use super::{
     launch::{LaunchOutcome, UnavailableLauncher},
     routed::RoutedIngress,
@@ -308,3 +310,9 @@ async fn native_lark_confirmed_receipt_selects_only_sending_consumer_and_retains
 
 #[path = "native_lark_media_tests.rs"]
 mod media_tests;
+
+#[path = "native_lark_shared_fact_tests.rs"]
+mod shared_facts;
+
+#[path = "native_lark_sticker_tests.rs"]
+mod sticker_tests;

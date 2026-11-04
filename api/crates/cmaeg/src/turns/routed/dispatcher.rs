@@ -1,6 +1,11 @@
-use super::{journal::valid_response, model::*, Journal};
+pub use super::dispatcher_authority::Authority;
+pub(super) use super::dispatcher_authority::{current_target, validate_current};
+use super::{
+    journal::valid_response, model::*, BindingPreparation, Journal, PreparationIntent,
+    PreparationReceipt,
+};
 use crate::{
-    channels::resolver::{ChannelResolver, ResolveError, ResolvedChannel},
+    channels::resolver::ResolvedChannel,
     ingress::routing_store::{
         AdmissionError, AdmittedPlan, EventIdentity, PlanStore, StoredTarget,
     },
@@ -8,73 +13,6 @@ use crate::{
 use cmaeg_core::channel::{ProviderBinding, Secret};
 use futures_util::future::BoxFuture;
 use std::sync::Arc;
-
-pub trait Authority: Send + Sync {
-    /// Must bypass process caches and authenticate the current sealed definition.
-    fn current<'a>(
-        &'a self,
-        identity: &'a EventIdentity,
-    ) -> BoxFuture<'a, Result<Arc<ResolvedChannel>, ExecutionError>>;
-    fn native_control<'a>(
-        &'a self,
-        _current: &'a ResolvedChannel,
-        plan: &'a AdmittedPlan,
-        _target: &'a StoredTarget,
-    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
-        Box::pin(async move {
-            if native_lark_control(plan)
-                || crate::interactions::whatsapp_flow::shape(&plan.activity)
-            {
-                Err(ExecutionError::AuthorityChanged)
-            } else {
-                Ok(())
-            }
-        })
-    }
-}
-impl Authority for ChannelResolver {
-    fn native_control<'a>(
-        &'a self,
-        current: &'a ResolvedChannel,
-        plan: &'a AdmittedPlan,
-        target: &'a StoredTarget,
-    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
-        Box::pin(async move {
-            if native_lark_control(plan) {
-                self.native_lark_control_current(current, &plan.activity, &target.launch.event)
-                    .await
-                    .map_err(|e| match e {
-                        crate::interactions::Error::Denied => ExecutionError::AuthorityChanged,
-                        crate::interactions::Error::Unavailable => ExecutionError::Unavailable,
-                    })?;
-            }
-            if crate::interactions::whatsapp_flow::shape(&plan.activity) {
-                self.whatsapp_flow_current(current, &plan.activity, &target.launch.event)
-                    .await
-                    .map_err(|e| match e {
-                        crate::interactions::Error::Denied => ExecutionError::AuthorityChanged,
-                        crate::interactions::Error::Unavailable => ExecutionError::Unavailable,
-                    })?;
-            }
-            Ok(())
-        })
-    }
-    fn current<'a>(
-        &'a self,
-        identity: &'a EventIdentity,
-    ) -> BoxFuture<'a, Result<Arc<ResolvedChannel>, ExecutionError>> {
-        Box::pin(async move {
-            self.resolve_current(identity.channel_id.as_str())
-                .await
-                .map_err(|error| match error {
-                    ResolveError::Unavailable | ResolveError::RateLimited => {
-                        ExecutionError::Unavailable
-                    }
-                    _ => ExecutionError::AuthorityChanged,
-                })
-        })
-    }
-}
 
 /// A direct, awaited transport: it must not spawn a detached start or re-render
 /// any frozen field. Exact-body idempotency is opt-in only after provider proof.
@@ -87,12 +25,52 @@ pub trait ExecutionPort: Send + Sync {
         target: &'a StoredTarget,
         current: &'a ResolvedChannel,
     ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>>;
+    fn inspect_binding<'a>(
+        &'a self,
+        _plan: &'a AdmittedPlan,
+        _target: &'a StoredTarget,
+        _current: &'a ResolvedChannel,
+    ) -> BoxFuture<'a, Result<BindingPreparation, ExecutionError>> {
+        Box::pin(async { Err(ExecutionError::Unsupported) })
+    }
+    fn reserve_binding<'a>(
+        &'a self,
+        _target: &'a StoredTarget,
+        _current: &'a ResolvedChannel,
+        _intent: &'a PreparationIntent,
+    ) -> BoxFuture<'a, Result<PreparationReceipt, ExecutionError>> {
+        Box::pin(async { Err(ExecutionError::Unsupported) })
+    }
+    fn prepare_at_generation<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+        generation: Option<u64>,
+    ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
+        if generation.is_some() {
+            Box::pin(async { Err(ExecutionError::Unsupported) })
+        } else {
+            self.prepare(plan, target, current)
+        }
+    }
     fn start<'a>(
         &'a self,
         body: &'a FrozenTurn,
         binding: &'a ProviderBinding,
         credential: &'a Secret,
     ) -> BoxFuture<'a, StartResult>;
+    /// Persist independent continuation scheduling after immutable body freeze.
+    /// Failure must prevent the original provider POST; a wake-up never grants
+    /// permission to replay that original request.
+    fn prepare_continuations<'a>(
+        &'a self,
+        _plan: &'a AdmittedPlan,
+        _target: &'a StoredTarget,
+        _body: &'a FrozenTurn,
+    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 pub enum StartResult {
@@ -165,7 +143,14 @@ impl Dispatcher {
             .find(|target| target.id == target_id)
             .ok_or(ExecutionError::Invalid)?;
         let mut lease = self.journal.claim(&plan, target, worker).await?;
-        let result = self.run(&plan, target, &mut lease).await;
+        let result = match self.run(&plan, target, &mut lease).await {
+            Err(ExecutionError::Expired) => match self.journal.expire_pending(&mut lease).await {
+                Ok(Some(phase)) => Ok(RunResult::Done(DispatchOutcome::Terminal(phase))),
+                Ok(None) => Err(ExecutionError::Expired),
+                Err(error) => Err(error),
+            },
+            result => result,
+        };
         match result {
             Ok(RunResult::Replay {
                 body,
@@ -192,8 +177,81 @@ impl Dispatcher {
         plan: &AdmittedPlan,
         target: &StoredTarget,
     ) -> Result<Arc<ResolvedChannel>, ExecutionError> {
-        current_target(self.authority.as_ref(), plan, target).await
+        let current = current_target(self.authority.as_ref(), plan, target).await?;
+        if !plan.current_preparation_source(&current.definition, &self.journal.keys) {
+            return Err(ExecutionError::AuthorityChanged);
+        }
+        Ok(current)
     }
+    /// A retained checkpoint is the only retry authority. Never re-inspect
+    /// after marker acknowledgement, including an ambiguous reservation reply.
+    async fn prepare_binding(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        lease: &mut Lease,
+    ) -> Result<Option<u64>, ExecutionError> {
+        const BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+        if lease.state.binding_preparation.is_none() {
+            let current = self.current(plan, target).await?;
+            self.journal.renew(lease).await?;
+            self.journal.guard(lease).await?;
+            let observed = tokio::time::timeout(BUDGET, async {
+                use super::generation_provenance::GenerationProvenance;
+                match self
+                    .journal
+                    .inherited_binding_generation(&self.plans, plan, target)
+                    .await?
+                {
+                    GenerationProvenance::Fresh => {
+                        self.port.inspect_binding(plan, target, &current).await
+                    }
+                    GenerationProvenance::Inherited {
+                        original_admission_id,
+                        original_target_id,
+                        generation,
+                    } => Ok(BindingPreparation::Inherited {
+                        version: 1,
+                        binding_id: target.launch.provider.binding_id.to_string(),
+                        original_admission_id,
+                        original_target_id,
+                        generation,
+                    }),
+                }
+            })
+            .await
+            .map_err(|_| ExecutionError::Unavailable)??;
+            self.journal
+                .pin_binding_preparation(lease, plan, target, observed)
+                .await?;
+        }
+        if let Some(BindingPreparation::Pending { intent }) =
+            lease.state.binding_preparation.clone()
+        {
+            // Any revocation, routing edit or credential rotation prevents the
+            // mutation even when the original plan/marker remains durable.
+            let current = self.current(plan, target).await?;
+            self.journal.renew(lease).await?;
+            self.journal.guard(lease).await?;
+            if lease.state.event_expires_at <= (self.journal.clock)() {
+                return Err(ExecutionError::Expired);
+            }
+            let receipt =
+                tokio::time::timeout(BUDGET, self.port.reserve_binding(target, &current, &intent))
+                    .await
+                    .map_err(|_| ExecutionError::Unavailable)??;
+            self.journal
+                .record_binding_preparation(lease, plan, target, receipt)
+                .await?;
+        }
+        lease
+            .state
+            .binding_preparation
+            .as_ref()
+            .ok_or(ExecutionError::Corrupt)?
+            .resolved_generation()
+    }
+
     async fn run(
         &self,
         plan: &AdmittedPlan,
@@ -237,7 +295,23 @@ impl Dispatcher {
             return Ok(RunResult::Done(DispatchOutcome::Unknown));
         }
         if lease.state.phase == Phase::Pending {
-            let body = self.port.prepare(plan, target, &current).await?;
+            let generation = if plan.prepares_binding(target) {
+                self.prepare_binding(plan, target, lease).await?
+            } else {
+                None
+            };
+            let current = if plan.prepares_binding(target) {
+                let current = self.current(plan, target).await?;
+                self.journal.renew(lease).await?;
+                self.journal.guard(lease).await?;
+                current
+            } else {
+                current
+            };
+            let body = self
+                .port
+                .prepare_at_generation(plan, target, &current, generation)
+                .await?;
             validate_delivery(&body, &current, target)?;
             self.journal.freeze(lease, plan, target, &body).await?;
         }
@@ -246,6 +320,8 @@ impl Dispatcher {
         // Media/conversation preparation has its own bound. Renew the still
         // owned lease so it cannot consume the subsequent acceptance budget.
         self.journal.renew(lease).await?;
+        self.port.prepare_continuations(plan, target, &body).await?;
+        self.journal.guard(lease).await?;
         // The durable start marker precedes any network effect. If either CAS
         // confirmation or the fresh authority check fails, no POST is made.
         self.journal.transition(lease, Phase::Starting).await?;
@@ -385,84 +461,4 @@ pub(super) fn admission_error(error: AdmissionError) -> ExecutionError {
         AdmissionError::Uncertain => ExecutionError::Uncertain,
         _ => ExecutionError::Corrupt,
     }
-}
-
-pub(super) async fn current_target(
-    authority: &dyn Authority,
-    plan: &AdmittedPlan,
-    target: &StoredTarget,
-) -> Result<Arc<ResolvedChannel>, ExecutionError> {
-    let current = authority.current(&plan.identity).await?;
-    validate_current(&current, plan, target)?;
-    authority.native_control(&current, plan, target).await?;
-    Ok(current)
-}
-
-pub(super) fn validate_current(
-    current: &ResolvedChannel,
-    plan: &AdmittedPlan,
-    target: &StoredTarget,
-) -> Result<(), ExecutionError> {
-    if matches!(
-        target.launch.event.reply,
-        cmaeg_core::seal::ReplyAddress::NativeLark(_)
-    ) && crate::native_lark::credentials(&current.definition, &target.launch.event.reply)
-        .is_none()
-    {
-        return Err(ExecutionError::AuthorityChanged);
-    }
-    if matches!(
-        target.launch.event.reply,
-        cmaeg_core::seal::ReplyAddress::WhatsappGroup(_)
-    ) && crate::whatsapp::credentials(&current.definition, &target.launch.event.reply).is_none()
-    {
-        return Err(ExecutionError::AuthorityChanged);
-    }
-    let consumer = current
-        .definition
-        .consumer(Some(&target.launch.consumer))
-        .ok_or(ExecutionError::AuthorityChanged)?;
-    if current.id != plan.identity.channel_id
-        || current.pointer.record_id != plan.identity.record_id
-        || current.definition.record_id != plan.identity.record_id
-        || current.definition.owner.subject != plan.identity.owner
-        || current.definition.routing.is_none()
-        || !current
-            .definition
-            .source_of(&plan.activity.source)
-            .is_some_and(|source| {
-                if matches!(source, cmaeg_core::channel::Source::Whatsapp { .. })
-                    && !crate::interactions::whatsapp_flow::shape(&plan.activity)
-                {
-                    crate::whatsapp::legacy_source(source)
-                        == crate::whatsapp::legacy_source(&plan.source)
-                } else if matches!(source, cmaeg_core::channel::Source::Telegram { .. }) {
-                    crate::telegram::messaging_source(source)
-                        == crate::telegram::messaging_source(&plan.source)
-                } else {
-                    crate::native_lark::same_messaging_source(source, &plan.source)
-                }
-            })
-        || current
-            .definition
-            .creation
-            .as_ref()
-            .is_some_and(|creation| !creation.ready)
-        || consumer.pending
-        || consumer.credential.is_none()
-        || consumer.provider != &target.launch.provider
-    {
-        return Err(ExecutionError::AuthorityChanged);
-    }
-    Ok(())
-}
-
-fn native_lark_control(plan: &AdmittedPlan) -> bool {
-    matches!(
-        plan.activity.source,
-        cmaeg_core::activity::SourceKind::NativeLark(_)
-    ) && matches!(
-        plan.activity.kind,
-        cmaeg_core::activity::ActivityKind::Interaction(_)
-    )
 }

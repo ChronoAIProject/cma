@@ -1,4 +1,5 @@
 //! Bounded leased preparation, always saving a transition before the next effect.
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -21,6 +22,8 @@ pub(crate) struct NativePreparedWorker {
     deployment_id: String,
     desired: Option<NativePreparedPlan>,
     target: u8,
+    machine_desired: Option<NativePreparedPlan>,
+    machine_target: u8,
 }
 
 impl NativePreparedWorker {
@@ -30,7 +33,8 @@ impl NativePreparedWorker {
         config: &Config,
     ) -> Result<Self, String> {
         let target = config.runtime.native_prepared_target;
-        let desired = if target == 0 {
+        let machine_target = config.runtime.native_machine_prepared_target;
+        let mut desired = if target == 0 && machine_target == 0 {
             None
         } else {
             let services = crate::config::REQUIRED_BASELINE_SERVICES
@@ -75,12 +79,48 @@ impl NativePreparedWorker {
                 .map_err(|error| error.to_string())?,
             )
         };
+        let machine_desired = if machine_target > 0 {
+            let prototype = desired.as_ref().ok_or("prepared prototype missing")?;
+            let image = config
+                .runtime
+                .machine_sandbox_image
+                .clone()
+                .ok_or("prepared machine image missing")?;
+            let mut sandbox = prototype.warm.profile.content.clone();
+            sandbox.runtime_image = Some(image.clone());
+            sandbox.workspace_profiles.clear();
+            sandbox.environment_variables = vec![layer2_core::profiles::EnvironmentVariable {
+                name: "CMA_MACHINE_INCLUDED".into(),
+                value: "1".into(),
+            }];
+            let mut workspace = prototype.warm.workspaces[0].profile.content.clone();
+            workspace.agent_profiles.clear();
+            Some(
+                NativePreparedPlan::new(
+                    sandbox,
+                    workspace,
+                    prototype.warm.workspaces[0].agents[0].content.clone(),
+                    prototype.warm.reaches.clone(),
+                    image,
+                    config.execution,
+                    prototype.home_policy.clone(),
+                )
+                .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
+        if target == 0 {
+            desired = None;
+        }
         Ok(Self {
             store,
             adapter,
             deployment_id: config.deployment_id.clone(),
             desired,
             target,
+            machine_desired,
+            machine_target,
         })
     }
 
@@ -88,6 +128,7 @@ impl NativePreparedWorker {
         tokio::spawn(async move {
             let worker = Arc::new(self);
             let mut jobs = JoinSet::new();
+            let mut probes = HashMap::new();
             let mut ticker = tokio::time::interval(Duration::from_secs(2));
             ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
@@ -96,12 +137,23 @@ impl NativePreparedWorker {
                 }
                 tokio::select! {
                     _ = shutdown.changed() => break,
-                    result = jobs.join_next(), if !jobs.is_empty() => {
-                        if let Some(Err(error)) = result { tracing::error!(%error, "native preparation worker task failed"); }
+                    result = jobs.join_next_with_id(), if !jobs.is_empty() => {
+                        match result {
+                            Some(Ok((id, ()))) => { probes.remove(&id); }
+                            Some(Err(error)) => {
+                                probes.remove(&error.id());
+                                tracing::error!(%error, "native preparation worker task failed");
+                            }
+                            None => {}
+                        }
                     }
                     _ = ticker.tick() => {
                         if let Err(error) = worker.store.reconcile_native_prepared_target(worker.desired.as_ref(), worker.target, &now_rfc3339()).await {
                             tracing::warn!(%error, "native preparation target reconciliation deferred");
+                            continue;
+                        }
+                        if let Err(error) = worker.store.reconcile_native_prepared_class(worker.machine_desired.as_ref(), worker.machine_target, &now_rfc3339(), true).await {
+                            tracing::warn!(%error, "native machine preparation reconciliation deferred");
                             continue;
                         }
                     },
@@ -109,19 +161,30 @@ impl NativePreparedWorker {
                 if *shutdown.borrow() {
                     break;
                 }
-                while jobs.len() < 2 {
+                while jobs.len() < 4 {
+                    // Keep the other ready reservation available for admission.
+                    // Durable leases continue to fence workers across processes.
+                    let ready_classes = [
+                        !probes.values().any(|machine: &bool| !*machine),
+                        !probes.values().any(|machine| *machine),
+                    ];
                     match worker
                         .store
-                        .claim_native_prepared_work(&now_rfc3339(), &after(60))
+                        .claim_native_prepared_work_for(&now_rfc3339(), &after(60), ready_classes)
                         .await
                     {
                         Ok(Some(claim)) => {
+                            let probe = (claim.record.state == WarmSandboxState::Ready)
+                                .then_some(claim.plan.machine());
                             let worker = worker.clone();
-                            jobs.spawn(async move {
+                            let task = jobs.spawn(async move {
                                 if let Err(error) = worker.run_claim(claim).await {
                                     tracing::warn!(%error, "native preparation step requires reconciliation");
                                 }
                             });
+                            if let Some(machine) = probe {
+                                probes.insert(task.id(), machine);
+                            }
                         }
                         Ok(None) => break,
                         Err(error) => {

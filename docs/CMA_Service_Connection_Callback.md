@@ -1,9 +1,9 @@
 # NyxID service connection return
 
-CMA registers `https://bot.chrono-ai.fun/connection-return` as a second, exact
-redirect URI on its NyxID OAuth client. Keep the existing
-`https://bot.chrono-ai.fun/auth/callback` URI: it serves the separate browser
-sign-in flow. Other environments use their configured CMA public origin with
+CMA registers `https://cma.nyxid.ai/connection-return` as an exact redirect URI
+on its NyxID OAuth client alongside `https://cma.nyxid.ai/auth/callback` for
+browser sign-in. Retain both old `https://bot.chrono-ai.fun` callback entries
+during the domain migration. Other environments use their configured CMA public origin with
 the same paths.
 
 The hosted connect-link request sends the fixed `/connection-return` URI without
@@ -42,7 +42,7 @@ GET /api/v1/developer/oauth-clients/{client_id}
 PATCH /api/v1/developer/oauth-clients/{client_id}
 Content-Type: application/json
 
-{"redirect_uris":["https://bot.chrono-ai.fun/auth/callback","https://bot.chrono-ai.fun/connection-return"]}
+{"redirect_uris":["https://bot.chrono-ai.fun/auth/callback","https://bot.chrono-ai.fun/connection-return","https://cma.nyxid.ai/auth/callback","https://cma.nyxid.ai/connection-return"]}
 ```
 
 The example assumes those are the complete existing and added URI set; use the

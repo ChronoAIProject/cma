@@ -22,6 +22,19 @@ pub trait FrozenTurnBuilder: Send + Sync {
         target: &'a StoredTarget,
         current: &'a ResolvedChannel,
     ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>>;
+    fn prepare_at_generation<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+        generation: Option<u64>,
+    ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
+        if generation.is_some() {
+            Box::pin(async { Err(ExecutionError::Unsupported) })
+        } else {
+            self.prepare(plan, target, current)
+        }
+    }
 }
 
 pub struct HttpExecutionPort {
@@ -30,6 +43,7 @@ pub struct HttpExecutionPort {
     plans: PlanStore,
     journal: Journal,
     authority: Arc<dyn Authority>,
+    media_work: Option<super::media_work::MediaWorkIndex>,
 }
 pub struct ReattachedResponse {
     pub snapshot: RecoverySnapshot,
@@ -65,7 +79,17 @@ impl HttpExecutionPort {
             plans,
             journal,
             authority,
+            media_work: None,
         }
+    }
+    pub fn with_media_continuations(mut self, enabled: bool) -> Self {
+        if enabled {
+            self.media_work = Some(super::media_work::MediaWorkIndex::new(
+                self.journal.clone(),
+                self.plans.clone(),
+            ));
+        }
+        self
     }
     /// The dispatcher shares this adapter's exact authority and storage handles.
     pub fn dispatcher(self: Arc<Self>) -> Dispatcher {
@@ -146,7 +170,7 @@ impl HttpExecutionPort {
         Ok(ReattachedResponse { snapshot, stream })
     }
 }
-fn credential<'a>(
+pub(super) fn credential<'a>(
     current: &'a ResolvedChannel,
     target: &StoredTarget,
 ) -> Result<&'a Secret, ExecutionError> {
@@ -157,6 +181,22 @@ fn credential<'a>(
         .ok_or(ExecutionError::AuthorityChanged)
 }
 impl ExecutionPort for HttpExecutionPort {
+    fn prepare_continuations<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        body: &'a FrozenTurn,
+    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
+        Box::pin(async move {
+            match &self.media_work {
+                Some(index) => index.prepare(plan, target, body).await,
+                None if body.metadata.contains_key(super::media_schedule::KEY) => {
+                    Err(ExecutionError::Unsupported)
+                }
+                None => Ok(()),
+            }
+        })
+    }
     fn support(&self, binding: &ProviderBinding) -> RecoverySupport {
         RecoverySupport {
             exact_body_idempotency: false,
@@ -173,6 +213,47 @@ impl ExecutionPort for HttpExecutionPort {
         current: &'a ResolvedChannel,
     ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
         self.builder.prepare(plan, target, current)
+    }
+    fn inspect_binding<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+    ) -> BoxFuture<'a, Result<BindingPreparation, ExecutionError>> {
+        Box::pin(async move {
+            self.providers
+                .inspect_binding_preparation(plan, target, credential(current, target)?)
+                .await
+                .map_err(super::builder::provider_error)
+        })
+    }
+    fn reserve_binding<'a>(
+        &'a self,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+        intent: &'a PreparationIntent,
+    ) -> BoxFuture<'a, Result<PreparationReceipt, ExecutionError>> {
+        Box::pin(async move {
+            self.providers
+                .reserve_binding_preparation(
+                    &target.launch.provider.slug,
+                    &target.launch.provider.binding_id,
+                    intent,
+                    credential(current, target)?,
+                )
+                .await
+                .map_err(super::builder::provider_error)
+        })
+    }
+    fn prepare_at_generation<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+        generation: Option<u64>,
+    ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
+        self.builder
+            .prepare_at_generation(plan, target, current, generation)
     }
     fn start<'a>(
         &'a self,

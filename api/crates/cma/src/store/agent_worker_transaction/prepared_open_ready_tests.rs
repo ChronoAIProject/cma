@@ -7,6 +7,8 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::AgentStatus;
 
+mod snapshot;
+
 async fn fixture() -> (
     mongodb::Client,
     String,

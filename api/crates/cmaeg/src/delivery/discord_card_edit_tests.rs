@@ -35,7 +35,7 @@ fn editing(f: &FixtureState) -> Sender {
         .with_consumer_interactions(true);
     value
 }
-async fn update(
+pub(super) async fn update(
     sender: &Sender,
     f: &FixtureState,
     reference: &MessageRefPayload,
@@ -84,7 +84,7 @@ fn echo(f: &FixtureState, adjust: impl Fn(&mut Value) + Send + Sync + 'static) {
         memory.responses.lock().unwrap().push_back((status, body));
     }));
 }
-fn patches(f: &FixtureState) -> usize {
+pub(super) fn patches(f: &FixtureState) -> usize {
     f.rest
         .memory
         .calls

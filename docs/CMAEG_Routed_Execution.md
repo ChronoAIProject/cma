@@ -12,6 +12,11 @@ delivery equivalence limits below remain prerequisites for activation.
 
 ## Verified HTTP ingress admission
 
+New owner-created Custom channels can also select this execution path through the
+immutable `durable_custom_execution` marker, behind its reader-first writer gate.
+See [self-service Custom execution](CMAEG_Custom_Durable_Execution.md). Existing
+routing-bearing records are not automatically enrolled.
+
 `CMAEG_ROUTED_CHANNEL_RECORDS` accepts at most 64 explicit record IDs, with no
 wildcard, and defaults to empty. `CMAEG_ROUTED_RECOVERY_ENABLED=true` installs the
 adapter, executor and supervised scheduler, and is required before selecting

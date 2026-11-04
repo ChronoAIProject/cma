@@ -304,7 +304,9 @@ it('uses server defaults without image or profile selectors and allows an empty 
   );
   expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
   expect(
-    screen.getByText('Start an Agent in a new Sandbox with an empty workspace.'),
+    screen.getByText(
+      'Your Agent gets its own Sandbox, a private computer it works in, starting with an empty Workspace.',
+    ),
   ).toBeInTheDocument();
   expect(screen.getAllByRole('textbox')).toHaveLength(1);
   expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
@@ -318,9 +320,11 @@ it('uses server defaults without image or profile selectors and allows an empty 
     expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
   expect(screen.queryByText('Detailed settings')).not.toBeInTheDocument();
   const settings = screen.getByRole('region', { name: 'Agent settings' });
-  expect(settings).toHaveTextContent('gpt-6 · High · Autonomous');
+  expect(settings).toHaveTextContent('gpt-6 · High reasoning · Autonomous');
   expect(within(settings).queryByRole('button')).not.toBeInTheDocument();
-  expect(screen.getByText('Includes chrono-llm-public and ornn-api access.')).toBeInTheDocument();
+  expect(
+    screen.getByText('Includes access to ChronoAI models and the Ornn skill library.'),
+  ).toBeInTheDocument();
   expect(screen.getByRole('dialog', { name: 'New agent' })).not.toHaveTextContent(/YOLO|Codex/);
   await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
   await waitFor(() => expect(create).toHaveBeenCalledOnce());

@@ -107,6 +107,8 @@ deadline. An active transaction or commit is allowed to finish; the retry budget
 does not cancel it or renew authorization.
 
 The Agent receives the ordinary input followed by `event_ref: <reference>`.
+The Web conversation view omits a trailing CMAEG event reference from user message
+text and clipboard copies; stored input and runtime dispatch retain it unchanged.
 The full activity is retrieved through authenticated
 `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}`.
 This read requires a current key for the exact binding and mapped conversation,

@@ -24,7 +24,7 @@ let request = AgentLifecycleCreateRequest {
     initial_message: Some("Compare three tools and cite your sources.".into()),
     workspace_id: None,
     sandbox_id: None,
-    name: "Research".into(), image: None, repository: None, profile: None,
+    name: "Research".into(), machine_included: false, image: None, repository: None, profile: None,
 };
 let receipt = client.agents().create_lifecycle(&request, &key).await?;
 let _operation = client.agents().read_lifecycle(&receipt.id).await?;
@@ -45,10 +45,18 @@ error when available.
 the original idempotent request. It must contain non-whitespace text and fit
 262144 UTF-8 bytes. The server queues it durably as `purpose: task` after
 environment preparation, replacing the readiness prompt. Omission retains
-legacy `setup` behavior. Do not combine it with `repository` or send a separate
-first message after creation. Discover support in the served OpenAPI request
-schema; older services cannot admit this field. Read Agent detail/transcript
-for delivery, recovery and results.
+legacy `setup` behavior. With `repository`, a new Sandbox prepares the pinned
+source checkout before delivering the task; omit existing Workspace and Sandbox
+IDs in this mode. Discover support in the served OpenAPI request schema and its
+`x-cma-task-repository` extension. Do not send a separate first message after
+creation. Read Agent detail/transcript for delivery, recovery and results.
+
+For a new desktop Sandbox, set `machine_included: true` and omit `image`.
+`agents().read(id).await?.desktop` reports its desktop capability. Call
+`agents().desktop(id).await?` to discover the same-origin `websocket_url`; your host
+WebSocket implementation carries binary RFB frames on that path using owner
+authentication. Browser connections require the exact CMA Origin, and one viewer
+may connect to a Sandbox at a time. Unavailable desktops return named API errors.
 
 Set `workspace_id: Some(existing_id)` to add an Agent to an owned, ready Workspace.
 Omit `image` and `repository` in this mode. The Agent inherits the existing
@@ -85,6 +93,14 @@ let history = client.agents().events(&id, EventOptions::default()).await?;
 the exact server-issued approval identifier with `Allow`, `Deny`, or `Abort`.
 `stop` and `delete` are distinct explicit lifecycle operations. Do not substitute
 either for cancellation of local observation.
+
+`agents().recover_worktree(id, &key)` retries failed initial worktree preparation
+only for an Agent that has never become ready. The owner or a CMA administrator
+can request recovery. It preserves the Agent identity and persistent volume,
+retains the failed worktree and its recovery evidence, and allocates a fresh
+worktree for the same Agent. HTTP 202 acknowledges admission; use `read` to
+observe readiness. Reuse the exact key after an uncertain response. Already-ready
+or otherwise ineligible Agents return HTTP 409 `agent_worktree_recovery_conflict`.
 
 While a Sandbox checkpoint is active, input is refused before admission with
 HTTP 409 `sandbox_checkpoint_in_progress`. No prompt is queued for later execution.
@@ -638,3 +654,75 @@ offline or visibility changes. Public audit contains at most 128 metadata entrie
 and no input text, client keys or lease tokens. It is volatile per incarnation.
 See `docs/plans/cma-ui-optimization/17-CONTROL-CONTRACT.md` for reader floors and
 bounded revocation behavior.
+
+## Binding event media continuations
+
+A bound consumer Agent Key can publish an original event attachment, read its
+completed receipt, and admit a separate supplementary response. It cannot select
+another Agent or an arbitrary filesystem path. The current binding and Gateway
+artifact authority are revalidated by the server on every operation.
+
+Use `client.provider_bindings().upload_event_attachment(&target, &upload,
+bytes)`, where `BindingMediaTarget` fixes the binding, conversation, event and
+attachment index and `BindingMediaUpload` carries the frozen filename, original
+SHA-256, MIME type, expiry and optional Gateway generation. The SDK enforces the
+20 MiB limit. `event_attachment(&target)` reads its completed receipt without
+republishing bytes. `supplement_event_media(&target, &body)` accepts a
+`BindingMediaSupplement` containing the exact artifact and derived UTF-8 text
+(at most 64 KiB), returning a separate command/response receipt.
+
+These routes need no caller-generated idempotency key: the original parent event
+and artifact slot identify the operation. Preserve the same slot, hashes, bytes
+and text after an uncertain result. The SDK does not automatically retry or
+create replacement events. A supplement uses Append ordering and leaves the
+original response intact. A 202 receipt acknowledges admission, not completion;
+follow its `response_url` through the Responses API. Typed media refusals retain
+the stable server code and Retry-After metadata, including temporary source
+unavailability and current authority revocation.
+
+Gateway channel owners can read retained supplementary response metadata with
+`gateway.get_event_media_responses(channel_id, event_id, &options)`.
+Follow `next_cursor` until absent or null. Each page covers up to sixteen original
+attachment slots and contains only consumer/response identities and status.
+Activity snapshots also retain each consumer's optional `media_responses`.
+These reads remain useful after the original event capability expires. They do
+not grant access to response text: every returned Manager `response_url` still
+requires existing Agent response authorization. The SDK never follows those URLs
+or replays an event automatically.
+
+## Retained provider associations
+
+
+**Coverage:** `channel-usage` and its history describe the legacy explicit Bridge
+usage projection only. Provider binding/conversation admission does not populate
+that projection. An empty result does not establish that the Agent was never
+associated with a provider, and must not be used as deletion eligibility. Use
+`provider-associations` for retained Manager membership; neither route invents
+missing event-use history.
+
+
+`agents().provider_associations(id, &page)` reads retained membership under
+current Agent management authority. Retired and borrowed associations remain
+visible without changing Agent creation origin. Parent binding state and
+generation describe the database snapshot for that page; subsequent pages use
+fresh snapshots. Reservation timestamps do not represent message usage. Keep
+continuations with their exact Agent incarnation and restart traversal when a
+fresh full view is needed.
+
+```rust
+use cma_sdk::{Client, PageOptions};
+async fn memberships(client: &Client, agent_id: &str) -> cma_sdk::Result<()> {
+    let mut options = PageOptions { limit: Some(50), cursor: None };
+    loop {
+        let page = client.agents().provider_associations(agent_id, &options).await?;
+        for item in page.items {
+            println!("{} {}", item.binding_id, item.binding_generation);
+        }
+        match page.next {
+            Some(next) => options.cursor = Some(next),
+            None => break,
+        }
+    }
+    Ok(())
+}
+```

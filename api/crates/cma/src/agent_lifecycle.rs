@@ -75,6 +75,7 @@ pub(crate) struct InlineAgentLifecycle {
     image_resolver: Arc<dyn ImageResolver>,
     bounds: ProfileCapacityBounds,
     capacity: layer3_adapter::SandboxCapacity,
+    machine_sandbox_image: Option<String>,
     operations: Arc<MongoAgentLifecycleStore>,
     native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
@@ -108,6 +109,7 @@ impl InlineAgentLifecycle {
         image_resolver: Arc<dyn ImageResolver>,
         bounds: ProfileCapacityBounds,
         capacity: layer3_adapter::SandboxCapacity,
+        machine_sandbox_image: Option<String>,
         scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
         operations: Arc<MongoAgentLifecycleStore>,
         native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
@@ -121,6 +123,7 @@ impl InlineAgentLifecycle {
             image_resolver,
             bounds,
             capacity,
+            machine_sandbox_image,
             operations,
             native_prepared,
             desktop,
@@ -419,32 +422,33 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             Some(guidance::managed_v3()),
         ))?;
         services(&profile.permissions)?;
+        if request.machine_included && request.image.is_some() {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "Machine Included selects the deployment desktop image and cannot be combined with an explicit image".into(),
+            ));
+        }
         // Resolve the delegated Image Manager reference before persisting the
         // operation. The durable worker then needs no secret after admission.
-        let mut resolved_image = match &request.image {
+        let resolved_image = match &request.image {
             Some(image) => Some(
                 self.image_resolver
                     .resolve(delegated_credential, image)
                     .await?,
             ),
+            None if request.machine_included => self
+                .machine_sandbox_image
+                .clone()
+                .ok_or_else(|| {
+                    AgentLifecycleProvisioningError::Invalid(
+                        "Machine Included is not available in this deployment".into(),
+                    )
+                })
+                .map(Some)?,
             None => None,
         };
-        if request.desktop {
-            let capability = self
-                .inspect_desktop(caller, context, &request, resolved_image.as_deref())
-                .await?;
-            if !capability.available() {
-                if capability.state == layer2_core::sandbox::desktop_creation::DesktopAvailability::TemporarilyUnavailable {
-                    return Err(AgentLifecycleProvisioningError::Unavailable);
-                }
-                return Err(AgentLifecycleProvisioningError::DesktopUnsupported(
-                    capability.reason,
-                ));
-            }
-            if request.workspace_id.is_none() && request.sandbox_id.is_none() {
-                resolved_image = capability.runtime_image;
-            }
-        }
+        let resolved_image = self
+            .resolve_desktop_image(caller, context, &request, resolved_image)
+            .await?;
         let input = LifecycleInput {
             behavior: LifecycleBehavior::PromptRepository,
             managed_agent_instructions: Some(guidance::managed_v3().into()),

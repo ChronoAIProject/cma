@@ -3,6 +3,13 @@ use crate::{Client, Result, http::Request};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
+mod worker_credentials;
+pub use worker_credentials::*;
+mod preparation;
+pub use preparation::*;
+mod media;
+pub use media::*;
+
 /// Provider target selection. Omission preserves profile provisioning.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -68,6 +75,22 @@ pub struct BindingConversation {
     pub agent_id: Option<String>,
     /// Current conversation state.
     pub state: String,
+}
+/// Retained conversation mapping and the current mapped Agent lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct BindingConversationInspection {
+    /// Binding whose current generation contains this mapping.
+    pub binding_id: String,
+    /// Current binding generation.
+    pub generation: u64,
+    /// Canonical provider conversation identity.
+    pub conversation_id: String,
+    /// Retained mapped Agent identity, even if its record is gone.
+    pub agent_id: String,
+    /// Conversation lifecycle state.
+    pub state: String,
+    /// Agent lifecycle state; null if its record is absent.
+    pub agent_status: Option<String>,
 }
 /// Binding advertisement for provider-side tools.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +158,19 @@ impl ProviderBindings<'_> {
                 None,
                 StatusCode::NO_CONTENT,
             )?)
+            .await
+    }
+    /// Inspect a retained mapping without creating or rebinding an Agent.
+    pub async fn inspect_conversation(
+        &self,
+        id: &str,
+        conversation: &str,
+    ) -> Result<BindingConversationInspection> {
+        self.0
+            .get(
+                &["cmaeg", "bindings", id, "conversations", conversation],
+                &[],
+            )
             .await
     }
     /// Create or replay a deterministic external conversation mapping.

@@ -12,6 +12,15 @@ impl Bridge {
         input: ConversationInput,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
+        let recovering = self.recovering_context.load(Ordering::SeqCst);
+        if recovering != 0
+            && !matches!(&input,
+            ConversationInput::RefreshContext { operation_sequence, .. } if *operation_sequence == recovering)
+        {
+            return Err(crate::AdapterError::OperationIdentityConflict(
+                "admitted context recovery must complete before other input".into(),
+            ));
+        }
         let session = self.session().await?;
         match input {
             ConversationInput::Configure {
@@ -30,6 +39,7 @@ impl Bridge {
                 .await
             }
             ConversationInput::RefreshContext {
+                service_origin,
                 operation_sequence,
                 readiness_receipt,
                 previous_guidance,
@@ -49,8 +59,11 @@ impl Bridge {
                     reasoning_effort,
                     permission,
                     working_directory.as_deref(),
+                    service_origin.as_deref(),
                 )
-                .await
+                .await?;
+                self.recovering_context.store(0, Ordering::SeqCst);
+                Ok(())
             }
             ConversationInput::Steer(content) => {
                 // Probe before mutation so an older retained runtime refuses

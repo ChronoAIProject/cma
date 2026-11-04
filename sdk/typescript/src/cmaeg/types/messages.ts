@@ -1,4 +1,5 @@
 import { WhatsappTemplateSchema } from './whatsapp-template.js';
+import { StructuredContentSchema } from './structured-content.js';
 import {
   AttachmentKindSchema,
   MessageRefSchema,
@@ -117,14 +118,29 @@ export const RenderingReportSchema = object({
 });
 export type RenderingReport = Output<typeof RenderingReportSchema>;
 
+export const ConfirmedMessagePartSchema = object({
+  index: integer,
+  message_ref: MessageRefSchema,
+});
+export type ConfirmedMessagePart = Output<typeof ConfirmedMessagePartSchema>;
+
 export const IntentReceiptSchema = object({
+  message_parts: optional(array(ConfirmedMessagePartSchema)),
   delivery: DeliveryOutcomeSchema,
   message_ref: optional(nullable(MessageRefSchema)),
   rendering: RenderingReportSchema,
 });
 export type IntentReceipt = Output<typeof IntentReceiptSchema>;
 
-export const NativeMediaKindSchema = enumeration('image', 'file', 'audio', 'video', 'sticker');
+export const NativeMediaKindSchema = enumeration(
+  'image',
+  'file',
+  'audio',
+  'video',
+  'voice',
+  'animation',
+  'sticker',
+);
 export type NativeMediaKind = Output<typeof NativeMediaKindSchema>;
 export const NativeMediaSourceSchema = tagged(
   {
@@ -167,7 +183,40 @@ export const NativeVideoCapabilitiesSchema = object({
   fast_start_required: boolean,
 });
 export type NativeVideoCapabilities = Output<typeof NativeVideoCapabilitiesSchema>;
+export const MediaControlsCapabilitiesSchema = object({
+  kinds: optional(nullable(array(text))),
+  max_attachments: integer,
+  buttons: boolean,
+  choices: boolean,
+  caption_max_chars: integer,
+  update: boolean,
+  replace_media: optional(nullable(boolean)),
+  clear_media: optional(nullable(boolean)),
+});
+export type MediaControlsCapabilities = Output<typeof MediaControlsCapabilitiesSchema>;
+export const NativeAlbumCapabilitiesSchema = object({
+  min_attachments: integer,
+  max_attachments: integer,
+  kind_groups: array(array(text)),
+  controls: boolean,
+  message_operations: boolean,
+});
+export type NativeAlbumCapabilities = Output<typeof NativeAlbumCapabilitiesSchema>;
+export const NativePresentationProfileSchema = object({
+  max_attachments: optional(nullable(integer)),
+  text: optional(nullable(boolean)),
+  kind: text,
+  mime_types: array(text),
+  max_bytes: integer,
+  caption: boolean,
+  profile: text,
+  message_operations: boolean,
+});
+export type NativePresentationProfile = Output<typeof NativePresentationProfileSchema>;
 export const NativeMediaCapabilitiesSchema = object({
+  presentation_profiles: optional(nullable(array(NativePresentationProfileSchema))),
+  albums: optional(nullable(NativeAlbumCapabilitiesSchema)),
+  controls: optional(nullable(MediaControlsCapabilitiesSchema)),
   kinds: array(text),
   sources: array(text),
   max_attachments: integer,
@@ -207,6 +256,9 @@ export const NativeMediaEditCapabilitiesSchema = object({
 export type NativeMediaEditCapabilities = Output<typeof NativeMediaEditCapabilitiesSchema>;
 
 export const OutboundMessageSchema = object({
+  structured_content: optional(StructuredContentSchema),
+  reply_with_received_sticker: optional(boolean),
+  clear_native_attachments: optional(boolean),
   native_media_update: optional(NativeMediaUpdateSchema),
   whatsapp_template: optional(nullable(WhatsappTemplateSchema)),
   native_attachments: optional(array(NativeAttachmentSchema)),

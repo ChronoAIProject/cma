@@ -71,11 +71,13 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
             || value.is_some_and(|value| {
                 value.to_str().ok() != Some(expected)
                     && !(name == "origin"
-                        && reqwest::Url::parse(&state.public_api_url)
-                            .ok()
-                            .is_some_and(|url| {
-                                value.to_str().ok()
-                                    == Some(url.origin().ascii_serialization().as_str())
+                        && std::iter::once(&state.public_api_url)
+                            .chain(state.public_api_aliases.iter())
+                            .any(|base| {
+                                reqwest::Url::parse(base).ok().is_some_and(|url| {
+                                    value.to_str().ok()
+                                        == Some(url.origin().ascii_serialization().as_str())
+                                })
                             }))
             })
         {

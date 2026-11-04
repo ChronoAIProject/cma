@@ -15,7 +15,7 @@ their own Layer 3 directory and evidence against pinned versions.
 
 | Pod | Contains | Responsibility |
 |---|---|---|
-| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. One deployment; currently one API replica while visitor/rate counters are process-local. |
+| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. One API replica with rolling overlap; operation budgets and visitor quotas are shared through MongoDB. |
 | **Sandbox pod** | Layer 4 | One isolated CMA Sandbox containing Workspaces, Worktrees, and Agents. Many, provisioned by the sandbox provider. |
 
 The control plane never executes agent code. Sandbox pods never serve public
@@ -27,8 +27,10 @@ Its own `web/` frontend contains the Agent Manager, Image Manager and Event
 Gateway portals, operational dashboard, Trigger publisher, public visitor
 journey, and reference client for the public interfaces. The main working
 surface is one Agent conversation in its Worktree, Workspace, and Sandbox.
-There is no terminal plane, separate Chat model, billing,
-sponsorship, or contribution-specific workflow.
+There is no terminal plane, separate Chat model, sponsorship, or contribution-specific workflow.
+Sandbox allocation usage is recorded at the lifecycle persistence boundary and
+exposed through public usage APIs. Pricing and invoices remain in NyxID’s existing
+billing provider; CMA does not maintain an independent price or wallet ledger.
 
 **The conversation surface may call no route a third-party client could not
 call.** Instance and inline configuration management use public REST; live Agent

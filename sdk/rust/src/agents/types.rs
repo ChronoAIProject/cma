@@ -220,6 +220,9 @@ pub struct Agent {
     pub workspace: AgentWorkspace,
     /// Owning Sandbox.
     pub sandbox: AgentSandbox,
+    /// Whether the immutable Sandbox provides the Linux desktop session.
+    #[serde(default)]
+    pub desktop: bool,
     /// Fresh lifecycle bootstrap lineage while messages can be queued before runtime readiness.
     pub bootstrap: Option<AgentBootstrap>,
     /// Public conformance identifiers.
@@ -434,4 +437,12 @@ pub struct AgentTurnUsage {
     pub input_tokens: u64,
     /// Output tokens reported by the provider.
     pub output_tokens: u64,
+}
+
+/// Owner-authorized desktop discovery; the caller's WebSocket implementation
+/// opens this same-origin path and carries binary RFB frames.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AgentDesktopDescriptor {
+    /// Relative CMA WebSocket endpoint; requires owner authentication.
+    pub websocket_url: String,
 }

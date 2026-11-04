@@ -101,7 +101,8 @@ impl SetupDependencies {
                 &gateway.base_url,
                 &gateway.public_url,
             )?
-            .with_public_api(&gateway.public_api_url)?,
+            .with_public_api(&gateway.public_api_url)?
+            .with_public_api_aliases(&gateway.public_api_aliases)?,
             required_services,
         });
         Ok(dependencies)

@@ -5,6 +5,12 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
+The current rolling-deployment implementation and its first-upgrade drain
+procedure are specified in [CMA rolling deployment](CMA_Rolling_Deployment.md).
+That procedure supersedes the process-local quota/Recreate restrictions in the
+dated observations below once the shared-budget binary is promoted. It does not
+retroactively change those deployment records or claim the promotion is complete.
+
 The current deployment is recorded in the linked verification document and
 immutable manifests. On 15 October at 22:31 SGT, Web `dfc4d128` (generation 121)
 and Agent Manager `b28d39c0` (generation 45) are verified live. Web provides
@@ -411,6 +417,13 @@ guest. Pod/PVC reads retain exact incarnation, home and cleanup checks. Native
 Sandbox status does not provide those UIDs. Direct Pod-IP connectivity and CRI
 port-forward did not establish a working production transport; changing from
 exec requires a separately tested transport and bootstrap contract.
+
+The remote Google Metadata client disables TCP packet coalescing on its
+Kubernetes connection so successive small desktop and conversation frames do
+not wait for an extra acknowledgement round trip. The client retains the pinned
+CA, request target checks, refreshable identity, retries and configured I/O
+timeouts. This transport setting does not change the fixed runtime exec relay
+or replace existing Sandbox processes.
 
 The installed API consists of the core `Sandbox` plus the three extension
 resources `SandboxTemplate`, `SandboxWarmPool` and `SandboxClaim`. The three
@@ -996,6 +1009,109 @@ worker lease or preparation cannot publish success. An interrupted attempt keeps
 both debts; recovery can replay the pair or use the ordinary individual steps
 when preparation evidence is unavailable. No runtime request is omitted, and
 metadata conflict retries contain publication only.
+
+After a successful paired replay on a runtime advertising combined resource
+preparation, the same worker call may immediately claim Open with its next durable
+writer fence. It compares that claim with the just-committed Agent, allowing only
+the existing startup metadata races, and rereads the complete Sandbox, Workspace
+and Worktree records. Only unchanged parents retain the call's runtime inspection;
+any parent or Agent authority change takes the ordinary startup path. Open still
+records its cleanup intent, validates the live native Pod at command transport,
+and retains its receipt and publication fences. A lost replay reply, uncertain
+publication, competing claim, retained runtime without this capability, or later
+worker invocation cannot reuse that observation. This removes one repeated full
+inspection from successful prepared startup; production measurements must still
+establish the end-to-end provisioning time.
+
+Agent Manager emits bounded `MongoDB client latency summary` records for
+connection checkout, connection establishment and pool clears. Command monitoring
+is deliberately absent: MongoDB driver 3.9 decodes full commands and replies
+before invoking those callbacks, adding CPU/allocation work even when a callback
+reads only timing fields.
+Each active category emits at most one record per ten-second observation window;
+the next completion flushes an idle window. `count`, `failures`, `total_us` and
+`max_us` include failed checkouts. `failures` counts only connection checkout
+failures; database command and write errors are not checkout failures. The
+seven non-overlapping `buckets` have inclusive
+upper bounds of 1, 5, 25, 100, 250 and 1000 milliseconds, followed by an overflow
+bucket. Compare those windows with the existing admission and worker timings;
+checkout durations include client scheduling and do not measure database execution
+time. Only fixed connection categories and numeric
+measurements enter these summaries: no query, reply, database/collection name,
+owner, server address, credential or driver error is recorded. The observer sends
+no diagnostic queries and changes no connection-pool, durability or retry policy.
+
+The singleton Agent Manager requests two CPU cores, permits a four-core burst and
+uses four Tokio workers. Production observations on the prior two-core limit
+averaged approximately 1.56 cores without command monitoring and 1.84 cores with
+it over separate 49/48-second windows. These overlapping application workloads
+are not a controlled benchmark. The additional scheduler capacity must still be
+validated against actual creation timings; it does not establish a five-second
+startup guarantee. Keep one Recreate replica while rate/quota counters remain
+process-local, and verify retained conversations and homes across the API rollout.
+
+Connection reconciliation carries the applied managed-guidance revision from the
+Agent record that its discovery scan already validated. For an attached Agent at
+the current revision, it skips the second full Agent read previously performed
+only to reject an unnecessary refresh. Applied guidance revisions cannot decrease;
+this observation only skips completed maintenance. Pending refreshes retain their
+fresh reads, idle checks and transaction/input fences. Missing connections still
+take the original recovery path regardless of their guidance revision. Discovery
+continues validating complete records and rejects corrupt metadata.
+
+That same validated scan also defers refresh checks while an attached Agent is
+busy or has no valid, explicitly selected model. The next sweep recomputes this
+eligibility; an owner model selection or settled turn is not hidden by a cache.
+Eligible refreshes still reread the current Agent and retain all admission and
+input fences. Missing connections recover even when maintenance is ineligible.
+
+Each completed reconciliation sweep logs only aggregate candidate, already-current,
+deferred, refresh-check and recovery counts plus elapsed milliseconds. The normal scheduler
+starts at most one sweep per second; summaries contain no Agent or owner identities,
+prompts or database payloads. Compare these counts and existing connection checkout
+metrics with actual UI timings before attributing production latency to this work.
+
+Browser hierarchy, transcript and live-head publication checks begin independently
+after each projection's own data is complete. They do not wait for the hierarchy's
+publication check to finish first. Each still obtains fresh account identity;
+no result or in-flight identity request is shared with later reads. Final snapshot
+publication waits for every early callback and a further fresh identity check.
+The deterministic 250 ms identity/300 ms parallel-read fixture completes in
+1,050 ms rather than 1,300 ms. This is a scheduling regression test, not a
+production latency measurement or five-second acceptance claim.
+
+Empty v2 Agent event polls return the core's already-authorized window without
+running response-command and optional message-command correlation. No source
+entries exist to bind. The core still reads fresh ownership and ancestry, checks
+for an uncommitted log tail, and revalidates authority after its IO. Nonempty
+windows keep both correlation paths; every buffered durable or live frame keeps
+its existing release-time authorization and generation checks. This reduces an
+empty poll from three full authorization snapshots to two, or from four to two
+when message bindings are requested. Poll cadence, revocation/expiry checks and
+public response shapes are unchanged. Measure aggregate database checkouts and
+actual creation timings before attributing startup improvement to fewer reads.
+
+Resource authorization reads the requested record, its authoritative ancestry,
+optional assigned Agent and policy with one bounded aggregation inside the same
+transaction snapshot. Every original record still passes its complete reader,
+indexed-field checks and lineage validation; applicable shares retain their
+separate bounded query and validation. Ordinary Agent reads use three database
+commands including transaction abort, down from seven. The aggregation emits
+individual source documents, so valid retained records need not fit together in
+one 16 MiB BSON row; oversized batches may require additional cursor reads in
+the same transaction. Fresh revocation checks and write fences remain mandatory.
+This reduces database round trips without caching permissions or establishing a
+five-second creation guarantee; actual UI timings remain the acceptance measure.
+
+Prepared Open/Ready publication decides eligibility inside the same Mongo
+transaction that validates the current Agent and writes its parent fences. It
+reads the consumed preparation once and fences that exact revision before
+committing the Agent, Worktree, logs and Sandbox event. Ineligibility aborts
+without writes and retains the ordinary startup path; a changed parent or writer
+still conflicts. Logs distinguish `ineligible` fallback from `conflict` fallback
+without recording document contents. This removes a separate eligibility
+snapshot and duplicate reads; it does not omit fresh runtime/home checks or prove
+that provisioning meets any latency target.
 
 First-message admission backs off bounded transaction conflicts. When all attempts
 are known to have aborted, the worker rereads the exact first-message record and
@@ -1733,3 +1849,27 @@ and the fixture key was confirmed revoked. The source deployment manifests now
 pin the verified images while preserving all prior Web asset initializers.
 Publication SHA-256:
 `196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7`.
+
+### Explicit recovery of an unpublished Workspace preparation
+
+`POST /api/v1/workspaces/{id}/recover-prepare` is an explicit operator/owner
+command; deploying the code does not admit it automatically. Deploy compatible
+API readers and the runtime recovery protocol before issuing the command. An
+unsupported runtime fails the attempt without removing the retained stage; after
+upgrading that runtime, an explicit new key can admit a new attempt.
+
+Admission persists `work.prepare_recovery` and `work.step = recover_prepare` on
+the original Workspace. Once any attempt has been admitted, all API replicas
+and rollback binaries must retain these readers, including after that Workspace
+becomes Ready. Preserve the original record, its attempt history, the immutable
+preparation journal, and `/home/cma/.cma/prepare-recovery/<workspace-id>/` on the
+same persistent home. Do not repair state by deleting markers, moving the
+original files manually, or changing the original operation/source/profile.
+
+Before acceptance, record the original Workspace/Sandbox IDs, PV identity,
+source/profile/execution policy, staged-directory identity and journal hash.
+Use one stable idempotency key until the attempt settles. Verify Ready only
+after preparation and setup have returned validated receipts; check the same
+Workspace path and PV, preserved original archive/journal, and the real resolved
+Git commit. An ineligible or uncertain outcome must retain the data and fail
+closed rather than publish a synthetic Ready state.

@@ -44,6 +44,34 @@ it('returns an empty native thread scan page without automatically fetching its 
   expect(fetch.mock.calls[0]?.[0]).toBe('https://gateway.example/v1/events/original/history');
 });
 
+it('preserves native mixed post text and media omission without fetching media or continuation', async () => {
+  const expected = examples.ConversationHistoryPage?.[3];
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(expected));
+  const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+  const page = await client.readEventHistory('original', undefined, { includeMedia: true });
+  expect(page).toEqual(expected);
+  expect(page.messages[0]?.text).toBe('Earlier postText before and after omitted media');
+  expect(page.messages[0]?.omitted_content).toEqual(['media']);
+  expect(page.messages[0]?.attachments).toEqual([]);
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0]?.[0]).toBe(
+    'https://gateway.example/v1/events/original/history?include_media=true',
+  );
+});
+
+it('pins explicit mixed-history opt-in to each opaque cursor request without changing legacy calls', async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockImplementation(async () => json(sample('ConversationHistoryPage')));
+  const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+  await client.readEventHistory('original', 'opaque/+?cursor', { includeMedia: true });
+  await client.readEventHistory('original', 'opaque/+?cursor', { includeMedia: false });
+  expect(fetch.mock.calls.map((call) => call[0])).toEqual([
+    'https://gateway.example/v1/events/original/history?cursor=opaque%2F%2B%3Fcursor&include_media=true',
+    'https://gateway.example/v1/events/original/history?cursor=opaque%2F%2B%3Fcursor',
+  ]);
+});
+
 describe('independent CMAEG client', () => {
   it('emits all management and tool methods with opaque IDs, complete bodies and exact versions', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
@@ -77,6 +105,23 @@ describe('independent CMAEG client', () => {
         method: 'GET',
         path: `/v1/channels/${segment}`,
         response: sample('ChannelResponse'),
+      },
+      {
+        run: () => client.inspectChannelPartition(id, 'oracle/+?', { consumerId: 'default' }),
+        method: 'GET',
+        path: `/v1/channels/${segment}/partition?partition_key=oracle%2F%2B%3F&consumer_id=default`,
+        response: {
+          consumer_id: 'default',
+          transport_conversation_id: 'conversation-partition',
+          mapping: {
+            binding_id: 'binding-partition',
+            generation: 1,
+            conversation_id: 'conversation-partition',
+            agent_id: 'agt_missing',
+            state: 'ready',
+            agent_status: null,
+          },
+        },
       },
       {
         run: () => client.recoverChannel(id),
@@ -461,4 +506,36 @@ it('uses scoped thread references, explicit stable keys and exact lifecycle wire
     'rename-stable',
   );
   expect(JSON.parse(fetch.mock.calls[3]?.[1]?.body as string)).toEqual(rename);
+});
+
+it('creates a Telegram topic without archive duration and manages its returned scope', async () => {
+  const receipt = examples.ThreadReceipt?.[1];
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(json(receipt))
+    .mockResolvedValueOnce(json({ outcome: { status: 'confirmed' } }));
+  const client = new Cmaeg({
+    baseUrl: 'https://gateway.example',
+    credential: () => 'fixture',
+    fetch,
+  });
+  const created = await client.createEventThread('original/forum', 'topic-create', {
+    name: 'Release planning',
+  });
+  expect(created).toEqual(receipt);
+  expect(fetch.mock.calls[0]?.[0]).toBe(
+    'https://gateway.example/v1/events/original%2Fforum/threads',
+  );
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ name: 'Release planning' });
+  expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('Idempotency-Key')).toBe(
+    'topic-create',
+  );
+  expect(created.thread).toBeDefined();
+  if (!created.thread) throw new Error('confirmed fixture must carry its scoped reference');
+  const target = { type: 'thread' as const, thread_ref: created.thread.thread_ref };
+  await client.manageThread('topic-close', { target, action: 'close' });
+  expect(fetch.mock.calls[1]?.[0]).toBe('https://gateway.example/v1/thread-operations');
+  expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toEqual({ target, action: 'close' });
+  expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('Idempotency-Key')).toBe('topic-close');
+  expect(fetch).toHaveBeenCalledTimes(2);
 });

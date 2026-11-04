@@ -90,8 +90,16 @@
 }
 
 .model-effort__head [class~='button'] {
+  position: relative;
   width: 24px;
   height: 24px;
+}
+
+/* The 24px reset key answers a 32px square (§15) inside the header's own height. */
+.model-effort__head [class~='button']::after {
+  position: absolute;
+  inset: -4px;
+  content: '';
 }
 
 .model-effort__list {

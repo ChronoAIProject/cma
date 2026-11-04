@@ -29,6 +29,9 @@ pub(super) struct CreateV2ResponseRequest {
     metadata: Option<BTreeMap<String, String>>,
     event_context: Option<super::event_context::EventContext>,
     answer_context: Option<crate::conversation::AnswerContextRequest>,
+    /// Exact provider binding generation; valid only with a binding credential.
+    #[schema(minimum = 1)]
+    binding_generation: Option<u64>,
     store: Option<bool>,
 }
 #[utoipa::path(post, path = "/api/v2/responses", tag = "responses v2", request_body = CreateV2ResponseRequest, params(("Idempotency-Key" = Option<String>, Header)), responses((status = 200, body = String, content_type = "text/event-stream"), (status = 422, body = Value)))]
@@ -63,7 +66,7 @@ async fn submit(
     let Some(credential) = auth.credential.as_ref() else {
         return error::unauthenticated();
     };
-    let Json(body) = match body {
+    let Json(mut body) = match body {
         Ok(body) => body,
         Err(_) => {
             return error::error(
@@ -105,6 +108,33 @@ async fn submit(
             Some("event_context"),
         );
     }
+    let expected_generation = match body
+        .as_object_mut()
+        .and_then(|body| body.remove("binding_generation"))
+    {
+        None => None,
+        Some(value) => match value.as_u64().filter(|value| *value > 0) {
+            Some(value) if binding => Some(value),
+            _ => {
+                return error::field(
+                    "binding_generation",
+                    "invalid_binding_generation",
+                    "Supply a positive generation only with a binding key.",
+                )
+            }
+        },
+    };
+    let binding_generation = if binding {
+        match state
+            .submission_generation(&auth, expected_generation)
+            .await
+        {
+            Ok(generation) => Some(generation),
+            Err(error) => return *error,
+        }
+    } else {
+        None
+    };
     // A binding's URL and body may use different aliases of the same Agent.
     let parse_alias = if binding && body.get("conversation").is_some() {
         None
@@ -119,7 +149,14 @@ async fn submit(
         if let (Some(router), Some(event)) =
             (&state.event_router, submission.command.external_event_mut())
         {
-            match router.route(&auth, event).await {
+            match router
+                .route_at_generation(
+                    &auth,
+                    event,
+                    binding_generation.expect("binding generation pinned"),
+                )
+                .await
+            {
                 Ok(value) => value,
                 Err(error) => return super::routing::error(error),
             }
@@ -133,7 +170,7 @@ async fn submit(
         agent
     } else {
         match state
-            .resolve_conversation(&auth, &submission.agent_id)
+            .resolve_conversation(&auth, &submission.agent_id, binding_generation)
             .await
         {
             Ok(id) => id,
@@ -142,7 +179,10 @@ async fn submit(
     };
     if binding {
         if let Some(alias) = alias {
-            let alias = match state.resolve_conversation(&auth, &alias).await {
+            let alias = match state
+                .resolve_conversation(&auth, &alias, binding_generation)
+                .await
+            {
                 Ok(id) => id,
                 Err(error) => return *error,
             };

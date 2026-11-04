@@ -1,3 +1,7 @@
+#[path = "routed_custom_tests.rs"]
+mod custom_tests;
+#[path = "routed_quote_tests.rs"]
+mod quote_tests;
 use super::*;
 use crate::{
     channels::resolver::ChannelResolver,

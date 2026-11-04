@@ -6,16 +6,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const requiredPrefixes = [
+  'usage_billing::tests::',
+  'store::request_limits::tests::',
+  'store::sandbox_mongo_integration_tests::sandbox_usage_tests::',
   'document_artifacts::mongo_integration_tests::',
   'store::message_feedback::tests::',
+  'store::sandbox_colors::tests::',
   'agent_lifecycle::workspace::tests::mongo::',
+  'agent_lifecycle::workspace::tests::bootstrap::',
   'warm_pools::tests::mongo::',
   'store::native_warm_pools::retirement::tests::',
+  'store::native_prepared::tests::',
   'store::sandbox_admission_mongo_integration_tests::warmup::',
   'store::auth::api_bearer_tests::',
   'store::agent_conversation_store::checkpoint_tests::',
   'store::agent_conversation_store::admission_tests::',
-  'store::agent_access_tools::tests::',
+  'store::agent_access_tools::',
   'store::agent_access_requests::',
   'agent_access_worker::',
   'owner_service_access::',
@@ -42,6 +48,8 @@ const requiredPrefixes = [
   'sandbox::worker_tests::lifecycle_queue_contention_tests::',
   'store::sandbox_mongo_integration_tests::sandbox_lifecycle_tests::lifecycle_phase_reconciles_an_ambiguous_commit_without_duplicate_logs',
   'sandbox::agent_worker::prepared_open_ready::',
+  'store::mongo_latency::tests::',
+  'store::sandbox_mongo_integration_tests::agent_worker_tests::reconciliation_context_tests::',
 ];
 
 function fixture(scenario) {

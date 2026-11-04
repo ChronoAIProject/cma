@@ -2,7 +2,7 @@
 use super::{
     AcceptedStatus, ActorKind, AttachmentKind, AttachmentSource, BindingId, ChannelId, ConsumerId,
     ConsumerName, ConversationId, ConversationKind, EventId, EventRef, MessageRef, ProblemCode,
-    ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts,
+    QuotedMessage, ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts,
 };
 use serde::{Deserialize, Serialize};
 
@@ -142,6 +142,9 @@ pub enum ActivityKind {
         /// Wire field `reply_to`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<MessageRef>,
+        /// Bounded untrusted reply context; confers no lookup or effect authority.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quoted_message: Option<QuotedMessage>,
         /// Wire field `text`.
         text: String,
     },
@@ -270,6 +273,18 @@ pub enum MediaVariant {
 /// CMAEG `Capabilities` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
+    /// Structured content kinds supported for this exact original event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_replies: Option<Vec<String>>,
+    /// Resend this event's received native Lark sticker to its original conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_with_received_sticker: Option<bool>,
+    /// One text reply can start the exact admitted native Lark group root thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_thread_start: Option<bool>,
+    /// Original forum-supergroup scope; current platform permissions are checked per creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_creation: Option<bool>,
     /// Eligibility for issuing native media edit references on confirmed single uploads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_media_edits: Option<super::NativeMediaEditCapabilities>,

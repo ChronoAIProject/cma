@@ -14,9 +14,13 @@ const platforms = ['telegram', 'lark', 'feishu', 'discord', 'whatsapp', 'slack']
 export function SourceFields({
   value,
   onChange,
+  managedIdentity = false,
+  attachmentDescription,
 }: {
   value: Fields;
   onChange: (v: Fields) => void;
+  managedIdentity?: boolean;
+  attachmentDescription?: string;
 }) {
   const discovery = useRelayCapabilities();
   const rawUnavailable = modeUnavailable(discovery, String(value.platform), 'raw_event');
@@ -30,7 +34,14 @@ export function SourceFields({
     return <NativeLarkSourceFields value={value} onChange={onChange} />;
   if (value.type === 'discord') return <DiscordSourceFields value={value} onChange={onChange} />;
   if (value.type === 'whatsapp') return <WhatsappSourceFields value={value} onChange={onChange} />;
-  if (value.type === 'custom') return <CustomSource value={value} onChange={onChange} />;
+  if (value.type === 'custom')
+    return (
+      <CustomSource
+        value={value}
+        onChange={onChange}
+        attachmentDescription={attachmentDescription}
+      />
+    );
   if (value.type !== 'telegram' && value.type !== 'nyxid_relay')
     return (
       <p>
@@ -167,9 +178,29 @@ export function SourceFields({
               }
             />
             <p className="channel-field-hint">
-              Agents may close or reopen the forum topic containing an admitted message. Requires a
-              forum supergroup and bot administrator permission to manage topics. General topics,
-              private chats, topic creation and browsing are excluded.
+              Agents may rename, close or reopen the forum topic containing an admitted message.
+              Requires a forum supergroup and bot administrator permission to manage topics.
+              {discovery.authoring?.native_telegram_general_topic_lifecycle_enabled === true
+                ? ' General topics are included; reopening General also makes it visible. '
+                : ' General topics are unavailable. '}
+              Private chats and topic browsing are excluded; creation needs separate consent.
+            </p>
+            <Toggle
+              label="Create new forum topics"
+              value={value.topic_creation === true}
+              disabled={
+                discovery.authoring?.native_telegram_topic_creation_enabled !== true &&
+                value.topic_creation !== true
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'topic_creation', enabled || undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Agents may create empty named topics in the forum supergroup containing an admitted
+              human message, then rename, close or reopen the topics they created. Requires bot
+              administrator permission to manage topics. Private chats, browsing and icon selection
+              are unavailable. Existing topic management is separate.
             </p>
             <Toggle
               label="Receive message edits and reactions"
@@ -190,10 +221,13 @@ export function SourceFields({
             />
             <p className="channel-field-hint">
               Private and group message edits and reactions from identifiable users reach the agents
-              that received the original message. Refresh the bot webhook after enabling this
-              setting. Reaction updates require bot administrator access. Anonymous reactions and
-              aggregate reaction counts keep the actor unknown and require open sender admission.
-              Telegram does not provide general message deletion events.
+              that received the original message.{' '}
+              {managedIdentity
+                ? 'Managed connections register these event types; an older registration may need an operator refresh. '
+                : 'If the current webhook does not subscribe to these event types, refresh its registration. '}
+              Reaction updates require bot administrator access. Anonymous reactions and aggregate
+              reaction counts keep the actor unknown and require open sender admission. Telegram
+              does not provide general message deletion events.
             </p>
             <Toggle
               label="Receive channel posts and edits"
@@ -211,7 +245,10 @@ export function SourceFields({
               Requires message events and open sender admission. Channel posts identify the channel,
               not a human publisher; chat allowlists and addressing rules still apply. Channel edits
               reach the original agents. Discussion-group forwards and channel direct-message topics
-              are not included. Refresh the bot webhook to receive these updates.
+              are not included.{' '}
+              {managedIdentity
+                ? 'Managed connections register these event types; an older registration may need an operator refresh.'
+                : 'If the current webhook does not subscribe to these event types, refresh its registration.'}
             </p>
             {discovery.authoring?.native_telegram_message_events_enabled !== true ? (
               <p className="channel-field-hint">
@@ -221,18 +258,28 @@ export function SourceFields({
             ) : null}
           </>
         ) : null}
-        <TextField
-          label="Bot ID"
-          value={value.bot_id}
-          onChange={(v) => onChange(optional(value, 'bot_id', v || undefined))}
-          required={value.type === 'telegram'}
-          hint="Use the platform's bot user ID for exact mention and reply matching."
-        />
-        <TextField
-          label="Bot username"
-          value={value.bot_username}
-          onChange={(v) => onChange(optional(value, 'bot_username', v || undefined))}
-        />
+        {managedIdentity ? (
+          <p className="channel-field-hint">
+            Bot {String(value.bot_id)}
+            {value.bot_username ? ` (@${String(value.bot_username)})` : ''} is managed by this
+            connection. Its identity and credentials are retained.
+          </p>
+        ) : (
+          <>
+            <TextField
+              label="Bot ID"
+              value={value.bot_id}
+              onChange={(v) => onChange(optional(value, 'bot_id', v || undefined))}
+              required={value.type === 'telegram'}
+              hint="Use the platform's bot user ID for exact mention and reply matching."
+            />
+            <TextField
+              label="Bot username"
+              value={value.bot_username}
+              onChange={(v) => onChange(optional(value, 'bot_username', v || undefined))}
+            />
+          </>
+        )}
       </Section>
       {value.type === 'nyxid_relay' && ['lark', 'feishu'].includes(String(value.platform)) ? (
         <>
@@ -244,7 +291,15 @@ export function SourceFields({
     </>
   );
 }
-function CustomSource({ value, onChange }: { value: Fields; onChange: (v: Fields) => void }) {
+function CustomSource({
+  value,
+  onChange,
+  attachmentDescription,
+}: {
+  value: Fields;
+  onChange: (v: Fields) => void;
+  attachmentDescription?: string;
+}) {
   const auth = object(value.auth),
     attachments = object(value.attachments);
   const set = (key: string, next: unknown) => onChange(optional(value, key, next));
@@ -288,7 +343,10 @@ function CustomSource({ value, onChange }: { value: Fields; onChange: (v: Fields
       </Section>
       <Section
         title="Event attachments"
-        description="Allow the agent to receive files from specific HTTPS origins in your event payload."
+        description={
+          attachmentDescription ??
+          'Allow attachments from approved HTTPS origins. What the agent can open depends on its connection and attachment support.'
+        }
       >
         <Toggle
           label="Accept event attachments"

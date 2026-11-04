@@ -8,18 +8,19 @@ metadata:
     app.kubernetes.io/part-of: cma
   annotations:
     cma.chronoai.dev/build-mode: "github-ci-artifact"
-    cma.chronoai.dev/candidate: "73d24c2e8b949ab3f8186c0f651afdfeb94689e0"
-    cma.chronoai.dev/ci-archive-sha256: "sha256:88833bcf1e3bcf4c0e32b9ef41d666e97f688c79b1a3730eadd21223bae0c2bd"
-    cma.chronoai.dev/ci-artifact: "12772558622"
+    cma.chronoai.dev/candidate: "0d1772cfcbda4b55edba6f872495413ec9d6e72d"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:f1d2a86df0b89e39dbf14ae3b4ab4efa71b21cc167f1dd34a358f5a27d1a4ea1"
+    cma.chronoai.dev/ci-artifact: "12821784343"
     cma.chronoai.dev/ci-attempt: "1"
-    cma.chronoai.dev/ci-head: "73d24c2e8b949ab3f8186c0f651afdfeb94689e0"
-    cma.chronoai.dev/ci-publication-sha256: "sha256:bed89e34f9c2b9c722b4804ebce9bdcb68732dcb3ddc5b6f96f4c4e5dce6e08c"
-    cma.chronoai.dev/ci-run: "40585431963"
-    cma.chronoai.dev/image-digest: "sha256:4578a6f5abb70ea2bb3aa98859f3c452ebe68366d2a317d6196909606d6c0f32"
-    cma.chronoai.dev/image-source: "b03a7d21d00c876b39c4e9d51382398926541402"
-    cma.chronoai.dev/source-tree: "d72f58088e5941526086e9bad1c8f1bc5d0047a8"
+    cma.chronoai.dev/ci-head: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:023e22a19c42cf9736bbc1c8dc21f7727da75cfdebaad61b77a5ecf975bf6baa"
+    cma.chronoai.dev/ci-run: "40699201203"
+    cma.chronoai.dev/image-digest: "sha256:03df804694cd5f43f637a44ebaa6002c988c4dbaaeb37beeee5e906943b79130"
+    cma.chronoai.dev/image-source: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
+    cma.chronoai.dev/source-tree: "674ab5a55000aa49433715f0668df743488fe2fb"
 spec:
   replicas: 1
+  minReadySeconds: 30
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -32,30 +33,30 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/thread-contract-writes: "v1"
-        cma.chronoai.dev/operator-config-reload: "pr1158-native-73d24c2e8-40585431963-4578a6f5abb7"
+        cma.chronoai.dev/operator-config-reload: "cmaeg-four-platform-4db8af3b-40699201203"
         cma.chronoai.dev/authoring-activation: "76bcae97d-20261026"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "73d24c2e8b949ab3f8186c0f651afdfeb94689e0"
-        cma.chronoai.dev/image-digest: "sha256:4578a6f5abb70ea2bb3aa98859f3c452ebe68366d2a317d6196909606d6c0f32"
-        cma.chronoai.dev/ci-archive-sha256: "sha256:88833bcf1e3bcf4c0e32b9ef41d666e97f688c79b1a3730eadd21223bae0c2bd"
-        cma.chronoai.dev/image-source: "b03a7d21d00c876b39c4e9d51382398926541402"
+        cma.chronoai.dev/candidate: "0d1772cfcbda4b55edba6f872495413ec9d6e72d"
+        cma.chronoai.dev/image-digest: "sha256:03df804694cd5f43f637a44ebaa6002c988c4dbaaeb37beeee5e906943b79130"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:f1d2a86df0b89e39dbf14ae3b4ab4efa71b21cc167f1dd34a358f5a27d1a4ea1"
+        cma.chronoai.dev/image-source: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
         cma.chronoai.dev/portal-auth: "agent-manager-shared-login"
-        cma.chronoai.dev/ci-artifact: "12772558622"
+        cma.chronoai.dev/ci-artifact: "12821784343"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "73d24c2e8b949ab3f8186c0f651afdfeb94689e0"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:bed89e34f9c2b9c722b4804ebce9bdcb68732dcb3ddc5b6f96f4c4e5dce6e08c"
-        cma.chronoai.dev/ci-run: "40585431963"
+        cma.chronoai.dev/ci-head: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:023e22a19c42cf9736bbc1c8dc21f7727da75cfdebaad61b77a5ecf975bf6baa"
+        cma.chronoai.dev/ci-run: "40699201203"
         cma.chronoai.dev/gateway-domain-phase: "eg-canonical"
-        cma.chronoai.dev/source-tree: "d72f58088e5941526086e9bad1c8f1bc5d0047a8"
+        cma.chronoai.dev/source-tree: "674ab5a55000aa49433715f0668df743488fe2fb"
       labels:
         app.kubernetes.io/name: cma-event-gateway
         app.kubernetes.io/part-of: cma
     spec:
       serviceAccountName: cmaeg-ksa
       automountServiceAccountToken: false
-      # Five seconds of routing propagation, 600 seconds of application drain,
-      # and ten seconds for process and kubelet teardown.
-      terminationGracePeriodSeconds: 615
+      # Thirty seconds of routing propagation, 660 seconds of connection drain,
+      # and 45 seconds for process and kubelet teardown.
+      terminationGracePeriodSeconds: 735
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -73,7 +74,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:4578a6f5abb70ea2bb3aa98859f3c452ebe68366d2a317d6196909606d6c0f32
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:03df804694cd5f43f637a44ebaa6002c988c4dbaaeb37beeee5e906943b79130
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -166,8 +167,8 @@ spec:
             timeoutSeconds: 2
           lifecycle:
             preStop:
-              exec:
-                command: ["/bin/sleep", "5"]
+              sleep:
+                seconds: 30
       volumes:
         - name: media-jobs
           emptyDir:

@@ -146,6 +146,7 @@ impl AgentWorker {
             workspace,
             worktree,
             runtime: observed.runtime.clone(),
+            agent_resource_preparation: observed.agent_resource_preparation,
         }))
     }
 }

@@ -2,16 +2,18 @@ mod support;
 
 #[path = "rest/artifacts.rs"]
 mod artifacts;
-#[path = "rest/deliverables.rs"]
-mod deliverables;
 #[path = "rest/attachments.rs"]
 mod attachments;
 #[path = "rest/channel_usage.rs"]
 mod channel_usage;
+#[path = "rest/deliverables.rs"]
+mod deliverables;
 #[path = "rest/hierarchy.rs"]
 mod hierarchy;
 #[path = "rest/lifecycle.rs"]
 mod lifecycle;
+#[path = "rest/provider_associations.rs"]
+mod provider_associations;
 #[path = "rest/source.rs"]
 mod source;
 
@@ -200,6 +202,7 @@ async fn sandbox_workspace_and_worktree_contracts() {
     );
     let listed = sandboxes
         .list(&SandboxListOptions {
+            exclude_retired: false,
             page: page(),
             status: Some(SandboxStatus::Active),
         })

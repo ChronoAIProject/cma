@@ -23,6 +23,7 @@ pub(super) async fn production_adapter(
     store: Arc<crate::store::MongoSandboxStore>,
     subscriptions: Arc<crate::connections::CodexSubscriptions>,
     access_tools: Arc<dyn layer3_adapter::hosted::HostedAccessToolSource>,
+    provider_tools: Arc<crate::store::MongoProviderToolSource>,
 ) -> Result<ProductionAdapters, String> {
     use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
     use layer3_adapter::hosted::{
@@ -31,7 +32,6 @@ pub(super) async fn production_adapter(
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
 
     let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
-    let provider_tools = crate::store::MongoProviderToolSource::new(store.clone());
 
     let routing_client = mongodb::Client::with_uri_str(&config.mongodb_uri)
         .await
@@ -192,6 +192,14 @@ pub(super) async fn production_adapter(
     let mut adapter = CodexAdapter::new(backend, spec)
         .with_provider_tools(provider_tools)
         .with_access_tools(access_tools);
+    if let Some(image) = &config.runtime.machine_sandbox_image {
+        preparation = preparation
+            .with_native_runtime_image(crate::warm_pools::deployment_image(image.clone()))
+            .map_err(|error| format!("prepared machine runtime image is not usable: {error}"))?;
+        adapter = adapter
+            .with_native_runtime_image(crate::warm_pools::deployment_image(image.clone()))
+            .map_err(|error| format!("machine runtime image is not usable: {error}"))?;
+    }
     if let Some(homes) = home_store {
         preparation = preparation.with_home_volumes(homes.clone());
         adapter = adapter.with_home_volumes(homes);

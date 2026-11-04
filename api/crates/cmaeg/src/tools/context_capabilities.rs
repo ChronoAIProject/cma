@@ -1,6 +1,8 @@
 //! Baseline capabilities projected for each supported delivery transport.
-use super::Capabilities;
+use super::{Capabilities, ToolsState};
+use crate::{auth::AgentCaller, channels::resolver::ResolvedChannel};
 use cmaeg_core::channel::Platform;
+use cmaeg_core::seal::EventRefPayload;
 
 impl Capabilities {
     pub fn custom() -> Self {
@@ -20,7 +22,11 @@ impl Capabilities {
             message_effects: None,
             thread_history: None,
             topic_lifecycle: None,
+            topic_creation: None,
             thread_lifecycle: None,
+            native_thread_start: None,
+            structured_replies: None,
+            reply_with_received_sticker: None,
             conversation_history: None,
         }
     }
@@ -47,7 +53,11 @@ impl Capabilities {
             message_effects: None,
             thread_history: None,
             topic_lifecycle: None,
+            topic_creation: None,
             thread_lifecycle: None,
+            native_thread_start: None,
+            structured_replies: None,
+            reply_with_received_sticker: None,
             conversation_history: None,
         }
     }
@@ -70,7 +80,11 @@ impl Capabilities {
             message_effects: None,
             thread_history: None,
             topic_lifecycle: None,
+            topic_creation: None,
             thread_lifecycle: None,
+            native_thread_start: None,
+            structured_replies: None,
+            reply_with_received_sticker: None,
             conversation_history: None,
         }
     }
@@ -95,5 +109,26 @@ impl Capabilities {
             }
         }
         capabilities
+    }
+}
+
+impl ToolsState {
+    pub(in crate::tools) async fn enrich_conversation_capabilities(
+        &self,
+        caller: AgentCaller,
+        event: &EventRefPayload,
+        channel: &ResolvedChannel,
+        capabilities: &mut Capabilities,
+    ) {
+        capabilities.structured_replies = self
+            .structured_reply_capability(caller, channel, event)
+            .await;
+        capabilities.reply_with_received_sticker = self
+            .received_sticker_capability(caller, channel, event, true)
+            .await;
+        capabilities.topic_creation = self.topic_creation_capability(caller, event).await;
+        capabilities.topic_lifecycle = self.topic_capabilities(caller, event, channel).await;
+        capabilities.thread_lifecycle = self.thread_capabilities(caller, event, channel).await;
+        capabilities.conversation_history = self.history_capabilities(caller, event, channel).await;
     }
 }

@@ -118,22 +118,17 @@ pub(super) fn observe(
     {
         return Ok(Outcome::Refused(Refusal::AttachmentUnsupported));
     }
+    let shared = match super::shared_facts::extract(message) {
+        Ok(shared) => shared,
+        Err(()) => return Ok(Outcome::Refused(Refusal::ContentUnsupported)),
+    };
     let text = match &media {
         Some(media) => media.caption.clone(),
-        None => message["text"].as_str().map(str::to_owned),
+        None => shared.or_else(|| message["text"].as_str().map(str::to_owned)),
     };
-    if [
-        "contact",
-        "location",
-        "venue",
-        "poll",
-        "dice",
-        "game",
-        "invoice",
-        "successful_payment",
-    ]
-    .iter()
-    .any(|key| message.get(*key).is_some())
+    if ["poll", "dice", "game", "invoice", "successful_payment"]
+        .iter()
+        .any(|key| message.get(*key).is_some())
         || (has_media && message.get("text").is_some())
         || (!has_media && text.as_ref().is_none_or(String::is_empty))
         || text.as_ref().is_some_and(|text| text.len() > 32 * 1024)

@@ -81,8 +81,8 @@ fn focused_contract_preserves_existing_operations_and_identities() {
             operation_count += 1;
         }
     }
-    assert_eq!(focused["paths"].as_object().unwrap().len(), 65);
-    assert_eq!(operation_count, 80);
+    assert_eq!(focused["paths"].as_object().unwrap().len(), 76);
+    assert_eq!(operation_count, 91);
     assert_eq!(focused["servers"][0]["url"], "/");
     assert_eq!(focused["info"]["title"], "CMA Agent Manager API");
     assert!(focused["info"]["description"]
@@ -95,6 +95,33 @@ fn focused_contract_preserves_existing_operations_and_identities() {
         for (name, value) in values.as_object().unwrap() {
             assert_eq!(value, &full["components"][kind][name], "{kind}/{name}");
         }
+    }
+}
+
+#[test]
+fn focused_contract_exposes_retained_provider_membership_as_an_authenticated_read() {
+    let focused = document();
+    let item = &focused["paths"]["/api/v1/agents/{id}/provider-associations"];
+    assert!(item.get("get").is_some());
+    for method in ["post", "put", "patch", "delete"] {
+        assert!(item.get(method).is_none());
+    }
+    assert!(!item["get"]["security"].as_array().unwrap().is_empty());
+    assert_eq!(
+        item["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/AgentProviderAssociationsView"
+    );
+    for name in [
+        "AgentProviderAssociationsView",
+        "ProviderAssociationView",
+        "ProviderAssociationRelationshipView",
+        "ProviderAssociationConversationStateView",
+        "ProviderAssociationBindingStateView",
+    ] {
+        assert!(
+            focused["components"]["schemas"].get(name).is_some(),
+            "{name}"
+        );
     }
 }
 
@@ -138,20 +165,34 @@ fn focused_contract_has_one_creation_and_interaction_model() {
 }
 
 #[test]
-fn public_contract_advertises_optional_initial_task_support() {
+fn public_contract_preserves_optional_task_and_desktop_creation_contracts() {
     for contract in [full(), document()] {
+        assert_eq!(contract["x-cma-task-repository"], json!(true));
         let schema = &contract["components"]["schemas"]["AgentLifecycleCreateRequest"];
-        let kind = &schema["properties"]["initial_message"]["type"];
-        assert!(
-            kind == "string"
-                || kind
-                    .as_array()
-                    .is_some_and(|types| types.contains(&serde_json::json!("string"))),
-            "{schema}"
-        );
-        assert!(!schema["required"]
-            .as_array()
-            .is_some_and(|fields| fields.contains(&serde_json::json!("initial_message"))));
+        for (field, expected_type) in [
+            ("initial_message", "string"),
+            ("desktop", "boolean"),
+            ("machine_included", "boolean"),
+        ] {
+            let kind = &schema["properties"][field]["type"];
+            assert!(
+                kind == expected_type
+                    || kind
+                        .as_array()
+                        .is_some_and(|types| types.contains(&json!(expected_type))),
+                "{field}: {schema}"
+            );
+            assert!(!schema["required"]
+                .as_array()
+                .is_some_and(|fields| fields.contains(&json!(field))));
+        }
+        let response = &contract["components"]["schemas"]["CreateV2ResponseRequest"];
+        for field in ["answer_context", "binding_generation"] {
+            assert!(
+                response["properties"].get(field).is_some(),
+                "{field}: {response}"
+            );
+        }
     }
 }
 
@@ -247,7 +288,7 @@ fn pruning_removes_all_unreachable_components_and_tags_without_dangling_referenc
         "projection must materially shrink the full contract"
     );
     println!(
-        "Agent Manager contract: paths={}, operations=45, schemas={}, bytes={focused_bytes}; full paths={}, schemas={}, bytes={full_bytes}",
+        "Agent Manager contract: paths={}, schemas={}, bytes={focused_bytes}; full paths={}, schemas={}, bytes={full_bytes}",
         focused["paths"].as_object().unwrap().len(),
         focused["components"]["schemas"].as_object().unwrap().len(),
         full["paths"].as_object().unwrap().len(),

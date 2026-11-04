@@ -224,6 +224,7 @@ async fn task_navigation_does_not_call_a_completed_agent_done_after_new_work_is_
                     reference: "task-navigation".into(),
                 },
                 correlation_id: "task-navigation".into(),
+                continuation: None,
                 request_fingerprint: command.fingerprint().unwrap(),
                 command,
                 authorization: AgentAuthorizationRevision {

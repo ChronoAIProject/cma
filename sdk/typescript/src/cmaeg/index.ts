@@ -9,12 +9,14 @@ import {
   type CreateConnectionOptions,
   type ListConnectionsOptions,
 } from './connections.js';
-import { CmaegEvents, type EventOptions } from './events.js';
+import { CmaegEvents, type EventOptions, type StreamEventOptions } from './events.js';
+import type { GatewayMediaStreamEvent, GatewayStreamEvent } from './stream.js';
 import { CmaegTools } from './tools.js';
 import type { CreateThreadRequest, ManageThreadRequest, ThreadListView } from './types.js';
 import {
   CmaegActivity,
   type ChannelActivityOptions,
+  type EventMediaResponseOptions,
   type StreamChannelActivityOptions,
 } from './activity.js';
 import type {
@@ -109,8 +111,18 @@ export class Cmaeg {
   getChannel(id: string, options?: OperationOptions) {
     return this.#channels.getChannel(id, options);
   }
+  inspectChannelPartition(
+    id: string,
+    partitionKey: string,
+    options?: OperationOptions & { readonly consumerId?: string },
+  ) {
+    return this.#channels.inspectChannelPartition(id, partitionKey, options);
+  }
   getChannelActivity(id: string, options?: ChannelActivityOptions) {
     return this.#activity.getChannelActivity(id, options);
+  }
+  getEventMediaResponses(id: string, eventId: string, options?: EventMediaResponseOptions) {
+    return this.#activity.getEventMediaResponses(id, eventId, options);
   }
   streamChannelActivity(id: string, options?: StreamChannelActivityOptions) {
     return this.#activity.streamChannelActivity(id, options);
@@ -142,7 +154,17 @@ export class Cmaeg {
   postEvent(id: string, event: CloudEvent, options?: EventOptions) {
     return this.#events.postEvent(id, event, options);
   }
-  streamEvent(id: string, event: CloudEvent, options?: EventOptions) {
+  streamEvent(
+    id: string,
+    event: CloudEvent,
+    options?: EventOptions & { readonly mediaResponses?: false },
+  ): AsyncGenerator<GatewayStreamEvent>;
+  streamEvent(
+    id: string,
+    event: CloudEvent,
+    options: StreamEventOptions,
+  ): AsyncGenerator<GatewayMediaStreamEvent>;
+  streamEvent(id: string, event: CloudEvent, options: StreamEventOptions = {}) {
     return this.#events.streamEvent(id, event, options);
   }
   replyToEvent(
@@ -199,7 +221,11 @@ export class Cmaeg {
     return this.#tools.sendTyping(ref, options);
   }
   /** Read one page only; pass the returned cursor explicitly to continue backward. */
-  readEventHistory(eventRef: string, cursor?: string, options?: OperationOptions) {
+  readEventHistory(
+    eventRef: string,
+    cursor?: string,
+    options?: OperationOptions & { includeMedia?: boolean },
+  ) {
     return this.#tools.readEventHistory(eventRef, cursor, options);
   }
   readEventContext(ref: string, options?: OperationOptions & { includeThreadHistory?: boolean }) {
@@ -226,9 +252,10 @@ export class Cmaeg {
 
 export { signWebhook, type WebhookHeaders } from './signing.js';
 export type { CreateChannelOptions, ListChannelOptions } from './channels.js';
-export type { EventOptions } from './events.js';
-export type { GatewayStreamEvent } from './stream.js';
+export type { EventOptions, StreamEventOptions } from './events.js';
+export type { GatewayStreamEvent, GatewayMediaStreamEvent } from './stream.js';
 export type {
+  EventMediaResponseOptions,
   ChannelActivityOptions,
   StreamChannelActivityOptions,
   ChannelActivityEvent,

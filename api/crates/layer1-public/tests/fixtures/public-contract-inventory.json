@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 242,
+  "openapi_operations": 260,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -2251,7 +2251,9 @@
     "GET /api/v2/ui/task-experience": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/agent_v2/task_experience.rs# Current caller policy is private/no-store and separate from environment capability or accepted recovery.",
-      "required_problems": ["not_authenticated"]
+      "required_problems": [
+        "not_authenticated"
+      ]
     },
     "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation": {
       "classification": "openapi",
@@ -3399,6 +3401,237 @@
         "invalid_request",
         "temporarily_unavailable"
       ]
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/inspection.rs# Read-only mapping inspection uses binding management authority.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding"
+      ]
+    },
+    "GET /api/v1/agents/{id}/desktop": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/desktop.rs# Owner desktop availability and same-origin stream discovery.",
+      "required_problems": [
+        "not_authenticated",
+        "desktop_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/desktop/ws": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/desktop.rs# Owner-authenticated desktop WebSocket admission and binary relay.",
+      "required_problems": [
+        "not_authenticated",
+        "desktop_unavailable",
+        "desktop_busy",
+        "desktop_runtime_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/desktop.rs# The Axum extractor refuses a request without an HTTP WebSocket upgrade.",
+        "403": "api/crates/layer1-public/src/rest/desktop.rs# Origin checks refuse foreign origins and cookie requests without Origin before runtime access."
+      }
+    },
+    "POST /api/v1/workspaces/{id}/recover-prepare": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Exact original Workspace prepare recovery is a required-key empty command with guarded durable admission.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "workspace_not_found",
+        "workspace_prepare_recovery_conflict"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/preparation.rs# Authenticated fresh-event inspection and exact-key reservation retain named refusals and never expose supplied credentials.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding",
+        "invalid_json",
+        "binding_not_ready",
+        "binding_unavailable",
+        "binding_resources_unavailable"
+      ]
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/preparations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/preparation.rs# Authenticated fresh-event inspection and exact-key reservation retain named refusals and never expose supplied credentials.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding",
+        "invalid_json",
+        "binding_not_ready",
+        "binding_unavailable"
+      ]
+    },
+    "POST /api/v1/agents/{id}/recover-worktree": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# Owner or administrator recovery preserves the never-ready Agent and retained failed worktree under exact durable admission.",
+      "required_problems": [
+        "forbidden",
+        "instance_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "agent_not_found",
+        "agent_worktree_recovery_conflict",
+        "agent_limit_reached"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# This bodyless command has no RequestBody or Json extractor and calls required_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# This bodyless command has no RequestBody or Json extractor and calls required_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# This bodyless command has no RequestBody or Json extractor and calls required_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/binding_media.rs# Bound event file publication requires authorization before bounded body reception.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "403": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "409": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "413": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "503": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal."
+      }
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/binding_media.rs# Exact retained file receipt recovery rechecks current binding and source.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "403": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "404": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "503": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal."
+      }
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/binding_media.rs# Immutable late media admits a separate command with server parent metadata.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "403": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "409": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "503": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal."
+      }
+    },
+    "POST /api/v1/cmaeg/worker-credentials/classify": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/worker_credentials.rs# Narrow service-only digest classification with fail-closed storage and bounded lookup.",
+      "required_problems": [
+        "worker_classifier_auth_required",
+        "worker_classifier_invalid_digest",
+        "worker_classifier_unavailable"
+      ],
+      "unreachable_problems": {
+        "worker_classifier_forbidden": "api/crates/cma/src/auth/worker_credentials/tests.rs# Composition verifies the exact machine bearer and both current service capabilities before Layer 1; rejected or revoked authority never installs its service marker."
+      }
+    },
+    "GET /api/v1/agents/{id}/provider-associations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_provider_associations.rs# Retained associations require current Agent management authority and never infer event-use history.",
+      "required_problems": [
+        "invalid_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/admin/usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "usage_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
+      }
+    },
+    "GET /api/v1/admin/usage/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "invalid_query",
+        "not_authenticated",
+        "usage_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
+      }
+    },
+    "GET /api/v1/usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "invalid_query",
+        "not_authenticated",
+        "usage_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
+      }
+    },
+    "GET /api/v1/usage/sandboxes/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "not_found",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage/sandboxes/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "invalid_query",
+        "not_authenticated",
+        "not_found",
+        "usage_unavailable"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
+      }
     }
   }
 }

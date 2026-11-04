@@ -166,6 +166,7 @@ impl ResourceFixture {
             .owner;
         let command = AgentCommand::message("retained shared input");
         let envelope = AgentCommandEnvelope {
+            continuation: None,
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: layer2_core::ids::AgentCommandId::generate(),
             agent_id: agent.id,

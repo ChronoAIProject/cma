@@ -32,3 +32,5 @@ spec:
     name: cma-agent-manager
   default:
     timeoutSec: 660
+    connectionDraining:
+      drainingTimeoutSec: 660

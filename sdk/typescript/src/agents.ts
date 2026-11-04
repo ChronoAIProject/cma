@@ -36,7 +36,7 @@ import type { ResolvedConfig } from './config.js';
 import { readSuggestions } from './agents/suggestions.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { ProtocolError } from './errors.js';
-import { array, boolean, integer, object, optional, type Parser } from './schema.js';
+import { boolean, object, text, type Parser } from './schema.js';
 import {
   command,
   identity,
@@ -71,15 +71,16 @@ import {
   agentProvenanceInventoryItem,
   type AgentCreationCategory,
 } from './agents/provenance.js';
-import { agentEvent } from './agents/events.js';
+import { readAgentEvents } from './agents/events.js';
 import {
-  agentLifecycleCreateReceipt,
-  agentLifecycleCreateRequest,
-  agentLifecycleOperation,
+  createAgentLifecycle,
+  readAgentLifecycle,
+  recoverAgentWorktree,
   type AgentLifecycleCreateRequest,
 } from './agents/lifecycle.js';
 import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
+import { listAgentProviderAssociations } from './agents/provider-associations.js';
 import { readAgentChannelUsage, listAgentChannelUsageHistory } from './agents/channel-usage.js';
 import { readDesktopCapability, type DesktopScope } from './agents/desktop.js';
 import {
@@ -161,6 +162,15 @@ export class Agents {
     return setMessageFeedback(this.config, id, messageId, vote, options);
   }
 
+  /** Discover the owner-authenticated desktop stream. The host opens its WebSocket. */
+  desktop(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(id)}/desktop`,
+      object({ websocket_url: text }),
+      options,
+    );
+  }
   /** Discover admitted models and their current runtime availability. */
   models(id: string, options: OperationOptions = {}) {
     return listAgentModels(this.config, id, options);
@@ -215,32 +225,35 @@ export class Agents {
 
   /** Admit or resume the exact same inline request with its original idempotency key. */
   createLifecycle(body: AgentLifecycleCreateRequest, options: CommandOptions) {
-    return read(this.config, '/api/v1/agents', agentLifecycleCreateReceipt, {
-      ...command(options),
-      method: 'POST',
-      body: input(agentLifecycleCreateRequest, body),
-      expectedStatus: 202,
-    });
+    return createAgentLifecycle(this.config, body, options);
   }
 
   desktopCapability(scope: DesktopScope = {}, options: OperationOptions = {}) {
     return readDesktopCapability(this.config, scope, options);
   }
 
-  /** Read owner-visible provisioning progress; succeeded means the Agent is ready. */
-  readLifecycle(id: string, options: OperationOptions = {}) {
-    return read(
-      this.config,
-      `/api/v1/agent-lifecycle/${segment(id)}`,
-      identity(agentLifecycleOperation, id),
-      options,
-    );
+  /** Retry a never-ready Agent's failed initial worktree preparation, preserving its PV and identity.
+   * The failed worktree is retained and a fresh one is allocated. Reuse the key after uncertain replies.
+   */
+  recoverWorktree(id: string, options: CommandOptions) {
+    return recoverAgentWorktree(this.config, id, options);
   }
 
-  /** Explicit active/historical channel facts under current resource visibility. */
+  /** Read owner-visible provisioning progress; succeeded means the Agent is ready. */
+  readLifecycle(id: string, options: OperationOptions = {}) {
+    return readAgentLifecycle(this.config, id, options);
+  }
+
+  /** Legacy Bridge usage projection; provider admissions require providerAssociations(). */
   channelUsage(id: string, options: OperationOptions = {}) {
     return readAgentChannelUsage(this.config, id, options);
   }
+
+  /** Read retained provider memberships under current Agent management authority. */
+  providerAssociations(id: string, options: PageOptions = {}) {
+    return listAgentProviderAssociations(this.config, id, options);
+  }
+
   /** Current bridge managers can page retained channel binding history. */
   channelUsageHistory(id: string, options: PageOptions = {}) {
     return listAgentChannelUsageHistory(this.config, id, options);
@@ -416,16 +429,7 @@ export class Agents {
   }
 
   events(id: string, options: EventOptions & { readonly toolOutput?: boolean } = {}) {
-    return read(
-      this.config,
-      query(`/api/v1/agents/${segment(id)}/events`, {
-        after: options.after,
-        limit: options.limit,
-        tool_output: options.toolOutput ? 'true' : undefined,
-      }),
-      object({ items: array(agentEvent), next: optional(integer) }),
-      options,
-    );
+    return readAgentEvents(this.config, id, options);
   }
 
   transcript(id: string, options: OperationOptions = {}) {

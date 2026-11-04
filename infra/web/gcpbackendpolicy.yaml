@@ -39,3 +39,5 @@ spec:
     name: cma-web
   default:
     timeoutSec: 660
+    connectionDraining:
+      drainingTimeoutSec: 660

@@ -10,6 +10,7 @@ use tokio_tungstenite::{
 };
 
 pub(super) async fn serve(socket: tokio::net::TcpStream, state: &Mutex<super::fixture::State>) {
+    let mut inspection = false;
     #[allow(clippy::result_large_err)]
     let mut ws = accept_hdr_async(socket, |request: &Request, mut response: Response| {
         let url = reqwest::Url::parse(&format!("http://fixture{}", request.uri())).unwrap();
@@ -22,10 +23,17 @@ pub(super) async fn serve(socket: tokio::net::TcpStream, state: &Mutex<super::fi
             .filter(|(k, _)| k == "command")
             .map(|(_, v)| v.into_owned())
             .collect();
-        assert_eq!(
-            commands,
-            ["/usr/local/bin/layer4-runtime", "--assign-runtime"]
-        );
+        inspection = commands.first().is_some_and(|c| c == "/usr/bin/python3");
+        if inspection {
+            assert_eq!(commands.len(), 4);
+            assert_eq!(&commands[..3], ["/usr/bin/python3", "-I", "-c"]);
+            assert_eq!(commands[3], include_str!("../idle_bootstrap.py"));
+        } else {
+            assert_eq!(
+                commands,
+                ["/usr/local/bin/layer4-runtime", "--assign-runtime"]
+            );
+        }
         assert!(!request.uri().to_string().contains("CHRONO_"));
         response.headers_mut().insert(
             "sec-websocket-protocol",
@@ -46,11 +54,21 @@ pub(super) async fn serve(socket: tokio::net::TcpStream, state: &Mutex<super::fi
         assert_eq!(bytes[0], 0);
         input.extend_from_slice(&bytes[1..]);
     }
-    let request: RuntimeBootstrapRequest = serde_json::from_slice(&input).unwrap();
-    let receipt = RuntimeBootstrapReceipt::for_request(&request).unwrap();
-    let fail = {
+    let (receipt, fail) = {
         let mut state = state.lock().unwrap();
-        state.assignments.push(request);
+        let receipt = if inspection {
+            assert!(input.is_empty());
+            state.inspections += 1;
+            state
+                .inspection_output
+                .clone()
+                .expect("explicit inspection fixture")
+        } else {
+            let request: RuntimeBootstrapRequest = serde_json::from_slice(&input).unwrap();
+            let receipt = RuntimeBootstrapReceipt::for_request(&request).unwrap();
+            state.assignments.push(request);
+            serde_json::to_value(receipt).unwrap()
+        };
         for (path, pointer, value) in std::mem::take(&mut state.exec_mutations) {
             *state
                 .rows
@@ -59,7 +77,7 @@ pub(super) async fn serve(socket: tokio::net::TcpStream, state: &Mutex<super::fi
                 .pointer_mut(&pointer)
                 .unwrap() = value;
         }
-        state.fail_exec
+        (receipt, state.fail_exec)
     };
     let mut stdout = vec![1];
     stdout.extend(serde_json::to_vec(&receipt).unwrap());

@@ -81,6 +81,21 @@ export function WhatsappSourceFields({
         </Section>
       ) : null}
       <Section
+        title="Incoming message changes"
+        description="Receive private message edits and deletions from WhatsApp Business App coexistence accounts. Meta must support these callbacks for your account."
+      >
+        <Toggle
+          label="Allow coexistence incoming edits and deletions"
+          value={value.message_events}
+          disabled={
+            discovery.authoring?.native_whatsapp_message_events_enabled !== true &&
+            value.message_events !== true
+          }
+          onChange={(message_events) => onChange({ ...value, message_events })}
+          hint="Applies to original messages retained after activation. Text and caption edits preserve the original conversation and media. Removing consent stops pending changes."
+        />
+      </Section>
+      <Section
         title="Native forms"
         description="Allow CMA to create and publish managed static WhatsApp Flows with your app credentials for private conversations."
       >

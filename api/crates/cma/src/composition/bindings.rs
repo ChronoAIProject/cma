@@ -3,6 +3,7 @@ use layer2_core::sandbox::binding::{BindingPolicy, BindingResources, BindingServ
 
 pub(crate) struct BindingComposition {
     service: Arc<BindingService>,
+    access: Arc<layer2_core::sandbox::binding::BindingAccessService>,
 }
 impl BindingComposition {
     pub(super) fn new(
@@ -12,6 +13,9 @@ impl BindingComposition {
         bounds: layer2_core::profiles::ProfileCapacityBounds,
     ) -> Self {
         Self {
+            access: layer2_core::sandbox::binding::BindingAccessService::new(
+                stores.sandbox_model.clone(),
+            ),
             service: BindingService::new(
                 stores.sandbox_model.clone(),
                 resources,
@@ -33,14 +37,22 @@ impl BindingComposition {
         gateway: Option<&crate::config::GatewayConfig>,
     ) -> Result<Router, String> {
         let routes = match gateway {
-            Some(gateway) => rest::binding_router_with_native_tools_alias(
+            Some(gateway) => rest::binding_router_with_native_tools_aliases_and_preparation(
                 self.service.clone(),
                 &format!("{}/mcp", gateway.public_url.trim_end_matches('/')),
-                &format!("{}/mcp", gateway.public_api_url.trim_end_matches('/')),
+                &std::iter::once(&gateway.public_api_url)
+                    .chain(gateway.public_api_aliases.iter())
+                    .map(|base| format!("{}/mcp", base.trim_end_matches('/')))
+                    .collect::<Vec<_>>(),
+                gateway.binding_preparation_enabled,
             )?,
             None => rest::binding_router(self.service.clone()),
         };
-        Ok(routes)
+        Ok(
+            routes.merge(rest::worker_credentials::worker_credential_router(
+                self.access.clone(),
+            )),
+        )
     }
     pub(crate) fn spawn(
         self,

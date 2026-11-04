@@ -1,5 +1,7 @@
 //! Versioned, stateless tokens used between CMAEG replicas.
 
+mod custody;
+
 use std::fmt;
 
 use base64::{engine::general_purpose, Engine as _};
@@ -24,6 +26,8 @@ pub mod received_reaction;
 pub mod reply_target;
 pub mod thread_ref;
 pub use thread_ref::{ThreadRef, ThreadRefPayload};
+mod telegram_thread_ref;
+pub use telegram_thread_ref::TelegramThreadRefPayload;
 mod history_cursor;
 pub use history_cursor::{
     HistoryCursor, HistoryCursorPayload, HistoryOrigin, NativeLarkHistoryCursorPayload,

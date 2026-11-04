@@ -6,13 +6,14 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, Sandbox, SandboxEventKind,
-    SandboxStatus, TypedFailure, Workspace, WorkspaceStatus, Worktree, WorktreeStatus,
+    TypedFailure, Workspace, Worktree, WorktreeStatus,
 };
 use layer3_adapter::{AdapterError, RuntimeHandle};
 
 use super::super::agent_skills::AgentSkillResolutionError;
 use super::AgentWorker;
 
+mod context;
 mod effects;
 mod mapping;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
@@ -24,6 +25,7 @@ pub(super) struct AgentContext {
     pub(super) workspace: Workspace,
     pub(super) worktree: Worktree,
     pub(super) runtime: RuntimeHandle,
+    pub(super) agent_resource_preparation: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +44,7 @@ pub(in crate::sandbox) struct WorkerFailure {
 }
 
 impl WorkerFailure {
-    pub(super) fn retryable(class: &'static str, detail: impl Into<String>) -> Self {
+    pub(in crate::sandbox) fn retryable(class: &'static str, detail: impl Into<String>) -> Self {
         Self {
             class,
             detail: detail.into(),
@@ -67,92 +69,6 @@ impl WorkerFailure {
 }
 
 impl AgentWorker {
-    pub(super) async fn startup_context(
-        &self,
-        agent: &Agent,
-    ) -> Result<AgentContext, WorkerFailure> {
-        if agent.status != AgentStatus::Starting {
-            return Err(WorkerFailure::terminal(
-                "agent_lifecycle_state_invalid",
-                "startup work was scheduled for a non-starting agent",
-            ));
-        }
-        let context = self.context(agent).await?;
-        if context.sandbox.status != SandboxStatus::Active
-            || !context.sandbox.credential.delivered
-            || context.workspace.status != WorkspaceStatus::Ready
-            || context.worktree.status != WorktreeStatus::Creating
-        {
-            return Err(WorkerFailure::retryable(
-                "agent_parent_not_ready",
-                "the sandbox, workspace, or worktree is not ready for agent startup",
-            ));
-        }
-        Ok(context)
-    }
-
-    pub(super) async fn cleanup_context(
-        &self,
-        agent: &Agent,
-    ) -> Result<AgentContext, WorkerFailure> {
-        self.context(agent).await
-    }
-
-    pub(super) async fn context(&self, agent: &Agent) -> Result<AgentContext, WorkerFailure> {
-        // These IDs come from the claimed Agent. Read independently, then retain
-        // the existing error precedence and validate all lineage before adoption.
-        let (sandbox, workspace, worktree) = tokio::join!(
-            self.dependencies.store.get_sandbox(&agent.sandbox_id),
-            self.dependencies.store.get_workspace(&agent.workspace_id),
-            self.dependencies.store.get_worktree(&agent.worktree_id),
-        );
-        let sandbox = sandbox
-            .map_err(parent_store_failure)?
-            .ok_or_else(missing_parent)?;
-        let workspace = workspace
-            .map_err(parent_store_failure)?
-            .ok_or_else(missing_parent)?;
-        let worktree = worktree
-            .map_err(parent_store_failure)?
-            .ok_or_else(missing_parent)?;
-        validate_lineage(agent, &sandbox, &workspace, &worktree)?;
-        if sandbox.status == SandboxStatus::Rotating && !sandbox.restored_connection_is_ready(agent)
-        {
-            return Err(WorkerFailure::retryable(
-                "agent_runtime_update_in_progress",
-                "the retained runtime update is pending",
-            ));
-        }
-        if sandbox.lifecycle.checkpoint_capture.is_some() {
-            return Err(WorkerFailure::retryable(
-                "agent_checkpoint_in_progress",
-                "checkpoint writer resumption is pending",
-            ));
-        }
-        let inspection_started = std::time::Instant::now();
-        let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
-            self.dependencies.adapter.as_ref(),
-            &sandbox,
-            &self.config.deployment_id,
-        )
-        .await;
-        tracing::info!(
-            agent_id = %agent.id,
-            sandbox_id = %sandbox.id,
-            step = ?agent.work.step,
-            elapsed_ms = inspection_started.elapsed().as_millis() as u64,
-            succeeded = attached.is_ok(),
-            "Agent runtime inspection completed"
-        );
-        let attached = attached.map_err(adapter_failure)?;
-        Ok(AgentContext {
-            sandbox,
-            workspace,
-            worktree,
-            runtime: attached,
-        })
-    }
-
     #[allow(
         clippy::too_many_arguments,
         reason = "one atomic lifecycle publication carries its optional evidence and artifacts"
@@ -200,13 +116,15 @@ impl AgentWorker {
             .await
     }
 
-    pub(super) async fn handle_failure(
+    pub(in crate::sandbox) async fn handle_failure(
         &self,
         agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if failure.retryable || agent.status != AgentStatus::Starting {
+        if agent.work.step == AgentWorkStep::PublishConnection {
+            self.retry_connection_failure(&agent, failure, now).await
+        } else if failure.retryable || agent.status != AgentStatus::Starting {
             self.retry(agent, failure, now).await
         } else {
             self.fail_startup(agent, failure, now).await
@@ -361,7 +279,9 @@ pub(super) fn bump_log_sequence(agent: &mut Agent, count: usize) -> Result<(), S
 
 pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     match error {
-        AdapterError::Unavailable(detail) => {
+        AdapterError::InputAuthorityUnavailable(detail)
+        | AdapterError::PromptNotWritten(detail)
+        | AdapterError::Unavailable(detail) => {
             WorkerFailure::retryable("agent_runtime_unavailable", detail)
         }
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),

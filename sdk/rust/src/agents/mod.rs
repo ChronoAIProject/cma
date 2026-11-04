@@ -25,6 +25,7 @@ pub use suggestions::*;
 mod models;
 mod preferences;
 mod provenance;
+mod provider_associations;
 pub use preferences::*;
 mod settings;
 pub use feedback_reasons::*;
@@ -39,6 +40,7 @@ pub use events::*;
 pub use lifecycle::*;
 pub use models::*;
 pub use provenance::*;
+pub use provider_associations::*;
 pub use settings::*;
 pub use shared::*;
 pub use skills::*;
@@ -130,6 +132,10 @@ impl Agents<'_> {
         }
         self.client.get(&["agents"], &query).await
     }
+    /// Discover the owner-authenticated desktop stream; the host opens its WebSocket.
+    pub async fn desktop(&self, id: &str) -> Result<AgentDesktopDescriptor> {
+        self.client.get(&["agents", id, "desktop"], &[]).await
+    }
     /// Read an Agent and its full parent hierarchy.
     pub async fn read(&self, id: &str) -> Result<Agent> {
         let value: Agent = self.client.get(&["agents", id], &[]).await?;
@@ -186,6 +192,23 @@ impl Agents<'_> {
                 StatusCode::CREATED,
             )
             .await
+    }
+    /// Retry failed initial worktree preparation for the same never-ready Agent.
+    /// Its PV and failed worktree are retained; recovery allocates a fresh worktree.
+    /// Preserve this key when retrying an uncertain response. Readiness is asynchronous.
+    pub async fn recover_worktree(&self, id: &str, key: &IdempotencyKey) -> Result<Agent> {
+        let value: Agent = self
+            .client
+            .command(
+                Method::POST,
+                &["agents", id, "recover-worktree"],
+                None::<&()>,
+                key,
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        identity(&value.id, id)?;
+        Ok(value)
     }
     /// Submit an idempotent owner message and return its queue acknowledgement.
     pub async fn input(

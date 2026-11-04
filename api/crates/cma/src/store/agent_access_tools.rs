@@ -20,10 +20,16 @@ use super::AuthEncryptionKey;
 mod authenticator;
 #[cfg(test)]
 pub(crate) mod fixtures;
+#[cfg(test)]
+mod migration_tests;
 mod operations;
+mod origins;
 mod records;
 #[cfg(test)]
 pub(in crate::store) mod tests;
+mod transport;
+#[cfg(test)]
+mod transport_tests;
 mod validation;
 use records::{OpenRecord, Scope};
 
@@ -37,35 +43,17 @@ pub(crate) struct MongoAgentAccessToolSource {
     store: Arc<MongoSandboxStore>,
     origin: String,
     signing_key: ring::hmac::Key,
+    retained_origins: Vec<origins::Authority>,
 }
 
 impl MongoAgentAccessToolSource {
+    #[cfg(test)]
     pub(crate) fn new(
         store: Arc<MongoSandboxStore>,
         public_origin: &str,
         encryption: &AuthEncryptionKey,
     ) -> std::result::Result<Arc<Self>, String> {
-        let origin = url::Url::parse(public_origin)
-            .map_err(|_| "Agent access tools need a valid HTTPS public origin")?;
-        if origin.scheme() != "https"
-            || origin.host_str().is_none()
-            || !origin.username().is_empty()
-            || origin.password().is_some()
-            || origin.query().is_some()
-            || origin.fragment().is_some()
-            || origin.path() != "/"
-        {
-            return Err("Agent access tools need a clean HTTPS public origin".into());
-        }
-        let origin = origin.to_string();
-        let namespace =
-            serde_json::to_string(&[store.agent_access_tools.namespace().db, origin.clone()])
-                .map_err(|_| "Agent access tools namespace could not be encoded")?;
-        Ok(Arc::new(Self {
-            store,
-            origin,
-            signing_key: encryption.agent_access_signing_key(&namespace),
-        }))
+        Self::with_retained_origins(store, public_origin, &[], encryption)
     }
 
     pub(crate) async fn authenticate(
@@ -92,14 +80,40 @@ impl MongoAgentAccessToolSource {
     }
 
     async fn run(&self, operation: Operation<'_>) -> layer3_adapter::Result<Outcome> {
-        for _ in 0..TRANSACTION_ATTEMPTS {
-            let mut session = self
-                .store
-                .client
-                .start_session()
-                .await
-                .map_err(unavailable)?;
-            start_transaction(&mut session).await.map_err(unavailable)?;
+        // Retained replay writes the same Agent while native tool setup is
+        // pending. Join the recorder's local queue before opening a snapshot,
+        // otherwise its steady progress can abort every confirmation attempt.
+        // This is scheduling only: all lineage, lease and capability checks
+        // remain in the transaction, including cross-replica write fences.
+        let agent = match &operation {
+            Operation::Resolve(_, request, _) => Some(AgentId(request.options.slot.0.clone())),
+            Operation::Confirm(binding, _) | Operation::Transport(binding, ..) => {
+                Some(AgentId(binding.scope().1 .0.clone()))
+            }
+            Operation::Authenticate(_) | Operation::Setup(_) => None,
+        };
+        let _writer = match agent {
+            Some(id) => Some(self.store.agent_writes.lock(&id).await),
+            None => None,
+        };
+        let jitter = uuid::Uuid::new_v4().as_u128() as u64;
+        for attempt in 0..TRANSACTION_ATTEMPTS {
+            // Only known-aborted transactions reach another attempt. Give a
+            // concurrent lineage writer time to finish before rereading all
+            // authority; unknown commits and refusals still return immediately.
+            if attempt > 0 {
+                let delay =
+                    (100_u64 << (attempt - 1).min(3)) + (jitter.rotate_left(attempt as u32) & 31);
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+            let mut session = self.store.client.start_session().await.map_err(|error| {
+                operation.diagnostic("start_session", driver_category(&error), attempt);
+                unavailable(())
+            })?;
+            start_transaction(&mut session).await.map_err(|error| {
+                operation.diagnostic("start_transaction", driver_category(&error), attempt);
+                unavailable(())
+            })?;
             let result = match operation {
                 Operation::Resolve(runtime, request, fence) => self
                     .resolve_in(runtime, request, fence, &mut session)
@@ -113,6 +127,10 @@ impl MongoAgentAccessToolSource {
                     .authenticate_in(capability, &mut session)
                     .await
                     .map(|identity| Outcome::Authenticated(Box::new(identity))),
+                Operation::Transport(binding, origin, conversation, sequence) => self
+                    .transport_in(binding, origin, conversation, sequence, &mut session)
+                    .await
+                    .map(|binding| Outcome::Resolved(Some(binding))),
                 Operation::Setup(capability) => self
                     .setup_in(capability, &mut session)
                     .await
@@ -123,23 +141,41 @@ impl MongoAgentAccessToolSource {
                 Err(error) => {
                     let _ = session.abort_transaction().await;
                     match error {
-                        Error::Driver(error)
-                            if is_transient(&error) || is_duplicate_key(&error) =>
-                        {
-                            continue
+                        Error::Driver(error) => {
+                            operation.diagnostic("read_write", driver_category(&error), attempt);
+                            if is_transient(&error) || is_duplicate_key(&error) {
+                                continue;
+                            }
+                            return Err(unavailable(()));
                         }
-                        Error::Driver(_) => return Err(unavailable(())),
-                        Error::Refused => return Err(refused()),
-                        Error::Unavailable => return Err(unavailable(())),
+                        Error::Refused => {
+                            operation.diagnostic("read_write", "authority_rejected", attempt);
+                            return Err(refused());
+                        }
+                        Error::Unavailable => {
+                            operation.diagnostic("read_write", "storage_unavailable", attempt);
+                            return Err(unavailable(()));
+                        }
                     }
                 }
             };
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(result),
-                CommitOutcome::Retry(_) => continue,
-                _ => return Err(unavailable(())),
+                CommitOutcome::Retry(_) => {
+                    operation.diagnostic("commit", "transient_transaction", attempt);
+                    continue;
+                }
+                CommitOutcome::Unknown(_) => {
+                    operation.diagnostic("commit", "unknown_commit", attempt);
+                    return Err(unavailable(()));
+                }
+                CommitOutcome::Failed(_) => {
+                    operation.diagnostic("commit", "driver_failure", attempt);
+                    return Err(unavailable(()));
+                }
             }
         }
+        operation.diagnostic("retry", "retry_exhausted", TRANSACTION_ATTEMPTS - 1);
         Err(unavailable(()))
     }
 }
@@ -161,6 +197,43 @@ impl HostedAccessToolSource for MongoAgentAccessToolSource {
         }
     }
 
+    async fn prepare_transport(
+        &self,
+        binding: &HostedAccessToolBinding,
+        origin: &str,
+        conversation: &str,
+        operation_sequence: u64,
+    ) -> layer3_adapter::Result<HostedAccessToolBinding> {
+        match self
+            .run(Operation::Transport(
+                binding,
+                Some(origin),
+                conversation,
+                operation_sequence,
+            ))
+            .await?
+        {
+            Outcome::Resolved(Some(binding)) => Ok(binding),
+            _ => unreachable!("transport returns a binding"),
+        }
+    }
+
+    async fn confirm_transport(
+        &self,
+        binding: &HostedAccessToolBinding,
+        conversation: &str,
+        operation_sequence: u64,
+    ) -> layer3_adapter::Result<()> {
+        self.run(Operation::Transport(
+            binding,
+            None,
+            conversation,
+            operation_sequence,
+        ))
+        .await?;
+        Ok(())
+    }
+
     async fn confirm_open(
         &self,
         binding: &HostedAccessToolBinding,
@@ -177,9 +250,53 @@ impl HostedAccessToolSource for MongoAgentAccessToolSource {
 enum Operation<'a> {
     Resolve(&'a RuntimeHandle, &'a AgentOpenRequest, u64),
     Confirm(&'a HostedAccessToolBinding, &'a str),
+    Transport(&'a HostedAccessToolBinding, Option<&'a str>, &'a str, u64),
     Authenticate(&'a str),
     Setup(&'a str),
 }
+
+impl Operation<'_> {
+    fn diagnostic(&self, stage: &'static str, category: &'static str, attempt: usize) {
+        let (operation, agent_id) = match self {
+            Self::Resolve(_, request, _) => ("resolve", Some(request.options.slot.as_str())),
+            Self::Confirm(binding, _) => ("confirm_open", Some(binding.scope().1.as_str())),
+            Self::Transport(binding, _, _, _) => ("transport", Some(binding.scope().1.as_str())),
+            Self::Authenticate(_) => ("authenticate", None),
+            Self::Setup(_) => ("setup", None),
+        };
+        // Bearer-only operations have no safe Agent identity at this boundary.
+        // Never log their input, bindings, driver text or stored documents.
+        if let Some(agent_id) = agent_id {
+            tracing::warn!(
+                operation,
+                stage,
+                category,
+                attempt = attempt + 1,
+                agent_id,
+                "Agent access tool authority transaction did not complete"
+            );
+        } else {
+            tracing::warn!(
+                operation,
+                stage,
+                category,
+                attempt = attempt + 1,
+                "Agent access tool authority transaction did not complete"
+            );
+        }
+    }
+}
+
+fn driver_category(error: &mongodb::error::Error) -> &'static str {
+    if is_transient(error) {
+        "transient_transaction"
+    } else if is_duplicate_key(error) {
+        "duplicate_key"
+    } else {
+        "driver_failure"
+    }
+}
+
 enum Outcome {
     Resolved(Option<HostedAccessToolBinding>),
     Confirmed,

@@ -99,7 +99,10 @@ impl App {
             },
         );
         let provider = FakeProvider::start(provider_config).await;
-        let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":8}]).to_string()).unwrap();
+        let entry = |slug: &str| json!({"slug":slug,"base_url":provider.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":8});
+        let registry =
+            ProviderRegistry::parse(&json!([entry("cma_codex"), entry("nyxbot")]).to_string())
+                .unwrap();
         let providers = Arc::new(
             ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(2), 8)
                 .unwrap(),
@@ -128,18 +131,36 @@ impl App {
             complete_replies_enabled: false,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
+            native_discord_media_controls_enabled: false,
+            native_discord_media_card_edits_enabled: false,
+            native_discord_media_card_replacements_enabled: false,
+            native_discord_media_card_sets_enabled: false,
             whatsapp_interactions_enabled: false,
             native_whatsapp_interactions_enabled: false,
+            native_whatsapp_media_controls_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_telegram_media_controls_enabled: false,
+            native_telegram_media_control_edits_enabled: false,
             native_media_edits: None,
             native_whatsapp_forms: None,
+            native_typing: None,
             native_lark_effects: None,
             lark_effects_issuance_enabled: false,
             lark_effects: None,
             telegram_effects: None,
             native_media_enabled: false,
             native_lark_outbound_media_enabled: false,
+            native_lark_sticker_replies_enabled: false,
+            native_lark_media_controls_enabled: false,
+            native_lark_multi_image_controls_enabled: false,
+            native_lark_media_card_replacements_enabled: false,
+            native_media_presentations_enabled: false,
+            native_discord_voice_enabled: false,
+            native_telegram_structured_replies_enabled: false,
+            native_whatsapp_structured_replies_enabled: false,
+            native_telegram_albums_enabled: false,
+            native_lark_thread_start_enabled: false,
             native_whatsapp_outbound_media_enabled: false,
             whatsapp_reactions: None,
             native_whatsapp_templates_enabled: false,
@@ -157,6 +178,7 @@ impl App {
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
             public_api_url: "https://gateway.example".into(),
+            public_api_aliases: vec![],
             advertise_public_api_url: true,
             media: None,
             downloads: Default::default(),

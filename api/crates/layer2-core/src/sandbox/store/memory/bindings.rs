@@ -10,6 +10,9 @@ impl BindingStore for InMemorySandboxStore {
     async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
         Ok(self.lock().binding_key_history.contains(hash))
     }
+    async fn classify_worker_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
+        self.contains_key_hash(hash).await
+    }
     async fn find_by_key_hash(
         &self,
         hash: &str,
@@ -76,7 +79,9 @@ impl BindingStore for InMemorySandboxStore {
             .bindings
             .values()
             .filter(|b| {
-                binding_has_work(b) && after.is_none_or(|after| b.binding_id.as_str() > after)
+                (binding_has_work(b)
+                    || crate::sandbox::binding::store::binding_is_recovery_candidate(b))
+                    && after.is_none_or(|after| b.binding_id.as_str() > after)
             })
             .take(usize::from(limit))
             .cloned()
@@ -123,6 +128,9 @@ impl BindingStore for InMemorySandboxStore {
         }) {
             return Err(SandboxStoreError::Conflict);
         }
+        state
+            .binding_association_index
+            .insert((next.owner.clone(), next.agent_id.clone(), key.clone()), ());
         state.binding_conversations.insert(key, next);
         Ok(())
     }
@@ -182,4 +190,29 @@ pub(super) fn require_conversation_authority(
         .get(&conversation_storage_key(&proof.conversation))
         .ok_or(SandboxStoreError::Conflict)?;
     proof.require_current(binding, conversation)
+}
+
+pub(super) fn continuation_retry_authority(
+    state: &super::State,
+    envelope: &crate::sandbox::agent_io::AgentCommandEnvelope,
+) -> bool {
+    let Some(id) = envelope.authorization.authority_id.strip_prefix("binding:") else {
+        return false;
+    };
+    let Some(binding) = state.bindings.get(id) else {
+        return false;
+    };
+    let Some(conversation) = state.binding_conversations.values().find(|conversation| {
+        conversation.binding_id == id
+            && conversation.generation == binding.generation
+            && conversation.agent_id == envelope.agent_id
+    }) else {
+        return false;
+    };
+    crate::sandbox::binding::BindingConversationAuthority {
+        binding: binding.clone(),
+        conversation: conversation.clone(),
+    }
+    .require_command(envelope)
+    .is_ok()
 }

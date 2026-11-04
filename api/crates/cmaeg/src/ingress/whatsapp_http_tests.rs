@@ -4,6 +4,10 @@ use axum::{
     http::{Request, StatusCode},
 };
 use cmaeg_core::seal::seal_blob;
+#[path = "whatsapp_changes_http_tests.rs"]
+mod changes_tests;
+#[path = "whatsapp_shared_facts_http_tests.rs"]
+mod shared_facts_tests;
 #[path = "whatsapp_status_tests.rs"]
 mod status_tests;
 
@@ -341,4 +345,33 @@ async fn native_whatsapp_signed_group_ingress_applies_original_participant_and_g
             assert_eq!(plan.activity.conversation.id, GROUP);
         }
     }
+}
+
+#[tokio::test]
+async fn signed_whatsapp_quote_batch_conflicts_before_any_admission() {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let mut setup = Setup::at(now).await;
+    Arc::get_mut(setup.state.routed.as_mut().unwrap())
+        .unwrap()
+        .quoted_context_enabled = true;
+    let app = setup.http();
+    let mut one = current(text("wamid.quote", "hello"));
+    one["context"] = json!({"id":"wamid.parent","from":"16505551234"});
+    let mut two = one.clone();
+    two["context"]["id"] = "wamid.other".into();
+    let body = envelope(vec![
+        current(text("wamid.before", "must not be admitted")),
+        one,
+        two,
+    ]);
+    let response = call(app, setup.callback(body, true)).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(setup
+        .server
+        .store()
+        .recover_all_page(None, 32)
+        .await
+        .unwrap()
+        .plans
+        .is_empty());
 }

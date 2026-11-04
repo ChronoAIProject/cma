@@ -1,9 +1,16 @@
 //! Durable admission for explicitly selected channel records. Legacy traffic
 //! never performs a routing-store read or retains its raw body here.
+#[path = "routed_custom.rs"]
+mod custom;
+#[path = "routed_problem.rs"]
+mod problem;
+use problem::admission_problem;
 #[path = "routed_native_lark.rs"]
 mod native_lark;
 #[path = "routed_native_lark_control.rs"]
 mod native_lark_control;
+#[path = "routed_quote.rs"]
+mod quoted;
 #[path = "routed_whatsapp.rs"]
 mod whatsapp;
 #[path = "routed_whatsapp_flow.rs"]
@@ -30,7 +37,9 @@ use tokio::sync::OwnedSemaphorePermit;
 
 /// Constructed only after ingress authenticates the original request. Neither
 /// its body nor its authentication facts come from a normalized event field.
+#[derive(Clone)]
 pub struct VerifiedIngress {
+    quote: super::quoted_context::Intake,
     body: Vec<u8>,
     oversized: bool,
     attributes_signed: bool,
@@ -51,7 +60,11 @@ pub struct RoutedIngress {
     non_human_providers: BTreeSet<String>,
     replay_providers: BTreeSet<String>,
     admission_enabled: bool,
+    binding_preparation_enabled: bool,
+    binding_replacement_bindings: BTreeSet<String>,
+    pub(crate) quoted_context_enabled: bool,
     sync_delivery_enabled: bool,
+    custom_media_providers: BTreeSet<String>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
@@ -73,7 +86,11 @@ impl RoutedIngress {
             non_human_providers,
             replay_providers,
             admission_enabled: true,
+            binding_preparation_enabled: false,
+            binding_replacement_bindings: BTreeSet::new(),
+            quoted_context_enabled: false,
             sync_delivery_enabled: false,
+            custom_media_providers: BTreeSet::new(),
             clock: Arc::new(|| time::OffsetDateTime::now_utc().unix_timestamp()),
         }
     }
@@ -110,6 +127,23 @@ impl RoutedIngress {
         self
     }
 
+    /// Generation pins remain enabled after replacement enrollment is disabled.
+    /// This gate is deployment authority and is never read from event JSON.
+    pub fn with_binding_preparation(
+        mut self,
+        enabled: bool,
+        replacements: BTreeSet<String>,
+    ) -> Self {
+        self.binding_preparation_enabled = enabled;
+        self.binding_replacement_bindings = replacements;
+        self
+    }
+
+    pub fn with_quoted_context(mut self, enabled: bool) -> Self {
+        self.quoted_context_enabled = enabled;
+        self
+    }
+
     pub fn with_admissions_enabled(mut self, enabled: bool) -> Self {
         self.admission_enabled = enabled;
         self
@@ -121,37 +155,23 @@ impl RoutedIngress {
         self
     }
 
-    async fn admit(
+    pub fn with_custom_media_providers(mut self, providers: BTreeSet<String>) -> Self {
+        self.custom_media_providers = providers;
+        self
+    }
+
+    async fn admit_once(
         &self,
         request: &LaunchRequest,
         source: VerifiedIngress,
         observer: &dyn ActivityObserver,
         native_interaction: bool,
         message_plan: Option<super::routing_plan::RoutedPlan>,
+        quote_projection: Option<u8>,
     ) -> Result<Option<LaunchOutcome>, Problem> {
         if source.oversized {
             return Err(admission_problem(AdmissionError::TooLarge));
         }
-        let receipt = match source.received_at {
-            Some(received_at) => {
-                observer
-                    .receive_at(
-                        &request.channel.definition.owner.subject,
-                        &request.channel.definition.record_id,
-                        &request.activity,
-                        received_at,
-                    )
-                    .await
-            }
-            None => observer.receive(request).await,
-        };
-        receipt.map_err(|_| {
-            Problem::new(
-                ProblemCode::ProviderUnavailable,
-                503,
-                "channel_activity_unavailable",
-            )
-        })?;
         // Restore committed selection before looking at mutable routing policy.
         let replay = if message_plan.is_some() {
             self.plans.replay_message_event(request, &source.body).await
@@ -210,6 +230,7 @@ impl RoutedIngress {
                         "routed_provider_replay_unavailable",
                     ));
                 }
+                custom::validate_media(request, &plan, &self.custom_media_providers)?;
                 validate_routed_delivery_with_sync(
                     &request.channel,
                     &plan,
@@ -223,23 +244,42 @@ impl RoutedIngress {
                     )
                 })?;
                 let candidate = if message_plan.is_some() {
-                    Candidate::prepare_message_event(
+                    Candidate::prepare_message_event_with_generation(
                         request,
                         &plan,
                         &source.body,
                         &self.keys,
                         (self.clock)(),
+                        self.binding_preparation_enabled,
                     )
                 } else if native_interaction {
-                    Candidate::prepare_native_interaction(
+                    Candidate::prepare_native_interaction_with_generation(
                         request,
                         &plan,
                         &source.body,
                         &self.keys,
                         (self.clock)(),
+                        self.binding_preparation_enabled,
+                    )
+                } else if self.binding_preparation_enabled {
+                    Candidate::prepare_with_binding_preparation(
+                        request,
+                        &plan,
+                        &source.body,
+                        &self.keys,
+                        (self.clock)(),
+                        quote_projection,
+                        &self.binding_replacement_bindings,
                     )
                 } else {
-                    Candidate::prepare(request, &plan, &source.body, &self.keys, (self.clock)())
+                    Candidate::prepare_projected(
+                        request,
+                        &plan,
+                        &source.body,
+                        &self.keys,
+                        (self.clock)(),
+                        quote_projection,
+                    )
                 }
                 .map_err(admission_problem)?;
                 let committed = self
@@ -254,6 +294,10 @@ impl RoutedIngress {
             }
             Err(error) => return Err(admission_problem(error)),
         };
+        if !matches!(source.quote, super::quoted_context::Intake::Legacy) {
+            self.observe_quote_receipt(request, &source, observer, Some(&committed.activity))
+                .await?;
+        }
         let primary = committed.targets.first().ok_or_else(|| {
             Problem::new(ProblemCode::Internal, 503, "routed_admission_unavailable")
         })?;
@@ -340,6 +384,7 @@ impl IngressState {
             ));
         };
         let source = VerifiedIngress {
+            quote: super::quoted_context::Intake::Pinned(verified.quote_projection),
             oversized: verified.source_bytes.len() > MAX_SOURCE_BYTES,
             body: verified.source_bytes,
             attributes_signed: true,
@@ -376,6 +421,18 @@ impl IngressState {
             .filter(|routing| routing.selected_request(request))
             .filter(|_| ordinary(request))
             .map(|_| VerifiedIngress {
+                quote: if matches!(
+                    request.activity.source,
+                    cmaeg_core::activity::SourceKind::Telegram { .. }
+                ) {
+                    super::quoted_context::Intake::Candidate(
+                        serde_json::from_slice(body).ok().and_then(|raw| {
+                            super::quoted_context::telegram(&raw, &request.activity)
+                        }),
+                    )
+                } else {
+                    super::quoted_context::Intake::Legacy
+                },
                 body: if body.len() <= MAX_SOURCE_BYTES {
                     body.to_vec()
                 } else {
@@ -423,6 +480,9 @@ impl IngressState {
                 "telegram_message_events_durable_admission_unavailable",
             ));
         }
+        if let Some(refusal) = custom::refusal(&request) {
+            return refusal;
+        }
         self.launcher.launch_holding(request, hold).await
     }
 }
@@ -431,21 +491,6 @@ fn ordinary(request: &LaunchRequest) -> bool {
     request.consumer.is_none()
         && request.activity.routing.is_none()
         && !matches!(request.activity.kind, ActivityKind::Interaction(_))
-}
-
-fn admission_problem(error: AdmissionError) -> Problem {
-    let (code, status, detail) = match error {
-        AdmissionError::Conflict => (ProblemCode::Conflict, 409, "routed_event_conflict"),
-        AdmissionError::TooLarge => (ProblemCode::PayloadTooLarge, 413, "routed_event_too_large"),
-        AdmissionError::Invalid => (ProblemCode::InvalidRequest, 400, "routed_event_invalid"),
-        AdmissionError::Expired => (ProblemCode::EventRefExpired, 410, "routed_event_expired"),
-        _ => (
-            ProblemCode::ProviderUnavailable,
-            503,
-            "routed_admission_unavailable",
-        ),
-    };
-    Problem::new(code, status, detail)
 }
 
 #[cfg(test)]

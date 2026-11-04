@@ -39,6 +39,8 @@ import {
 
 export interface SandboxListOptions extends PageOptions {
   readonly status?: SandboxStatus;
+  /** Exclude retired history before pagination; defaults to false. */
+  readonly excludeRetired?: boolean;
 }
 
 export interface AccessibleSandboxListOptions extends SandboxListOptions {
@@ -91,12 +93,14 @@ export class Sandboxes {
     if (options.shared === true && options.organization !== undefined)
       throw new ValidationError('Choose an organization or Shared with me, not both.');
     if (options.status !== undefined) input(sandboxStatus, options.status);
+    if (options.excludeRetired !== undefined) input(boolean, options.excludeRetired);
     return read(
       this.config,
       query('/api/v1/sandboxes', {
         cursor: options.cursor,
         limit: options.limit,
         status: options.status,
+        exclude_retired: options.excludeRetired === true ? 'true' : undefined,
         organization: options.organization,
         shared: options.shared === true ? 'true' : undefined,
       }),
@@ -107,12 +111,14 @@ export class Sandboxes {
 
   list(options: SandboxListOptions = {}) {
     if (options.status !== undefined) input(sandboxStatus, options.status);
+    if (options.excludeRetired !== undefined) input(boolean, options.excludeRetired);
     return read(
       this.config,
       query('/api/v1/sandboxes', {
         cursor: options.cursor,
         limit: options.limit,
         status: options.status,
+        exclude_retired: options.excludeRetired === true ? 'true' : undefined,
       }),
       page(sandboxSummary),
       options,

@@ -92,6 +92,7 @@ pub fn frozen(
         .unwrap();
     FrozenTurn {
         conversation_id: target.launch.event.conversation_id.clone(),
+        binding_generation: None,
         idempotency_key: target.launch.idempotency_key.clone(),
         input: vec![json!({"role":"user","content":"x".repeat(size)})],
         metadata: std::collections::BTreeMap::new(),
@@ -131,11 +132,18 @@ impl Setup {
         .await
     }
     pub async fn with_request(support: RecoverySupport, request: LaunchRequest) -> Self {
+        Self::with_source(support, request, b"raw-event").await
+    }
+    pub async fn with_source(
+        support: RecoverySupport,
+        request: LaunchRequest,
+        source: &[u8],
+    ) -> Self {
         let server = Server::start().await;
         let candidate = Candidate::prepare(
             &request,
             &fixture::routed(&request),
-            b"raw-event",
+            source,
             &fixture::keys(),
             fixture::NOW,
         )

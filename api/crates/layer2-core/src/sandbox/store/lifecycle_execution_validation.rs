@@ -79,7 +79,26 @@ pub(super) fn lifecycle_sandbox_advanced(
         .is_some_and(|(old, new)| {
             old.authority().writer_resume_generation != new.authority().writer_resume_generation
         });
-    let result = if current.credential.current != next.credential.current {
+    let recorded_quiescence = next
+        .lifecycle
+        .unpublished_recovery
+        .as_ref()
+        .and_then(|recovery| recovery.quiescence.clone())
+        .filter(|receipt| {
+            current
+                .lifecycle
+                .unpublished_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.quiescence.as_ref() != Some(receipt))
+        });
+    let result = if let Some(receipt) = recorded_quiescence {
+        expected.complete_unpublished_runtime_quiescence(
+            receipt,
+            &lease.holder,
+            lease.fence,
+            appended_at.into(),
+        )
+    } else if current.credential.current != next.credential.current {
         let Some(authority) = next.credential.current.clone() else {
             return false;
         };

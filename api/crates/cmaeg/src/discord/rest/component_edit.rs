@@ -16,6 +16,20 @@ impl DiscordRest {
         text: &str,
         components: &Value,
     ) -> Result<(), RestError> {
+        self.edit_components_result(token, bot, channel, message, text, components)
+            .await
+            .map(|_| ())
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn edit_components_result(
+        &self,
+        token: &Secret,
+        bot: &str,
+        channel: &str,
+        message: &str,
+        text: &str,
+        components: &Value,
+    ) -> Result<Value, RestError> {
         if ![bot, channel, message].into_iter().all(valid_id)
             || text.encode_utf16().count() > 2000
             || components
@@ -53,12 +67,12 @@ impl DiscordRest {
         {
             return Err(RestError::Unknown);
         }
-        Ok(())
+        Ok(body)
     }
 }
 /// Discord may add numeric component IDs and omit false defaults. Match every
 /// authored field and every array member, rejecting disabled/retargeted controls.
-fn matches_components(expected: &Value, actual: &Value) -> bool {
+pub(super) fn matches_components(expected: &Value, actual: &Value) -> bool {
     match expected {
         Value::Array(values) => actual.as_array().is_some_and(|seen| {
             values.len() == seen.len()
@@ -78,4 +92,28 @@ fn matches_components(expected: &Value, actual: &Value) -> bool {
         }),
         _ => expected == actual,
     }
+}
+
+/// Reuse bounded native file/presentation observation only after proving the
+/// entire expected component tree and content on the same authored message.
+pub(crate) fn media_card_snapshot(
+    value: &Value,
+    bot: &str,
+    channel: &str,
+    message: &str,
+    kind: cmaeg_core::message::NativeMediaKind,
+    text: &str,
+    components: &Value,
+) -> Result<crate::native_media::model::Snapshot, RestError> {
+    if value["content"].as_str() != Some(text)
+        || !matches_components(components, &value["components"])
+    {
+        return Err(RestError::Unknown);
+    }
+    let mut ordinary = value.clone();
+    ordinary
+        .as_object_mut()
+        .ok_or(RestError::Unknown)?
+        .remove("components");
+    super::media_edit::snapshot(&ordinary, bot, channel, message, kind)
 }

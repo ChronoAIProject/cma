@@ -178,6 +178,7 @@ where
     let worker = AgentCommandWorker::new(
         harness.store.clone(),
         Arc::new(crate::commands::ResourceCommandExecution {
+            source_guard: None,
             authority,
             access,
             store: harness.store.clone(),

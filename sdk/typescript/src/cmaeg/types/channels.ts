@@ -1,4 +1,8 @@
-import { EndpointResponseSchema, FieldRefusalSchema } from './channel-results.js';
+import {
+  EndpointResponseSchema,
+  FieldRefusalSchema,
+  NativeDiscordActivationSchema,
+} from './channel-results.js';
 export * from './channel-results.js';
 import { NativeLarkIdentitySchema } from './primitives.js';
 import { CredentialsRequestSchema, CredentialPatchSchema } from './credentials.js';
@@ -127,6 +131,7 @@ export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
 
 const TelegramSourceSchema = object({
   topic_lifecycle: optional(boolean),
+  topic_creation: optional(boolean),
   message_events: optional(boolean),
   channel_posts: optional(boolean),
   admission: AdmissionPolicySchema,
@@ -149,6 +154,7 @@ export const SourceRequestSchema = tagged(
       waba_id: text,
       phone_number_id: text,
       forms_enabled: optional(boolean),
+      message_events: optional(boolean),
       group_ids: optional(array(text)),
       admission: AdmissionPolicySchema,
       type: enumeration('whatsapp'),
@@ -188,8 +194,8 @@ export const SourceRequestSchema = tagged(
   'type',
 );
 export type SourceRequest = Output<typeof SourceRequestSchema>;
-
 export const ChannelCreateRequestSchema = object({
+  durable_custom_execution: optional(boolean),
   connection_ref: optional(nullable(text)),
   connection_admission: optional(nullable(AdmissionPolicySchema)),
   credentials: CredentialsRequestSchema,
@@ -372,6 +378,7 @@ export const SourceSchema = tagged(
       waba_id: text,
       phone_number_id: text,
       forms_enabled: optional(boolean),
+      message_events: optional(boolean),
       group_ids: optional(array(text)),
       admission: AdmissionPolicySchema,
       type: enumeration('whatsapp'),
@@ -412,8 +419,8 @@ export const SourceSchema = tagged(
   'type',
 );
 export type Source = Output<typeof SourceSchema>;
-
 export const PublicChannelDefinitionSchema = object({
+  durable_custom_execution: optional(boolean),
   connection_ref: optional(nullable(text)),
   created_at: text,
   creation: optional(nullable(ChannelCreationSchema)),
@@ -441,15 +448,6 @@ export const ProviderResponseSchema = object({
   slug: text,
 });
 export type ProviderResponse = Output<typeof ProviderResponseSchema>;
-
-/** Native intake eligibility; selection is not a socket-health claim. */
-export const NativeDiscordActivationSchema = object({
-  state: text,
-  detail: text,
-  capacity: integer,
-  selected_records: integer,
-});
-export type NativeDiscordActivation = Output<typeof NativeDiscordActivationSchema>;
 
 export const ChannelResponseSchema = object({
   native_discord_activation: optional(nullable(NativeDiscordActivationSchema)),
@@ -482,6 +480,7 @@ export const ChannelPageSchema = object({
 export type ChannelPage = Output<typeof ChannelPageSchema>;
 
 export const ChannelUpdateRequestSchema = object({
+  durable_custom_execution: optional(nullable(boolean)),
   connection_ref: optional(nullable(text)),
   connection_admission: optional(nullable(AdmissionPolicySchema)),
   credentials: optional(nullable(CredentialPatchSchema)),

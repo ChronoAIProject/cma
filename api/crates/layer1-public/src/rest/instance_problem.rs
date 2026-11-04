@@ -21,10 +21,20 @@ pub(crate) enum InstanceProblem {
     WorkspaceNotReady,
     AgentNotReady,
     AgentNotStopped,
-    AgentLimitReached { limit: u8, live: u8 },
-    MessageQueueFull { limit: usize },
-    ApprovalNotPending { approval_id: String },
-    CapabilityUnsupported { capability: RuntimeCapability },
+    WorktreeRecoveryConflict,
+    AgentLimitReached {
+        limit: u8,
+        live: u8,
+    },
+    MessageQueueFull {
+        limit: usize,
+    },
+    ApprovalNotPending {
+        approval_id: String,
+    },
+    CapabilityUnsupported {
+        capability: RuntimeCapability,
+    },
     ContentUnsupported,
     SkillVersionUpgradeUnsupported {
         id: String,
@@ -56,6 +66,7 @@ impl InstanceProblem {
                 Self::AgentLimitReached { limit, live }
             }
             AgentServiceError::InvalidRequest(_) => Self::InvalidRequest,
+            AgentServiceError::WorktreeRecoveryConflict => Self::WorktreeRecoveryConflict,
             AgentServiceError::CreationConflict
             | AgentServiceError::StatusConflict { .. }
             | AgentServiceError::WorkConflict { .. }
@@ -230,6 +241,12 @@ impl IntoResponse for InstanceProblem {
                 "The agent must be stopped before it can be deleted.",
                 "agent_not_stopped",
             ),
+            Self::WorktreeRecoveryConflict => (
+                StatusCode::CONFLICT,
+                "agent-worktree-recovery-conflict",
+                "Only a failed Agent that never became ready can recover its initial worktree preparation.",
+                "agent_worktree_recovery_conflict",
+            ),
             Self::AgentLimitReached { .. } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "agent-limit-reached",
@@ -325,13 +342,11 @@ mod tests {
 
     #[tokio::test]
     async fn skill_version_upgrade_refusal_has_a_named_conflict_code() {
-        let response = InstanceProblem::from(
-            AgentOperationError::SkillVersionUpgradeUnsupported {
-                id: "research".into(),
-                installed: "1.0".into(),
-                requested: "1.1".into(),
-            },
-        )
+        let response = InstanceProblem::from(AgentOperationError::SkillVersionUpgradeUnsupported {
+            id: "research".into(),
+            installed: "1.0".into(),
+            requested: "1.1".into(),
+        })
         .into_response();
         assert_eq!(response.status(), StatusCode::CONFLICT);
         let body = axum::body::to_bytes(response.into_body(), 4096)

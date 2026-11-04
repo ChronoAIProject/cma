@@ -15,6 +15,11 @@ use crate::{
     WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest,
 };
 
+/// Opt in to the additive Agent resource capability in RuntimeStatus responses.
+/// Old runtimes ignore Accept and retain their original request/response shape.
+pub const AGENT_RESOURCES_STATUS_MEDIA_TYPE: &str =
+    "application/vnd.chrono.cma.agent-resources-status+json";
+
 /// A stable reference to one agent slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,6 +64,21 @@ impl<T> FencedReceipt<T> {
             receipt,
         }
     }
+}
+
+/// Two ordered resource operations retain their original identities and receipts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentResourcesPlan {
+    pub worktree: WorktreeRequest,
+    pub home: AgentHomePlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentResourcesReceipt {
+    pub worktree: WorktreeReceipt,
+    pub home: AgentHomeReceipt,
 }
 
 /// Generic successful acknowledgement.
@@ -142,8 +162,10 @@ pub enum WireOperation {
     Install,
     BootstrapRestore,
     PrepareWorkspace,
+    RecoverWorkspacePrepare,
     WorkspaceSetup,
     RemoveWorkspace,
+    PrepareAgentResources,
     AddWorktree,
     RemoveWorktree,
     MaterializeAgentHome,
@@ -209,8 +231,10 @@ pub enum RequestFrame {
     Install(InstallRequest),
     BootstrapRestore(RestoreBootstrapRequest),
     PrepareWorkspace(WorkspaceRequest),
+    RecoverWorkspacePrepare(crate::WorkspacePrepareRecoveryFrame),
     WorkspaceSetup(WorkspaceSetupRequest),
     RemoveWorkspace(WorkspaceRemoveRequest),
+    PrepareAgentResources(FencedRequest<AgentResourcesPlan>),
     AddWorktree(FencedRequest<WorktreeRequest>),
     RemoveWorktree(FencedRequest<WorktreeRef>),
     MaterializeAgentHome(FencedRequest<AgentHomePlan>),
@@ -245,8 +269,10 @@ impl RequestFrame {
             Self::Install(_) => WireOperation::Install,
             Self::BootstrapRestore(_) => WireOperation::BootstrapRestore,
             Self::PrepareWorkspace(_) => WireOperation::PrepareWorkspace,
+            Self::RecoverWorkspacePrepare(_) => WireOperation::RecoverWorkspacePrepare,
             Self::WorkspaceSetup(_) => WireOperation::WorkspaceSetup,
             Self::RemoveWorkspace(_) => WireOperation::RemoveWorkspace,
+            Self::PrepareAgentResources(_) => WireOperation::PrepareAgentResources,
             Self::AddWorktree(_) => WireOperation::AddWorktree,
             Self::RemoveWorktree(_) => WireOperation::RemoveWorktree,
             Self::MaterializeAgentHome(_) => WireOperation::MaterializeAgentHome,
@@ -284,8 +310,10 @@ pub enum ResponseFrame {
     Install(InstallReceipt),
     BootstrapRestore(RestoreBootstrapReceipt),
     PrepareWorkspace(WorkspaceReceipt),
+    RecoverWorkspacePrepare(crate::WorkspacePrepareRecoveryReceipt),
     WorkspaceSetup(SetupReceipt),
     RemoveWorkspace(WorkspaceRemoveReceipt),
+    PrepareAgentResources(FencedReceipt<AgentResourcesReceipt>),
     AddWorktree(FencedReceipt<WorktreeReceipt>),
     RemoveWorktree(FencedReceipt<WorktreeRemoveReceipt>),
     MaterializeAgentHome(FencedReceipt<AgentHomeReceipt>),

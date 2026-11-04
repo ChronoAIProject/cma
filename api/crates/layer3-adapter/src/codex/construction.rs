@@ -1,10 +1,16 @@
 //! Configure the hosted Codex adapter and its runtime services.
 use super::*;
 
+/// Configuration for Codex inside a hosted sandbox.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CodexSandboxSpec {
     pub deployment: HostedDeployment,
     pub config: CodexConfig,
+}
+
+/// Complete Codex sandbox adapter.
+pub struct CodexAdapter {
+    pub(super) hosted: HostedAdapter,
 }
 
 impl CodexAdapter {
@@ -32,6 +38,11 @@ impl CodexAdapter {
 
     pub fn hosted(&self) -> &HostedAdapter {
         &self.hosted
+    }
+
+    pub fn with_native_runtime_image(mut self, image: crate::RuntimeImage) -> crate::Result<Self> {
+        self.hosted = self.hosted.with_native_runtime_image(image)?;
+        Ok(self)
     }
 
     pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {

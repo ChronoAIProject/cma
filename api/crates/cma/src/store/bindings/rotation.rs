@@ -33,6 +33,8 @@ impl MongoBindingCredentials {
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION}, doc! {"$set": sandbox_replacement_fields(&updated).map_err(unavailable)?})
                 .session(&mut session).await.map_err(unavailable)?;
             if result.matched_count != 1 { return Err(conflict()); }
+            crate::store::sandbox_usage::save::record_saved(&self.store, &mut session, &updated, sandbox.revision).await
+                .map_err(|_| unavailable("usage persistence failed"))?;
             let mut document = binding_document(&next).map_err(unavailable)?;
             document.remove("_id");
             self.store.bindings.records.update_one(doc! {"_id": &binding.binding_id}, doc! {"$set": document, "$addToSet": {"key_history": {"$each": [&binding.key_sha256, &next.key_sha256]}}})

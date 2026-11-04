@@ -3,15 +3,32 @@ use crate::responses::v2::binding_tests as conversation;
 use crate::rest::bindings_tests as management;
 use axum::Extension;
 use layer2_core::{
-    profiles::content_digest,
-    resource_access::CallerContext,
-    sandbox::binding::*,
-    Authorization,
+    profiles::content_digest, resource_access::CallerContext, sandbox::binding::*, Authorization,
 };
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if let Some(mode) = name.strip_prefix("worker_classifier_") {
+        return Some(Scenario {
+            router: crate::rest::worker_credentials::tests::fixture(mode).await,
+            subject: None,
+            authorization: Authorization::none(),
+            symbols: Default::default(),
+        });
+    }
+    if let Some(mode) = name.strip_prefix("binding_preparation_") {
+        return Some(Scenario {
+            router: management::preparation_contract::fixture(mode).await,
+            subject: (mode != "anonymous").then_some("manager"),
+            authorization: if mode == "forbidden" {
+                Authorization::none()
+            } else {
+                management::authority()
+            },
+            symbols: Default::default(),
+        });
+    }
     if name == "provider_card" {
         return Some(Scenario {
             router: crate::a2a::router("https://cma.example"),
@@ -47,7 +64,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     }
     let mode = name.strip_prefix("binding_management_")?;
     let (router, store) = management::app();
-    if ["ready", "pending", "skill_version"].contains(&mode) {
+    if ["ready", "pending", "skill_version", "conversation"].contains(&mode) {
         let body = if mode == "skill_version" {
             skill_version_body("1.0")
         } else {
@@ -64,7 +81,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
-        if matches!(mode, "ready" | "skill_version") {
+        if mode != "pending" {
             let mut binding = store.binding("binding-contract").await.unwrap().unwrap();
             let revision = binding.revision;
             binding.state = BindingState::Ready;
@@ -74,6 +91,19 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 .unwrap();
             management::create_backing_resources(&store, &binding).await;
             store.save_binding(Some(revision), binding).await.unwrap();
+        }
+        if mode == "conversation" {
+            let response = router
+                .clone()
+                .oneshot(management::request(
+                    "PUT",
+                    "/api/v1/cmaeg/bindings/binding-contract/conversations/conversation-contract",
+                    None,
+                    Some(management::authority()),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 201);
         }
     }
     Some(Scenario {

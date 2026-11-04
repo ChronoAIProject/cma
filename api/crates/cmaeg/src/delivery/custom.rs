@@ -44,7 +44,10 @@ impl CustomDelivery {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> IntentReceipt {
-        if message.native_media_update.is_some() {
+        if message.structured_content.is_some()
+            || message.native_media_update.is_some()
+            || message.clear_native_attachments
+        {
             return super::send::unsupported();
         }
         let data = custom::data(event, message.text.as_deref(), Some(message), None);
@@ -53,6 +56,7 @@ impl CustomDelivery {
         // address does nothing, so its first webhook attempt commits.
         if matches!(event.reply, ReplyAddress::Sync { .. }) && !gate.commit() {
             return IntentReceipt {
+                message_parts: vec![],
                 message_ref: None,
                 rendering: custom::report(message),
                 delivery: expired(),
@@ -71,6 +75,7 @@ impl CustomDelivery {
             )
             .await;
         IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering: custom::report(message),
             delivery,
@@ -89,6 +94,9 @@ impl CustomDelivery {
                     Some(text),
                     Some(&OutboundMessage {
                         whatsapp_template: None,
+                        structured_content: None,
+                        reply_with_received_sticker: false,
+                        clear_native_attachments: false,
                         native_media_update: None,
                         native_attachments: Vec::new(),
                         thread_reply: false,
@@ -326,6 +334,9 @@ mod tests {
     pub(super) fn message() -> OutboundMessage {
         OutboundMessage {
             whatsapp_template: None,
+            structured_content: None,
+            reply_with_received_sticker: false,
+            clear_native_attachments: false,
             native_media_update: None,
             native_attachments: Vec::new(),
             thread_reply: false,

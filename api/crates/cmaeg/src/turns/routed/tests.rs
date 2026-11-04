@@ -174,7 +174,8 @@ async fn expired_event_and_unconfigured_provider_never_start() {
         .store(fixture::NOW + 901, Ordering::SeqCst);
     assert!(matches!(
         setup.dispatch().await,
-        Err(ExecutionError::Expired)
+        Ok(DispatchOutcome::Terminal(Phase::Refused { code }))
+            if code == super::expiry::EXPIRED_BEFORE_START
     ));
     assert!(setup.port.starts.lock().unwrap().is_empty());
     let unsupported = Setup::new(RecoverySupport::default()).await;

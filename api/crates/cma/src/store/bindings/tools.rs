@@ -1,8 +1,6 @@
 //! Durable provider tool-open authority; no dependency on legacy bridge records.
 use super::*;
-use crate::store::sandbox_mongo::{
-    commit_transaction, read_record, record_bson, start_transaction, CommitOutcome,
-};
+use crate::store::sandbox_mongo::{read_record, record_bson};
 use layer3_adapter::hosted::{
     HostedProviderToolBinding, HostedProviderToolSource, HostedToolOpenReceipt,
 };
@@ -11,18 +9,28 @@ use mongodb::ClientSession;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+mod relay;
+mod relay_auth;
+#[cfg(test)]
+mod relay_tests;
+mod relay_transport;
 #[cfg(test)]
 mod tests;
+mod transaction;
+#[cfg(test)]
+mod transaction_tests;
 mod validation;
+use transaction::{Operation, Outcome};
 use validation::Scope;
 
 pub(crate) struct MongoProviderToolSource {
     store: Arc<MongoSandboxStore>,
+    relay: Option<relay::Authority>,
 }
 
 impl MongoProviderToolSource {
     pub(crate) fn new(store: Arc<MongoSandboxStore>) -> Arc<Self> {
-        Arc::new(Self { store })
+        Arc::new(Self { store, relay: None })
     }
 
     async fn resolve_in(
@@ -31,7 +39,7 @@ impl MongoProviderToolSource {
         request: &AgentOpenRequest,
         fence: u64,
         session: &mut ClientSession,
-    ) -> layer3_adapter::Result<Option<(HostedProviderToolBinding, Scope)>> {
+    ) -> transaction::Result<Option<(HostedProviderToolBinding, Scope)>> {
         let Some(document) = self
             .store
             .bindings
@@ -40,8 +48,7 @@ impl MongoProviderToolSource {
                 doc! {"record.agent_id": &request.options.slot.0, "record.borrowed": {"$ne": true}},
             )
             .session(&mut *session)
-            .await
-            .map_err(unavailable)?
+            .await?
         else {
             return Ok(None);
         };
@@ -52,8 +59,7 @@ impl MongoProviderToolSource {
             .records
             .find_one(doc! {"_id": &conversation.binding_id})
             .session(&mut *session)
-            .await
-            .map_err(unavailable)?
+            .await?
             .map(read_binding)
             .transpose()
             .map_err(unavailable)?
@@ -66,8 +72,7 @@ impl MongoProviderToolSource {
             &conversation.agent_id,
             session,
         )
-        .await
-        .map_err(unavailable)?;
+        .await?;
         let (scope, proxy) =
             validation::validate(&snapshot, &binding, &conversation, runtime, request, fence)?;
         let id = scope.id()?;
@@ -77,8 +82,7 @@ impl MongoProviderToolSource {
             .tool_opens
             .find_one(doc! {"_id": &id})
             .session(&mut *session)
-            .await
-            .map_err(unavailable)?;
+            .await?;
         let receipt = previous
             .as_ref()
             .map(|document| read(document, &scope))
@@ -89,24 +93,38 @@ impl MongoProviderToolSource {
             doc! {"_id": &binding.binding_id, "revision": integer(binding.revision).map_err(unavailable)?,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION},
             doc! {"$inc": {"tool_open_fence": 1_i64}},
-        ).session(&mut *session).await.map_err(unavailable)?;
+        ).session(&mut *session).await?;
         if guarded.matched_count != 1 {
-            return Err(refused());
+            return Err(refused().into());
         }
         crate::store::resource_access::fence_lineage(&self.store, &snapshot.resource, session)
-            .await
-            .map_err(unavailable)?;
+            .await?;
         let attachment = HostedProviderToolBinding::new(
             id,
             runtime.clone(),
             request.clone(),
             fence,
             proxy,
-            receipt.map(|record| HostedToolOpenReceipt {
-                boot_id: record.boot_id,
-                conversation: record.conversation,
+            receipt.as_ref().map(|record| HostedToolOpenReceipt {
+                boot_id: record.boot_id.clone(),
+                conversation: record.conversation.clone(),
             }),
         )?;
+        let attachment = self
+            .relay_for_open(
+                attachment,
+                &scope,
+                receipt.is_some()
+                    || request.resume_conversation.is_some()
+                    || snapshot
+                        .resource
+                        .lineage
+                        .agent
+                        .as_ref()
+                        .is_some_and(|agent| agent.conversation.conversation_id.is_some()),
+                session,
+            )
+            .await?;
         Ok(Some((attachment, scope)))
     }
 }
@@ -119,25 +137,12 @@ impl HostedProviderToolSource for MongoProviderToolSource {
         request: &AgentOpenRequest,
         authority_fence: u64,
     ) -> layer3_adapter::Result<Option<HostedProviderToolBinding>> {
-        let mut session = self
-            .store
-            .client
-            .start_session()
-            .await
-            .map_err(unavailable)?;
-        start_transaction(&mut session).await.map_err(unavailable)?;
-        let result = self
-            .resolve_in(runtime, request, authority_fence, &mut session)
-            .await;
-        match result {
-            Ok(value) => {
-                committed(commit_transaction(&mut session).await)?;
-                Ok(value.map(|(attachment, _)| attachment))
-            }
-            Err(error) => {
-                let _ = session.abort_transaction().await;
-                Err(error)
-            }
+        match self
+            .run(Operation::Resolve(runtime, request, authority_fence))
+            .await?
+        {
+            Outcome::Resolved(binding) => Ok(binding.map(|binding| *binding)),
+            _ => unreachable!("resolve returns a binding"),
         }
     }
 
@@ -153,23 +158,41 @@ impl HostedProviderToolSource for MongoProviderToolSource {
         {
             return Err(refused());
         }
-        let mut session = self
-            .store
-            .client
-            .start_session()
-            .await
-            .map_err(unavailable)?;
-        start_transaction(&mut session).await.map_err(unavailable)?;
-        let result = self
-            .confirm_in(attachment, conversation, &mut session)
-            .await;
-        match result {
-            Ok(()) => committed(commit_transaction(&mut session).await),
-            Err(error) => {
-                let _ = session.abort_transaction().await;
-                Err(error)
-            }
+        self.run(Operation::Confirm(attachment, conversation))
+            .await?;
+        Ok(())
+    }
+
+    async fn prepare_transport(
+        &self,
+        binding: &HostedProviderToolBinding,
+        origin: &str,
+        conversation: &str,
+        sequence: u64,
+    ) -> layer3_adapter::Result<HostedProviderToolBinding> {
+        match self
+            .run(Operation::Transport(
+                binding,
+                Some(origin),
+                conversation,
+                sequence,
+            ))
+            .await?
+        {
+            Outcome::Resolved(Some(binding)) => Ok(*binding),
+            _ => unreachable!("transport preparation returns a binding"),
         }
+    }
+
+    async fn confirm_transport(
+        &self,
+        binding: &HostedProviderToolBinding,
+        conversation: &str,
+        sequence: u64,
+    ) -> layer3_adapter::Result<()> {
+        self.run(Operation::Transport(binding, None, conversation, sequence))
+            .await?;
+        Ok(())
     }
 }
 
@@ -179,7 +202,7 @@ impl MongoProviderToolSource {
         attachment: &HostedProviderToolBinding,
         conversation: &str,
         session: &mut ClientSession,
-    ) -> layer3_adapter::Result<()> {
+    ) -> transaction::Result<()> {
         let (runtime, request, fence, proxy) = attachment.scope();
         let observed = attachment.observed().ok_or_else(refused)?;
         observed.validate_for(proxy)?;
@@ -188,6 +211,7 @@ impl MongoProviderToolSource {
             .await?
             .ok_or_else(refused)?;
         if current.scope() != attachment.scope()
+            || !current.same_transport(attachment)
             || current.provenance_sha256() != attachment.provenance_sha256()
             || scope
                 .runtime
@@ -195,13 +219,12 @@ impl MongoProviderToolSource {
                 .as_ref()
                 .is_some_and(|boot| boot != &observed.boot_id)
         {
-            return Err(refused());
+            return Err(refused().into());
         }
         // The durable Agent conversation, if already installed, must agree too.
         let snapshot =
             crate::store::agent_provenance::read_snapshot(&self.store, &scope.agent_id, session)
-                .await
-                .map_err(unavailable)?;
+                .await?;
         if snapshot
             .resource
             .lineage
@@ -213,7 +236,7 @@ impl MongoProviderToolSource {
             .as_deref()
             .is_some_and(|id| id != conversation)
         {
-            return Err(refused());
+            return Err(refused().into());
         }
         let id = scope.id()?;
         let previous = self
@@ -222,16 +245,17 @@ impl MongoProviderToolSource {
             .tool_opens
             .find_one(doc! {"_id": &id})
             .session(&mut *session)
-            .await
-            .map_err(unavailable)?;
+            .await?;
         if previous
             .as_ref()
             .map(|document| read(document, &scope))
             .transpose()?
             .is_some_and(|receipt| receipt.conversation != conversation)
         {
-            return Err(refused());
+            return Err(refused().into());
         }
+        self.confirm_relay_open(attachment, &scope, conversation, session)
+            .await?;
         let record = OpenRecord {
             scope,
             boot_id: observed.boot_id.clone(),
@@ -245,8 +269,7 @@ impl MongoProviderToolSource {
             .replace_one(doc! {"_id": id}, document)
             .upsert(true)
             .session(&mut *session)
-            .await
-            .map_err(unavailable)?;
+            .await?;
         Ok(())
     }
 }
@@ -265,13 +288,6 @@ fn read(document: &Document, scope: &Scope) -> layer3_adapter::Result<OpenRecord
         return Err(refused());
     }
     Ok(record)
-}
-
-fn committed(outcome: CommitOutcome) -> layer3_adapter::Result<()> {
-    match outcome {
-        CommitOutcome::Committed => Ok(()),
-        _ => Err(unavailable(())),
-    }
 }
 
 fn refused() -> AdapterError {

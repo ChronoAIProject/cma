@@ -15,6 +15,12 @@ pub(super) async fn window(
         .reads
         .event_stream_window(authorization, after, through, limit)
         .await?;
+    // The core read already fenced current authority after checking the tail.
+    // With no entries there is no command correlation IO to authorize again.
+    // Live and durable frames retain their separate release-time checks.
+    if window.entries.is_empty() {
+        return Ok(window);
+    }
     let window = state
         .commands
         .bind_replay_window(&state.reads, authorization, window)

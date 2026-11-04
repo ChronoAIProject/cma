@@ -148,6 +148,12 @@ pub struct CreateConnection {
 /// Deployment gates for new relay authoring; existing exact records remain readable.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayAuthoringCapabilities {
+    /// New Custom channels may select durable execution with compatible providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_durable_execution_enabled: Option<bool>,
+    /// Configured response replay providers; does not attest provider or platform health.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_recovery_providers: Option<Vec<String>>,
     /// Separate native app authoring gate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_lark_writes_enabled: Option<bool>,
@@ -163,6 +169,9 @@ pub struct RelayAuthoringCapabilities {
     /// Native WhatsApp Form issuance is enabled by the operator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_forms_enabled: Option<bool>,
+    /// Effective admission switch for coexistence incoming edits and revokes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_message_events_enabled: Option<bool>,
     /// Managed static Flow creation/publication is enabled by the operator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_flow_writes_enabled: Option<bool>,
@@ -178,6 +187,12 @@ pub struct RelayAuthoringCapabilities {
     /// Gateway accepts new exact Telegram forum-topic management opt-ins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_telegram_topic_lifecycle_enabled: Option<bool>,
+    /// Create new topics in the original forum supergroup after owner consent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_telegram_topic_creation_enabled: Option<bool>,
+    /// Exact admitted General forum-topic execution is independently enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_telegram_general_topic_lifecycle_enabled: Option<bool>,
     /// Independently enabled original-conversation history reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_conversation_history_enabled: Option<bool>,
@@ -187,6 +202,12 @@ pub struct RelayAuthoringCapabilities {
     /// Whether native Discord incoming reaction events are enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_reactions_enabled: Option<bool>,
+    /// Bounded incoming Discord sticker, embed and poll descriptions are enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_rich_content_enabled: Option<bool>,
+    /// Bounded descriptions of received Discord forwards, without origin access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_forwards_enabled: Option<bool>,
     /// New direct Discord source and token writes are available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_writes_enabled: Option<bool>,

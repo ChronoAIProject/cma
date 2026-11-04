@@ -96,10 +96,7 @@ impl HierarchyReadService {
         let view = self
             .sandbox_held(held, &held.snapshot.lineage.sandbox.id)
             .await?;
-        if query
-            .status
-            .is_some_and(|status| view.sandbox.status != status)
-        {
+        if !query.matches_status(view.sandbox.status) {
             return Err(authorized::access_error(
                 ResourceAccessStoreError::Conflict.into(),
             ));

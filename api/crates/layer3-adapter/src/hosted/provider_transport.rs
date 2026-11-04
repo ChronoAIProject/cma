@@ -11,6 +11,7 @@ use super::checkpoint_store::{CheckpointArchiveStore, CheckpointArchiveStoreFact
 use super::checkpoint_transport::{restore_request, successful_checkpoint};
 use super::provider_endpoint::{NativeRuntimeIdentity, RuntimeEndpoint};
 use super::{checkpoint_transport, control_correlation, HostedAgentOpenSettings};
+use crate::agent_sandbox::RuntimeStreamKind;
 use crate::provider::SandboxClient;
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
 use crate::{
@@ -345,139 +346,8 @@ mod native_status;
 #[path = "native_transport.rs"]
 mod native_transport;
 
-#[async_trait::async_trait]
-impl super::HostedControlTransport for ProviderHostedControlTransport {
-    async fn inspect_native_status(
-        &self,
-        inspection: &super::NativeStatusInspection<'_>,
-    ) -> crate::Result<Option<crate::RuntimeInspection>> {
-        self.inspect_reused_native_status(inspection).await
-    }
-
-    async fn bind_runtime(&self, handle: &RuntimeHandle, sandbox_id: &str) -> crate::Result<()> {
-        self.bind_sandbox(handle, sandbox_id).await
-    }
-
-    async fn bind_native_runtime(
-        &self,
-        handle: &RuntimeHandle,
-        sandbox_id: &str,
-        request_sha256: &str,
-    ) -> crate::Result<()> {
-        self.bind_native_identity(handle, sandbox_id, request_sha256)
-            .await
-    }
-
-    async fn exchange(
-        &self,
-        handle: &RuntimeHandle,
-        request: RequestFrame,
-    ) -> crate::Result<ResponseFrame> {
-        self.require_supported_operation(&request)?;
-        let endpoint = self.endpoint(handle).await?;
-        self.exchange_at(handle, &endpoint, request).await
-    }
-
-    async fn verify_checkpoint_hold(
-        &self,
-        handle: &RuntimeHandle,
-        request: &crate::CheckpointHoldRequest,
-    ) -> crate::Result<ResponseFrame> {
-        // Require the sandbox binding, but do not transfer the archive again.
-        // The caller already published it and checks the pinned identity.
-        self.archive(handle).await?;
-        let endpoint = self.endpoint(handle).await?;
-        self.control_with_hold_recovery(
-            &endpoint,
-            &RequestFrame::CheckpointForTeardown(request.clone()),
-        )
-        .await
-    }
-
-    async fn export_agent_history(
-        &self,
-        handle: &RuntimeHandle,
-        agent: &AgentSlot,
-    ) -> crate::Result<Vec<u8>> {
-        ProviderHostedControlTransport::export_agent_history(self, handle, agent).await
-    }
-
-    #[tracing::instrument(skip_all, fields(agent_id = launch.request.agent_id.as_str()))]
-    async fn open_agent(
-        &self,
-        handle: &RuntimeHandle,
-        launch: FencedRequest<AgentLaunch>,
-        resume_conversation: Option<String>,
-        mut settings: HostedAgentOpenSettings,
-        updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
-        let mut timing = super::startup_timing::StartupTiming::new();
-        let key = (handle.clone(), launch.request.agent_id.clone());
-        let epochs = self.open_epochs(&key).await;
-        let endpoint = self.endpoint(handle).await?;
-        timing.completed("transport_endpoint");
-        let (mut receipt, socket) = self
-            .open_and_connect(handle, &endpoint, &launch, &mut timing)
-            .await?;
-        timing.completed("conversation_transport");
-        let subscription = if settings.own_credential {
-            match &self.subscriptions {
-                Some(source) => Some(super::subscriptions::HostedSubscriptionBinding {
-                    source: source.clone(),
-                    sandbox_id: self.binding(handle).await?.sandbox_id,
-                    runtime: handle.clone(),
-                    agent: launch.request.agent_id.clone(),
-                }),
-                None => None,
-            }
-        } else {
-            None
-        };
-        let recovered_prompt = settings.recovered_prompt.take();
-        let opened = Bridge::open_with_subscription_and_prompt(
-            socket,
-            launch.request.agent_id.as_str(),
-            launch.request.cwd.clone(),
-            (settings, subscription),
-            resume_conversation,
-            recovered_prompt,
-            updates,
-        )
-        .await?;
-        timing.completed("conversation_handshake");
-        let channel = self.register_link(key, epochs, opened).await?;
-        receipt.receipt.conversation_id = channel.conversation_id.clone();
-        Ok((channel, receipt))
-    }
-
-    async fn retire(&self, handle: &RuntimeHandle) -> crate::Result<()> {
-        let links = {
-            let mut state = self.state.lock().await;
-            let epoch = state.runtime_epochs.entry(handle.clone()).or_default();
-            *epoch = epoch.wrapping_add(1);
-            state.bindings.remove(handle);
-            if let Some(slot) = state.native_http.remove(handle) {
-                slot.cancel();
-            }
-            state
-                .slot_epochs
-                .retain(|(runtime, _), _| runtime != handle);
-            let keys: Vec<_> = state
-                .links
-                .keys()
-                .filter(|(runtime, _)| runtime == handle)
-                .cloned()
-                .collect();
-            keys.into_iter()
-                .filter_map(|key| state.links.remove(&key))
-                .collect::<Vec<_>>()
-        };
-        for link in links {
-            link.stop().await;
-        }
-        Ok(())
-    }
-}
+#[path = "provider_transport_impl.rs"]
+mod transport_impl;
 
 #[cfg(test)]
 #[path = "provider_transport_tests.rs"]

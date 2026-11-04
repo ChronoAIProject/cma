@@ -18,6 +18,37 @@ impl From<mongodb::error::Error> for FenceError {
 }
 
 impl BindingCollections {
+    /// Requeue bookkeeping only: current binding/conversation must still own this command.
+    pub(in crate::store) async fn continuation_retry_authority(
+        &self,
+        envelope: &layer2_core::sandbox::agent_io::AgentCommandEnvelope,
+        session: &mut ClientSession,
+    ) -> Result<bool, FenceError> {
+        let Some(id) = envelope.authorization.authority_id.strip_prefix("binding:") else {
+            return Ok(false);
+        };
+        let Some(binding) = self
+            .records
+            .find_one(doc! {"_id":id})
+            .session(&mut *session)
+            .await?
+            .map(read_binding)
+            .transpose()?
+        else {
+            return Ok(false);
+        };
+        let Some(conversation) = self.conversations.find_one(doc! {"binding_id":id,"generation":integer(binding.generation)?,"record.agent_id":envelope.agent_id.as_str()}).session(&mut *session).await?.map(read_conversation).transpose()? else { return Ok(false); };
+        let proof = BindingConversationAuthority {
+            binding,
+            conversation,
+        };
+        if proof.require_command(envelope).is_err() {
+            return Ok(false);
+        }
+        self.conversation_authority(Some(&proof), session).await?;
+        Ok(true)
+    }
+
     pub(in crate::store) async fn conversation_authority(
         &self,
         proof: Option<&BindingConversationAuthority>,

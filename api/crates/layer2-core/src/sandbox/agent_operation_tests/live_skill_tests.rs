@@ -77,9 +77,7 @@ async fn installed_skill_version_change_is_reported_as_unsupported() {
     let mut requested = reference();
     requested.version = Some("1.1".into());
     assert_eq!(
-        service
-            .install_skill(&owner(), &ready.id, requested)
-            .await,
+        service.install_skill(&owner(), &ready.id, requested).await,
         Err(AgentOperationError::SkillVersionUpgradeUnsupported {
             id: "research".into(),
             installed: "1.0".into(),
@@ -106,9 +104,7 @@ async fn profile_skill_version_change_is_reported_as_unsupported() {
     let mut requested = reference();
     requested.version = Some("1.1".into());
     assert_eq!(
-        service
-            .install_skill(&owner(), &ready.id, requested)
-            .await,
+        service.install_skill(&owner(), &ready.id, requested).await,
         Err(AgentOperationError::SkillVersionUpgradeUnsupported {
             id: "research".into(),
             installed: "1.0".into(),

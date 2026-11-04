@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
+import { readableError } from '../vocabulary/errors';
 import type { SandboxDetail, SandboxSummary, WorkspaceDetail } from '../api/types';
 
 export interface NavigationSandbox {
@@ -24,7 +25,7 @@ async function allSandboxes(client: CmaWebClient, signal: AbortSignal) {
   const seen = new Set<string>();
   let cursor: string | undefined;
   do {
-    const page = await client.listSandboxes({ cursor, signal });
+    const page = await client.listSandboxes({ cursor, signal, excludeRetired: true });
     items.push(...page.items);
     cursor = page.next;
     if (cursor !== undefined && seen.has(cursor)) {
@@ -66,7 +67,7 @@ export async function loadNavigation(
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : 'The Sandbox hierarchy could not be loaded.';
+  return readableError(error, 'The Sandbox hierarchy could not be loaded.');
 }
 
 export function useNavigation(client: CmaWebClient): NavigationState & { refresh: () => void } {
@@ -136,4 +137,16 @@ export function useNavigation(client: CmaWebClient): NavigationState & { refresh
   }, []);
 
   return { ...state, refresh };
+}
+
+/** The Agent's navigation row and the Sandbox it works in, once the hierarchy has loaded. */
+export function navigationAgent(navigation: NavigationState, agentId: string | undefined) {
+  if (navigation.status !== 'ready' || agentId === undefined) return undefined;
+  for (const { sandbox, workspaces } of navigation.items) {
+    for (const workspace of workspaces) {
+      const agent = workspace.agents.find(({ id }) => id === agentId);
+      if (agent !== undefined) return { agent, sandbox };
+    }
+  }
+  return undefined;
 }

@@ -51,6 +51,7 @@ async fn lifecycle_replays_exact_task_bytes_and_keeps_legacy_omission() {
         name: "New task".into(),
         initial_message: Some("  比较三个工具\n保留原文。  ".into()),
         desktop: None,
+        machine_included: false,
         workspace_id: None,
         sandbox_id: None,
         image: None,

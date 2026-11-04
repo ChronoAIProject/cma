@@ -31,8 +31,9 @@ issuance, edits, expiry and receipt behavior remain unchanged.
 
 ## Exactly one native message
 
-Telegram sends rendered text and each attachment separately in the current
-adapter. Issuance requires exactly one attachment, no separately rendered text
+Telegram sends rendered text separately. Attachments normally send individually;
+[opted-in albums](CMAEG_Native_Telegram_Albums.md) group compatible multiple uploads
+without issuing effect authority. Single-upload issuance requires exactly one attachment, no separately rendered text
 part, one attempted native upload operation, and its confirmed response.
 Attachment captions remain on that single message and are supported at send
 time. A top-level text message followed by one upload is two native messages and
@@ -47,7 +48,8 @@ loss or partial batch leaves no reference. No target is inferred from a file ID,
 URL, filename, the first successful batch part or an uncertain platform write.
 
 The adapter uses `sendPhoto`, `sendDocument`, `sendAudio` and `sendVideo`, each of
-which returns its sent Message. It does not use `sendMediaGroup`. The strict
+which returns its sent Message. This single-upload effect path does not use
+`sendMediaGroup`; the separately gated album path issues no references. The strict
 album refusal matters because Telegram may redirect a reaction on an album
 member to the first non-deleted message in that group. This reference does not
 authorize that possible alternative target.

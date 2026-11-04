@@ -2,7 +2,8 @@
 //! client content and metadata never establish an owner, actor, or grant.
 //!
 //! Admission envelopes belong in a separate ledger. Retained Agent aggregates
-//! and event variants remain readable by previous releases during rollback.
+//! remain stable for ordinary commands. Continuation records require a reader
+//! that understands their provenance and retained deferred attempts.
 
 mod admission;
 mod admission_service;
@@ -14,6 +15,9 @@ mod binding;
 mod capabilities;
 mod claimed_service;
 mod command;
+mod continuation;
+pub(in crate::sandbox) mod continuation_retry;
+pub use continuation_retry::{DeferredCommandAttempt, SOURCE_DEFERRED_FAILURE};
 mod event;
 mod evidence;
 pub(in crate::sandbox) mod execution_authority;
@@ -58,6 +62,7 @@ pub use authorization_audit::{
 pub use binding::bind_command_dispatch;
 pub use capabilities::AgentInterfaceCapabilities;
 pub use command::{AgentCommand, AgentInputOrder};
+pub use continuation::{CommandSourceGuard, ExternalEventContinuation};
 pub use event::{
     AgentEphemeralEvent, AgentEvent, AgentEventKind, AgentMessageRole, AGENT_IO_SCHEMA_VERSION,
 };

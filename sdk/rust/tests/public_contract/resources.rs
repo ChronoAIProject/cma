@@ -34,6 +34,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "GET /api/v1/agents/{id}/environment" => {
             c.check(client.agent_files().environment(c.param("id")).await)
         }
+        "GET /api/v1/agents/{id}/desktop" => c.check(client.agents().desktop(c.param("id")).await),
         "GET /api/v1/agents/{id}/files/tree" => c.check(
             client
                 .agent_files()
@@ -280,6 +281,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .delete(c.param("record_id"), c.number("expected_version")?)
                 .await,
         ),
+        "GET /api/v1/agents/{id}/provider-associations" => c.check(
+            client
+                .agents()
+                .provider_associations(c.param("id"), &c.page()?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/channel-usage" => {
             c.check(client.agents().channel_usage(c.param("id")).await)
         }
@@ -407,6 +414,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                     organization: c.q("organization"),
                     shared: c.number::<bool>("shared")?.unwrap_or(false),
                     filters: SandboxListOptions {
+                        exclude_retired: c.number::<bool>("exclude_retired")?.unwrap_or(false),
                         status: c.tag("status")?,
                         page: c.page()?,
                     },
@@ -450,6 +458,18 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "DELETE /api/v1/workspaces/{id}" => {
             c.check(client.workspaces().delete(c.param("id"), &c.key()?).await)
         }
+        "POST /api/v1/workspaces/{id}/recover-prepare" => c.check(
+            client
+                .workspaces()
+                .recover_prepare(c.param("id"), &c.key()?)
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/recover-worktree" => c.check(
+            client
+                .agents()
+                .recover_worktree(c.param("id"), &c.key()?)
+                .await,
+        ),
         "GET /api/v1/workspaces/{id}/worktrees" => {
             c.check(client.worktrees().list_accessible(c.param("id")).await)
         }

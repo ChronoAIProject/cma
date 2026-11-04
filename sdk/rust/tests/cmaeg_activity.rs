@@ -228,3 +228,59 @@ async fn invalid_activity_authority_is_rejected_locally() {
     ));
     assert_eq!(server.request_count(), 0);
 }
+
+#[tokio::test]
+async fn retained_media_pages_and_activity_preserve_response_metadata_without_following_urls() {
+    use cma_sdk::cmaeg::EventMediaResponseOptions;
+    let server = WireServer::new().await;
+    let mut expected = wire::json(
+        "GET",
+        "/v1/channels/channel-one/events/event-one/media-responses?cursor=0",
+        None,
+        200,
+        json!({"items":[{"consumer_id":"consumer-1","attachment_index":0,"kind":"transcript",
+            "response_id":"resp_supplement","response_url":"/api/v2/responses/resp_supplement",
+            "status":"completed","delivery":"delivered","refusal":null}],"next_cursor":16}),
+        true,
+    );
+    expected
+        .headers
+        .insert("x-cmaeg-owner".into(), "org-one".into());
+    server.expect(expected);
+    let result = client(&server)
+        .get_event_media_responses(
+            "channel-one",
+            "event-one",
+            &EventMediaResponseOptions {
+                owner: Some("org-one"),
+                cursor: Some(0),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.next_cursor, Some(16));
+    assert_eq!(
+        result.items[0].response_id.as_deref(),
+        Some("resp_supplement")
+    );
+    assert_eq!(server.request_count(), 1);
+    let mut value = page();
+    value["items"][0]["consumers"][0]["media_responses"] = json!([{"attachment_index":0,"kind":"transcript",
+        "response_id":"resp_supplement","response_url":"/api/v2/responses/resp_supplement",
+        "status":"completed","delivery":"delivered","observed_at":"2026-10-29T00:00:00Z"}]);
+    server.expect(wire::json(
+        "GET",
+        "/v1/channels/channel-one/activity",
+        None,
+        200,
+        value.clone(),
+        true,
+    ));
+    let observed = client(&server)
+        .get_channel_activity("channel-one", &ChannelActivityOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(observed).unwrap(), value);
+    assert_eq!(server.request_count(), 2);
+    server.assert_drained();
+}

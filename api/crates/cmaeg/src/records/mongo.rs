@@ -16,6 +16,7 @@ pub const CONNECTIONS: &str = "eg_connection_records";
 pub const INTERACTIONS: &str = "eg_interaction_records";
 pub const THREAD_FENCES: &str = "eg_thread_fence_records";
 pub const WHATSAPP_FLOWS: &str = "eg_whatsapp_flow_records";
+pub const MEDIA_CONTINUATIONS: &str = "eg_media_continuation_records";
 pub const MIGRATIONS: &str = "eg_schema_migrations";
 pub const SESSIONS: &str = "eg_auth_sessions";
 pub const COLLECTIONS: &[&str] = &[RECORDS, CONNECTIONS, INTERACTIONS, MIGRATIONS, SESSIONS];
@@ -24,6 +25,7 @@ pub struct MongoRecords {
     db: Database,
     records: Collection<Record>,
     kind: RecordKind,
+    worker_credentials: Option<crate::worker_credentials::WorkerCredentials>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +58,8 @@ impl MongoRecords {
             .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
             .build();
         Ok(Self {
+            worker_credentials: crate::worker_credentials::WorkerCredentials::from_environment(&db)
+                .await?,
             records: db.collection_with_options(RECORDS, options),
             kind: RecordKind::Channel,
             db,
@@ -75,13 +79,22 @@ impl MongoRecords {
                     .build(),
             ),
             kind,
+            worker_credentials: self.worker_credentials.clone(),
         }
     }
     fn live(&self, mut filter: Document) -> Document {
-        if self.kind == RecordKind::Interaction {
+        if matches!(
+            self.kind,
+            RecordKind::Interaction | RecordKind::MediaContinuation
+        ) {
             filter.insert("expires_at", doc! {"$gt":DateTime::now()});
         }
         filter
+    }
+    pub(crate) fn worker_credentials(
+        &self,
+    ) -> Option<crate::worker_credentials::WorkerCredentials> {
+        self.worker_credentials.clone()
     }
     pub async fn put(
         &self,
@@ -115,6 +128,11 @@ impl MongoRecords {
         if owner.is_empty() || owner.len() > 512 || blob.is_empty() || blob.len() > 65536 {
             return Err(RecordError::Rejected("invalid record".into()));
         }
+        if self.kind == RecordKind::Channel {
+            if let Some(tracking) = &self.worker_credentials {
+                tracking.record_blob(blob).await?;
+            }
+        }
         if retention == super::retention::InteractionRetention::WhatsappReaction
             && self.kind != RecordKind::Interaction
         {
@@ -123,7 +141,7 @@ impl MongoRecords {
             ));
         }
         let expiry = match (self.kind, expires_at) {
-            (RecordKind::Interaction, Some(seconds))
+            (RecordKind::Interaction | RecordKind::MediaContinuation, Some(seconds))
                 if seconds > DateTime::now().timestamp_millis() / 1000
                     && seconds <= DateTime::now().timestamp_millis() / 1000 + retention.maximum_age() =>
             {
@@ -232,7 +250,12 @@ impl MongoRecords {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<RecordHead>, RecordError> {
-        if !(1..=1000).contains(&limit) {
+        let maximum = if self.kind == RecordKind::MediaContinuation {
+            32
+        } else {
+            1000
+        };
+        if !(1..=maximum).contains(&limit) {
             return Err(RecordError::Rejected("invalid page size".into()));
         }
         let mut filter = self.live(doc! {});
@@ -241,6 +264,11 @@ impl MongoRecords {
         }
         if let Some(after) = after {
             filter.insert("_id", doc! {"$gt":after});
+        }
+        if self.kind == RecordKind::MediaContinuation {
+            return self
+                .media_continuation_heads(filter, owner.is_some(), limit)
+                .await;
         }
         let rows: Vec<Record> = self
             .records
@@ -279,6 +307,7 @@ fn failure(_: mongodb::error::Error) -> RecordError {
 
 #[path = "mongo_schema.rs"]
 mod schema;
+pub(crate) use schema::migration_validator;
 pub use schema::{migrate, role, verify, verify_with_authority};
 
 #[path = "mongo_thread_fences.rs"]
@@ -287,3 +316,8 @@ pub use thread_fences::{migrate as migrate_thread_fences, role as thread_fences_
 #[path = "mongo_whatsapp_flows.rs"]
 mod whatsapp_flows;
 pub use whatsapp_flows::{migrate as migrate_whatsapp_flows, role as whatsapp_flows_role};
+#[path = "mongo_media_continuations.rs"]
+mod media_continuations;
+pub use media_continuations::{
+    migrate as migrate_media_continuations, role as media_continuations_role,
+};

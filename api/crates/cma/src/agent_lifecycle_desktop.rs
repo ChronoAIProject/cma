@@ -1,5 +1,5 @@
 use super::*;
-use layer2_core::sandbox::desktop_creation::DesktopCapability;
+use layer2_core::sandbox::desktop_creation::{DesktopAvailability, DesktopCapability};
 
 impl InlineAgentLifecycle {
     pub(super) async fn read_desktop_capability(
@@ -20,6 +20,7 @@ impl InlineAgentLifecycle {
             name: "Desktop capability".into(),
             initial_message: None,
             desktop: true,
+            machine_included: false,
             workspace_id: scope.workspace_id,
             sandbox_id: scope.sandbox_id,
             image: None,
@@ -28,6 +29,34 @@ impl InlineAgentLifecycle {
         };
         validate_request(&request)?;
         self.inspect_desktop(caller, context, &request, None).await
+    }
+
+    pub(super) async fn resolve_desktop_image(
+        &self,
+        caller: &Caller,
+        context: Option<&CallerContext>,
+        request: &AgentLifecycleCreateRequest,
+        resolved_image: Option<String>,
+    ) -> Result<Option<String>, AgentLifecycleProvisioningError> {
+        if !request.desktop {
+            return Ok(resolved_image);
+        }
+        let capability = self
+            .inspect_desktop(caller, context, request, resolved_image.as_deref())
+            .await?;
+        if !capability.available() {
+            if capability.state == DesktopAvailability::TemporarilyUnavailable {
+                return Err(AgentLifecycleProvisioningError::Unavailable);
+            }
+            return Err(AgentLifecycleProvisioningError::DesktopUnsupported(
+                capability.reason,
+            ));
+        }
+        if request.workspace_id.is_none() && request.sandbox_id.is_none() {
+            Ok(capability.runtime_image)
+        } else {
+            Ok(resolved_image)
+        }
     }
 
     pub(super) async fn inspect_desktop(

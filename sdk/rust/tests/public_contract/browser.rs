@@ -36,12 +36,63 @@ pub const BROWSER_CASES: &[&str] = &[
 
 pub fn owns(case: &Case) -> bool {
     BROWSER_CASES.contains(&case.id.as_str())
+        || case.operation == "GET /api/v1/agents/{id}/desktop/ws"
+}
+
+// WebSocket transport is supplied by the host. The backend corpus drives the
+// real upgrade and verifies bidirectional binary relay, including these refusals.
+fn desktop_upgrade(c: &Context<'_>) {
+    use base64::Engine;
+    assert_eq!(c.case.request.method, "GET");
+    assert_eq!(
+        c.case.request.path,
+        format!("/api/v1/agents/{}/desktop/ws", c.param("id"))
+    );
+    match c.case.response.status {
+        101 => {
+            assert_eq!(c.case.request.headers["upgrade"], "websocket");
+            assert_eq!(c.case.request.headers["sec-websocket-version"], "13");
+            assert_eq!(c.case.response.headers["upgrade"], "websocket");
+            assert_eq!(c.case.response.headers["connection"], "upgrade");
+            let challenge = format!(
+                "{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11",
+                c.case.request.headers["sec-websocket-key"]
+            );
+            let digest = ring::digest::digest(
+                &ring::digest::SHA1_FOR_LEGACY_USE_ONLY,
+                challenge.as_bytes(),
+            );
+            assert_eq!(
+                c.case.response.headers["sec-websocket-accept"],
+                base64::engine::general_purpose::STANDARD.encode(digest)
+            );
+            assert_eq!(c.case.response.body_kind, "empty");
+            assert!(c.case.response.body.is_null());
+        }
+        403 => {
+            assert_eq!(c.case.response.body_kind, "empty");
+            assert!(c.case.response.body.is_null());
+        }
+        400 => {
+            assert_eq!(c.case.response.body_kind, "text");
+            assert_eq!(
+                c.case.response.body,
+                "Connection header did not include 'upgrade'"
+            );
+        }
+        401 | 404 | 409 | 503 => {
+            assert_eq!(c.case.response.body_kind, "json");
+            assert!(c.case.response.body["code"].is_string());
+        }
+        status => panic!("unexpected desktop upgrade status {status}"),
+    }
 }
 
 // Cookie authority and OAuth callbacks belong to the browser. Validate their
 // shared response models and navigation helpers without issuing a replacement request.
 pub fn verify(c: &Context<'_>) {
     match c.case.operation.as_str() {
+        "GET /api/v1/agents/{id}/desktop/ws" => desktop_upgrade(c),
         "GET /api/v1/triggers/public/{public_id}/open/{placement_id}" => {
             assert_eq!(c.case.response.status, 303);
             assert_eq!(

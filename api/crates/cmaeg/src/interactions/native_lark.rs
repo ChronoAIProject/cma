@@ -3,7 +3,9 @@ mod authority;
 mod dispatch;
 pub(crate) use dispatch::current as current_dispatch;
 mod click;
+mod media;
 mod recovery;
+pub(crate) use media::{preflight_media, render_with_images, Image};
 mod replacement;
 mod store;
 use super::{Card, Error};
@@ -60,6 +62,16 @@ pub(crate) fn render(
         return Err(Error::Denied);
     }
     Ok((value, report))
+}
+pub(crate) fn markup(card: &Card) -> Result<(Value, RenderingReport), Error> {
+    let authority = card.native_lark.as_ref().ok_or(Error::Denied)?;
+    render_with_images(
+        &card.message,
+        &card.id,
+        card.revision,
+        authority.form,
+        authority.images()?,
+    )
 }
 pub(super) fn valid(card: &Card, keys: &cmaeg_core::seal::MasterKeyRing) -> bool {
     valid_shape(card) && (card.native_lark.is_none() || store::valid_reference(card, keys))
@@ -133,5 +145,7 @@ pub(crate) fn project(
 
 #[cfg(test)]
 pub(crate) mod fixture;
+#[cfg(test)]
+mod media_tests;
 #[cfg(test)]
 mod tests;

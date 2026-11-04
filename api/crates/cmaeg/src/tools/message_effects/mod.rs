@@ -371,6 +371,7 @@ impl ToolsState {
             },
         };
         let receipt = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering: RenderingReport {
                 outcome: RenderingOutcome::Unsupported,
@@ -437,3 +438,6 @@ mod received_fixture;
 mod received_retry_tests;
 #[cfg(test)]
 mod received_tests;
+
+#[cfg(test)]
+mod native_lark_sticker_context_tests;

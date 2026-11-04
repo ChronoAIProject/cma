@@ -11,7 +11,6 @@ import type { AppRoute } from '../routing/routes';
 import { toneDot } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import {
-  IconAgentPresetOutline16,
   IconBranchOutline16,
   IconChevronDownOutline14,
   IconChevronRightOutline14,
@@ -25,7 +24,7 @@ import { agentActions, sandboxActions, workspaceActions } from './treeActions';
 import { CreationBadge, useTreeCreation } from './treeCreation';
 import './Tree.css';
 import { statusLabel } from '../vocabulary/status';
-import { activityLabel, stateMeta, keyboardNavigation } from './treePresentation';
+import { activityLabel, agentSignal, stateMeta, keyboardNavigation } from './treePresentation';
 import { PersonalAgentTree } from './PersonalAgentTree';
 export { activityLabel } from './treePresentation';
 import type { ResourceViewsClient } from '../resources/client';
@@ -377,7 +376,12 @@ export function Tree({
                                                   parentId={workspaceNode}
                                                   level={3}
                                                   label={agentDisplayTitle(agent)}
-                                                  icon={<IconAgentPresetOutline16 />}
+                                                  icon={agentSignal(
+                                                    effectiveStatus,
+                                                    agent.id,
+                                                    20,
+                                                    sandbox.color,
+                                                  )}
                                                   route={{ kind: 'agent', agentId: agent.id }}
                                                   selected={
                                                     route.kind === 'agent' &&

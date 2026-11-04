@@ -10,6 +10,12 @@ import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
 
+vi.mock('@novnc/novnc', () => ({
+  default: class extends EventTarget {
+    disconnect() {}
+  },
+}));
+
 it.each(['active', 'delivery', 'previous'] as const)(
   'opens model discovery from %s evidence before initial Agent success without remounting the composer',
   async (evidence) => {
@@ -90,53 +96,58 @@ it.each(['active', 'delivery', 'previous'] as const)(
   },
 );
 
-it('links the compact header only to the current turn plan and preserves the draft in a new turn', () => {
-  let conversation = conversationFromTranscript({ agentId: 'agt_1', throughSeq: 0, turns: [] });
-  const append = (seq: number, kind: Record<string, unknown>) => {
-    conversation = foldAgentEvent(conversation, {
-      seq,
-      appendedAt: '2026-11-03T00:00:00Z',
-      kind: kind as { type: string },
+it.each([false, true])(
+  'links the current turn plan and preserves the draft with machine desktop=%s',
+  (desktop) => {
+    let conversation = conversationFromTranscript({ agentId: 'agt_1', throughSeq: 0, turns: [] });
+    const append = (seq: number, kind: Record<string, unknown>) => {
+      conversation = foldAgentEvent(conversation, {
+        seq,
+        appendedAt: '2026-11-03T00:00:00Z',
+        kind: kind as { type: string },
+      });
+    };
+    append(1, { type: 'turn_started', turn_sequence: 1 });
+    append(2, {
+      type: 'plan_set',
+      entries: [
+        { title: 'Read instructions', status: 'completed' },
+        { title: 'Apply change', status: 'in_progress' },
+        { title: 'Verify', status: 'pending' },
+      ],
     });
-  };
-  append(1, { type: 'turn_started', turn_sequence: 1 });
-  append(2, {
-    type: 'plan_set',
-    entries: [
-      { title: 'Read instructions', status: 'completed' },
-      { title: 'Apply change', status: 'in_progress' },
-      { title: 'Verify', status: 'pending' },
-    ],
-  });
-  const draw = () => (
-    <AgentSurface
-      agentId="agt_1"
-      controller={controller({
-        status: 'ready',
-        detail: AGENT_DETAIL,
-        workspace: workspaceFixture(),
-        conversation,
-      })}
-      detailsOpen={false}
-      onDetailsOpenChange={() => {}}
-      onNavigate={() => {}}
-    />
-  );
-  const view = render(draw());
-  const link = screen.getByRole('link', { name: 'Current plan: 1/3 steps · Step 2' });
-  expect(link.closest('header')).not.toBeNull();
-  expect(link).toHaveAttribute('href', `#${screen.getByRole('region', { name: 'Plan' }).id}`);
-  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
-    target: { value: 'Retain next draft' },
-  });
-  append(3, { type: 'turn_completed', turn_sequence: 1 });
-  append(4, { type: 'turn_started', turn_sequence: 4 });
-  view.rerender(draw());
-  expect(screen.queryByRole('link', { name: /^Current plan:/ })).not.toBeInTheDocument();
-  expect(screen.getAllByRole('region', { name: 'Plan' })).toHaveLength(1);
-  expect(screen.getByText('Response finished · Plan completion not fully reported')).toBeVisible();
-  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Retain next draft');
-});
+    const draw = () => (
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller({
+          status: 'ready',
+          detail: { ...AGENT_DETAIL, desktop },
+          workspace: workspaceFixture(),
+          conversation,
+        })}
+        detailsOpen={false}
+        onDetailsOpenChange={() => {}}
+        onNavigate={() => {}}
+      />
+    );
+    const view = render(draw());
+    const link = screen.getByRole('link', { name: 'Current plan: 1/3 steps · Step 2' });
+    expect(link.closest('header')).not.toBeNull();
+    expect(link).toHaveAttribute('href', `#${screen.getByRole('region', { name: 'Plan' }).id}`);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+      target: { value: 'Retain next draft' },
+    });
+    append(3, { type: 'turn_completed', turn_sequence: 1 });
+    append(4, { type: 'turn_started', turn_sequence: 4 });
+    view.rerender(draw());
+    expect(screen.queryByRole('link', { name: /^Current plan:/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('region', { name: 'Plan' })).toHaveLength(1);
+    expect(
+      screen.getByText('Response finished · Plan completion not fully reported'),
+    ).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Retain next draft');
+  },
+);
 
 it('places settings inside the composer box and preserves draft and busy-turn apply rules', async () => {
   const defaults = {
@@ -236,7 +247,10 @@ it('shows authorized history while later pages load and preserves the editable d
   const draft = screen.getByRole('textbox', { name: 'Message' });
   expect(draft).toBeEnabled();
   fireEvent.change(draft, { target: { value: 'Keep this draft' } });
-  expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+  // Prepared configuration can arrive after the first history page. Sending
+  // must become available while later history is still held by the fixture.
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+  expect(loadingNotice).toBeInTheDocument();
   await act(async () => finish({ items: [] }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
   // Retain the node: a busy test worker can finish the exit before waitFor resolves.
@@ -653,3 +667,45 @@ it('removes completed preparation while preserving active and failed preparation
   );
 });
 import '../test/connectedAccounts';
+
+it('keeps the composer and history mounted beside the Machine and across viewer toggles', async () => {
+  const client = agentClient();
+  const draw = (desktop = true, accessUncertain = false) => (
+    <CmaClientProvider client={client}>
+      <AgentSurface
+        agentId="agt_1"
+        accessUncertain={accessUncertain}
+        controller={controller({
+          status: 'ready',
+          detail: { ...AGENT_DETAIL, desktop },
+          workspace: workspaceFixture(),
+          conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+        })}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    </CmaClientProvider>
+  );
+  const view = render(draw());
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  const history = screen.getByText('The repository is ready.');
+  fireEvent.change(input, { target: { value: 'Open a terminal on the desktop' } });
+  expect(screen.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Hide machine desktop' })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Close machine desktop' }));
+  expect(screen.queryByRole('region', { name: 'Machine desktop' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Open machine desktop' }));
+  expect(screen.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
+  expect(input).toHaveValue('Open a terminal on the desktop');
+  expect(screen.getByText('The repository is ready.')).toBe(history);
+  view.rerender(draw(true, true));
+  expect(screen.queryByRole('region', { name: 'Machine desktop' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /machine desktop/ })).not.toBeInTheDocument();
+  view.rerender(draw(false));
+  expect(screen.queryByRole('region', { name: 'Machine desktop' })).not.toBeInTheDocument();
+});

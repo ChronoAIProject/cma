@@ -22,9 +22,10 @@ pub(super) use inventory::{
 };
 mod mutation;
 pub(super) use mutation::fence_lineage;
-mod records;
+pub(super) mod records;
 mod sandbox_inventory;
 mod snapshot;
+mod snapshot_lineage;
 
 pub(super) async fn read_execution_snapshot(
     store: &MongoSandboxStore,

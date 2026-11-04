@@ -20,6 +20,8 @@ pub(in crate::store) async fn bind(
     };
     let now = layer2_core::now_rfc3339();
     let (mut command, lane) = worker_apply::load_claim(store, claim, &now, session).await?;
+    super::super::media_uploads::require_continuation(store, &command.receipt.envelope, session)
+        .await?;
     let revision = command.revision;
     if let Some(fence) = &mutation.trigger_execution_fence {
         let proof =

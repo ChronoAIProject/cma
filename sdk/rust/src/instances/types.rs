@@ -55,6 +55,10 @@ pub struct Sandbox {
     pub owner_name: Option<String>,
     /// Display name.
     pub name: String,
+    /// Colour every Agent in this Sandbox wears, as lowercase `#rrggbb`;
+    /// absent until one is assigned and on shared-grant reads.
+    #[serde(default, deserialize_with = "sandbox_color")]
+    pub color: Option<String>,
     /// Current lifecycle status.
     pub status: SandboxStatus,
     /// Immutable source profile.
@@ -81,6 +85,27 @@ pub struct Sandbox {
     pub retired_at: Option<String>,
     /// Persisted aggregate revision.
     pub revision: u64,
+}
+
+/// The server spells every Sandbox colour one way, so any other value is a
+/// protocol error rather than a colour to guess at.
+fn sandbox_color<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let color = String::deserialize(deserializer)?;
+    let digits = color.strip_prefix('#').unwrap_or_default();
+    if digits.len() == 6
+        && digits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Ok(Some(color))
+    } else {
+        Err(serde::de::Error::custom(
+            "sandbox colour must be lowercase #rrggbb",
+        ))
+    }
 }
 
 /// Sandbox list item with counts of its resource hierarchy.

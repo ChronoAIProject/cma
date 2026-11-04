@@ -73,6 +73,21 @@ pub(super) async fn apply(
                     if result.matched_count != 1 {
                         return Err(SandboxControlError::Conflict.into());
                     }
+                    crate::store::sandbox_usage::save::record_saved(
+                        store,
+                        session,
+                        &sandbox,
+                        snapshot.lineage.sandbox.revision,
+                    )
+                    .await
+                    .map_err(|error| match error {
+                        sandbox_events::TransactionEventError::Driver(error) => {
+                            ApplyError::Driver(error)
+                        }
+                        sandbox_events::TransactionEventError::Domain(_) => {
+                            ApplyError::Domain(SandboxControlError::Corrupt)
+                        }
+                    })?;
                     sandbox_events::append_in_transaction(
                         store,
                         session,

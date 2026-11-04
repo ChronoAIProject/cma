@@ -10,6 +10,10 @@ export const localCodes = new Map([
   ['feedback-reasons-invalid-comment', 'invalid_agent_request'],
   ['feedback-reasons-invalid-message', 'invalid_agent_request'],
   ['feedback-reasons-unknown-reason', 'invalid_json'],
+  ['usage-sandboxes-zero-limit', 'invalid_query'],
+  ['usage-admin-sandboxes-zero-limit', 'invalid_query'],
+
+  ['preparation-reserve-missing-key', 'invalid_binding'],
   ['document-source-invalid', 'invalid_document_request'],
   ['filesystem-content-reject-invalid-max-bytes', 'invalid_file_request'],
   ['filesystem-write-reject-malformed-json', 'invalid_file_request'],
@@ -40,6 +44,8 @@ export const localCodes = new Map([
   ['response-controls-v2-invalid-observation', 'invalid_control_observation'],
   ['channel-inventory-invalid-active', 'invalid_instance_query'],
   ['channel-inventory-invalid-history', 'invalid_instance_query'],
+  ['provider-associations-zero-limit', 'invalid_query'],
+  ['provider-associations-large-limit', 'invalid_query'],
   ['channel-usage-zero-limit', 'invalid_query'],
   ['channel-usage-large-limit', 'invalid_query'],
   ['channel-usage-invalid-cursor', 'invalid_query'],
@@ -146,6 +152,37 @@ export function expectation(
     );
     return 'raw-wire-only';
   }
+  if (
+    [
+      'binding-media-missing-length',
+      'binding-media-missing-type',
+      'binding-media-encoding',
+      'binding-media-too-large',
+      'binding-media-incomplete-body',
+    ].includes(fixture.id)
+  ) {
+    const headers = fixture.request.headers;
+    const invalid =
+      fixture.id === 'binding-media-missing-length'
+        ? headers['content-length'] === undefined
+        : fixture.id === 'binding-media-missing-type'
+          ? headers['content-type'] === undefined
+          : fixture.id === 'binding-media-encoding'
+            ? headers['content-encoding'] === 'gzip'
+            : fixture.id === 'binding-media-too-large'
+              ? Number(headers['content-length']) > 20 * 1024 * 1024
+              : Number(headers['content-length']) !== Buffer.byteLength(fixture.request.rawBody!);
+    assert(
+      invalid,
+      'typed Blob upload always derives valid content length/type and sends unencoded bytes',
+    );
+    return 'raw-wire-only';
+  }
+  if (
+    fixture.request.method === 'POST' &&
+    fixture.operation.endsWith('/media/{attachment_index}/attachment')
+  )
+    return 'wire';
   if (fixture.id === 'filesystem-delete-reject-invalid-recursive') {
     assert.equal(problemBody(fixture).code, 'invalid_file_request');
     assert.equal(
@@ -358,12 +395,15 @@ export function expectedProjection(fixture: ContractCase): unknown {
 /** Both public error envelopes retain their exact machine code and extensions. */
 export function problemBody(fixture: ContractCase): Record<string, unknown> {
   const body = fixture.response.body as Record<string, unknown>;
+  if (fixture.response.status >= 400 && typeof body?.error === 'string')
+    return { code: body.error };
   return fixture.response.status >= 400 && body?.error !== undefined
     ? (body.error as Record<string, unknown>)
     : body;
 }
 export function problemExtensions(fixture: ContractCase): Record<string, unknown> {
   const body = problemBody(fixture);
+  if (typeof (fixture.response.body as Record<string, unknown>)?.error === 'string') return {};
   if ((fixture.response.body as Record<string, unknown>).error !== undefined)
     return { type: body.type, param: body.param };
   return Object.fromEntries(

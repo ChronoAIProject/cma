@@ -1,6 +1,61 @@
 use super::{custom_http_fixture::App, Phase, TargetState};
 
 #[tokio::test]
+async fn public_media_stream_negotiation_rejects_nonstream_or_invalid_queries_before_admission() {
+    let mut app = App::new(true).await;
+    for query in [
+        "media_responses=true",
+        "media_responses=false",
+        "mode=stream&media_responses=invalid",
+        "mode=stream&media_responses=true&media_responses=false",
+    ] {
+        let response = app
+            .request(app.event("invalid-media-query").to_string(), false)
+            .query(
+                &reqwest::Url::parse(&format!("https://fixture.invalid/?{query}"))
+                    .unwrap()
+                    .query_pairs()
+                    .into_owned()
+                    .collect::<Vec<_>>(),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400, "{query}");
+    }
+    app.drain().await;
+    assert!(app.plans().await.is_empty());
+    assert!(app.provider.seen().is_empty());
+    assert!(app.waiters.is_empty());
+}
+
+#[tokio::test]
+async fn public_media_stream_option_does_not_change_nonmedia_events() {
+    let mut app = App::new(true).await;
+    for enabled in [false, true] {
+        let response = app
+            .request(
+                app.event(&format!("media-option-{enabled}")).to_string(),
+                true,
+            )
+            .query(&[("media_responses", enabled)])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let stream = response.text().await.unwrap();
+        assert_eq!(
+            stream.matches("event: cmaeg.completed").count(),
+            1,
+            "{stream}"
+        );
+        assert!(!stream.contains("cmaeg.response.completed"), "{stream}");
+        assert!(!stream.contains("cmaeg.media."), "{stream}");
+    }
+    app.drain().await;
+}
+
+#[tokio::test]
 async fn public_custom_http_stream_runs_real_routed_provider_and_closes_on_completion() {
     let mut app = App::new(true).await;
     let body = app.event("http-stream").to_string();

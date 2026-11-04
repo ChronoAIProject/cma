@@ -1,6 +1,6 @@
 # CMA (ChronoAI Managed Agent)
 
-[![Try it](https://bot.chrono-ai.fun/api/v1/triggers/public/pub_d77caf24c76f4ce188e569a83c71b8a1/badge.svg?label=try_it&theme=auto&placement=plc_08e81ca7da574d86a8addfb61d550ecd)](https://bot.chrono-ai.fun/api/v1/triggers/public/pub_d77caf24c76f4ce188e569a83c71b8a1/open/plc_08e81ca7da574d86a8addfb61d550ecd)
+[![Try it](https://cma.nyxid.ai/api/v1/triggers/public/pub_d77caf24c76f4ce188e569a83c71b8a1/badge.svg?label=try_it&theme=auto&placement=plc_08e81ca7da574d86a8addfb61d550ecd)](https://cma.nyxid.ai/api/v1/triggers/public/pub_d77caf24c76f4ce188e569a83c71b8a1/open/plc_08e81ca7da574d86a8addfb61d550ecd)
 
 CMA is a cloud-hosted platform for running AI Agents on ChronoAI infrastructure.
 It manages their working environments, conversations, approvals, service access

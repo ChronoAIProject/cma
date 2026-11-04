@@ -135,32 +135,48 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
-        if message.native_media_update.is_some() {
+        if message.structured_content.is_some() {
+            return if matches!(event.reply, ReplyAddress::Whatsapp { .. }) {
+                Box::pin(self.whatsapp_reply(ctx, event, message)).await
+            } else {
+                Box::pin(self.telegram_structured_reply(ctx, event, message)).await
+            };
+        }
+        let discord_voice = self.relay.native_discord_voice
+            && matches!(event.reply, ReplyAddress::Discord { .. })
+            && crate::discord::voice::eligible(message);
+        if (!discord_voice
+            && !crate::media::presentations::allowed(
+                self.relay.native_media_presentations,
+                &event.reply,
+                message,
+            ))
+            || message.native_media_update.is_some()
+            || message.clear_native_attachments
+            || (message.reply_with_received_sticker
+                && !matches!(event.reply, ReplyAddress::NativeLark(_)))
+        {
             return (unsupported(), SendEffects::default());
         }
+        // Each transport owns a large send future. Keep those futures off the
+        // shared dispatcher so a native adapter cannot exhaust a relay worker's
+        // default stack even when that adapter is disabled.
         if matches!(event.reply, ReplyAddress::NativeLark(_)) {
-            return self.native_lark_reply(ctx, event, message).await;
+            return Box::pin(self.native_lark_reply(ctx, event, message)).await;
         }
         if matches!(
             event.reply,
             ReplyAddress::Whatsapp { .. } | ReplyAddress::WhatsappGroup(_)
         ) {
-            return self.whatsapp_reply(ctx, event, message).await;
-        }
-        if message
-            .native_attachments
-            .iter()
-            .any(|item| item.kind == cmaeg_core::message::NativeMediaKind::Sticker)
-        {
-            return (unsupported(), SendEffects::default());
+            return Box::pin(self.whatsapp_reply(ctx, event, message)).await;
         }
         if matches!(event.reply, ReplyAddress::Discord { .. }) {
-            return self.discord_reply(ctx, event, message).await;
+            return Box::pin(self.discord_reply(ctx, event, message)).await;
         }
         if !message.native_attachments.is_empty()
             && matches!(event.reply, ReplyAddress::Telegram { .. })
         {
-            return self.native_media_reply(ctx, event, message).await;
+            return Box::pin(self.native_media_reply(ctx, event, message)).await;
         }
         if message.whatsapp_template.is_some() {
             if !self.relay.whatsapp_templates_enabled()
@@ -175,7 +191,7 @@ impl Sender {
             {
                 return (unsupported(), SendEffects::default());
             }
-            return self.complete_reply(ctx, event, message, false).await;
+            return Box::pin(self.complete_reply(ctx, event, message, false)).await;
         }
         if !message.native_attachments.is_empty()
             && (!self.relay.native_media_enabled()
@@ -210,7 +226,7 @@ impl Sender {
             return (result, SendEffects::default());
         }
         if matches!(event.reply, ReplyAddress::Telegram { .. }) {
-            return self.native_reply(ctx, event, message).await;
+            return Box::pin(self.native_reply(ctx, event, message)).await;
         }
         let ReplyAddress::NyxidRelay { platform, .. } = &event.reply else {
             let result = self
@@ -228,8 +244,7 @@ impl Sender {
         if native_controls {
             match self.relay_control_context(ctx, event).await {
                 Ok(Some(context)) => {
-                    return self
-                        .interactive_reply(ctx, event, message, Some(context))
+                    return Box::pin(self.interactive_reply(ctx, event, message, Some(context)))
                         .await;
                 }
                 Ok(None) => {} // Preserve legacy text for contexts without native controls.
@@ -238,10 +253,10 @@ impl Sender {
         }
         let interactive = *platform == Platform::Telegram && self.relay.interactions.is_some();
         if interactive && crate::interactions::has_controls(message) {
-            return self.interactive_reply(ctx, event, message, None).await;
+            return Box::pin(self.interactive_reply(ctx, event, message, None)).await;
         }
         if self.relay.complete_replies() || !message.native_attachments.is_empty() {
-            return self.complete_reply(ctx, event, message, interactive).await;
+            return Box::pin(self.complete_reply(ctx, event, message, interactive)).await;
         }
         // The send's own view of the event's first-send flag, returned as its effect.
         let mut first_send_done = ctx.first_send_done;
@@ -251,6 +266,7 @@ impl Sender {
         }
         let (parts, rendering) = RelayText.render(message, &capabilities);
         let mut result = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery: DeliveryOutcome::Rejected {
@@ -445,6 +461,7 @@ impl Sender {
 /// A receipt for a send a gate stopped before its side effect.
 pub(super) fn refused(rendering: RenderingReport, delivery: DeliveryOutcome) -> IntentReceipt {
     IntentReceipt {
+        message_parts: vec![],
         message_ref: None,
         rendering,
         delivery,
@@ -452,6 +469,7 @@ pub(super) fn refused(rendering: RenderingReport, delivery: DeliveryOutcome) -> 
 }
 pub(super) fn unsupported() -> IntentReceipt {
     IntentReceipt {
+        message_parts: vec![],
         message_ref: None,
         rendering: RenderingReport {
             outcome: RenderingOutcome::Unsupported,
