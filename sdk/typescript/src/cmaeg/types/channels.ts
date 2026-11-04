@@ -33,6 +33,7 @@ import {
   type Output,
 } from '../../schema.js';
 import { anything } from './helpers.js';
+import { GitHubSourceSchema } from './github.js';
 export const IdentityAdmissionSchema = tagged(
   {
     deny: object({ type: enumeration('deny') }),
@@ -142,6 +143,7 @@ const TelegramSourceSchema = object({
 
 export const SourceRequestSchema = tagged(
   {
+    github: GitHubSourceSchema,
     native_lark: object({
       type: enumeration('native_lark'),
       conversation_history: optional(boolean),
@@ -366,6 +368,7 @@ export const PublicSecretsSchema = object({ agent_key_hash: text });
 export type PublicSecrets = Output<typeof PublicSecretsSchema>;
 export const SourceSchema = tagged(
   {
+    github: GitHubSourceSchema,
     native_lark: object({
       type: enumeration('native_lark'),
       conversation_history: optional(boolean),
