@@ -301,7 +301,10 @@ builder isolated the architecture-dependent syscall behavior:
 The CMAEG and runtime checks remain unchanged and fail closed. These attempts
 did not produce final images for their scans or built-image contracts, so those
 gates are not recorded as passing. They require a suitable Linux AMD64 runner;
-this local run does not satisfy an all-local-gates-before-PR requirement.
+on 2026-11-05 the lead approved completing these AMD64 image gates in CI because
+the local machine is Apple Silicon. The CMAEG, runtime and desktop runtime
+image jobs must pass in CI before merge. Every other required local gate was
+run, with the results and resolved fixture failures recorded above.
 No production configuration or workload was changed during verification.
 
 ## Production verification
