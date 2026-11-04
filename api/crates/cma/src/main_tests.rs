@@ -220,6 +220,7 @@ fn composed_rest_router() -> Router {
     );
     let workspaces = WorkspaceService::new(Arc::clone(&sandbox_store), profile_store.clone());
     let projections = AgentProjectionServices::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         Arc::clone(&sandbox_store),
         profile_store.clone(),
         Arc::new(LiveAgentRegistry::default()),

@@ -128,6 +128,10 @@ pub struct AgentLifecycleOperationView {
     pub phase: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// Omitted without an Agent ID or when observation fails; null for a missing or Deleted Agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, nullable = true)]
+    pub callback_url: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub events: Vec<AgentLifecycleEventView>,
