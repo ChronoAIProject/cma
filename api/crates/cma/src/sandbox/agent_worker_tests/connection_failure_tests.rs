@@ -4,6 +4,8 @@ use super::*;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder as _};
 
+mod capacity_cleanup_tests;
+
 async fn claimed_after_metadata() -> (Harness, Agent, Agent) {
     let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     let agent = harness.admit("reconnect-metadata-failure", vec![]).await;
