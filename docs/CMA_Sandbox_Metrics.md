@@ -108,6 +108,9 @@ RAM and disk GiB-hours integrate observed gauge bytes over time, divided by
 `2^30 * 3600`. Each hold ends at the next observation or 90 seconds, whichever
 comes first. Stale intervals never extend an integral through missing time.
 These are observational estimates, independent of allocated resource-hours.
+Filesystem capacity follows its own scrape times and 90-second freshness
+bound. Capacity changes and expiry split the percentage numerator/denominator
+intervals without discarding independently valid used-byte observations.
 
 Charts use epoch-aligned minute buckets through 24 hours, five-minute buckets
 through seven days, and hourly buckets through 30 days. Coarser steps must be
@@ -214,6 +217,12 @@ readers explicitly reject unsupported document versions. Register the same
 collection grants before starting an isolated deployment. Initialize and
 verify indexes before enabling background work. No migration rewrites
 `sandbox_usage`, `sandbox_usage_events` or funding records.
+
+Each report persists its admitted byte reservation. Admission counts those
+reservations before adding new work, including when quotas are not exact
+multiples of a report budget. A worker cannot grow a cache beyond its original
+reservation after a configuration change. Reservations are released only after
+the expired row and chart projections have been removed.
 
 Roll out the reader and collections with collection disabled, prove source and
 identity permissions, then enable collection for the supported deployment.
