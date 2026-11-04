@@ -112,7 +112,11 @@ pub trait HostedBackend: Send + Sync {
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         Ok(None)
     }
-    async fn validate_funding(&self, request: &ProviderSandboxRequest) -> Result<()> {
+    async fn validate_funding(
+        &self,
+        request: &ProviderSandboxRequest,
+        _existing: Option<&RuntimeHandle>,
+    ) -> Result<()> {
         if request.funded_until.is_some() {
             return Err(crate::AdapterError::Unsupported(
                 "funded provider deadlines are unavailable".into(),
