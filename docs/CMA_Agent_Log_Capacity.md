@@ -60,7 +60,7 @@ writes are rejected.
 
 The immediate fix settles a deterministic lifecycle failure with a named
 `agent_log_capacity_exceeded` condition and releases its claim promptly. For
-normal startup/reconnect work, the proposed outcome is `Failed`, retaining the
+normal startup/reconnect work, the outcome is `Failed`, retaining the
 Agent ID, native conversation, pending recovery facts, home and complete log.
 It neither creates a replacement Agent nor claims the native process stopped.
 Already-authorized cleanup remains able to complete with its original effect
@@ -136,9 +136,12 @@ per-document and 64-entry per-batch checks remain independent.
 
 The existing finite reserve is a safety mechanism, not a second conversation
 budget. Reconnect success events and ordinary retry events must not borrow it.
-If physical capacity is exhausted or history is corrupt, do not overwrite old
-evidence or invent successful settlement; return a distinct actionable failure
-and retain the original recovery facts for operator repair.
+If physical capacity is exhausted or history is corrupt, the reserved failure
+publication can itself be rejected. The worker must retain the original claim
+and recovery facts for operator repair; it cannot promise prompt settlement
+without room for a valid durable publication. Dimensioned diagnostics distinguish
+physical exhaustion from normal append rejection. Never overwrite old evidence
+or invent a successful close or settlement.
 
 The capacity diagnostic reuses `WorkStepFailed` and the existing string-valued
 failure class; retry metadata uses the existing work record. There is no new
@@ -146,17 +149,21 @@ serialized field, event variant, log segment or sequence reset. Metadata-only
 publication already exists for lifecycle intent and parent waiting. Unknown
 commit reconciliation must still verify the exact aggregate and full retained
 history, including when the new log batch is empty. Older writers can read this
-retry state but would reintroduce the original capacity loop. First-input
-failure settlement must use #1318's compatible reader contract after integration.
+retry state but would reintroduce the original capacity loop. Never-dispatched
+first input uses #1318's `Failed` / `agent_startup_failed` contract; attempted or
+ambiguous first input remains byte-for-byte unchanged. The reader floor therefore
+includes #1318 as well as #1311's retained tool-output readers. A recovery build
+must keep these readers and the full physical reserve ceilings. No backfill,
+DDL, collection reset or retained-record deletion is required.
 
-## Integration boundary
+## Integration and deployment boundary
 
-Prepare the design, cleanup-reserve selection, boundary diagnostics and tests
-without editing files changed by open PR #1318. The lead will explicitly send
-`GO: #1318 merged`; only then merge `origin/develop` into
-`tl/cma-log-capacity/integration` and extend its version of the validated
-settlement path. #1316 history-reader files, #1317 files and Sandbox billing
-files remain protected. One final PR uses `Refs #1321`.
+#1318 is merged and the lead authorized integration on its validated lifecycle
+transition. The capacity handler covers ordinary execution and both prepared
+startup paths that acquire a fresh lease inside an attempt. Each path settles
+only its own current, unexpired claim. #1316 history-reader files and Sandbox
+billing/funding files are unchanged. One PR uses `Refs #1321`; the lead owns
+merge, deployment and issue closure. Rollover remains an owner decision.
 
 ## Verification
 
@@ -172,8 +179,30 @@ Run affected crates with `CARGO_BUILD_JOBS=4` while iterating. After integration
 run full required local gates once, including source size/structure, before
 opening the PR. Do not push further commits to an open PR unless the lead asks.
 
-The eventual PR's production verification compares read-only capacity/attempt
-aggregates over at least two former lease periods after deployment, checks
-explicit settlement or authoritative cleanup completion, and verifies retained
-history remains readable. The lead owns deployment and issue closure. No test
-turn, stop, cancellation or replay is implied by this plan.
+## Production verification
+
+1. Record deployed source/image and the initial Agent counts, statuses and log
+   heads using owner API reads. Preserve the investigation cutoff above; compare
+   new VictoriaLogs windows by lifecycle step and distinct Agent/Sandbox counts.
+2. Observe for at least 36 minutes (two former 18-minute leases). An old claim
+   can survive the rollout until its existing expiry; the fix does not steal it.
+   On the next owned attempt, a normal capacity failure should emit
+   `Agent log capacity failure settled`, have the named public failure, and have
+   no pending lifecycle work/lease. No repeated 18-minute reconnect cycle is
+   expected after that settlement.
+3. For the already-requested cleanup, require an authoritative close receipt and
+   `Stopped`, or a released claim with the original cleanup pending and normal
+   retry timing. A transient runtime failure may keep cleanup pending, but its
+   fixed capacity diagnostic must not grow the log on every retry. Never infer a
+   close from a capacity error or a failed acknowledgement alone.
+4. Check `Agent log capacity rejected` by dimension and ceiling; investigate
+   physical-reserve/document failures separately. This finite reserve cannot
+   repair already-corrupt or physically over-budget history.
+5. Read retained history/tail (including durable tool output) through owner APIs;
+   compare identity, log continuity and original input/receipt recovery facts.
+   Check terminal remediation and queued/dispatched command outcomes without
+   sending a message or replaying an input.
+
+All verification is read-only. No production test turn, stop, cancellation,
+replacement, cleanup admission, database write or runtime restart is authorized
+by this plan. The lead records the result before closing the issue.
