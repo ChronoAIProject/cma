@@ -10,9 +10,9 @@ impl HostedAdapter {
         request: &crate::RuntimeProvisionRequest,
         operation_id: &str,
     ) -> crate::Result<crate::RuntimeProvisionReceipt> {
-        let rendered = self
-            .deployment
-            .render_runtime(&request.spec, request.generation)?;
+        let mut rendered = self.deployment.render_runtime(&request.spec, request.generation)?;
+        rendered.funded_until = request.funded_until;
+        self.backend.validate_funding(&rendered).await?;
         self.verify_spec_home(&request.spec).await?;
         if let Some(home) = &request.spec.home_volume {
             self.backend
@@ -153,7 +153,9 @@ impl HostedAdapter {
                 .expected_image
                 .clone_from(&successor.spec.runtime_image);
         }
-        let next = self.retained_request(&resumed, successor.generation)?;
+        let mut next = self.retained_request(&resumed, successor.generation)?;
+        next.funded_until = successor.funded_until;
+        self.backend.validate_funding(&next).await?;
         let previous_identity = provider_request_identity(&previous)?;
         let next_identity = provider_request_identity(&next)?;
         self.verify_spec_home(&request.spec).await?;
@@ -190,8 +192,11 @@ impl HostedAdapter {
         &self,
         spec: &SandboxSpec,
         generation: u64,
+        funded_until: Option<u64>,
     ) -> crate::Result<RuntimeHandle> {
-        let request = self.deployment.render_runtime(spec, generation)?;
+        let mut request = self.deployment.render_runtime(spec, generation)?;
+        request.funded_until = funded_until;
+        self.backend.validate_funding(&request).await?;
         self.verify_spec_home(spec).await?;
         if let Some(home) = &spec.home_volume {
             self.backend

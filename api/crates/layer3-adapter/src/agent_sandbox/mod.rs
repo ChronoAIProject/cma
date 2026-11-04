@@ -3,6 +3,7 @@
 
 mod assignment;
 mod connection;
+pub(crate) mod funding;
 mod idle_bootstrap;
 mod lifecycle;
 mod model;
