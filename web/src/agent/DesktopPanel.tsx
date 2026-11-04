@@ -13,12 +13,14 @@ export function DesktopPanel({
   running,
   onClose,
   preparation,
+  embedded = false,
 }: {
   readonly agentId: string;
   readonly runtimeReady: boolean;
   readonly running: boolean;
   readonly onClose: () => void;
   readonly preparation?: DesktopPreparationScope;
+  readonly embedded?: boolean;
 }) {
   const panel = useRef<HTMLElement>(null);
   const [fullScreen, setFullScreen] = useState(false);
@@ -53,11 +55,12 @@ export function DesktopPanel({
       className="agent-desktop"
       aria-label="Machine desktop"
       data-controller={ready ? controller : undefined}
+      data-embedded={embedded || undefined}
     >
       <header className="agent-desktop__header">
         <div>
           <div className="agent-desktop__title">
-            <h2>Machine desktop</h2>
+            <h2>{embedded ? 'Shared desktop' : 'Machine desktop'}</h2>
             <span className="agent-desktop__control-label">
               <StateDot
                 state={phase === 'error' ? 'error' : !ready || running ? 'ongoing' : 'neutral'}
@@ -106,7 +109,11 @@ export function DesktopPanel({
               if (next) focus();
             }}
           >
-            {control && !running ? 'Stop controlling' : 'Control desktop'}
+            {control && !running
+              ? 'Stop controlling'
+              : embedded
+                ? 'Take control'
+                : 'Control desktop'}
           </Button>
           <Button
             size="sm"
@@ -132,12 +139,14 @@ export function DesktopPanel({
           >
             {fullScreen ? 'Exit full screen' : 'Full screen'}
           </Button>
-          <Button
-            size="sm"
-            icon={<IconCloseOutline16 />}
-            aria-label="Close machine desktop"
-            onClick={onClose}
-          />
+          {!embedded ? (
+            <Button
+              size="sm"
+              icon={<IconCloseOutline16 />}
+              aria-label="Close machine desktop"
+              onClick={onClose}
+            />
+          ) : null}
         </div>
       </header>
       <div className="agent-desktop__viewport" aria-busy={!ready && phase !== 'error'}>

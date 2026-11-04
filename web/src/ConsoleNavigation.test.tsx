@@ -6,7 +6,7 @@ import { CmaClientProvider } from './api/context';
 import type { User } from './auth/types';
 import { Console } from './Console';
 import type { AppRoute } from './routing/routes';
-import { SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './shell/columns';
+import { SIDEBAR_COLLAPSED, SIDEBAR_MIN } from './shell/columns';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from './test/agent';
 
 const OWNER: User = {
@@ -90,7 +90,7 @@ it.each([
       expect(
         frame.style.gridTemplateColumns.startsWith(
           // A phone has no rail: the top bar is the way back to navigation.
-          `${width < 640 ? 0 : width < 1024 ? SIDEBAR_COLLAPSED : SIDEBAR_DEFAULT}px`,
+          `${width < 640 ? 0 : width < 1024 ? SIDEBAR_COLLAPSED : SIDEBAR_MIN}px`,
         ),
       ).toBe(true),
     );

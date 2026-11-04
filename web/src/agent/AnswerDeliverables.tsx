@@ -3,7 +3,7 @@ import type { AnswerDeliverable } from '@chronoai/cma-sdk';
 import { ApiError, DeliverableUnavailable } from '@chronoai/cma-sdk';
 import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDeliveries';
 import { Button } from '../ui/Button';
-import { IconPaperclipOutline16 } from '../ui/icons';
+import { IconDownloadOutline16 } from '../ui/icons';
 import './AnswerDeliverables.css';
 import { DeliverablePreviewContext } from './previewSelection';
 import { saveDelivery } from './saveDelivery';
@@ -123,7 +123,9 @@ function DeliveryRow({
   }
   return (
     <li className="answer-deliveries__row">
-      <IconPaperclipOutline16 aria-hidden="true" />
+      <span className="answer-deliveries__type" aria-hidden="true">
+        {item.reference.name.split('.').at(-1)?.slice(0, 5).toUpperCase() || 'FILE'}
+      </span>
       <div className="answer-deliveries__detail">
         {preview ? (
           <button
@@ -150,7 +152,7 @@ function DeliveryRow({
             : item.reference.resource.kind === 'agent_artifact'
               ? 'Published artifact'
               : `Document revision ${item.reference.resource.revision}`}{' '}
-          · {item.reference.media_type} · {item.reference.size_bytes.toLocaleString()} bytes
+          · {item.reference.size_bytes.toLocaleString()} bytes
         </span>
         <span className="answer-deliveries__status" role="status">
           {error ??
@@ -166,21 +168,22 @@ function DeliveryRow({
           variant="outline"
           size="sm"
           aria-label={`Download ${item.reference.name}`}
+          icon={<IconDownloadOutline16 />}
           disabled={
             busy !== undefined || !['ready', 'unchecked', 'version_changed'].includes(item.status)
           }
           onClick={() => void download()}
-        >
-          Download
-        </Button>
-        <Button
-          size="sm"
-          aria-label={`Retry ${item.reference.name}`}
-          disabled={busy !== undefined}
-          onClick={() => void retry()}
-        >
-          Retry
-        </Button>
+        />
+        {item.status !== 'ready' || error ? (
+          <Button
+            size="sm"
+            aria-label={`Retry ${item.reference.name}`}
+            disabled={busy !== undefined}
+            onClick={() => void retry()}
+          >
+            Retry
+          </Button>
+        ) : null}
       </div>
     </li>
   );
@@ -251,6 +254,7 @@ export function AnswerDeliverables({
     loaded?.access === access && loaded.answerId === answerId ? loaded.items : undefined;
   return (
     <div ref={container} className="answer-deliveries">
+      {items?.length ? <h3 className="answer-deliveries__heading">Files from this task</h3> : null}
       {items ? (
         items.length ? (
           <ul aria-label="Answer deliverables" className="answer-deliveries__list">
