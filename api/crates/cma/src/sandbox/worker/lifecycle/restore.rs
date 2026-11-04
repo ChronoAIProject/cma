@@ -93,7 +93,24 @@ impl SandboxWorker {
         if let Some(target) = sandbox.admitted_runtime_update_target() {
             spec.runtime_image = Some(target.into());
         }
-        let request = RuntimeProvisionRequest::new(generation, spec);
+        let funded_until = match self
+            .funding
+            .ensure_coverage(&sandbox, SystemTime::now())
+            .await
+        {
+            Ok(coverage) => coverage,
+            Err(error) => {
+                return self
+                    .handle_lifecycle_failure(
+                        sandbox,
+                        super::super::support::funding_failure(error),
+                        now,
+                    )
+                    .await
+            }
+        };
+        let mut request = RuntimeProvisionRequest::new(generation, spec);
+        request.funded_until = funded_until;
         let provisioned = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
             match crate::sandbox::runtime_attachment::recovery_runtime_request(
                 &sandbox,

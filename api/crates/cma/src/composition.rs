@@ -265,6 +265,12 @@ impl ControlPlaneComposition {
             stores.request_limits.clone(),
         );
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
+        let sandbox_funding = crate::sandbox::funding::production(
+            config.sandbox_billing.clone(),
+            stores.sandbox_model.clone(),
+            adapter.clone(),
+            config.deployment_id.clone(),
+        )?;
         let sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
@@ -284,6 +290,7 @@ impl ControlPlaneComposition {
                 operations: projections.operations(),
                 policy: sandbox_policy.clone(),
                 skills: agent_skills,
+                funding: sandbox_funding,
             },
             SandboxLifecycleConfig {
                 access_transport_migration: config.agent_access_transport_migration.clone(),
