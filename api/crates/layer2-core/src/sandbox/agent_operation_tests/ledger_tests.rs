@@ -167,6 +167,36 @@ fn personal_policy(parent: &Sandbox) -> crate::resource_access::ResourcePolicyRe
 }
 
 #[tokio::test]
+async fn terminal_agent_refuses_new_input_even_when_the_observation_predates_failed_open() {
+    let agent = test_agent(AgentStatus::Starting, Some("Wait for input"));
+    let store = InMemorySandboxStore::default();
+    let parent = seed_active_parent(&store).await;
+    let request = reservation(&agent, &parent, "never-accepted");
+    let mut failed = agent.clone();
+    failed
+        .fail(
+            TypedFailure {
+                class: "agent_runtime_unsupported".into(),
+                detail: "open failed".into(),
+            },
+            LATER.into(),
+        )
+        .unwrap();
+    assert_eq!(
+        validate_command_reservation(&request, &failed, &parent),
+        Err(CommandLedgerError::NotAdmissible)
+    );
+    let mut foreign = request;
+    foreign.envelope.owner = AgentOwner::Person {
+        subject: crate::SubjectId::new("foreign"),
+    };
+    assert_eq!(
+        validate_command_reservation(&foreign, &failed, &parent),
+        Err(CommandLedgerError::NotFound)
+    );
+}
+
+#[tokio::test]
 async fn policy_revision_is_fenced_without_changing_aggregate_revisions_and_retries_survive() {
     let (store, agent, parent) = fixture().await;
     let original_request = reservation(&agent, &parent, "old-policy");
