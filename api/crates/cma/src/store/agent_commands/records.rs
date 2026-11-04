@@ -81,6 +81,11 @@ pub(in crate::store) async fn ensure_indexes(
 ) -> Result<(), layer2_core::StoreError> {
     let definitions = [
         (
+            "agent_command_answer_admission",
+            doc! { "agent_id": 1, "record.receipt.envelope.command.type": 1, "record.receipt.event_cursor": 1 },
+            false,
+        ),
+        (
             "agent_command_work_scan",
             doc! { "status": 1, "_id": 1 },
             false,

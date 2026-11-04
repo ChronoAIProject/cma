@@ -38,6 +38,23 @@ impl InlineAgentLifecycle {
                 let changed = readiness.notified();
                 tokio::pin!(changed);
                 changed.as_mut().enable();
+                if let Some(id) = expected_workspace {
+                    let workspace = self
+                        .workspaces
+                        .read(caller, id)
+                        .await
+                        .map_err(workspace_error)?;
+                    if workspace.status == WorkspaceStatus::Failed {
+                        let detail = workspace
+                            .failed
+                            .filter(|failure| failure.class.starts_with("repository_"))
+                            .map(|failure| format!("{}: {}", failure.class, failure.detail))
+                            .unwrap_or_else(|| {
+                                "Workspace preparation failed. The task has not run.".into()
+                            });
+                        return Err(AgentLifecycleProvisioningError::Conflict(detail));
+                    }
+                }
                 let sandbox = self
                     .sandbox
                     .read(caller, sandbox_id)
@@ -78,11 +95,7 @@ impl InlineAgentLifecycle {
                             "ready",
                             "Agent key permissions are ready",
                         ),
-                        (
-                            "workspace_runtime",
-                            "running",
-                            "Preparing an empty workspace",
-                        ),
+                        ("workspace_runtime", "running", "Preparing the workspace"),
                     )
                     .await?;
                     key_ready = true;

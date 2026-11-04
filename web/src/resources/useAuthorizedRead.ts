@@ -9,11 +9,17 @@ export interface AuthorizedValue<Value> {
 export type AuthorizedRead<Value> =
   | { readonly status: 'loading' }
   | { readonly status: 'error'; readonly message: string; readonly transient?: true }
-  | { readonly status: 'ready'; readonly value: Value };
+  | {
+      readonly status: 'ready';
+      readonly value: Value;
+      readonly stale?: boolean;
+      readonly refreshError?: string;
+    };
 
 /** Values belong to one read context and expire independently of a pending refresh. */
 export function useAuthorizedRead<Value>(
   read: ((signal: AbortSignal) => Promise<AuthorizedValue<Value>>) | undefined,
+  retainStale = false,
 ) {
   const [revision, setRevision] = useState(0);
   const [stored, setStored] = useState<{
@@ -32,7 +38,28 @@ export function useAuthorizedRead<Value>(
     // throttle `expiration`, so foreground checks this directly.
     let validUntil: number | undefined;
     const publish = (result: AuthorizedRead<Value>) => {
-      if (active) setStored({ read, revision, result, refreshing: false });
+      if (active)
+        setStored((current) => {
+          if (
+            retainStale &&
+            current?.read === read &&
+            current.result.status === 'ready' &&
+            (result.status === 'loading' || (result.status === 'error' && result.transient))
+          ) {
+            return {
+              read,
+              revision,
+              result: {
+                ...current.result,
+                stale: true,
+                refreshError:
+                  result.status === 'error' ? result.message : current.result.refreshError,
+              },
+              refreshing: result.status === 'loading',
+            };
+          }
+          return { read, revision, result, refreshing: false };
+        });
     };
     const clear = () => {
       clearTimeout(expiration);
@@ -124,13 +151,15 @@ export function useAuthorizedRead<Value>(
       document.removeEventListener('visibilitychange', foreground);
       window.removeEventListener('focus', foreground);
     };
-  }, [read, revision]);
+  }, [read, revision, retainStale]);
   const state: AuthorizedRead<Value> =
     stored !== undefined &&
     stored.read === read &&
-    stored.revision === revision &&
+    (stored.revision === revision || retainStale) &&
     read !== undefined
-      ? stored.result
+      ? stored.revision !== revision && stored.result.status === 'ready'
+        ? { ...stored.result, stale: true }
+        : stored.result
       : { status: 'loading' };
   return { state, reload, refreshing: state.status === 'ready' && stored?.refreshing === true };
 }

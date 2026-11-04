@@ -1247,6 +1247,38 @@
       "captures": {}
     },
     {
+      "id": "agent-skills-install-version-upgrade-unsupported",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_installed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-version-upgrade-unsupported"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.1"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-skill-version-upgrade-unsupported",
+          "title": "agent skill version upgrade unsupported",
+          "status": 409,
+          "detail": "Skill \"research\" is already installed at version \"1.0\"; changing it to version \"1.1\" is unsupported on an existing Agent. Create a replacement Agent with the requested profile.",
+          "code": "agent_skill_version_upgrade_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "agent-skills-install-accepted",
       "operation": "POST /api/v1/agents/{id}/skills",
       "scenario": "agent_customization_admission",
@@ -1478,11 +1510,74 @@
           "content-type": "application/problem+json"
         },
         "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-skill-version-upgrade-unsupported",
+          "title": "agent skill version upgrade unsupported",
+          "status": 409,
+          "detail": "Skill \"research\" is already installed at version \"1.0\"; changing it to version \"2.0\" is unsupported on an existing Agent. Create a replacement Agent with the requested profile.",
+          "code": "agent_skill_version_upgrade_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-operation-in-flight",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_install_race",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-operation-in-flight"
+        },
+        "body": {
+          "id": "research",
+          "version": "2.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
           "title": "agent operation in flight",
           "status": 409,
           "detail": "Another durable operation currently owns this agent.",
           "code": "agent_operation_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-pending-after-install-conflict",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_install_race",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "pending"
+            }
+          ],
+          "pending": true,
+          "can_install": false,
+          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
         },
         "bodyKind": "json"
       },

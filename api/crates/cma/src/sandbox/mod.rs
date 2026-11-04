@@ -23,6 +23,8 @@ mod reconciliation;
 pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;
+mod suggestion_worker;
+pub(crate) mod suggestions;
 mod title_scheduler;
 mod title_worker;
 mod titles;

@@ -1,4 +1,4 @@
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
 test('LOCAL composer settings and message feedback remain usable across screen sizes and reload', async ({
@@ -60,6 +60,7 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
   const composer = page.getByRole('form', { name: 'Message Agent' });
+  await composer.getByRole('button', { name: /^Agent settings:/ }).click();
   await expect(composer.getByRole('button', { name: /^Model and reasoning effort/ })).toHaveText(
     'GPT-6 High',
   );
@@ -74,17 +75,17 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   await expect
     .poll(() => actions.evaluate((element) => getComputedStyle(element).opacity))
     .toBe('1');
-  await reply.getByRole('button', { name: 'Upvote message' }).click();
-  await expect(reply.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
+  await reply.getByRole('button', { name: 'Helpful' }).click();
+  await expect(reply.getByRole('button', { name: 'Helpful' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  await reply.getByRole('button', { name: 'Downvote message' }).click();
-  await expect(reply.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
+  await reply.getByRole('button', { name: 'Needs improvement' }).click();
+  await expect(reply.getByRole('button', { name: 'Helpful' })).toHaveAttribute(
     'aria-pressed',
     'false',
   );
-  await expect(reply.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+  await expect(reply.getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
@@ -120,7 +121,7 @@ test('LOCAL composer settings and message feedback remain usable across screen s
     '0s',
   );
   await page.reload();
-  await expect(reply.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+  await expect(reply.getByRole('button', { name: 'Needs improvement' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
@@ -129,7 +130,12 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   expect(boundary.errors).toEqual([]);
 });
 
-async function capture(page: Page, info: TestInfo, state: string) {
+async function capture(
+  page: Page,
+  info: TestInfo,
+  state: string,
+  surface: Locator = page.getByRole('dialog'),
+) {
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
@@ -137,7 +143,7 @@ async function capture(page: Page, info: TestInfo, state: string) {
     );
     await expect
       .poll(() =>
-        page.getByRole('dialog').evaluate((dialog) => {
+        surface.evaluate((dialog) => {
           const bounds = dialog.getBoundingClientRect();
           return (
             bounds.left >= 0 &&
@@ -155,7 +161,7 @@ async function capture(page: Page, info: TestInfo, state: string) {
   }
 }
 for (const target of ['new', 'contextual'] as const) {
-  test(`LOCAL ${target} Sandbox creation uses only repository context and recovers the same command after reload`, async ({
+  test(`LOCAL ${target} task creation preserves repository or inherited context and recovers the same command after reload`, async ({
     page,
     baseURL,
   }, info) => {
@@ -207,28 +213,47 @@ for (const target of ['new', 'contextual'] as const) {
       }
     };
     await open();
-    const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
-    await expect(dialog.getByLabel('GitHub repository (optional)')).toBeVisible();
+    const dialog =
+      target === 'new'
+        ? page.locator('.task-home')
+        : page.getByRole('dialog', { name: 'New task', exact: true });
+    await expect(dialog.getByLabel('Your task')).toBeVisible();
     await expect(dialog.getByRole('radiogroup')).toHaveCount(0);
     await expect(dialog.getByText('Where it works', { exact: true })).toHaveCount(0);
-    expect(await dialog.locator('input').count()).toBe(1);
-    await dialog.getByLabel('GitHub repository (optional)').fill('https://github.com/org/research');
-    await capture(page, info, `${target}-creation`);
-    await dialog.getByRole('button', { name: 'Create agent', exact: true }).click();
+    await dialog
+      .getByLabel('Your task')
+      .fill('  Inspect the selected source\nKeep this exact task.  ');
+    if (target === 'new') {
+      await dialog.getByLabel('GitHub repository').fill('https://github.com/org/research');
+      await dialog.getByLabel('Repository ref').fill('proof/fixed');
+    } else {
+      await expect(dialog.getByLabel('GitHub repository')).toHaveCount(0);
+      await expect(dialog.getByText(/Repository context is inherited/)).toBeVisible();
+    }
+    await capture(page, info, `${target}-creation`, dialog);
+    await dialog.getByRole('button', { name: 'Start task', exact: true }).click();
     await expect(
-      dialog.getByRole('button', { name: 'Recover creation', exact: true }),
+      dialog.getByRole('button', { name: 'Recover original task', exact: true }),
     ).toBeEnabled();
     await page.setViewportSize({ width: 1440, height: 900 });
     await open();
-    await dialog.getByRole('button', { name: 'Recover creation', exact: true }).click();
-    await expect(dialog.getByRole('button', { name: 'Open agent', exact: true })).toBeDisabled();
+    await expect(dialog.getByLabel('Your task')).toHaveValue(
+      '  Inspect the selected source\nKeep this exact task.  ',
+    );
+    await dialog.getByRole('button', { name: 'Recover original task', exact: true }).click();
+    await expect(
+      dialog.getByText('Task accepted. Preparing your Agent.', { exact: true }),
+    ).toBeVisible();
+    await expect(page).not.toHaveURL(/\/agents\/agt_contract$/);
     expect(writes).toHaveLength(2);
     expect(writes[1]).toEqual(writes[0]);
     expect(writes[0]?.key).toBeTruthy();
     expect(writes[0]?.body).toEqual({
-      name: 'research',
-      repository: { url: 'https://github.com/org/research' },
-      ...(target === 'new' ? {} : { sandbox_id: 'sbx_route' }),
+      name: 'New task',
+      initial_message: '  Inspect the selected source\nKeep this exact task.  ',
+      ...(target === 'new'
+        ? { repository: { url: 'https://github.com/org/research', ref: 'proof/fixed' } }
+        : { sandbox_id: 'sbx_route' }),
     });
     ready = true;
     await expect(page).toHaveURL(/\/agents\/agt_contract$/);
@@ -336,6 +361,7 @@ test('LOCAL composer settings apply only after a confirmed runtime response and 
   });
   await page.goto('/agents/agt_contract');
   const details = page.getByRole('form', { name: 'Message Agent' });
+  await details.getByRole('button', { name: /^Agent settings:/ }).click();
   const chip = details.getByRole('button', { name: /^Model and reasoning effort/ });
   await expect(chip).toHaveText('GPT-6 High');
   await chip.click();
@@ -439,6 +465,7 @@ test('LOCAL composer and Details use model and skill catalogs in responsive cont
   const details = page.getByRole('complementary', { name: 'Agent details' });
   const composer = page.getByRole('form', { name: 'Message Agent' });
   await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveCount(0);
+  await composer.getByRole('button', { name: /^Agent settings:/ }).click();
   const chip = composer.getByRole('button', { name: /^Model and reasoning effort/ });
   await expect(chip).toHaveText('GPT-6 High');
   await chip.click();

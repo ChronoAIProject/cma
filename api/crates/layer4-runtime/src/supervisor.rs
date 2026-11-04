@@ -29,6 +29,8 @@ mod agent_resources;
 mod agent_validation;
 #[path = "supervisor_attachment.rs"]
 mod attachment;
+#[path = "supervisor_browser.rs"]
+mod browser;
 #[path = "supervisor_checkpoint.rs"]
 mod checkpoint_lifecycle;
 #[path = "supervisor_execute.rs"]
@@ -75,6 +77,7 @@ pub(crate) struct Supervisor {
     operation_gate: Arc<Mutex<()>>,
     credential: CredentialHolder,
     agents: RwLock<BTreeMap<AgentSlot, AgentProcess>>,
+    browsers: Mutex<BTreeMap<AgentSlot, crate::browser::Browser>>,
     checkpoint: CheckpointStore,
     held_checkpoint: Arc<Mutex<Option<HeldCheckpoint>>>,
     resources: crate::resources::Sampler,
@@ -176,6 +179,7 @@ impl Supervisor {
             operation_gate: Arc::new(Mutex::new(())),
             credential: CredentialHolder::new(),
             agents: RwLock::new(BTreeMap::new()),
+            browsers: Mutex::new(BTreeMap::new()),
             checkpoint,
             held_checkpoint: Arc::new(Mutex::new(None)),
             resources: crate::resources::Sampler::new(
@@ -194,6 +198,18 @@ impl Supervisor {
 
     pub(crate) async fn dispatch(&self, request: RequestFrame) -> ResponseFrame {
         let operation = request.operation();
+        if let RequestFrame::BrowserControl(request) = request {
+            return match self.browser_control(request).await {
+                Ok(response) => response,
+                Err(error) => error.response(operation),
+            };
+        }
+        if let RequestFrame::Browser(request) = request {
+            return match self.browser(request).await {
+                Ok(response) => response,
+                Err(error) => error.response(operation),
+            };
+        }
         // Observation must not repair journals or wait for archive capture/export.
         if let RequestFrame::ToolProxyStatus(request) = request {
             return match self.tool_proxy_status(request).await {
@@ -428,6 +444,9 @@ mod authority_tests;
 #[cfg(test)]
 #[path = "supervisor_checkpoint_http_tests.rs"]
 mod checkpoint_http_tests;
+#[cfg(test)]
+#[path = "supervisor_filesystem_http_tests.rs"]
+mod filesystem_http_tests;
 #[cfg(test)]
 #[path = "supervisor_mutation_tests.rs"]
 mod mutation_tests;

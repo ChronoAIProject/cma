@@ -11,6 +11,44 @@ import type { AgentEvent, AgentLiveEvent, AgentTranscript, ResourcePage } from '
 
 afterEach(() => vi.useRealTimers());
 
+it('retains an unsaved file draft when write access is withdrawn but read access remains', async () => {
+  const test = fixture(['view_details', 'view_history', 'view_files', 'operate_agent'], {
+    files: {
+      list: async () => [
+        { path: 'notes.txt', name: 'notes.txt', kind: 'file', size_bytes: 5, hidden: false },
+      ],
+      read: async () => ({
+        path: 'notes.txt',
+        size_bytes: 5,
+        sha256: 'a'.repeat(64),
+        content_base64: btoa('Notes'),
+      }),
+      download: async () => new Blob(['Notes']),
+      write: async () => {
+        throw new Error('No save is requested');
+      },
+      remove: async () => {
+        throw new Error('No deletion is requested');
+      },
+    },
+  });
+  test.show();
+  await userEvent.click(await screen.findByRole('button', { name: 'Show Agent computer' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'notes.txt' }));
+  const editor = await screen.findByRole('textbox', { name: 'Contents of notes.txt' });
+  fireEvent.change(editor, { target: { value: 'Keep this unsaved draft' } });
+  test.state.capabilities = ['view_details', 'view_history', 'view_files'];
+  test.state.policy += 1;
+  fireEvent.focus(window);
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument(),
+  );
+  expect(await screen.findByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
+    'Keep this unsaved draft',
+  );
+  expect(editor).toHaveAttribute('readonly');
+});
+
 const detail = {
   access: 'shared',
   id: 'agt_1',
@@ -149,7 +187,7 @@ it('allows a writable shared Agent to change settings and checks current access 
   });
   test.show();
   const user = userEvent.setup();
-  await screen.findByRole('button', { name: 'Permission mode' });
+  await user.click(await screen.findByRole('button', { name: /^Agent settings:/ }));
   expect(screen.getByRole('note')).toHaveTextContent('View and write access');
   await user.click(screen.getByRole('button', { name: 'Permission mode' }));
   await user.click(screen.getByRole('menuitemradio', { name: 'Guarded' }));
@@ -241,6 +279,81 @@ const sharedHistoryTranscript = {
     })),
   })),
 };
+
+it('shares the authorized conversation observation with the computer and clears revoked output', async () => {
+  let deliver: ((event: AgentLiveEvent) => void) | undefined;
+  const replayAgent = vi.fn(async (_id, options) => {
+    deliver = options.onEvent;
+    await new Promise<void>((resolve) =>
+      options.signal.addEventListener('abort', () => resolve(), { once: true }),
+    );
+  });
+  const test = fixture(['view_details', 'view_history'], {
+    readAgentTranscript: async () => sharedHistoryTranscript,
+    readAgentEvents: async () => ({
+      items: sharedHistoryEvents.map((event) =>
+        event.kind.type === 'tool_call_started'
+          ? { ...event, kind: { ...event.kind, kind: 'execute', title: 'printf shared-proof' } }
+          : event.kind.type === 'tool_call_updated'
+            ? {
+                ...event,
+                kind: { ...event.kind, output: { text: 'shared-proof', truncated: false } },
+              }
+            : event,
+      ),
+    }),
+    replayAgent,
+  });
+  test.show();
+  await userEvent.click(await screen.findByRole('button', { name: 'Show Agent computer' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Operation output' }));
+  expect(await screen.findByText('shared-proof', { exact: true })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('tab', { name: 'Browser' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Operation output' }));
+  expect(replayAgent).toHaveBeenCalledOnce();
+  test.state.capabilities = ['view_details'];
+  test.state.policy += 1;
+  fireEvent.focus(window);
+  await waitFor(() =>
+    expect(screen.queryByText('shared-proof', { exact: true })).not.toBeInTheDocument(),
+  );
+  await act(async () =>
+    deliver?.({
+      type: 'TOOL_CALL_END',
+      threadId: 'agt_1',
+      runId: '1',
+      toolCallId: 'read',
+      'cma:output': { text: 'shared-proof', truncated: false },
+    }),
+  );
+  expect(screen.queryByText('shared-proof', { exact: true })).not.toBeInTheDocument();
+});
+
+it('does not invent an operation or status from output without a recorded call', async () => {
+  let deliver: ((event: AgentLiveEvent) => void) | undefined;
+  const fixtureView = fixture(['view_details', 'view_history'], {
+    readAgentTranscript: async () => ({ agentId: 'agt_1', throughSeq: 0, turns: [] }),
+    readAgentEvents: async () => ({ items: [] }),
+    replayAgent: async (_agent, options) => {
+      deliver = options.onEvent;
+      await new Promise<void>((resolve) =>
+        options.signal?.addEventListener('abort', () => resolve(), { once: true }),
+      );
+    },
+  });
+  fixtureView.show();
+  await waitFor(() => expect(deliver).toBeDefined());
+  await act(async () =>
+    deliver?.({
+      type: 'CUSTOM',
+      name: 'cma.tool_output_reported',
+      threadId: 'agt_1',
+      runId: '1',
+      value: { toolCallId: 'unobserved-call', output: { text: 'partial proof', truncated: false } },
+    }),
+  );
+  expect(screen.queryByText('Tool call', { exact: true })).not.toBeInTheDocument();
+});
 
 it('sends with current access before the shared transcript or rich history arrives', async () => {
   let finish!: (value: typeof AGENT_TRANSCRIPT) => void;
@@ -368,6 +481,10 @@ it('retains new live messages and resolved controls when older rich history fini
   );
   expect(screen.getAllByText('A new message during history loading.')).toHaveLength(1);
   expect(screen.getAllByText('A new live answer')).toHaveLength(1);
+  const process = screen.getByRole('button', { name: /^1 tool call$/ });
+  expect(process).toHaveAttribute('aria-expanded', 'false');
+  await userEvent.click(process);
+  expect(process).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByRole('article', { name: 'Tool call: Read files' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
@@ -533,6 +650,10 @@ it('retains hydrated tools, approvals, live text and the composer across unchang
   );
   const composer = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Keep this draft' } });
+  const process = screen.getByRole('button', { name: /^1 tool call$/ });
+  expect(process).toHaveAttribute('aria-expanded', 'false');
+  fireEvent.click(process);
+  expect(process).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByRole('article', { name: 'Tool call: Read files' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();

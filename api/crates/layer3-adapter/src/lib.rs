@@ -8,6 +8,13 @@ mod adapter;
 mod agent;
 mod agent_attachment;
 mod agent_filesystem;
+mod browser;
+mod browser_control;
+pub use browser::{
+    BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,
+    BrowserRequest, BrowserState,
+};
+pub use browser_control::*;
 mod agent_skill_install;
 pub use agent_skill_install::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
 mod agent_provider;
@@ -82,13 +89,14 @@ pub use checkpoint::{
     RestoreBootstrapRequest, RestoreRequest, WriterState,
 };
 pub use conversation::{
-    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
-    ConversationId, ConversationInput, ConversationInputGuard, ConversationInputSender,
-    ConversationSendOutcome, ConversationSettingsSupport, ConversationUpdate, MessageId,
-    PermissionDecision, PermissionLocator, PermissionOption, PermissionOptionId,
-    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
-    SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-    ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage, UsageUpdate,
+    reported_tool_text, AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk,
+    ConversationChannel, ConversationId, ConversationInput, ConversationInputGuard,
+    ConversationInputSender, ConversationSendOutcome, ConversationSettingsSupport,
+    ConversationUpdate, MessageId, PermissionDecision, PermissionLocator, PermissionOption,
+    PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
+    RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus,
+    ToolCallUpdate, ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence,
+    TurnStopReason, TurnUsage, UsageUpdate,
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
 pub use home_finality::{

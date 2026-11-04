@@ -120,16 +120,25 @@ pub(super) fn project(id: &AgentId, history: &[AgentLogEntry]) -> Vec<Value> {
                 call_id,
                 title,
                 status,
+                output,
             } => {
                 if let Some(index) = tools.get(call_id) {
                     items[*index]["status"] = status.clone().into();
+                    if let Some(output) = output {
+                        items[*index]["output"] = json!(output);
+                    }
                     if let Some(title) = title {
                         items[*index]["target"] = title.clone().into();
                     }
                 } else {
                     tools.insert(call_id.clone(), items.len());
                     items.push(json!({"id": format!("tool_{}_{}", id, entry.seq), "type": "cma_chat.tool_activity",
-                        "call_id": call_id, "kind": "unknown", "target": title, "status": status, "duration_ms": null}));
+                        "call_id": call_id, "kind": "unknown", "target": title, "status": status, "output": output, "duration_ms": null}));
+                }
+            }
+            AgentLogKind::ToolOutputReported { call_id, output } => {
+                if let Some(index) = tools.get(call_id) {
+                    items[*index]["output"] = json!(output);
                 }
             }
             _ => {}
