@@ -189,3 +189,36 @@ The merged tree also passes all 3,060 TypeScript SDK public-contract tests and t
 Rust SDK shared-corpus test. Independent Standards and Spec reviews of the frozen
 worker commit both report zero findings. Final CI and merge status remain subject
 to PR #1311's checks on the pushed candidate.
+
+## Mongo persistence contract integration
+
+The subsequent PR run passes all 7,151 normal Backend tests and all 14 other jobs.
+Its disposable Mongo gate runs 454 tests: 452 pass, while two reveal test-boundary
+drift. The five-case real-model sample proof requires an explicitly authorized
+local proxy, model and evidence destination, but the generic Mongo selector had
+included it. The hierarchy snapshot test also still expected the command count
+from before task-status projection added its two reads.
+
+The default-off `real-model-suggestion-samples` Cargo feature now gates only the
+existing external sample module beneath `cfg(test)`. Its implementation, ignored
+attribute, real generation and strict missing-configuration failure are unchanged.
+Default test inventory removes exactly that one proof; all five deterministic
+suggestion HTTP/persistence/lifecycle tests remain selected. Explicit opt-in restores
+the full inventory, and missing sample configuration still fails before database
+or model access. The authorized invocation is recorded in `13-EVIDENCE.md`.
+
+The hierarchy regression now checks exact ordered collection reads, filters,
+sorting, limits and timeouts; one snapshot/session/transaction through abort;
+read-only behavior; the actual task status; and preserved lineage, logs and command
+state. Production hierarchy and task-status code remain unchanged. Both original
+failures were reproduced before correction on a fresh, owned Mongo 8.0.13 replica
+set. Three hierarchy and five deterministic suggestion tests then pass on macOS
+arm64; this is separate from the required Linux CI result.
+
+Formatting, scoped all-feature Clippy and the workspace doctest command pass.
+The doctest command finds no executable documentation examples. Independent
+Standards and Spec reviews report zero findings. Worker commit `c194357e5` and
+independent merge `7ac951aaf` have identical trees. The temporary Mongo process
+was shut down successfully after tests; no external model calls were made. CI
+scripts, filters, production behavior and the human acceptance boundary are
+unchanged. Final CI and merge status remain with PR #1311.
