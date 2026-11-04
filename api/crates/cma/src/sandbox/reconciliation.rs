@@ -421,7 +421,7 @@ impl SandboxReconciler {
                         if changed.is_err() || *shutdown.borrow() { break; }
                     }
                     _ = ticker.tick() => {
-                        if let Err(error) = self.run_due(SystemTime::now()).await {
+                        if let Err(error) = crate::background::sandbox_reconciliation(|| self.run_due(SystemTime::now())).await {
                             tracing::error!(error = %error, "sandbox runtime reconciliation failed");
                         }
                     }
