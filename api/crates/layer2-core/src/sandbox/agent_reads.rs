@@ -389,16 +389,13 @@ impl AgentReadService {
         }
         let tail = self
             .store
-            .agent_log(&agent.id, through_seq, 1)
+            .agent_log_entry(&agent.id, through_seq.saturating_add(1))
             .await
             .map_err(log_store_error)?;
-        let Some(extra) = tail.first() else {
+        let Some(extra) = tail else {
             return Ok(());
         };
-        if tail.len() != 1
-            || extra.agent_id != agent.id
-            || extra.seq != through_seq.saturating_add(1)
-        {
+        if extra.agent_id != agent.id || extra.seq != through_seq.saturating_add(1) {
             return Err(corrupt("agent log has an invalid tail"));
         }
         let current = self
