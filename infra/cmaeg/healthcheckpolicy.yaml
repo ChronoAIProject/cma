@@ -16,4 +16,6 @@ spec:
       type: HTTP
       httpHealthCheck:
         port: 8090
+        # Keep infrastructure probes on the root path. Public NyxID probes use
+        # /event-gateway/v1/readyz -> the application's /v1/readyz alias.
         requestPath: /readyz

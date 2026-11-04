@@ -743,6 +743,34 @@ is lost with its pod stays unknown; see "Routed tool deadlines" (#995). Readines
 liveness is `/healthz`. Readiness gates loaded master keys, parsed provider policy and draining state.
 Its CMA reachability field is diagnostic only; remote outages do not remove a
 warm replica from service. A public route must never forward the private scrape port.
+
+The NyxID `cmaeg` service base is `https://cma.nyxid.ai/event-gateway/v1`.
+Public liveness is `GET /event-gateway/v1/healthz`; public readiness is
+`GET /event-gateway/v1/readyz`. The existing HTTPRoute rewrites that base prefix
+to `/v1`, where the application serves `/v1/healthz` and `/v1/readyz` with the
+same handlers and readiness state as `/healthz` and `/readyz`. Kubernetes and
+load-balancer probes continue using the root paths. These exact application
+aliases need no HTTPRoute changes; do not reapply route manifests to enable them.
+The host root `https://cma.nyxid.ai/healthz` reaches the frontend, not CMAEG.
+
+Verify through the registered NyxID UserService:
+
+```bash
+nyxid proxy request cmaeg healthz \
+  --via-service 97cbb9dc-e493-4cfc-ae8b-1491e549c345
+nyxid proxy request cmaeg readyz \
+  --via-service 97cbb9dc-e493-4cfc-ae8b-1491e549c345
+```
+
+Liveness returns HTTP 200 with `{"status":"ok"}`. Readiness returns HTTP 200
+when ready, or HTTP 503 when unready, with the same JSON fields: `ready`,
+`reasons` and `cma_reachable`. Reasons are bounded codes:
+`master_keys_not_loaded`, `provider_registry_not_parsed`, `routed_recovery_failed`
+and `draining`. Both probe aliases are unauthenticated at CMAEG, cheap and
+read-only: they report local state without issuing dependency requests or
+starting business work. NyxID authenticates proxy access separately; the aliases
+do not change authentication on CMAEG business routes.
+
 `infra/cmaeg/` declares a separate `cmaeg` Deployment with **one replica** in
 `chrono-bot`, matching the maintainer's 2026-09-22 deployment decision. CMA API
 also keeps one replica. The gateway listens on 8090; its private metrics listener
