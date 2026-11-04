@@ -103,6 +103,7 @@ pub(super) async fn public_router_for(
         }
     }
     AgentProjectionServices::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         resources.clone(),
         Arc::new(InMemoryProfileStore::default()),
         Arc::new(LiveAgentRegistry::default()),

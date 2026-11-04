@@ -120,6 +120,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     agent.conversation.last_seq = logs.len() as u64 + 2;
     agents::insert_agent(&store, agent, logs).await;
     let router = agent_router(AgentRoutesState::new(
+        crate::agent_page::AgentPageOrigin::test(),
         AgentService::new(store.clone(), profiles, registry.clone(), capabilities),
         AgentReadService::new(
             store.clone(),
