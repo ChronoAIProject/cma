@@ -34,16 +34,26 @@ async fn get_json(base: &str, path: &str) -> Value {
 #[tokio::test]
 async fn health_and_readiness_are_live() {
     let (base, shutdown, task) = start_server().await;
-    assert_eq!(
-        get_json(&base, "/healthz").await,
-        serde_json::json!({"status": "ok"})
-    );
-    let response = reqwest::get(format!("{base}/readyz")).await.unwrap();
-    assert_eq!(response.status(), 503);
-    assert_eq!(response.headers()["cache-control"], "no-store");
-    let report: Value = response.json().await.unwrap();
-    assert_eq!(report["ready"], false);
-    assert_eq!(report["reasons"].as_array().unwrap().len(), 2);
+    for path in ["/healthz", "/v1/healthz"] {
+        assert_eq!(
+            get_json(&base, path).await,
+            serde_json::json!({"status": "ok"})
+        );
+    }
+    for path in ["/readyz", "/v1/readyz"] {
+        let response = reqwest::get(format!("{base}{path}")).await.unwrap();
+        assert_eq!(response.status(), 503);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["content-type"], "application/json");
+        assert_eq!(
+            response.json::<Value>().await.unwrap(),
+            serde_json::json!({
+                "ready": false,
+                "reasons": ["master_keys_not_loaded", "provider_registry_not_parsed"],
+                "cma_reachable": false
+            })
+        );
+    }
     shutdown.send(()).expect("server is listening");
     task.await.expect("server task");
 }
