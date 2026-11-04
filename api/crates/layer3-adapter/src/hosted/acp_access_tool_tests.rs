@@ -114,7 +114,7 @@ async fn existing_conversation_requires_exact_retained_access_tool_receipt() {
         if retained == Some("access-conversation") {
             stop(result.unwrap()).await;
         } else {
-            assert!(matches!(result, Err(crate::AdapterError::Unsupported(_))));
+            assert!(matches!(result, Err(crate::AdapterError::Rejected(_))));
         }
         serving.await.unwrap();
     }
@@ -189,7 +189,7 @@ async fn prepared_receipt_cannot_reconfigure_another_conversation() {
         updates,
     )
     .await;
-    assert!(matches!(result, Err(crate::AdapterError::Unsupported(_))));
+    assert!(matches!(result, Err(crate::AdapterError::Rejected(_))));
     serving.await.unwrap();
     assert!(binding(Some("prepared-conversation"))
         .with_prepared_conversation("prepared-conversation")
@@ -293,7 +293,7 @@ async fn unrelated_initialize_failure_is_redacted_even_with_retained_tool_author
     )
     .await;
     assert!(
-        matches!(result, Err(AdapterError::Rejected(detail)) if detail == "channel tool session setup did not complete")
+        matches!(result, Err(AdapterError::Rejected(detail)) if detail == "channel tool session setup did not complete (phase: protocol_initialize)")
     );
     serving.await.unwrap();
 }
