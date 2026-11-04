@@ -187,7 +187,7 @@ it.each(
           path === '/'
             ? visitor
               ? 'Welcome to CMA'
-              : 'What would you like to do?'
+              : 'What should your Agent work on?'
             : PUBLIC_PREVIEW.title,
       });
       await waitFor(() =>

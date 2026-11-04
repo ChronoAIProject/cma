@@ -28,7 +28,7 @@ it('retires the profile-driven Sandbox creation entry from the Agent Manager hom
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await screen.findByRole('heading', { name: 'What would you like to do?' });
+  await screen.findByRole('heading', { name: 'What should your Agent work on?' });
   expect(screen.getAllByRole('button', { name: 'New agent' }).length).toBeGreaterThan(0);
   expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
@@ -70,7 +70,7 @@ it('does not offer Sandbox creation without its distinct capability', async () =
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await screen.findByRole('heading', { name: 'What would you like to do?' });
+  await screen.findByRole('heading', { name: 'What should your Agent work on?' });
   expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
 it('creates the Agent in the Workspace whose row opened New agent', async () => {

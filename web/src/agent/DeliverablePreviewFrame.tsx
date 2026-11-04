@@ -76,7 +76,8 @@ export function DeliverablePreviewFrame({
     >
       <AppFrame
         {...props}
-        compactDetailsInline={selected !== undefined}
+        workspaceDetails={selected !== undefined || props.workspaceDetails}
+        compactDetailsOverlay={selected !== undefined || props.compactDetailsOverlay}
         detailsOpen={props.detailsOpen || selected !== undefined}
         onDetailsClose={close}
         details={
