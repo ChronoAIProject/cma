@@ -88,7 +88,28 @@
             }
           },
           {
-            "id": "16",
+            "id": "15",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Continue the proof",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "17",
             "data": {
               "type": "RUN_FINISHED",
               "threadId": "agt_contract",
@@ -108,7 +129,8 @@
         "event_time_2": "/2/data/timestamp",
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
-        "event_time_5": "/5/data/timestamp"
+        "event_time_5": "/5/data/timestamp",
+        "event_time_6": "/6/data/timestamp"
       },
       "headerCaptures": {
         "agui_run_completes_command": "x-cma-command-id",
@@ -147,11 +169,11 @@
         },
         "body": [
           {
-            "id": "19",
+            "id": "20",
             "data": {
               "type": "RUN_STARTED",
               "threadId": "agt_contract",
-              "runId": "19",
+              "runId": "20",
               "timestamp": "2026-09-07T00:00:00Z"
             }
           },
@@ -159,8 +181,8 @@
             "data": {
               "type": "TEXT_MESSAGE_START",
               "threadId": "agt_contract",
-              "runId": "19",
-              "messageId": "msg_20",
+              "runId": "20",
+              "messageId": "msg_21",
               "role": "user",
               "timestamp": "2026-09-07T00:00:00Z"
             }
@@ -169,28 +191,28 @@
             "data": {
               "type": "TEXT_MESSAGE_CONTENT",
               "threadId": "agt_contract",
-              "runId": "19",
-              "messageId": "msg_20",
+              "runId": "20",
+              "messageId": "msg_21",
               "delta": "Check the next boundary",
-              "timestamp": "2026-09-07T00:00:00Z"
-            }
-          },
-          {
-            "id": "20",
-            "data": {
-              "type": "TEXT_MESSAGE_END",
-              "threadId": "agt_contract",
-              "runId": "19",
-              "messageId": "msg_20",
               "timestamp": "2026-09-07T00:00:00Z"
             }
           },
           {
             "id": "21",
             "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "20",
+              "messageId": "msg_21",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "22",
+            "data": {
               "type": "STATE_DELTA",
               "threadId": "agt_contract",
-              "runId": "19",
+              "runId": "20",
               "delta": [
                 {
                   "op": "replace",
@@ -202,11 +224,11 @@
             }
           },
           {
-            "id": "23",
+            "id": "24",
             "data": {
               "type": "RUN_FINISHED",
               "threadId": "agt_contract",
-              "runId": "19",
+              "runId": "20",
               "outcome": {
                 "type": "complete"
               },
@@ -263,6 +285,7 @@
             "event": "response.created",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,
@@ -305,6 +328,7 @@
             "event": "response.in_progress",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,
@@ -347,6 +371,7 @@
             "event": "response.completed",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,
@@ -412,6 +437,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "callback_url": "https://cma.example/agents/agt_contract",
           "id": "resp_agt_contract_12",
           "object": "response",
           "created_at": 1700000000,
@@ -697,6 +723,7 @@
             "event": "response.created",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,
@@ -739,6 +766,7 @@
             "event": "response.in_progress",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,

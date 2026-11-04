@@ -90,6 +90,115 @@ async fn prepare_recovery_preserves_original_identity_and_replays_concurrent_adm
 }
 
 #[tokio::test]
+async fn prepare_recovery_preserves_repository_snapshot_request_and_refuses_changed_source() {
+    let (store, service, mut original, _) = fixture().await;
+    let revision = original.revision;
+    let url = "https://github.com/example/original".to_string();
+    let reference = Some("release".to_string());
+    original.profile.content.location = crate::profiles::WorkspaceLocation::RepositorySnapshot {
+        url: url.clone(),
+        reference: reference.clone(),
+    };
+    original.profile.digest = crate::profiles::content_digest(&original.profile.content).unwrap();
+    original.source = WorkspaceSource::RepositorySnapshot {
+        url: url.clone(),
+        reference: reference.clone(),
+        source_commit: None,
+    };
+    original.revision += 1;
+    store
+        .save_workspace(revision, original.clone())
+        .await
+        .unwrap();
+    let recovered = service
+        .recover_prepare(&caller("consumer"), &original.id, "snapshot")
+        .await
+        .unwrap();
+    let request = &recovered.work.prepare_recovery.as_ref().unwrap().original;
+    assert_eq!(
+        request.source,
+        layer3_adapter::WorkspaceSource::RepositorySnapshot { url, reference }
+    );
+    assert!(request.has_valid_sha256());
+    assert_eq!(request, &original.original_prepare_request().unwrap());
+    assert_eq!(recovered.source, original.source);
+    assert_eq!(
+        service
+            .recover_prepare(&caller("consumer"), &original.id, "snapshot")
+            .await
+            .unwrap(),
+        recovered
+    );
+    for pinned in [false, true] {
+        let mut changed = recovered.clone();
+        let WorkspaceSource::RepositorySnapshot {
+            reference,
+            source_commit,
+            ..
+        } = &mut changed.source
+        else {
+            unreachable!()
+        };
+        if pinned {
+            *source_commit = Some("a".repeat(40));
+        } else {
+            *reference = Some("different".into());
+        }
+        assert_eq!(
+            changed.validate_prepare_recovery_binding(),
+            Err(SandboxStoreError::WorkspaceRecoveryConflict)
+        );
+    }
+    let mut completed = recovered.clone();
+    let WorkspaceSource::RepositorySnapshot { source_commit, .. } = &mut completed.source else {
+        unreachable!()
+    };
+    *source_commit = Some("b".repeat(40));
+    completed.record_resolved_commit("c".repeat(40)).unwrap();
+    completed
+        .work
+        .schedule(WorkspaceWorkStep::Setup, NOW.into());
+    let receipt_request =
+        layer3_adapter::WorkspacePrepareRecoveryRequest::new("snapshot", request.clone(), None);
+    completed.work.prepare_recovery.as_mut().unwrap().attempts[0].completion =
+        Some(WorkspacePrepareRecoveryCompletion {
+            prepared: layer3_adapter::WorkspaceReceipt {
+                operation_id: receipt_request.operation_id.clone(),
+                request_sha256: receipt_request.request_sha256.clone(),
+                workspace_id: original.id.to_string(),
+                name: original.name.clone(),
+                path: original.path.clone(),
+                resolved_commit: "c".repeat(40),
+                source_commit: Some("b".repeat(40)),
+            },
+            preserved_path: receipt_request.preserved_path(),
+            original_journal_sha256: "d".repeat(64),
+        });
+    completed.validate_prepare_recovery_binding().unwrap();
+    let completion_revision = completed.revision;
+    completed.revision += 1;
+    store
+        .save_workspace(completion_revision, completed.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .recover_prepare(&caller("consumer"), &original.id, "snapshot")
+            .await
+            .unwrap(),
+        completed
+    );
+    let WorkspaceSource::RepositorySnapshot { source_commit, .. } = &mut completed.source else {
+        unreachable!()
+    };
+    *source_commit = Some("e".repeat(40));
+    assert_eq!(
+        completed.validate_prepare_recovery_binding(),
+        Err(SandboxStoreError::WorkspaceRecoveryConflict)
+    );
+}
+
+#[tokio::test]
 async fn prepare_recovery_admin_is_audited_and_foreign_or_unprivileged_cannot_admit() {
     let (store, service, original, _) = fixture().await;
     assert_eq!(

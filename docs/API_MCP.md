@@ -87,6 +87,23 @@ A stale expected revision preserves the owner's newer work. All metadata commits
 recheck the full current Agent, runtime and conversation identity after object
 upload. User-supplied REST origin labels cannot forge runtime write authority.
 
+The confirmed result also includes `structuredContent.deliverable` with
+`{reference,marker}`. Copy the marker unchanged onto its own line in the final
+answer delivering that document. It selects the receipt's exact immutable source
+revision, using stored revision metadata and revalidated runtime authorship.
+Updating a title does not relabel the original source revision's download.
+
+When delivery services are configured, `describe_deliverable` verifies one
+`{kind:"live_file",path}` or `{kind:"agent_artifact",id}` and returns the same
+`{reference,marker}` directly in `structuredContent`. The path is relative to the
+mounted home and must select an actual file. The tool reads bounded bytes and
+checks the exact current runtime/conversation before and after verification.
+It does not scan the directory, publish private files, grant sharing or create
+immutable file snapshots. Use it only for a result actually delivered in that
+answer; descriptions of file names are not references. Arbitrary document
+selection is refused: document markers come from confirmed publication/update
+receipts with the separate runtime author fence.
+
 Sources are at most 1 MiB UTF-8 Markdown; the JSON envelope accommodates escaped
 text. Other tool requests retain the original 16 KiB bound. All tools share the
 existing rate, concurrency and request deadlines. Machine storage credentials

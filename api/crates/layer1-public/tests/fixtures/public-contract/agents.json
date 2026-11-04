@@ -57,6 +57,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "callback_url": "https://cma.example/agents/agt_contract",
           "id": "agt_contract",
           "status": "ready",
           "profile": {

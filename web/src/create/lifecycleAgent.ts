@@ -14,7 +14,9 @@ export function useLifecycleAgent(
 ) {
   const operationId = operation?.id;
   const agentId = operation?.agent_id;
-  const eligible = operation?.status === 'running' && operationId === receiptId;
+  const eligible =
+    (operation?.status === 'running' || operation?.status === 'succeeded') &&
+    operationId === receiptId;
   const [observed, setObserved] = useState<{ operationId: string; agent: AgentDetail }>();
   useEffect(() => {
     if (!eligible || !operationId || !agentId || !viewerId) return;
@@ -43,7 +45,7 @@ export function useLifecycleAgent(
             if (
               signal.aborted ||
               parent.id !== detail.sandbox.id ||
-              (parent.owner !== undefined && parent.owner !== viewerId) ||
+              parent.owner !== viewerId ||
               (parent.status !== 'active' &&
                 !bootstrapInputAllowed(detail, parent, viewerId, operationId)) ||
               parent.lifecycle === undefined ||

@@ -7,9 +7,13 @@ use axum::{
 };
 
 mod capabilities;
+#[cfg(test)]
+mod completion_tests;
 mod events;
 mod launch_companion;
 mod live;
+#[cfg(test)]
+mod plan_tests;
 mod replay;
 mod run;
 mod sandbox_companion;

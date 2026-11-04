@@ -10,7 +10,33 @@ Legacy response POSTs also enter common durable command admission. The v1 contra
 to apply to those routes; changing a client's base URL requires adopting the
 v2 rules in this section.
 
+Both Responses versions include optional `callback_url` in response objects and their SSE frames, derived from `CHRONO_SERVER_PUBLIC_URL` and the actual Agent ID as described in [REST Agent links](API_REST.md#inline-agent-creation).
+
 ## Responses v2
+
+Conditional follow-ups may include
+`"answer_context":{"turn_sequence":3,"answer_sequence":5}` on either creation
+route. The sequences identify the current successfully completed turn and its
+final nonempty assistant message. The answer sequence must exceed the positive
+turn sequence; both fit a signed 64-bit integer (TypeScript additionally requires
+safe integers). Admission atomically rejects an active or replaced answer, pending
+input, or any newer admitted message, including one later cancelled or rejected.
+This uses the ordinary permission checks and command queue. It adds no send route.
+
+Scope is immutable canonical intent. Keep exact input, scope and `Idempotency-Key`
+when recovering uncertain delivery; authorized same-key replay returns the original
+receipt before checking the now-stale answer. A different key or changed intent
+cannot recover that receipt. Invalid conditions return 422 `invalid_answer_context`;
+ineligible new admissions return 409 `agent_command_not_admissible`. The latter is
+an explicit refusal of new admission; callers can remove the expired suggestion.
+Permission or network failures alone never prove that a prior request was refused.
+Clients without a condition retain ordinary append semantics.
+
+Internally this condition uses the existing `after_turn` order and reserved
+`cma.answer_sequence` metadata. Applications must not supply that metadata key;
+the condition consumes one of the 16 metadata entries. Persisted commands retain
+their existing schema and fingerprint/replay behavior. Older public servers reject
+this unsupported extension; clients must not drop it and resubmit unconditionally.
 
 An optional request `model` must match the Agent's current conversation settings;
 it does not override those settings. Once a command starts a turn, its response
@@ -164,7 +190,12 @@ uncertain.
 This version streams committed messages, not transient provider token fragments.
 Provider tool activity uses standard `mcp_call` items with `server_label: "cma"`,
 a display `name` bounded to 200 Unicode characters, empty `arguments`, and null
-`output` and `error` bodies. These items describe provider activity; they do not
+`output` and `error` bodies. An optional additive `cma:output: {text, truncated}`
+extension carries bounded recorded output in retrieval, completed activity items
+and the terminal response. In-progress output-only updates are available by
+retrieval and the Agent event/AG-UI streams; they do not manufacture a Responses
+activity status transition or renumber earlier events. The standard `output`
+field remains null for existing clients. These items describe provider activity; they do not
 request client tool execution. Their status is `in_progress`, `completed` or
 `failed`. Tool starts and terminal updates follow immutable log order, so tools
 may overlap and text may appear before a tool completes without rewriting the
@@ -569,9 +600,13 @@ for that connection. The SSE `event` field repeats `type`.
 | `response.incomplete` | Terminal incomplete response with details |
 
 `response.cma_chat.tool_activity` carries an `item` whose type is
-`cma_chat.tool_activity`. It includes the tool call id, kind, target and status;
+`cma_chat.tool_activity`. Starts and status updates include the tool call id,
+kind, target and reported status;
 `duration_ms` is currently null. Tool updates without a retained kind use
-`"unknown"`. Argument and result bodies are not part of this projection.
+`"unknown"`. Optional `output: {text, truncated}` contains at most 16 KiB of
+reported text. An output-only activity update has an id and output without an
+invented status; merge it into the existing call. Executable arguments and
+structured tool result bodies are not part of this projection.
 The same extension item can appear in durable conversation history.
 
 Reasoning has a narrower lifetime. Live `ThoughtDelta` frames project into the

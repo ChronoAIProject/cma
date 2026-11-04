@@ -2,6 +2,9 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
+        Some(&self.hosted)
+    }
     fn runtime_recovery(&self) -> Option<&dyn crate::RuntimeRecovery> {
         Some(self)
     }

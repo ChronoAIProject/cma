@@ -132,6 +132,8 @@ pub struct AgentWorktree {
 /// Workspace details embedded in the Agent resource.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentWorkspace {
+    /// Pinned repository provenance, when supplied by the server.
+    pub source: Option<crate::instances::WorkspaceSource>,
     /// Workspace identifier.
     pub id: String,
     /// Display name.
@@ -201,6 +203,9 @@ pub struct AgentBootstrap {
 /// Complete owner-facing Agent resource with its hierarchy.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Agent {
+    /// Browser page for the actual CMA Agent, when available.
+    #[serde(default)]
+    pub callback_url: Option<String>,
     /// Canonical runtime observations, absent on retained older runtimes.
     pub runtime_metadata: Option<AgentRuntimeMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

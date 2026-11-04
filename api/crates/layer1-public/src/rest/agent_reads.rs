@@ -28,6 +28,8 @@ const DEFAULT_EVENT_LIMIT: u16 = 200;
 pub(crate) struct EventParams {
     after: Option<u64>,
     limit: Option<u16>,
+    #[serde(default)]
+    tool_output: bool,
 }
 
 pub(super) fn routes() -> Router<AgentRoutesState> {
@@ -92,7 +94,16 @@ pub(crate) async fn events(
         .flatten();
     let items = entries
         .into_iter()
-        .map(public_event)
+        .map(|mut entry| {
+            if !params.tool_output {
+                match &mut entry.kind {
+                    Some(AgentLogKind::ToolOutputReported { .. }) => entry.kind = None,
+                    Some(AgentLogKind::ToolCallUpdated { output, .. }) => *output = None,
+                    _ => {}
+                }
+            }
+            public_event(entry)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(AgentEventPageView { items, next }))
 }

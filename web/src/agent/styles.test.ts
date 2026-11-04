@@ -56,7 +56,7 @@ describe('conversation geometry with readable labels', () => {
         .getPropertyValue('grid-template-areas')
         .replace(/\s+/g, ' '),
     ).toBe(
-      "'attach permission steering . model ring send' 'status status status status status status status'",
+      "'attach steering settings ring send' 'settings-panel settings-panel settings-panel settings-panel settings-panel' 'status status status status status'",
     );
   });
 
@@ -72,8 +72,13 @@ describe('conversation geometry with readable labels', () => {
     const media = Array.from(rules).find(
       (rule) => rule instanceof CSSMediaRule && rule.conditionText === '(max-width: 30rem)',
     ) as CSSMediaRule;
-    const narrow = declaration(media.cssRules, '.agent-composer .agent-composer__submit');
+    const narrow = declaration(
+      media.cssRules,
+      '.agent-composer .agent-composer__submit:not(.agent-composer__submit--stop)',
+    );
     expect(narrow.getPropertyValue('width')).toBe('44px');
+    const stop = declaration(rules, '.agent-composer .agent-composer__submit--stop');
+    expect(stop.getPropertyValue('width')).toBe('auto');
   });
 
   it('retains the original 12px gap and track in the resource metrics row', () => {

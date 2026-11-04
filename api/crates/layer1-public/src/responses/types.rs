@@ -72,6 +72,9 @@ pub struct OutputMessage {
 /// A response resource reconstructed from one durable turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ResponseObject {
+    /// Browser page for the actual CMA Agent behind this response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_url: Option<String>,
     pub id: String,
     pub object: &'static str,
     pub created_at: u64,

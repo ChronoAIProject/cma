@@ -20,8 +20,14 @@ import { commandRefusal, type SessionCommand } from './slashCommands';
 import { SteeringModePicker, type SteeringMode } from './SteeringMode';
 import { ContextRing } from './ContextRing';
 import './Composer.css';
+import {
+  ComposerSuggestionEditor,
+  type ComposerSuggestionEditorHandle,
+} from './ComposerSuggestionEditor';
 
 interface ComposerProps {
+  readonly editorRef?: React.RefObject<ComposerSuggestionEditorHandle | null>;
+  readonly suggestionScope?: string;
   readonly draft?: AgentDraft;
   readonly availableCommands?: readonly SessionCommand[];
   readonly usage?: AgentUsage;
@@ -71,6 +77,8 @@ function fit(field: HTMLTextAreaElement): void {
 }
 
 export function Composer({
+  editorRef,
+  suggestionScope,
   draft,
   availableCommands,
   usage,
@@ -140,6 +148,7 @@ export function Composer({
     usable && !inputBlocked && !busy && !submitting && !requestPending,
     inputRef,
     (value) => {
+      editorRef?.current?.discardUndo();
       editVersion.current += 1;
       setCommandError(undefined);
       setContent(value);
@@ -221,6 +230,7 @@ export function Composer({
     const refusal = commandRefusal(message, availableCommands, visibleAttachments.length > 0);
     setCommandError(refusal);
     if (refusal) return;
+    editorRef?.current?.discardUndo();
     const originalContent = content;
     const submittedAttachments = attachments.items;
     const version = editVersion.current;
@@ -237,9 +247,10 @@ export function Composer({
     try {
       const sendingRequest = onSend(message, () => {
         if (quickMessage === undefined) {
-          if (editVersion.current === version)
+          if (editVersion.current === version) {
             setContent((current) => (current === originalContent ? '' : current));
-          attachments.accept(submittedAttachments);
+            attachments.accept(submittedAttachments);
+          }
           setHandoff((current) => (current === pending ? undefined : current));
         }
       });
@@ -271,6 +282,18 @@ export function Composer({
         if (!submitting && !requestPending) attachments.add(files);
       }}
     >
+      <ComposerSuggestionEditor
+        key={suggestionScope}
+        editorRef={editorRef}
+        inputRef={inputRef}
+        content={content}
+        onChange={(text) => {
+          editVersion.current += 1;
+          setCommandError(undefined);
+          setHandoff(undefined);
+          setContent(text);
+        }}
+      />
       <QuickMessages
         messages={quickMessages}
         disabled={
@@ -339,8 +362,15 @@ export function Composer({
             aria-expanded={commands.open}
             aria-controls={commands.open ? commands.id : undefined}
             aria-activedescendant={commands.activeId}
-            placeholder={preparing ? 'Message Agent' : placeholder(status)}
+            placeholder={
+              preparing
+                ? 'Message Agent'
+                : running && queueWhileRunning
+                  ? 'Add a follow-up while the Agent works.'
+                  : placeholder(status)
+            }
             onChange={(event) => {
+              editorRef?.current?.discardUndo();
               editVersion.current += 1;
               setCommandError(undefined);
               if (handoff !== undefined) attachments.accept(handoff.attachments);
@@ -434,7 +464,7 @@ export function Composer({
               {running ? (
                 <Button
                   placement="agent-composer__submit agent-composer__submit--stop"
-                  variant="primary"
+                  variant="outline"
                   icon={<IconStopFill16 />}
                   aria-label="Stop response"
                   title={
@@ -444,7 +474,9 @@ export function Composer({
                   }
                   disabled={busy || controlsUnavailable}
                   onClick={() => void onStop()}
-                />
+                >
+                  Stop
+                </Button>
               ) : null}
             </div>
           </div>

@@ -276,6 +276,13 @@ impl From<SandboxHierarchyView> for OwnerSandboxDetailView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceSourceView {
+    RepositorySnapshot {
+        url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_commit: Option<String>,
+    },
     GitRepository {
         url: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -287,6 +294,15 @@ pub enum WorkspaceSourceView {
 impl From<&WorkspaceSource> for WorkspaceSourceView {
     fn from(value: &WorkspaceSource) -> Self {
         match value {
+            WorkspaceSource::RepositorySnapshot {
+                url,
+                reference,
+                source_commit,
+            } => Self::RepositorySnapshot {
+                url: url.clone(),
+                reference: reference.clone(),
+                source_commit: source_commit.clone(),
+            },
             WorkspaceSource::GitRepository { url, reference } => Self::GitRepository {
                 url: url.clone(),
                 reference: reference.clone(),
@@ -374,6 +390,8 @@ impl From<WorktreeHierarchySummary> for WorktreeView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct OwnerAgentSummaryView {
+    #[schema(value_type = String)]
+    pub task_status: layer2_core::sandbox::AgentTaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -393,6 +411,7 @@ pub struct OwnerAgentSummaryView {
 impl From<AgentHierarchySummary> for OwnerAgentSummaryView {
     fn from(value: AgentHierarchySummary) -> Self {
         Self {
+            task_status: value.task_status,
             runtime_metadata: value.runtime_metadata.map(Into::into),
             owner_title: value.owner_title,
             id: value.id.to_string(),

@@ -60,6 +60,7 @@ pub(crate) struct SandboxLifecycleComposition {
     workspace: SandboxScheduler,
     agent: AgentScheduler,
     titles: AgentTitleScheduler,
+    suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<dyn AgentUpdateRecorder>,
     funding_renewal: FundingRenewalWorker,
 }
@@ -97,6 +98,12 @@ impl SandboxLifecycleComposition {
         ));
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
+        let suggestions = super::suggestion_worker::SuggestionWorker::new(
+            dependencies.store.clone(),
+            dependencies.credentials.clone(),
+            dependencies.title_runtime.clone(),
+            config.title_model.clone(),
+        );
         let titles = AgentTitleScheduler::new(AgentTitleWorker::new(
             AgentTitleService::new(
                 dependencies.store.clone(),
@@ -174,6 +181,7 @@ impl SandboxLifecycleComposition {
             agent: AgentScheduler::new(agent_worker, agent_admitted),
             titles,
             funding_renewal,
+            suggestions,
         }
     }
 
@@ -195,6 +203,7 @@ impl SandboxLifecycleComposition {
         shutdown.push(self.agent.spawn(shutdown.subscribe()));
         shutdown.push(self.titles.spawn(shutdown.subscribe()));
         shutdown.push(self.funding_renewal.spawn(shutdown.subscribe()));
+        shutdown.push(self.suggestions.spawn(shutdown.subscribe()));
         for scheduler in [self.sandbox, self.workspace] {
             let signal = shutdown.subscribe();
             shutdown.push(scheduler.spawn(signal));

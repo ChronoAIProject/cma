@@ -7,6 +7,42 @@ use std::sync::Arc;
 struct Lifecycle(String);
 #[async_trait::async_trait]
 impl AgentLifecycleProvisioner for Lifecycle {
+    async fn desktop_capability(
+        &self,
+        _: &Caller,
+        _: Option<&CallerContext>,
+        scope: DesktopCreationScope,
+    ) -> Result<
+        layer2_core::sandbox::desktop_creation::DesktopCapability,
+        AgentLifecycleProvisioningError,
+    > {
+        use layer2_core::sandbox::desktop_creation::{DesktopAvailability, DesktopCapability};
+        if scope.workspace_id.is_some() && scope.sandbox_id.is_some() {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "workspace_id and sandbox_id are mutually exclusive".into(),
+            ));
+        }
+        if self.0 == "unavailable" {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
+        }
+        if self.0 == "foreign" {
+            return Err(AgentLifecycleProvisioningError::Forbidden);
+        }
+        let mut capability =
+            DesktopCapability::unavailable("This deployment has no verified desktop runtime.");
+        if self.0 == "desktop_available" {
+            capability.state = DesktopAvailability::Available;
+            capability.reason = "Verified desktop runtime.".into();
+            capability.runtime_image =
+                Some(format!("proof.invalid/runtime@sha256:{}", "d".repeat(64)));
+        }
+        if self.0 == "desktop_pending" {
+            capability.state = DesktopAvailability::TemporarilyUnavailable;
+            capability.reason =
+                "Runtime capability could not be verified. Retry the same request.".into();
+        }
+        Ok(capability)
+    }
     async fn create(
         &self,
         _: &Caller,
@@ -16,6 +52,9 @@ impl AgentLifecycleProvisioner for Lifecycle {
         _: &str,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
         match self.0.as_str() {
+            "desktop_unsupported" => Err(AgentLifecycleProvisioningError::DesktopUnsupported(
+                "This deployment has no verified desktop runtime.".into(),
+            )),
             "unavailable" => Err(AgentLifecycleProvisioningError::Unavailable),
             "image_auth" => Err(AgentLifecycleProvisioningError::SignInRequired),
             "image_forbidden" => Err(AgentLifecycleProvisioningError::ImageAccessDenied),
@@ -43,6 +82,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
             _ => {}
         }
         Ok(AgentLifecycleOperationView {
+            callback_url: None,
             id: "operation-contract".into(),
             status: "waiting_for_connection".into(),
             phase: "sandbox_ready".into(),

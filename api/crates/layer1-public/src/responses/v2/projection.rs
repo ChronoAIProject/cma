@@ -23,6 +23,9 @@ pub struct ResponseConversation {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct V2ResponseObject {
+    /// Browser page for the actual CMA Agent behind this response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callback_url: Option<String>,
     pub id: String,
     pub object: &'static str,
     pub created_at: u64,
@@ -66,6 +69,7 @@ impl V2ResponseObject {
     }
 }
 pub(super) fn project(
+    origin: &crate::agent_page::AgentPageOrigin,
     reading: AgentResponseReading,
     snapshot: &AgentEventStreamSnapshot,
 ) -> Option<V2ResponseObject> {
@@ -75,6 +79,7 @@ pub(super) fn project(
         return None;
     }
     let mut response = V2ResponseObject {
+        callback_url: origin.agent_url(snapshot.id.as_str()),
         id: command.receipt.response_id?.to_string(),
         object: "response",
         created_at: layer2_core::seconds_from_rfc3339(&command.receipt.admitted_at)?,

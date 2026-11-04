@@ -2,6 +2,9 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
+        Some(self)
+    }
     async fn open_desktop(&self, handle: &RuntimeHandle) -> crate::Result<DesktopConnectionHandle> {
         self.open_desktop(handle).await
     }
@@ -93,12 +96,7 @@ impl SandboxAdapter for HostedAdapter {
         request: &RuntimeAdoptionRequest,
         until: u64,
     ) -> crate::Result<()> {
-        let rendered = self
-            .deployment
-            .render_adoption(request, request.generation)?;
-        self.backend
-            .set_runtime_deadline(&request.handle, &rendered, until)
-            .await
+        self.deadline_exact(request, until).await
     }
 
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
@@ -493,17 +491,10 @@ impl SandboxAdapter for HostedAdapter {
     }
 
     async fn resources(&self, handle: &RuntimeHandle) -> crate::Result<ResourceReading> {
-        self.known_state(handle).await?;
-        match self.exchange(handle, RequestFrame::Resources).await? {
-            ResponseFrame::Resources(reading) => Ok(reading),
-            _ => unreachable!("exchange verifies response operation"),
-        }
+        self.resources_exact(handle).await
     }
 
     async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {
-        self.known_state(handle).await?;
-        self.backend.teardown(handle).await?;
-        self.states.lock().await.remove(handle);
-        Ok(())
+        self.teardown_exact(handle).await
     }
 }

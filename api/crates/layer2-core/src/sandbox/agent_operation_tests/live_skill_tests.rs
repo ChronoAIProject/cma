@@ -56,6 +56,68 @@ async fn live_skill_admission_is_durable_idempotent_and_blocks_conversation_inpu
 }
 
 #[tokio::test]
+async fn installed_skill_version_change_is_reported_as_unsupported() {
+    let mut ready = test_agent(AgentStatus::Ready, None);
+    let mut selected = reference();
+    selected.version = None;
+    ready.profile.content.skills = vec![selected];
+    ready.work.resolved_skills = Some(vec![ResolvedAgentSkill {
+        source: SkillSource::Ornn,
+        id: crate::SkillId::new("research"),
+        name: Some("Research".into()),
+        version: "1.0".into(),
+        archive_sha256: "a".repeat(64),
+    }]);
+    let store = Arc::new(InMemorySandboxStore::with_agent_fixture(ready.clone()));
+    seed_active_parent(&store).await;
+    let (sender, inputs) = recording_sender(Ok(()));
+    let service = AgentOperationService::new(
+        store.clone(),
+        TestRuntimeRegistry::new(full_capabilities(), sender),
+    );
+
+    let mut requested = reference();
+    requested.version = Some("1.1".into());
+    assert_eq!(
+        service.install_skill(&owner(), &ready.id, requested).await,
+        Err(AgentOperationError::SkillVersionUpgradeUnsupported {
+            id: "research".into(),
+            installed: "1.0".into(),
+            requested: "1.1".into(),
+        })
+    );
+    assert_eq!(store.get_agent(&ready.id).await.unwrap().unwrap(), ready);
+    assert!(inputs.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn profile_skill_version_change_is_reported_as_unsupported() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    let mut ready = test_agent(AgentStatus::Ready, None);
+    ready.profile.content.skills = vec![reference()];
+    seed_active_parent(&store).await;
+    store.create_agent(ready.clone()).await.unwrap();
+    let (sender, inputs) = recording_sender(Ok(()));
+    let service = AgentOperationService::new(
+        store.clone(),
+        TestRuntimeRegistry::new(full_capabilities(), sender),
+    );
+
+    let mut requested = reference();
+    requested.version = Some("1.1".into());
+    assert_eq!(
+        service.install_skill(&owner(), &ready.id, requested).await,
+        Err(AgentOperationError::SkillVersionUpgradeUnsupported {
+            id: "research".into(),
+            installed: "1.0".into(),
+            requested: "1.1".into(),
+        })
+    );
+    assert_eq!(store.get_agent(&ready.id).await.unwrap().unwrap(), ready);
+    assert!(inputs.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn live_skill_admission_rejects_other_owners_busy_agents_and_unsafe_paths() {
     for case in 0..6 {
         let store = Arc::new(InMemorySandboxStore::default());

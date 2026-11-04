@@ -1,5 +1,32 @@
-import type { ConversationState, PlanEntry } from './model';
+import type { ConversationState, PlanEntry, PlanSnapshot } from './model';
 import { object, text } from './conversationValues';
+
+export function reportedPlanProgress(plan: PlanSnapshot) {
+  const completed = plan.entries.filter((entry) => entry.status === 'completed').length;
+  const currentIndex = plan.incomplete
+    ? -1
+    : plan.entries.findIndex((entry) => entry.status === 'in_progress');
+  const multiple = plan.entries.filter((entry) => entry.status === 'in_progress').length > 1;
+  const known =
+    !plan.incomplete &&
+    !multiple &&
+    plan.entries.every((entry) => ['completed', 'in_progress', 'pending'].includes(entry.status));
+  return {
+    completed,
+    currentIndex,
+    multiple,
+    known,
+    summary: plan.incomplete
+      ? 'Some plan steps unavailable'
+      : known
+        ? `Completed ${completed}/${plan.entries.length} steps`
+        : `${completed} of ${plan.entries.length} steps reported complete`,
+  };
+}
+
+export function planAnchor(plan: PlanSnapshot) {
+  return `reported-${plan.id}`;
+}
 
 /** Entries that are not a titled step with a status are dropped rather than guessed at. */
 function planEntries(value: unknown): readonly PlanEntry[] | undefined {
@@ -8,7 +35,12 @@ function planEntries(value: unknown): readonly PlanEntry[] | undefined {
     const item = object(entry);
     const title = text(item?.title);
     const status = text(item?.status);
-    return title === undefined || status === undefined ? [] : [{ title, status }];
+    return title === undefined ||
+      title.trim() === '' ||
+      status === undefined ||
+      status.trim() === ''
+      ? []
+      : [{ title, status }];
   });
 }
 
@@ -26,7 +58,13 @@ export function setPlan(
   if (entries === undefined) return state;
   const id = `plan:${runId ?? 'unattributed'}`;
   const current = state.plans.find((plan) => plan.id === id);
-  const plan = { ...current, id, runId, entries };
+  const plan = {
+    ...current,
+    id,
+    runId,
+    entries,
+    incomplete: entries.length !== (value as unknown[]).length || undefined,
+  };
   return {
     ...state,
     plans:

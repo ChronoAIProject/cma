@@ -3,6 +3,8 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/agents/{id}/environment': ({ client, param }) =>
+    client.agentFiles.environment(param('id')),
   'POST /api/v1/cmaeg/worker-credentials/classify': ({ client, body }) =>
     client.providerBindings.classifyWorkerCredential(body),
   'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment':
@@ -121,11 +123,20 @@ export const resourceDispatch: Record<string, Dispatch> = {
   }) => client.agents.approveAccessRequest(param('id'), param('request_id'), body, command),
   'POST /api/v1/agents/{id}/access-requests/{request_id}/deny': ({ client, param, command }) =>
     client.agents.denyAccessRequest(param('id'), param('request_id'), command),
+  'GET /api/v1/agents/{id}/suggestions': ({ client, param, query }) =>
+    client.agents.suggestions(param('id'), {
+      turn_sequence: Number(query.get('turn_sequence')),
+      answer_sequence: Number(query.get('answer_sequence')),
+    }),
   'GET /api/v1/agents/{id}/message-feedback': ({ client, param, query }) =>
     client.agents.messageFeedback(param('id'), {
       ...(query.has('after') ? { after: Number(query.get('after')) } : {}),
       ...(query.has('limit') ? { limit: Number(query.get('limit')) } : {}),
     }),
+  'GET /api/v1/agents/{id}/messages/{message_id}/feedback': ({ client, param }) =>
+    client.agents.feedbackDetails(param('id'), param('message_id')),
+  'PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons': ({ client, param, body }) =>
+    client.agents.setFeedbackReasons(param('id'), param('message_id'), body),
   'PUT /api/v1/agents/{id}/messages/{message_id}/feedback': ({ client, param, body }) =>
     client.agents.setMessageFeedback(
       param('id'),
@@ -143,6 +154,11 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.agents.createLifecycle(body, command),
   'GET /api/v1/agent-lifecycle/{id}': ({ client, param }) =>
     client.agents.readLifecycle(param('id')),
+  'GET /api/v1/desktop-capability': ({ client, query }) =>
+    client.agents.desktopCapability({
+      workspace_id: query.get('workspace_id') ?? undefined,
+      sandbox_id: query.get('sandbox_id') ?? undefined,
+    }),
   'POST /api/v1/sandboxes/{id}/workspaces/inline': ({ client, param, body, command }) =>
     client.workspaces.createInline(param('id'), body, command),
   'PUT /api/v1/cmaeg/bindings/{binding_id}': ({ client, param, body }) =>

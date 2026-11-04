@@ -27,6 +27,8 @@ describe('ToolCallRow', () => {
     ['in_progress', undefined, 'Outcome not reported (last status: in_progress)', 'neutral'],
   ])('pairs status %s with its word and dot', (status, activeRunId, word, dot) => {
     render(<ToolCallRow tool={call('a', status)} activeRunId={activeRunId} />);
+    const toggle = screen.getByRole('button', { name: /^1 tool call/ });
+    if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle);
     const row = screen.getByRole('article', { name: 'Tool call: Call a' });
     expect(row).toHaveTextContent(word);
     expect(row).toHaveTextContent('execute');
@@ -35,6 +37,7 @@ describe('ToolCallRow', () => {
 
   it('draws no dot for a cancelled call and never states a duration', () => {
     render(<ToolCallRow tool={call('a', 'cancelled')} activeRunId={undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: '1 tool call' }));
     const row = screen.getByRole('article', { name: 'Tool call: Call a' });
     expect(row).toHaveTextContent('Cancelled');
     expect(row.querySelector('.statedot')).toBeNull();
@@ -43,6 +46,7 @@ describe('ToolCallRow', () => {
 
   it('offers Details only when the public contract supplied a body', () => {
     const { rerender } = render(<ToolCallRow tool={call('a', 'completed')} activeRunId="1" />);
+    fireEvent.click(screen.getByRole('button', { name: '1 tool call' }));
     expect(screen.queryByText('Details')).not.toBeInTheDocument();
     rerender(<ToolCallRow tool={call('a', 'completed', { detail: 'exit 0' })} activeRunId="1" />);
     fireEvent.click(screen.getByText('Details'));
@@ -76,7 +80,7 @@ describe('ToolCallGroup', () => {
     expect(toggle).not.toHaveAttribute('aria-controls');
   });
 
-  it('opens a group holding a failure, including one that joins later, until the reader closes it', () => {
+  it('opens failures in the current turn until the reader closes them', () => {
     const { rerender } = render(
       <ToolCallGroup
         group={group([call('a', 'completed'), call('b', 'completed')])}
@@ -89,7 +93,7 @@ describe('ToolCallGroup', () => {
       [call('a', 'completed'), call('b', 'completed'), call('c', 'failed')],
       true,
     );
-    rerender(<ToolCallGroup group={failing} activeRunId={undefined} />);
+    rerender(<ToolCallGroup group={failing} activeRunId="1" />);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(toggle).toHaveAccessibleName('3 tool calls · 1 failed');
     expect(toggle.querySelector('.tool-calls__failed')).toHaveTextContent('· 1 failed');
@@ -114,7 +118,7 @@ describe('ToolCallGroup', () => {
     expect(screen.getByRole('button', { name: '3 tool calls' })).toBeVisible();
   });
 
-  it('counts every failure in the group', () => {
+  it('keeps completed operation details collapsed while reporting every failure', () => {
     render(
       <ToolCallGroup
         group={group([call('a', 'failed'), call('b', 'completed'), call('c', 'error')], true)}
@@ -123,7 +127,7 @@ describe('ToolCallGroup', () => {
     );
     expect(screen.getByRole('button', { name: '3 tool calls · 2 failed' })).toHaveAttribute(
       'aria-expanded',
-      'true',
+      'false',
     );
   });
 });

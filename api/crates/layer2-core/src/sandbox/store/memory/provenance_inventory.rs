@@ -38,9 +38,7 @@ impl AgentProvenanceInventoryStore for InMemorySandboxStore {
                     .collect::<Result<Vec<_>, _>>()?
             }
         };
-        ids.iter()
-            .map(|id| super::channel_usage::snapshot(&state, id))
-            .collect()
+        ids.iter().map(|id| task_snapshot(&state, id)).collect()
     }
     async fn scan_shared_agent_provenance_inventory(
         &self,
@@ -70,7 +68,7 @@ impl AgentProvenanceInventoryStore for InMemorySandboxStore {
         ids.truncate(usize::from(page.limit) + 1);
         ids.iter()
             .map(|id| {
-                let value = super::channel_usage::snapshot(&state, id)?;
+                let value = task_snapshot(&state, id)?;
                 value
                     .provenance
                     .resource
@@ -80,4 +78,24 @@ impl AgentProvenanceInventoryStore for InMemorySandboxStore {
             })
             .collect()
     }
+}
+
+fn task_snapshot(
+    state: &State,
+    id: &AgentId,
+) -> Result<AgentChannelUsageSnapshot, SandboxStoreError> {
+    let mut snapshot = super::channel_usage::snapshot(state, id)?;
+    let agent = snapshot
+        .provenance
+        .resource
+        .lineage
+        .agent
+        .as_ref()
+        .ok_or(SandboxStoreError::NotFound)?;
+    let entries = state.agent_logs.get(id).map_or(&[][..], Vec::as_slice);
+    let pending_work = state.agent_commands.values().any(|command| {
+        command.receipt.envelope.agent_id == agent.id && !command.status.is_terminal()
+    });
+    snapshot.task_status = crate::sandbox::AgentTaskStatus::from_log(agent, entries, pending_work);
+    Ok(snapshot)
 }

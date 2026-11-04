@@ -1,4 +1,3 @@
-import { Presence } from './ui/Presence';
 import { SkeletonRows } from './ui/Skeleton';
 import { Documents, Operations, Settings, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
@@ -8,16 +7,17 @@ import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
 import { useAgentDraft } from './agent/draft';
-import { AgentSidePanel, type AgentPanel } from './agent/AgentSidePanel';
+import { AgentSidePanel } from './agent/AgentSidePanel';
+import { useAgentPanel } from './agent/useAgentPanel';
+import { AgentComputerObservation } from './agent/environment/observation';
 import { useAgentController } from './agent/controller';
 import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { LegacyProfileNotice } from './profile/LegacyProfileNotice';
 import { routePath, type AppRoute } from './routing/routes';
 import { useViewArrival } from './ui/arrivalMotion';
-import { AppFrame } from './shell/AppFrame';
+import { DeliverablePreviewFrame as AppFrame } from './agent/DeliverablePreviewFrame';
 import { Sidebar } from './shell/Sidebar';
-import type { TreePermissions } from './shell/Tree';
 import { ManagerNavigation } from './shell/ManagerNavigation';
 import { navigationAgent, useNavigation } from './shell/navigation';
 import { CharacterColorContext } from './character/characterColor';
@@ -26,7 +26,9 @@ import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
 import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
-import { NotFoundView, UnavailableView, WelcomeView } from './ConsoleViews';
+import { ConsoleActionError, NotFoundView, UnavailableView } from './ConsoleViews';
+import { ConsoleLanding } from './ConsoleLanding';
+import { consoleCreationAccess } from './ConsoleCreationAccess';
 import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
@@ -75,15 +77,20 @@ function ConsoleContent({
 }: ConsoleProps) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [panel, setPanel] = useState<AgentPanel>();
-  const detailsOpen = panel === 'details';
-  const setDetailsOpen = (open: boolean) => setPanel(open ? 'details' : undefined);
+  const { panel, setPanel, detailsOpen, setDetailsOpen } = useAgentPanel();
   const [positions] = useState(() => new AgentViewPositions());
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
   const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const computerObservation = useMemo(
+    () =>
+      new AgentComputerObservation({ client, subject: user.id, agentId: selectedAgent }, () =>
+        setPanel('activity'),
+      ),
+    [client, user.id, selectedAgent, setPanel],
+  );
   const ownerViews = useOwnerViews();
   const scopeClient = user.visitor ? undefined : client.resourceViews;
   const {
@@ -149,14 +156,14 @@ function ConsoleContent({
     onNavigate,
     !accessUncertain,
   );
-  const canUse = !accessUncertain && user.capabilities.includes('use_own_sandboxes');
-  const canCreate = !user.visitor && canUse && onCreate !== undefined;
-  const canCreateInScope = canCreate && navigationScope === '' && scopeReady;
-  const newAgentUnavailable = !scopeReady
-    ? 'Checking your access.'
-    : navigationScope !== ''
-      ? 'Switch to Personal to create an Agent.'
-      : undefined;
+  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
+    consoleCreationAccess(
+      user,
+      navigationScope,
+      scopeReady,
+      accessUncertain,
+      onCreate !== undefined,
+    );
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
@@ -166,19 +173,10 @@ function ConsoleContent({
       : route.kind === 'not_found'
         ? 'Page not found'
         : undefined,
+    route.kind === 'agent' && (personalAgentId !== undefined || shared !== undefined)
+      ? 'inherit'
+      : 'product',
   );
-  const permissions: TreePermissions = {
-    createAgent: canCreate,
-    // Workspace creation is an inline Agent Manager operation. The legacy
-    // profile picker remains available only to compatibility handoffs.
-    createWorkspace: canCreate,
-    pauseSandbox: canUse,
-    removeWorkspace: canUse,
-    stopAgent: canUse,
-    deleteAgent: canUse,
-    exportHistory: canUse,
-    deleteSandbox: !accessUncertain && user.capabilities.includes('delete_own_sandbox'),
-  };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content =
     route.kind === 'artifacts' || route.kind === 'document' ? (
@@ -218,11 +216,13 @@ function ConsoleContent({
     ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
       <SharedAgent
         key={shared.id}
+        viewerId={user.id}
         client={client.resourceViews}
         web={client}
+        computerObservation={computerObservation}
         detail={shared}
         onAccessChanged={agentAccess.reload}
-        filesOpen={panel === 'files'}
+        filesOpen={panel !== undefined && panel !== 'details'}
         onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
@@ -248,6 +248,7 @@ function ConsoleContent({
     ) : route.kind === 'agent' ? (
       <CharacterColorContext value={located?.sandbox.color}>
         <AgentSurface
+          computerObservation={client.operationReplay ? computerObservation : undefined}
           key={route.agentId}
           user={user}
           lifecycleClient={client}
@@ -258,7 +259,7 @@ function ConsoleContent({
           viewPosition={viewPosition}
           accessUncertain={accessUncertain}
           accessAuthorized={agentAccess.personalReady && !accessUncertain}
-          filesOpen={panel === 'files'}
+          filesOpen={panel !== undefined && panel !== 'details'}
           onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
           detailsOpen={detailsOpen}
           onDetailsOpenChange={setDetailsOpen}
@@ -357,42 +358,43 @@ function ConsoleContent({
     ) : route.kind === 'not_found' ? (
       <NotFoundView />
     ) : (
-      <WelcomeView
-        heading={
-          route.kind === 'home' || route.kind === 'agent_manager'
-            ? 'Welcome to CMA'
-            : route.kind.replaceAll('_', ' ')
-        }
-        description={
-          route.kind === 'home' || route.kind === 'agent_manager'
-            ? 'An Agent is an AI assistant with its own private computer. Describe a task such as research, writing, data work or code, and it works on it, asking you when it needs a decision.'
-            : undefined
-        }
-        onNewAgent={
-          (route.kind === 'home' || route.kind === 'agent_manager') && canCreateInScope
-            ? newAgent
-            : undefined
-        }
+      <ConsoleLanding
+        client={client}
+        user={user}
+        route={route}
+        canCreate={canCreateInScope}
+        onCreated={(target) => {
+          setRevision((value) => value + 1);
+          onNavigate(target);
+        }}
       />
     );
-
   return (
     <AppFrame
+      previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
+      onPreviewOpen={() => setPanel(undefined)}
       phoneTitle="Agent Manager"
+      taskLayout
+      workspaceDetails={panel !== 'details'}
       detailsOpen={
         !accessUncertain &&
         (personalAgentId !== undefined || shared !== undefined) &&
         panel !== undefined
       }
       compactDetailsOverlay
+      onDetailsClose={() => setPanel(undefined)}
       details={
         route.kind === 'agent' && !accessUncertain && (personalAgentId || shared) ? (
           <AgentSidePanel
             key={route.agentId}
             agentId={route.agentId}
+            viewerId={user.id}
             shared={shared !== undefined}
             detail={ready?.detail}
             panel={panel}
+            onSelect={setPanel}
+            conversation={ready?.conversation}
+            observation={computerObservation}
             onClose={() => setPanel(undefined)}
             onAccessChanged={agentAccess.reload}
             publicationScope={artifactPublicationScope}
@@ -419,7 +421,7 @@ function ConsoleContent({
             (onServiceNavigate ?? onNavigate)(next);
           }}
           newAgent={
-            canCreate
+            canStartNewAgent
               ? {
                   onCreate: () => onCreate?.({ kind: 'new_agent' }),
                   unavailableReason: newAgentUnavailable,
@@ -485,13 +487,7 @@ function ConsoleContent({
             canOpenOperations={canOpenOperations(user.capabilities)}
           />
           {actions.notice}
-          <Presence>
-            {actions.error === undefined ? null : (
-              <p className="console__action-error" role="alert">
-                {actions.error}
-              </p>
-            )}
-          </Presence>
+          <ConsoleActionError error={actions.error} />
           {content}
         </main>
       }
