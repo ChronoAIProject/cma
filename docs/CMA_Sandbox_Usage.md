@@ -96,7 +96,11 @@ summary aggregation and history retention after purge. The Mongo tests require
 `CHRONO_TEST_MONGODB_URI` naming an isolated replica set and are included in the CI
 Mongo contract suite.
 
-## NyxID billing integration
+## Optional direct Lago exporter
+
+Keep this exporter disabled for the NyxID prepaid lifecycle path below. It bypasses
+NyxID admission and its internal usage ledger; prepaid windows use NyxID's single
+reconciler instead. The following describes the existing optional direct exporter.
 
 NyxID's current billing provider is Lago. Its customer external ID is the NyxID
 owner subject and its subscription external ID is `{owner}:{plan_code}`. CMA
