@@ -22,6 +22,7 @@ import { agentSkillsClient } from './rest/agentSkills';
 import { messageFeedbackClient } from './rest/messageFeedback';
 import { agentFilesClient } from './rest/agentFiles';
 import { documentsClient } from './rest/documents';
+import { computerClient } from './rest/computer';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -52,6 +53,7 @@ async function createdDetail<Value>(
 
 /** One public SDK transport, with explicit wire-to-view conversion at the boundary. */
 export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions): CmaWebClient {
+  const computer = computerClient(sdk);
   const pinnedSandboxProfile = async (reference: ProfileReference, options?: ReadOptions) => {
     const profile = await sdk.sandboxProfiles.readRevision(
       reference.id,
@@ -67,8 +69,16 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
+    operationReplay: sdk.agentEventsV2,
+    deliverables: sdk.agents,
     documents: documentsClient(),
-    files: agentFilesClient(),
+    browser: sdk.agentBrowser,
+    browserControl: computer.browserControl,
+    taskExperience: sdk.taskExperience,
+    files: {
+      ...agentFilesClient(),
+      environment: computer.environment,
+    },
     updateSandboxRuntime: async (id, targetVersion, options) => {
       const result = await sdk.sandboxes.updateRuntime(
         id,
@@ -79,12 +89,48 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     ...agentSettingsClient(),
     ...messageFeedbackClient(),
+    readSuggestedReplies: (agentId, scope, options) =>
+      sdk.agents.suggestions(agentId, scope, options),
     ...agentSkillsClient(),
     grantSandboxServiceAccess: async (id, services, options) => {
       await sdk.sandboxes.grantServiceAccess(id, { services: [...services] }, options);
     },
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
+    readTaskRepositorySupport: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
+    readDesktopCapability: async (scope, options) => {
+      const document = await sdk.readOpenApi(options);
+      const components = document.components as
+        | {
+            schemas?: { AgentLifecycleCreateRequest?: { properties?: { desktop?: unknown } } };
+          }
+        | undefined;
+      if (!components?.schemas?.AgentLifecycleCreateRequest?.properties?.desktop)
+        return {
+          state: 'unsupported',
+          reason: 'This service does not support desktop creation.',
+          runtime_contract: 3,
+          min_memory_mib: 2048,
+          min_cpu_millis: 1000,
+        };
+      return sdk.agents.desktopCapability(scope, options);
+    },
+    readTaskCreationSupport: async (options) => {
+      const document = await sdk.readOpenApi(options);
+      const components = document.components as
+        | {
+            schemas?: {
+              AgentLifecycleCreateRequest?: {
+                properties?: { initial_message?: { type?: unknown } };
+              };
+            };
+          }
+        | undefined;
+      const type =
+        components?.schemas?.AgentLifecycleCreateRequest?.properties?.initial_message?.type;
+      return type === 'string' || (Array.isArray(type) && type.includes('string'));
+    },
     createAgentLifecycle: async (input: AgentLifecycleCreateInput, options) => {
       const response = await fetch('/api/agent-manager/v1/agents', {
         method: 'POST',
@@ -207,7 +253,11 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       };
     },
     readAgentEvents: async (id, options) => {
-      const page = await sdk.agents.events(id, { after: options?.cursor, signal: options?.signal });
+      const page = await sdk.agents.events(id, {
+        after: options?.cursor,
+        signal: options?.signal,
+        toolOutput: true,
+      });
       return {
         items: page.items.map((event) => ({
           seq: event.seq,

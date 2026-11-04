@@ -255,9 +255,12 @@ pub(crate) async fn fixture_for_owner_with_router(
             .with_bindings(bindings.clone()),
     );
     let commands = AgentCommandService::new(store.clone(), access.clone(), authority);
-    let mut state =
-        super::ResponsesV2State::new(commands, state.reads.with_resource_access(access))
-            .with_bindings(bindings.clone());
+    let mut state = super::ResponsesV2State::new(
+        crate::agent_page::AgentPageOrigin::test(),
+        commands,
+        state.reads.with_resource_access(access),
+    )
+    .with_bindings(bindings.clone());
     if let Some(router) = router {
         state = state.with_event_router(router);
     }

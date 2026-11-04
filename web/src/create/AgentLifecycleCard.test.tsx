@@ -7,6 +7,7 @@ import { creationClient } from '../test/creation';
 import type { AgentLifecycleOperationView, CmaWebClient } from '../api/client';
 import { connectionClient, type ConnectionReport } from '../connections/client';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
+import { taskExperience } from '../test/taskExperience';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { CreationFlow } from './CreationFlow';
 
@@ -209,6 +210,8 @@ it('keeps contextual Agent creation in the selected workspace and recovers only 
     .mockResolvedValue({ id: running.id });
   const client = agentClient({
     readWorkspace: async () => workspaceFixture(),
+    readTaskCreationSupport: async () => true,
+    taskExperience: taskExperience('owner'),
     createAgentLifecycle: create,
     readAgentLifecycle: async () => running,
   });
@@ -227,15 +230,17 @@ it('keeps contextual Agent creation in the selected workspace and recovers only 
     );
   const first = draw();
   expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
-  expect(screen.getByText('Start an Agent in the selected workspace.')).toBeInTheDocument();
+  expect(screen.getByText('Creating in Workspace wsp_1')).toBeInTheDocument();
   expect(screen.queryByRole('group', { name: 'Runtime image' })).not.toBeInTheDocument();
-  const user = await review();
-  await user.click(screen.getByRole('button', { name: 'Create agent' }));
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText('Your task'), 'Inspect the workspace');
+  await user.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByText('Lost create response');
   const [body, options] = create.mock.calls[0]!;
   expect(body.workspace_id).toBe('wsp_1');
   expect(body).not.toHaveProperty('image');
-  expect(body.repository).toEqual({ url: 'https://github.com/org/Research' });
+  expect(body.initial_message).toBe('Inspect the workspace');
+  expect(body).not.toHaveProperty('repository');
   expect(body).not.toHaveProperty('profile');
   expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBeNull();
   expect(sessionStorage.getItem(lifecycleStorageKey('owner', 'wsp_1'))).toContain('wsp_1');
@@ -245,7 +250,7 @@ it('keeps contextual Agent creation in the selected workspace and recovers only 
   expect(screen.queryByRole('button', { name: 'Recover creation' })).not.toBeInTheDocument();
   global.unmount();
   draw();
-  await user.click(screen.getByRole('button', { name: 'Recover creation' }));
+  await user.click(screen.getByRole('button', { name: 'Recover original task' }));
   await screen.findByRole('region', { name: 'Agent provisioning progress' });
   expect(create.mock.calls[1]?.[0]).toEqual(body);
   expect(create.mock.calls[1]?.[1].idempotencyKey).toBe(options.idempotencyKey);
@@ -329,7 +334,11 @@ it('uses server defaults without image or profile selectors and allows an empty 
 
 it('retains the contextual Sandbox and keeps its recovery separate from global creation', async () => {
   const create = vi.fn().mockRejectedValue(new Error('Lost response'));
-  const client = agentClient({ createAgentLifecycle: create });
+  const client = agentClient({
+    createAgentLifecycle: create,
+    readTaskCreationSupport: async () => true,
+    taskExperience: taskExperience('owner'),
+  });
   const draw = () =>
     render(
       <CreationFlow
@@ -346,9 +355,14 @@ it('retains the contextual Sandbox and keeps its recovery separate from global c
   const first = draw();
   const user = userEvent.setup();
   expect(screen.queryByLabelText('Agent location')).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Create agent' }));
+  await user.type(screen.getByLabelText('Your task'), 'Inspect the Sandbox');
+  await user.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByText('Lost response');
-  expect(create.mock.calls[0]?.[0]).toEqual({ name: 'New agent', sandbox_id: 'sbx_1' });
+  expect(create.mock.calls[0]?.[0]).toEqual({
+    name: 'New task',
+    sandbox_id: 'sbx_1',
+    initial_message: 'Inspect the Sandbox',
+  });
   expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBeNull();
   expect(sessionStorage.getItem(lifecycleStorageKey('owner', undefined, 'sbx_1'))).toContain(
     'sbx_1',
@@ -358,8 +372,8 @@ it('retains the contextual Sandbox and keeps its recovery separate from global c
   expect(screen.queryByRole('button', { name: 'Recover creation' })).not.toBeInTheDocument();
   global.unmount();
   draw();
-  expect(screen.getByRole('button', { name: 'Recover creation' })).toBeEnabled();
-  await user.click(screen.getByRole('button', { name: 'Recover creation' }));
+  expect(screen.getByRole('button', { name: 'Recover original task' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: 'Recover original task' }));
   await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
   expect(create.mock.calls[1]?.[0]).toEqual(create.mock.calls[0]?.[0]);
   expect(create.mock.calls[1]?.[1].idempotencyKey).toBe(create.mock.calls[0]?.[1].idempotencyKey);

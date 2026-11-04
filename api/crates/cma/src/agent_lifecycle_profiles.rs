@@ -2,6 +2,15 @@
 use super::*;
 use layer2_core::profiles::EnvironmentVariable;
 
+pub(crate) fn prepared_default_agent_profile(
+) -> Result<layer2_core::profiles::AgentProfileContent, String> {
+    validation::agent_content(&guidance::profile_with_instructions(
+        layer1_public::rest::AgentLifecycleProfile::default(),
+        Some(guidance::managed_v3()),
+    ))
+    .map_err(|error| format!("default Agent preparation profile is invalid: {error:?}"))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn create_profiles(
     profiles: &PrivateProfileCreationService,
@@ -61,7 +70,15 @@ pub(super) async fn create_profiles(
                 revision: workspace_revision.revision,
             };
 
-            let permissions = validation::services_for(&profile.permissions, behavior)?;
+            let mut permissions = validation::services_for(&profile.permissions, behavior)?;
+            if request.initial_message.is_some()
+                && request.repository.is_some()
+                && !permissions
+                    .iter()
+                    .any(|service| service.as_str() == "api-github")
+            {
+                permissions.push(layer2_core::ServiceId::new("api-github"));
+            }
             let sandbox_content = SandboxProfileContent {
                 runtime_image,
                 cpu_millis: capacity.cpu_millis,

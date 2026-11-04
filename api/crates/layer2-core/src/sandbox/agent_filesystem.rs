@@ -16,6 +16,16 @@ use layer3_adapter::{
 };
 use std::sync::Arc;
 use std::time::SystemTime;
+#[path = "agent_browser_service.rs"]
+mod browser;
+#[path = "agent_browser_control_service.rs"]
+mod browser_control;
+#[path = "agent_environment_service.rs"]
+mod environment;
+
+mod read_check;
+mod scope;
+use scope::{public_path, require_home_mutation};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentFileError {
@@ -63,10 +73,26 @@ impl From<AdapterError> for AgentFileError {
 pub struct AgentFileService {
     access: Arc<ResourceAccessService>,
     adapter: Arc<dyn SandboxAdapter>,
+    task_experience: Arc<super::task_experience::TaskExperiencePolicy>,
 }
 impl AgentFileService {
     pub fn new(access: Arc<ResourceAccessService>, adapter: Arc<dyn SandboxAdapter>) -> Arc<Self> {
-        Arc::new(Self { access, adapter })
+        Arc::new(Self {
+            access,
+            adapter,
+            task_experience: Default::default(),
+        })
+    }
+
+    pub fn with_task_experience(
+        self: Arc<Self>,
+        policy: Arc<super::task_experience::TaskExperiencePolicy>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            access: self.access.clone(),
+            adapter: self.adapter.clone(),
+            task_experience: policy,
+        })
     }
 
     pub async fn list(
@@ -89,7 +115,9 @@ impl AgentFileService {
             .await?;
         let request = runtime_request(
             &authorized.snapshot.lineage.sandbox,
+            agent_id,
             path,
+            false,
             |sandbox, boot_id| {
                 Ok(AgentFileListRequest {
                     owner_access: authorized
@@ -103,7 +131,7 @@ impl AgentFileService {
                 })
             },
         )?;
-        let response = self
+        let mut response = self
             .adapter
             .list_agent_files(
                 &RuntimeHandle(runtime(&authorized.snapshot.lineage.sandbox)?),
@@ -112,6 +140,9 @@ impl AgentFileService {
             .await?;
         self.finish(&authorized, agent_id, ResourceCapability::ViewFiles)
             .await?;
+        response
+            .entries
+            .retain(|entry| public_path(agent_id, &entry.path, false).is_ok());
         Ok(response)
     }
 
@@ -136,7 +167,9 @@ impl AgentFileService {
             .await?;
         let request = runtime_request(
             &authorized.snapshot.lineage.sandbox,
+            agent_id,
             path,
+            false,
             |sandbox, boot_id| {
                 Ok(AgentFileReadRequest {
                     owner_access: authorized
@@ -189,7 +222,9 @@ impl AgentFileService {
             .await?;
         let request = runtime_request(
             &authorized.snapshot.lineage.sandbox,
+            agent_id,
             path,
+            false,
             |sandbox, boot_id| {
                 Ok(AgentFileWriteRequest {
                     owner_access: authorized
@@ -243,7 +278,9 @@ impl AgentFileService {
             .await?;
         let request = runtime_request(
             &authorized.snapshot.lineage.sandbox,
+            agent_id,
             path,
+            true,
             |sandbox, boot_id| {
                 Ok(AgentFileDeleteRequest {
                     owner_access: authorized
@@ -334,32 +371,6 @@ impl AgentFileService {
     }
 }
 
-fn require_home_mutation(
-    authorized: &AuthorizedResource,
-    subject: &crate::SubjectId,
-) -> Result<(), AgentFileError> {
-    let owner = authorized
-        .decision
-        .allows(ResourceCapability::ManageSharing);
-    let linked_write = authorized.snapshot.shares.iter().any(|share| {
-        share.mode == crate::resource_access::ShareMode::ViewWrite
-            && share.revoked_at.is_none()
-            && authorized
-                .decision
-                .share_revisions
-                .contains(&(share.id.clone(), share.revision))
-            && share
-                .link
-                .as_ref()
-                .is_some_and(|link| link.accepted_subjects.contains(subject))
-    });
-    if owner || linked_write {
-        Ok(())
-    } else {
-        Err(ResourceAccessError::Access(AccessError::Forbidden).into())
-    }
-}
-
 fn runtime(sandbox: &Sandbox) -> Result<String, AgentFileError> {
     sandbox
         .runtime
@@ -376,12 +387,12 @@ fn generation(sandbox: &Sandbox) -> Result<u64, AgentFileError> {
 }
 fn runtime_request<T>(
     sandbox: &Sandbox,
+    agent_id: &AgentId,
     path: &str,
+    remove: bool,
     build: impl FnOnce(&Sandbox, String) -> Result<T, AgentFileError>,
 ) -> Result<T, AgentFileError> {
-    if !layer3_adapter::valid_agent_file_path(path) {
-        return Err(AgentFileError::Invalid);
-    }
+    public_path(agent_id, path, remove)?;
     if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.operation.is_some() {
         return Err(AgentFileError::NotReady);
     }

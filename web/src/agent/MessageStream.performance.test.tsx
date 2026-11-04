@@ -77,10 +77,13 @@ it('parses only the changed reply while streaming over a long Markdown history',
 
 it('keeps feedback controls stable across stream rerenders and revokes the old owner callbacks', async () => {
   const setVote = vi.fn();
+  const readReasons = vi.fn();
   const client = {
     ...agentClient(),
     readMessageFeedback: vi.fn(async () => []),
     setMessageFeedback: setVote,
+    readFeedbackDetails: readReasons,
+    setFeedbackReasons: vi.fn(),
   };
   const hook = renderHook(({ owner }) => useMessageFeedback('agent', owner, true), {
     initialProps: { owner: 'owner' },
@@ -90,6 +93,7 @@ it('keeps feedback controls stable across stream rerenders and revokes the old o
   const before = hook.result.current;
   hook.rerender({ owner: 'owner' });
   expect(hook.result.current).toBe(before);
+  expect(readReasons).not.toHaveBeenCalled();
   hook.rerender({ owner: 'other' });
   expect(hook.result.current).not.toBe(before);
   before?.setVote('event:1', 'up');

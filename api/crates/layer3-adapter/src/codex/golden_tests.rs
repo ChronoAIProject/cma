@@ -4,6 +4,14 @@ use crate::{
     RuntimeOptions,
 };
 
+#[test]
+fn adapter_exposes_browser_and_runtime_recovery_through_the_shared_contract() {
+    let (adapter, _) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let adapter: &dyn SandboxAdapter = &adapter;
+    assert!(adapter.browser().is_some());
+    assert!(adapter.runtime_recovery().is_some());
+}
+
 fn options(
     own_credential: bool,
     permission: PermissionLevel,

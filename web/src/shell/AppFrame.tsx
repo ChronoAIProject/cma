@@ -13,6 +13,7 @@ import {
 } from './columns';
 import { IconPanelLeftOutline16 } from '../ui/icons';
 import './AppFrame.css';
+import { usePlateFocus } from '../ui/plate';
 
 /**
  * The page — `docs/Web_Style.md` §9.
@@ -46,6 +47,8 @@ interface AppFrameProps {
   /** Whether the details column is asked for. */
   readonly detailsOpen: boolean;
   readonly compactDetailsOverlay?: boolean;
+  readonly compactDetailsInline?: boolean;
+  readonly onDetailsClose?: () => void;
   /**
    * Whether the owner has asked for the sidebar to be closed.
    *
@@ -70,6 +73,8 @@ export function AppFrame({
   details,
   detailsOpen,
   compactDetailsOverlay = false,
+  compactDetailsInline = false,
+  onDetailsClose,
   overlay,
   sidebarCollapsed = false,
   sidebarLocked = false,
@@ -77,6 +82,7 @@ export function AppFrame({
   phoneTitle = 'CMA',
 }: AppFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
+  const detailsRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const [detailsWidth, setDetailsWidth] = useState(DETAILS_MIN);
@@ -216,6 +222,14 @@ export function AppFrame({
   const onDetailsDrag = useCallback((to: number) => {
     setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
   }, []);
+  const detailsInline = detailsOpen && columns.details === 0 && compactDetailsInline;
+  const detailsOverlay =
+    detailsOpen && columns.details === 0 && compactDetailsOverlay && !detailsInline;
+  usePlateFocus(
+    detailsRef,
+    onDetailsClose ?? (() => {}),
+    detailsOverlay && onDetailsClose !== undefined,
+  );
 
   return (
     <div
@@ -223,9 +237,8 @@ export function AppFrame({
       className="frame"
       data-dragging={dragging ? '' : undefined}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
-      data-details-overlay={
-        detailsOpen && columns.details === 0 && compactDetailsOverlay ? '' : undefined
-      }
+      data-details-overlay={detailsOverlay ? '' : undefined}
+      data-details-inline={detailsInline ? '' : undefined}
       data-sidebar-overlay={sidebarOverlay ? '' : undefined}
       data-phone={phone ? '' : undefined}
       style={{
@@ -236,6 +249,7 @@ export function AppFrame({
     >
       <div
         className="frame__sidebar"
+        inert={detailsOverlay || undefined}
         hidden={phone && effectiveSidebarCollapsed}
         style={
           sidebarOverlay
@@ -245,7 +259,7 @@ export function AppFrame({
       >
         {renderedSidebar}
       </div>
-      <div className="frame__center" inert={sidebarOverlay || undefined}>
+      <div className="frame__center" inert={sidebarOverlay || detailsOverlay || undefined}>
         {phone && sidebarOwnsToggle ? (
           <div className="frame__topbar">
             {sidebarLocked ? null : (
@@ -267,7 +281,15 @@ export function AppFrame({
       {sidebarOverlay ? (
         <div className="frame__scrim" aria-hidden="true" onClick={toggleSidebar} />
       ) : null}
-      <div className="frame__details">{details}</div>
+      <div
+        className="frame__details"
+        ref={detailsRef}
+        role={detailsOverlay ? 'dialog' : undefined}
+        aria-modal={detailsOverlay || undefined}
+        aria-label={detailsOverlay ? 'Agent panel' : undefined}
+      >
+        {details}
+      </div>
 
       {/*
         The handles are children of the frame rather than of the columns they

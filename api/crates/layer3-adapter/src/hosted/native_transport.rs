@@ -148,7 +148,11 @@ impl ProviderHostedControlTransport {
             .header(http::header::CONTENT_TYPE, "application/json")
             .header(
                 http::header::ACCEPT,
-                crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+                format!(
+                    "{}, {}",
+                    crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+                    crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
+                ),
             )
             .header(name, token)
             .body(Full::new(Bytes::from(body)))

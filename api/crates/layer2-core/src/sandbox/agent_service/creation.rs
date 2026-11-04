@@ -13,7 +13,51 @@ impl AgentService {
         workspace_id: &WorkspaceId,
         request: CreateAgent,
     ) -> Result<Agent, AgentServiceError> {
+        self.create_for_lifecycle_with_purpose(
+            caller,
+            actor,
+            workspace_id,
+            request,
+            super::super::FirstMessagePurpose::Setup,
+        )
+        .await
+    }
+
+    pub async fn create_for_lifecycle_with_purpose(
+        &self,
+        caller: &Caller,
+        actor: Option<&ResourceActor>,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+        purpose: super::super::FirstMessagePurpose,
+    ) -> Result<Agent, AgentServiceError> {
+        self.create_for_lifecycle_with_preparation(
+            caller,
+            actor,
+            workspace_id,
+            request,
+            super::super::FirstMessagePreparation {
+                purpose,
+                desktop: false,
+            },
+        )
+        .await
+    }
+
+    pub async fn create_for_lifecycle_with_preparation(
+        &self,
+        caller: &Caller,
+        actor: Option<&ResourceActor>,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+        preparation: super::super::FirstMessagePreparation,
+    ) -> Result<Agent, AgentServiceError> {
         require(caller)?;
+        if preparation.desktop && request.first_message.is_none() {
+            return Err(AgentServiceError::InvalidRequest(
+                "desktop creation requires a retained first message".into(),
+            ));
+        }
         if actor.is_some_and(|actor| actor.ordinary_subject() != Some(&caller.subject)) {
             return Err(AgentServiceError::Forbidden);
         }
@@ -29,9 +73,10 @@ impl AgentService {
             true,
             false,
             CreationAttribution {
+                desktop: preparation.desktop,
                 actor: actor.cloned(),
                 initiation: None,
-                first_message_purpose: super::super::FirstMessagePurpose::Setup,
+                first_message_purpose: preparation.purpose,
             },
         )
         .await

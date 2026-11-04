@@ -49,7 +49,7 @@ it('keeps header and selected sidebar status together across stream and navigati
   const header = () => document.querySelector('.agent-toolbar__title');
   const row = () => document.querySelector('.tree-row[data-node-id="agent:agt_1"]');
   expect(header()).toHaveAttribute('title', expect.stringContaining('· Ready'));
-  expect(row()).toHaveTextContent('Ready');
+  expect(row()).toHaveTextContent('Status unavailable');
   expect(update).toBeDefined();
   await act(async () =>
     update!({

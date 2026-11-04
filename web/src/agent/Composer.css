@@ -67,6 +67,10 @@
   border: 0;
 }
 
+[data-details-inline] .agent-composer textarea {
+  max-height: min(160px, 20dvh);
+}
+
 .agent-composer textarea:focus-visible {
   box-shadow: none;
 }
@@ -82,10 +86,11 @@
  */
 .agent-composer__controls {
   display: grid;
-  grid-template-columns: auto auto auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   grid-template-areas:
-    'attach permission steering . model ring send'
-    'status status status status status status status';
+    'attach steering settings ring send'
+    'settings-panel settings-panel settings-panel settings-panel settings-panel'
+    'status status status status status';
   align-items: center;
   column-gap: 4px;
   min-width: 0;
@@ -219,11 +224,12 @@
     white-space: nowrap;
   }
 
-  .agent-composer__controls[data-steering] {
+  .agent-composer__controls {
     grid-template-areas:
-      'attach permission steering . . . .'
-      '. . . . model ring send'
-      'status status status status status status status';
+      'settings settings settings settings settings'
+      'attach steering . ring send'
+      'settings-panel settings-panel settings-panel settings-panel settings-panel'
+      'status status status status status';
   }
 }
 

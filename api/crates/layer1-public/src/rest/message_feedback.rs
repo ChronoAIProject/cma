@@ -11,6 +11,20 @@ use utoipa::ToSchema;
 use super::{agents::AgentRoutesState, instance_problem::InstanceProblem, BodyProblem};
 use crate::AuthenticatedCaller;
 
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(
+    list,
+    set,
+    super::message_feedback_reasons::get,
+    super::message_feedback_reasons::set
+))]
+struct FeedbackApi;
+
+pub(super) fn document() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    FeedbackApi::openapi()
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MessageFeedbackVote {

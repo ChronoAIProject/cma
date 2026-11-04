@@ -57,6 +57,7 @@ async fn router(auth: Arc<AuthState>) -> Router {
         resources.create_agent(agent).await.unwrap();
     }
     AgentProjectionServices::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         resources.clone(),
         Arc::new(InMemoryProfileStore::default()),
         Arc::new(LiveAgentRegistry::default()),
