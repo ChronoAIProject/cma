@@ -44,8 +44,8 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
         assert_eq!(value["t"], "runtime_status");
         for (capability, supported) in [
             ("agent_browser", computer),
-            ("agent_filesystem", computer && files_supported),
-            ("agent_attachment_upload", computer && files_supported),
+            ("agent_filesystem", files_supported),
+            ("agent_attachment_upload", files_supported),
         ] {
             assert_eq!(
                 value.get(capability),
@@ -60,14 +60,9 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
         };
         assert_eq!(status.agent_resource_preparation, resources);
         assert_eq!(status.agent_browser, computer);
-        assert_eq!(status.agent_filesystem, computer && files_supported);
-        assert_eq!(status.agent_attachment_upload, computer && files_supported);
-        for capability in [
-            "agent_resource_preparation",
-            "agent_browser",
-            "agent_filesystem",
-            "agent_attachment_upload",
-        ] {
+        assert_eq!(status.agent_filesystem, files_supported);
+        assert_eq!(status.agent_attachment_upload, files_supported);
+        for capability in ["agent_resource_preparation", "agent_browser"] {
             value.as_object_mut().unwrap().remove(capability);
         }
         if let Some(original) = &original {
@@ -97,12 +92,12 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
             .await
             .unwrap();
         assert_eq!(response["t"], "workspace_removal_support");
-        for capability in [
-            "agent_browser",
-            "agent_filesystem",
-            "agent_attachment_upload",
-        ] {
-            assert!(response["runtime"].get(capability).is_none());
+        assert!(response["runtime"].get("agent_browser").is_none());
+        for capability in ["agent_filesystem", "agent_attachment_upload"] {
+            assert_eq!(
+                response["runtime"].get(capability),
+                files_supported.then_some(&serde_json::Value::Bool(true))
+            );
         }
         assert!(response["runtime"]
             .get("agent_resource_preparation")
