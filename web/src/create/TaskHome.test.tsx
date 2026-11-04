@@ -19,6 +19,7 @@ afterEach(() => {
 
 it.each([
   { initial_message: { damaged: true } },
+  { initial_message: 'Retained task', machine_included: { damaged: true } },
   { initial_message: 'Retained task', repository: { url: { damaged: true }, ref: 'main' } },
   {
     initial_message: 'Retained task',
@@ -464,7 +465,7 @@ it('verifies the Agent even when the first status read already reports preparati
   );
 });
 
-it('resumes a desktop repository task only on explicit connection action with its frozen options, body and key after cancel and refresh', async () => {
+it('resumes both desktop choices and repository only on explicit connection action with frozen options, body and key after cancel and refresh', async () => {
   const writes: { body: unknown; key: string | null }[] = [];
   let checks = 0;
   let authorized = false;
@@ -523,6 +524,8 @@ it('resumes a desktop repository task only on explicit connection action with it
   const desktop = screen.getByRole('checkbox', { name: 'Enable desktop' });
   await waitFor(() => expect(desktop).toBeEnabled());
   fireEvent.click(desktop);
+  const machine = screen.getByRole('checkbox', { name: 'Include a shared desktop' });
+  fireEvent.click(machine);
   fireEvent.change(screen.getByLabelText('Your task'), {
     target: { value: '  Original task\nwith whitespace  ' },
   });
@@ -542,6 +545,8 @@ it('resumes a desktop repository task only on explicit connection action with it
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   expect(desktop).toBeChecked();
   expect(desktop).toBeDisabled();
+  expect(machine).toBeChecked();
+  expect(machine).toBeDisabled();
   expect(writes).toHaveLength(1);
   const checksBeforeRefresh = checks;
   first.unmount();
@@ -550,6 +555,8 @@ it('resumes a desktop repository task only on explicit connection action with it
   await screen.findByRole('button', { name: 'Continue original task' });
   expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: 'Include a shared desktop' })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: 'Include a shared desktop' })).toBeDisabled();
   expect(writes).toHaveLength(1);
   expect(checks).toBe(checksBeforeRefresh);
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Next task draft' } });
@@ -560,6 +567,7 @@ it('resumes a desktop repository task only on explicit connection action with it
     initial_message: '  Original task\nwith whitespace  ',
     repository: { url: 'https://github.com/example/project', ref: 'proof/fixed' },
     desktop: true,
+    machine_included: true,
   });
   expect(checks).toBe(checksBeforeRefresh + 1);
   expect(screen.getByLabelText('Your task')).toHaveValue('Next task draft');

@@ -49,3 +49,59 @@ Linux deployment proof.
 All 11 `workspace_prepare_recovery` checks pass, including explicit HTTP recovery,
 stale-boot fencing, failed-attempt preservation, publication/restart replay,
 unsafe pin refusal and rejection of an interrupted candidate pinned to B.
+
+## Spec P2 — independent shared desktop choice in Home
+
+Normal task entry now includes the existing **Include a shared desktop** choice,
+with the same new-Sandbox permission/context gate and Linux/Chromium meaning as
+`AgentLifecycleCard`. It sends `machine_included`; ticket 16's **Enable desktop**
+still sends the independent Agent-browser `desktop` flag. No legacy configuration
+dialog becomes the default task entry.
+
+The existing public contract selects the deployment machine image first, then
+checks Agent-browser support against that selected image. The UI preserves typed
+refusals for unsupported combinations; it does not substitute a flag or image.
+No new capability endpoint or backend creation contract was invented.
+
+Both choices persist with the unsent draft. Submitted/uncertain requests retain
+their exact body and key through refresh, connection cancellation and recovery.
+Malformed stored machine choices fail closed. A definite 400/422 rejection before
+admission retains editable draft choices; a later explicit submission has a new
+key, as required by the existing lifecycle contract. Machine creation also carries
+the original desktop transport preparation hint into the Agent handoff.
+
+Red: the Home tests could not find the shared desktop checkbox. Green: all four
+option combinations preserve the exact task, fields and key across draft refresh
+and lost-receipt recovery. Additional coverage includes unavailable Agent-browser
+capability, forbidden/contextual machine creation, clearing an unsupported draft,
+typed combination refusal, malformed saved input, and OAuth cancellation with
+repository plus both desktop options. The existing CMA profile test verifies the
+machine image/marker and exact first task with `desktop` both false and true.
+
+Real Chrome checks at 1440px and 320px pass against the built app and public HTTP
+fixtures. They cover default-off independent controls, 44px labels within the
+viewport, no configuration dialog, no effect before submission, draft refresh and
+frozen original recovery. Screenshots were inspected and retained outside Git in
+`/Users/liuyitian/code/cma-ui-worktrees/evidence/develop-review-fixes/`.
+
+## Validation before the parent integration update
+
+- Full Web: 368 files / 3,277 tests passed with two workers. An unrelated Event
+  Gateway test exceeded its existing five-second timeout in the first heavily
+  parallel run; it passed unchanged alone and in the complete two-worker run.
+- Web TypeScript, E2E TypeScript, ESLint, Prettier and production build passed.
+- Real Chrome Home checks: 2/2 passed.
+- Runtime: 334 passed, 3 existing ignored cases. The new regression is not ignored.
+- CMA machine/profile test: passed with both independent option combinations.
+- Core: the focused delivered-queue regression passed; full Core runs both at
+  default concurrency and with two threads passed 1,264 tests and failed the
+  unchanged `installed_skill_version_change_is_reported_as_unsupported` fixture
+  at its `create_agent(...).unwrap()` with Conflict. That unrelated fixture and
+  its assertions were not modified.
+- Rust formatting, production-source size limits and `git diff --check` passed.
+
+Check logs are outside Git under
+`/Users/liuyitian/code/cma-ui-worktrees/review-fixes-*.log`. No dependency, CI gate,
+timeout or ignored-test policy changed. The parent owns CI and its separate
+RuntimeStatus compatibility correction; its final commit must be merged before
+handoff and checked with these fixes.
