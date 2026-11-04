@@ -21,15 +21,18 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+#[path = "telegram_album_tests.rs"]
+mod albums;
 #[path = "telegram_media_effect_tests.rs"]
 mod effects;
-fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPayload) {
+pub(super) fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPayload) {
     let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
         "../../../cmaeg-core/tests/fixtures/channel.json"
     ))
     .unwrap();
     definition.sources = vec![Source::Telegram {
         topic_lifecycle: false,
+        topic_creation: false,
         message_events: false,
         channel_posts: false,
         bot_id: "77".into(),
@@ -346,3 +349,6 @@ async fn native_telegram_media_rechecks_authority_before_every_effect_and_stops_
     );
     assert_eq!(f.calls().len(), 1);
 }
+
+#[path = "telegram_media_presentation_tests.rs"]
+mod presentations;

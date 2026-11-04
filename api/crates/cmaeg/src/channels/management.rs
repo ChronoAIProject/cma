@@ -74,6 +74,8 @@ pub async fn create(
         state.write_flags(),
     )
     .map_err(ManagementError::Invalid)?;
+    super::custom_execution::validate_providers(&state.providers, &definition)?;
+    super::custom_execution::validate_media(state, None, &definition)?;
     super::native_telegram::initialize(state, None, &mut definition)?;
     let pointer =
         channel_pointer(&state.cma_base_url, &record_id).map_err(ManagementError::Invalid)?;
@@ -235,14 +237,8 @@ pub async fn update(
     let pointer = open_pointer(state, channel_id)?;
     let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
     let current = load(state, creator, channel_id).await?;
-    crate::connections::binding::expand_update(
-        state,
-        creator,
-        &current.definition.record_id,
-        current.definition.connection_ref.as_deref(),
-        &mut request,
-    )
-    .await?;
+    crate::connections::binding::expand_update(state, creator, &current.definition, &mut request)
+        .await?;
     validate_update_request(&request).map_err(ManagementError::Invalid)?;
     custom_attachments_allowed(state, &request.sources)?;
     if current
@@ -274,6 +270,8 @@ pub async fn update(
     let mut definition = build_update(&request, &current.definition, state.write_flags())
         .map_err(ManagementError::Invalid)?;
     super::native_telegram::initialize(state, Some(&current.definition), &mut definition)?;
+    super::custom_execution::validate_providers(&state.providers, &definition)?;
+    super::custom_execution::validate_media(state, Some(&current.definition), &definition)?;
     definition.version = current.record.version;
     if definition.routing.is_none()
         || definition.secrets.whatsapp != current.definition.secrets.whatsapp

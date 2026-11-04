@@ -80,6 +80,7 @@ impl AuthState {
         enabled: bool,
         issuer: Option<String>,
         jwks_url: Option<String>,
+        audience: Option<String>,
     ) -> Result<Arc<Self>, String> {
         if !enabled {
             return Ok(self);
@@ -90,7 +91,7 @@ impl AuthState {
         let config = jwt::Config {
             issuer: issuer.ok_or("CHRONO_NYXID_PROXY_ISSUER is required")?,
             jwks_url: jwks_url.ok_or("CHRONO_NYXID_PROXY_JWKS_URL is required")?,
-            audience: public_url.trim_end_matches('/').to_owned(),
+            audience: audience.unwrap_or_else(|| public_url.trim_end_matches('/').to_owned()),
             service_id: self
                 .agent_key_service_id
                 .clone()

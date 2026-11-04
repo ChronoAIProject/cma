@@ -15,14 +15,14 @@ for an overview of channel setup, ingress, execution, tools, delivery and recove
 
 | Interface | Production address |
 | --- | --- |
-| Direct REST base | `https://bot.chrono-ai.fun/event-gateway/v1` |
+| Direct REST base | `https://cma.nyxid.ai/event-gateway/v1` |
 | NyxID REST proxy base | `https://nyx-api.chrono-ai.fun/api/v1/proxy/s/cmaeg` |
-| Native MCP | `https://bot.chrono-ai.fun/event-gateway/mcp` |
-| OpenAPI | <https://bot.chrono-ai.fun/event-gateway/openapi.json> |
-| Integration guide | <https://bot.chrono-ai.fun/event-gateway/docs> |
-| Architecture section | <https://bot.chrono-ai.fun/event-gateway/docs#architecture> |
-| Complete protocol section | <https://bot.chrono-ai.fun/event-gateway/docs#protocol> |
-| Download complete document | <https://bot.chrono-ai.fun/event-gateway/docs/download> |
+| Native MCP | `https://cma.nyxid.ai/event-gateway/mcp` |
+| OpenAPI | <https://cma.nyxid.ai/event-gateway/openapi.json> |
+| Integration guide | <https://cma.nyxid.ai/event-gateway/docs> |
+| Architecture section | <https://cma.nyxid.ai/event-gateway/docs#architecture> |
+| Complete protocol section | <https://cma.nyxid.ai/event-gateway/docs#protocol> |
+| Download complete document | <https://cma.nyxid.ai/event-gateway/docs/download> |
 
 The canonical public API uses the `/event-gateway` namespace on the portal's
 origin. The portal itself remains at `/event-gateway`, and its browser-cookie
@@ -439,7 +439,10 @@ prove live NyxID/IM delivery or reconstruction.
 
 Read `delivery.outcome` and rendering receipts. `unknown` means a reply might
 already have been delivered; blind resend can duplicate messages. Current Telegram
-and custom transports report editing and typing as unsupported. Telegram accepts
+relay and custom transports report typing as unsupported. Native Discord and
+private WhatsApp can use the separately gated existing `sendTyping` operation;
+WhatsApp also marks the original message read. See [Native typing](CMAEG_Native_Typing.md)
+for exact scope, lifetime, and refusal behavior. Telegram relay accepts
 human text, renders rich output as text/link fallbacks, and does not support
 interactive callbacks or attachment transfer in this version. Discord, Slack and
 WhatsApp relay sources are text-only in both directions. Lark and Feishu replies
@@ -601,7 +604,7 @@ Exact bodies, canonical digests, error codes and conformance levels are in the
 
 Channel owners can inspect every channel their NyxID account, or an
 organization they administer, owns at
-<https://bot.chrono-ai.fun/event-gateway/legacy-console>. This compatibility entry
+<https://cma.nyxid.ai/event-gateway/legacy-console>. This compatibility entry
 redirects to the existing console OAuth authority at
 `https://bot-gateway.chrono-ai.fun/console`; its login, callback and existing tabs
 remain valid. It is read-only apart from

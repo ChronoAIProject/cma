@@ -123,8 +123,6 @@ pub(super) async fn cleanup(state: &ManagementState, id: &str, release: bool) ->
     let material = record.material.as_ref().ok_or(Error::Unavailable)?;
     let token = Secret::new(material.token.clone());
     let telegram = client(state)?;
-    let expected = format!("{}/v1/telegram/{channel_id}", state.public_api_url);
-    let legacy = format!("{}/v1/telegram/{channel_id}", state.public_url);
     let actual = telegram
         .get_webhook_url(&token)
         .await
@@ -134,7 +132,10 @@ pub(super) async fn cleanup(state: &ManagementState, id: &str, release: bool) ->
     if !holds(&current, &lease) || !live(&current) || !current.webhook_retiring {
         return Err(Error::Conflict);
     }
-    if actual == expected || actual == legacy {
+    if state
+        .public_api_bases()
+        .any(|base| actual == format!("{base}/v1/telegram/{channel_id}"))
+    {
         telegram
             .delete_webhook(&token)
             .await

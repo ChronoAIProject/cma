@@ -14,7 +14,17 @@ pub(crate) mod components_fixture;
 mod components_restore_tests;
 #[cfg(test)]
 mod components_tests;
+mod content;
+#[cfg(test)]
+mod content_replay_tests;
+#[cfg(test)]
+mod content_tests;
 pub(crate) mod facts;
+mod forward;
+#[cfg(test)]
+mod forward_replay_tests;
+#[cfg(test)]
+mod forward_tests;
 pub(crate) mod history_authority;
 pub mod inbox_dispatch;
 mod inbox_reader;
@@ -39,6 +49,7 @@ mod source_discovery;
 mod source_worker;
 pub(crate) mod thread_authority;
 mod thread_context;
+pub(crate) mod voice;
 pub use inbox_reader::{InboxLaunch, InboxReader, VerifiedInboxLaunch};
 pub(crate) mod outbound_media;
 pub(crate) mod rest;
@@ -85,6 +96,8 @@ mod inbox_dispatch_tests;
 mod media_tests;
 #[cfg(test)]
 mod normalization_tests;
+#[cfg(test)]
+mod quote_tests;
 #[cfg(test)]
 pub(crate) mod rest_fixture;
 #[cfg(test)]

@@ -3,7 +3,7 @@
 The code-derived contract at **`GET /agent-manager/openapi.json`** covers the
 programmatic Agent lifecycle and interaction workflow. Its server is the current
 CMA origin; requests use the existing `/api/v1` and `/api/v2` paths. For example,
-production discovery is `https://bot.chrono-ai.fun/agent-manager/openapi.json`.
+production discovery is `https://cma.nyxid.ai/agent-manager/openapi.json`.
 This is a focused view of the existing API, with the same operation IDs, request
 schemas, responses and authorization. The full compatibility contract remains
 at `/openapi.json`; existing clients and routes remain supported.
@@ -44,6 +44,15 @@ CMA OAuth login. A bearer alone does not establish this delegation. See
    endpoint. Omit both for a new Sandbox. Read the request schema for supported
    repository and inline settings options.
 
+   The creation flags have separate meanings. `desktop:true` prepares the
+   task's browser before its exact `initial_message` is delivered; that message
+   is required, and browser observation/control use their own capability routes.
+   `machine_included:true` selects the deployment's desktop Sandbox image, so
+   omit `image`, `workspace_id` and `sandbox_id`; it does not require an initial
+   task. Agent detail's `desktop` field reflects this immutable machine marker
+   for non-isolated Agents and enables desktop WebSocket discovery. Neither
+   request flag substitutes for the other. Preserve both in exact retries.
+
 2. Read `GET /api/v1/agent-lifecycle/<lifecycle-operation-id>`. Keep the returned
    `agent_id`; inspect `status`, `phase`, `events`, and any connection requirement.
    A readiness phase event alone is not operation completion. A lost response
@@ -75,7 +84,7 @@ CMA OAuth login. A bearer alone does not establish this delegation. See
 
 ## Included operations
 
-The focused contract contains 37 paths and 43 operations. It retains only
+The focused contract contains 76 paths and 91 operations. It retains only
 transitively referenced components, used tags and required security schemes.
 The generated document is authoritative for exact bodies and error responses.
 
@@ -259,6 +268,28 @@ record decoding cannot read extended rows/tombstones and must not share writes
 or be restored against upgraded records. Public old clients remain supported;
 an application rollback must retain this storage reader and clearing/version
 semantics. Do not delete tombstones or reset versions during rollback.
+
+### Sandbox colours
+
+Every Agent in one Sandbox wears that Sandbox's colour. `SandboxView.color` is
+lowercase `#rrggbb` on the owner's `POST /api/v1/sandboxes`, personal
+`GET /api/v1/sandboxes` and owner `GET /api/v1/sandboxes/{id}`. The first owner
+read of a Sandbox without a colour assigns one, oldest first. The colour is a
+random sRGB value whose OKLab lightness is 0.62–0.86 and chroma at least 0.10,
+kept at least ΔEok 0.15 from the approval amber and failure red. Of 64 such
+candidates, the one farthest from every live (not retiring or retired) Sandbox of
+that owner wins, so colours stay distinct until the pool is crowded and never
+repeat exactly. A Sandbox keeps its first colour; retiring frees it for the next.
+Organization rows, shared-grant reads and another owner's Sandboxes are never
+assigned and omit the field, as does any read while colours cannot be stored.
+
+Palettes live in Agent Manager's `sandbox_colors` collection, one document per
+owner, written by revision compare-and-set. They are deliberately outside the
+Sandbox record, which denies unknown fields: a rolled-back reader ignores this
+collection instead of refusing every coloured Sandbox. The collection initializes
+additively at startup. Isolated database deployments must add it to the
+generated Agent Manager role before upgrading; explicit shared-schema deployments
+require no new database credential.
 
 ### Direct owner service access
 

@@ -4,6 +4,13 @@ The Agent Details model list comes from the current Chrono LLM catalogue through
 the Sandbox's delivered NyxID credential. The public Agent endpoint checks owner
 lineage before fetching the list. Listing models does not expand service scope.
 
+Credential expiry follows its source: Managed credentials require an unexpired
+timestamp, while Provided and Binding credentials intentionally have no locally
+projected expiry. All sources still require a valid delivered credential,
+matching custody material and the required service scope. An absent expiry on
+a Provided or Binding credential must not make the catalogue return 503 before
+contacting the upstream service; upstream credential refusal still fails closed.
+
 The current upstream catalogue contains text and image models without modality
 metadata. CMA admits catalogue IDs matching `gpt-<numeric generation>` with
 letters, digits, dots, underscores or hyphens, plus `codex-auto-review`. It does

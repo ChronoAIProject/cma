@@ -1,5 +1,6 @@
 import {
   modeUnavailable,
+  nativeDiscordProviderUnavailable,
   nativeDiscordUnavailable,
   nativeLarkUnavailable,
   nativeWhatsappUnavailable,
@@ -84,9 +85,20 @@ export function validateRelayAuthoring(
       const retained = oldSources.some(
         (old) =>
           old.type === 'whatsapp' &&
-          canonical({ ...old, group_ids: undefined, forms_enabled: undefined }) ===
-            canonical({ ...source, group_ids: undefined, forms_enabled: undefined }) &&
+          canonical({
+            ...old,
+            group_ids: undefined,
+            forms_enabled: undefined,
+            message_events: undefined,
+          }) ===
+            canonical({
+              ...source,
+              group_ids: undefined,
+              forms_enabled: undefined,
+              message_events: undefined,
+            }) &&
           (source.forms_enabled !== true || old.forms_enabled === true) &&
+          (source.message_events !== true || old.message_events === true) &&
           groups.every((id) => strings(old.group_ids).includes(id)),
       );
       if (
@@ -119,6 +131,19 @@ export function validateRelayAuthoring(
           'New WhatsApp form consent is disabled on this gateway. Your draft has been retained.',
         );
       }
+      if (
+        source.message_events === true &&
+        discovery.authoring?.native_whatsapp_message_events_enabled !== true &&
+        !oldSources.some(
+          (old) =>
+            old.type === 'whatsapp' &&
+            old.message_events === true &&
+            ['app_id', 'waba_id', 'phone_number_id'].every((key) => old[key] === source[key]),
+        )
+      )
+        throw new Error(
+          'New WhatsApp incoming message change consent is disabled on this gateway. Your draft has been retained.',
+        );
       const reason = nativeWhatsappUnavailable(discovery, !saved);
       if (reason && (!retained || replacement))
         throw new Error(`${reason} Your draft has been retained.`);
@@ -148,11 +173,13 @@ export function validateRelayAuthoring(
       source.message_events === true &&
       !oldSources.some(
         (old) =>
-          canonical(without(old, ['topic_lifecycle'])) ===
-            canonical(without(source, ['topic_lifecycle'])) ||
+          canonical(without(old, ['topic_lifecycle', 'topic_creation'])) ===
+            canonical(without(source, ['topic_lifecycle', 'topic_creation'])) ||
           (source.channel_posts !== true &&
-            canonical(without(old, ['topic_lifecycle'])) ===
-              canonical(without({ ...source, channel_posts: true }, ['topic_lifecycle']))),
+            canonical(without(old, ['topic_lifecycle', 'topic_creation'])) ===
+              canonical(
+                without({ ...source, channel_posts: true }, ['topic_lifecycle', 'topic_creation']),
+              )),
       ) &&
       discovery.authoring?.native_telegram_message_events_enabled !== true
     )
@@ -162,11 +189,30 @@ export function validateRelayAuthoring(
     if (
       source.type === 'telegram' &&
       source.topic_lifecycle === true &&
-      !unchanged &&
+      !oldSources.some(
+        (old) =>
+          (source.message_events !== true || old.message_events === true) &&
+          (source.channel_posts !== true || old.channel_posts === true) &&
+          canonical(without(old, ['message_events', 'channel_posts', 'topic_creation'])) ===
+            canonical(without(source, ['message_events', 'channel_posts', 'topic_creation'])),
+      ) &&
       discovery.authoring?.native_telegram_topic_lifecycle_enabled !== true
     )
       throw new Error(
         'New or changed Telegram topic management is disabled on this gateway. Your draft has been retained.',
+      );
+    if (
+      source.type === 'telegram' &&
+      source.topic_creation === true &&
+      !oldSources.some(
+        (old) =>
+          canonical(without(old, ['topic_lifecycle', 'message_events', 'channel_posts'])) ===
+          canonical(without(source, ['topic_lifecycle', 'message_events', 'channel_posts'])),
+      ) &&
+      discovery.authoring?.native_telegram_topic_creation_enabled !== true
+    )
+      throw new Error(
+        'New or changed Telegram topic creation is disabled on this gateway. Your draft has been retained.',
       );
     if (source.type === 'discord') {
       if (
@@ -203,7 +249,11 @@ export function validateRelayAuthoring(
           'New or changed conversation history access is disabled on this gateway. Your draft has been retained.',
         );
       const hasSavedNative = oldSources.some((old) => old.type === 'discord');
-      const reason = nativeDiscordUnavailable(discovery, !hasSavedNative);
+      const reason =
+        nativeDiscordUnavailable(discovery, !hasSavedNative) ??
+        (!hasSavedNative
+          ? nativeDiscordProviderUnavailable(discovery, text(object(next.provider).slug))
+          : undefined);
       if (
         reason &&
         (!unchanged || Boolean(credentialsPatch(credentials, false)?.discord_bot_token))

@@ -2,6 +2,14 @@
 
 <!-- nav: 4 Sandboxes -->
 
+Sandbox lists include retained history by default. Set `excludeRetired: true` in the
+list options to omit only `retired` records before pagination; keep the same filter
+when following a cursor. Paused, failing, and retiring Sandboxes remain visible.
+The option applies to personal, organization, and incoming shared inventories,
+combines with the exact status filter, and does not delete any retained record.
+The public query parameter is `exclude_retired=true`; false or omission preserves
+the historical listing. Combining it with `status=retired` returns an empty page.
+
 Agent Sandbox persists a Sandbox on its attached persistent volume. CMA does not
 create, schedule, expose, download, or delete Sandbox snapshot archives. Pause,
 revive, and retirement delegate runtime and volume lifecycle to Agent Sandbox;
@@ -74,6 +82,12 @@ still succeed when a new transition is not eligible.
 Use `workspaces.create(sandboxId, body, options)` to add a Workspace within the
 pinned limits. `worktrees.list(workspaceId)` and `worktrees.read(id)` expose the
 Agent's real working checkout; a Worktree is not an independent terminal surface.
+
+The owner's `list`, `read` and `create` responses carry an optional `color`: the
+colour every Agent in that Sandbox wears, spelled as lowercase `#rrggbb`. The
+server assigns it and keeps it distinct from the owner's other live Sandboxes.
+It is absent until assigned, on shared-grant reads and on older servers; show
+your default colour then. Any other spelling is a `ProtocolError`.
 
 See [Profiles](profiles.md) for revision selection and [Errors](errors.md) for
 quota, trust and uncertain-command handling.
@@ -208,3 +222,31 @@ Shared recipients cannot retire the owner’s Sandbox. The server rechecks autho
 before scheduling; receipt reads require the requesting actor and current Sandbox
 visibility. The five-minute queue deadline never renews. HTTP 409 busy and HTTP
 503 unavailable responses require reading/retrying; they do not establish success.
+
+## Allocation usage
+
+`client.usage` reads CMA's allocated Sandbox resource-time independently of
+Agent token usage. CPU is measured in core-hours, RAM and retained disk in
+GiB-hours, and uptime in seconds. Integer source quantities are included for
+integrations that need exact arithmetic.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+const client = createClient();
+const totals = await client.usage.summary();
+const first = await client.usage.sandboxes({ limit: 50 });
+const sandbox = await client.usage.sandbox('sbx_example');
+const intervals = await client.usage.events('sbx_example', { limit: 100 });
+// cma:admin:sandboxes is required for cross-owner queries.
+const allUsers = await client.usage.adminSummary();
+const ownerSandboxes = await client.usage.adminSandboxes({ owner: 'owner-subject' });
+```
+
+Pass `next` back as `cursor` for subsequent pages. These reads support the usual
+`signal` and request options. `complete_lifecycle: false` means tracking started
+after the Sandbox was created; earlier usage is unknown. Retained rows remain
+readable after a Sandbox is deleted. Live totals include the currently open
+interval as of the returned timestamp. Paused Sandboxes retain disk accrual.
+
+Allocated capacity is distinct from actual CPU load, memory in use and files
+stored. Prices and invoice totals are not inferred from these resource counts.

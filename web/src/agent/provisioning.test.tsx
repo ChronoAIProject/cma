@@ -40,16 +40,133 @@ it('polls a starting Agent until its first message is durably delivered without 
     expect(result.current.state.conversation.messages).toHaveLength(0);
   delivered = true;
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(100);
   });
   if (result.current.state.status === 'ready')
     expect(result.current.state.conversation.messages[0]?.content).toBe('Inspect this repository.');
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10000);
   });
-  expect(readAgent).toHaveBeenCalledTimes(2);
+  expect(readAgent).toHaveBeenCalledTimes(4);
   expect(createAgent).not.toHaveBeenCalled();
   expect(runAgent).not.toHaveBeenCalled();
+  unmount();
+});
+
+it('keeps startup reads sequential, slows prolonged preparation and stops on unmount', async () => {
+  vi.useFakeTimers();
+  const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
+  let finishRead: ((value: typeof starting) => void) | undefined;
+  let readSignal: AbortSignal | undefined;
+  const readAgent = vi.fn(async (_id: string, options?: { signal?: AbortSignal }) => {
+    readSignal = options?.signal;
+    if (readAgent.mock.calls.length === 1) return starting;
+    return new Promise<typeof starting>((resolve) => {
+      finishRead = resolve;
+    });
+  });
+  const readAgentTranscript = vi.fn(async () => AGENT_TRANSCRIPT);
+  const client = agentClient({ readAgent, readAgentTranscript });
+  const { unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  await act(() => vi.advanceTimersByTimeAsync(100));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  expect(readAgentTranscript).toHaveBeenCalledTimes(1);
+  await act(async () => finishRead?.(starting));
+  await act(() => vi.advanceTimersByTimeAsync(1499));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(readAgent).toHaveBeenCalledTimes(3);
+  unmount();
+  expect(readSignal?.aborted).toBe(true);
+  await act(async () => finishRead?.(starting));
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(readAgent).toHaveBeenCalledTimes(3);
+});
+
+it('observes startup again without an extra idle interval after a slow successful read', async () => {
+  vi.useFakeTimers();
+  const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
+  let finishRead: ((value: typeof starting) => void) | undefined;
+  const readAgent = vi.fn(async () => {
+    if (readAgent.mock.calls.length === 1) return starting;
+    if (readAgent.mock.calls.length === 2)
+      return new Promise<typeof starting>((resolve) => {
+        finishRead = resolve;
+      });
+    return AGENT_DETAIL;
+  });
+  const client = agentClient({ readAgent });
+  const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  await act(async () => finishRead?.(starting));
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(result.current.state.status).toBe('ready');
+  if (result.current.state.status === 'ready')
+    expect(result.current.state.detail.status).toBe('ready');
+  expect(readAgent).toHaveBeenCalledTimes(4);
+  unmount();
+});
+
+it('rejects changed startup lineage before reading history and retains error backoff', async () => {
+  vi.useFakeTimers();
+  const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
+  const readAgent = vi
+    .fn()
+    .mockResolvedValueOnce(starting)
+    .mockResolvedValue({
+      ...starting,
+      workspace: { ...starting.workspace, id: 'foreign-workspace' },
+    });
+  const readAgentTranscript = vi.fn(async () => AGENT_TRANSCRIPT);
+  const client = agentClient({ readAgent, readAgentTranscript });
+  const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  expect(readAgentTranscript).toHaveBeenCalledTimes(1);
+  expect(result.current.actionError).toBe(
+    'Preparation progress could not be refreshed. Reconnecting.',
+  );
+  await act(() => vi.advanceTimersByTimeAsync(4999));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(readAgent).toHaveBeenCalledTimes(3);
+  expect(readAgentTranscript).toHaveBeenCalledTimes(1);
+  unmount();
+});
+
+it('shows actual runtime readiness while retaining the conversation during a slow history refresh', async () => {
+  vi.useFakeTimers();
+  const firstMessage = { state: 'execution_observed' as const, queuedAt: AGENT_DETAIL.createdAt };
+  const readAgent = vi
+    .fn()
+    .mockResolvedValueOnce({ ...AGENT_DETAIL, status: 'starting', firstMessage })
+    .mockResolvedValue({ ...AGENT_DETAIL, firstMessage });
+  let completeHistory: ((value: typeof AGENT_TRANSCRIPT) => void) | undefined;
+  const readAgentTranscript = vi.fn(async () => {
+    if (readAgentTranscript.mock.calls.length === 1) return AGENT_TRANSCRIPT;
+    return new Promise<typeof AGENT_TRANSCRIPT>((resolve) => {
+      completeHistory = resolve;
+    });
+  });
+  const client = agentClient({ readAgent, readAgentTranscript });
+  const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(result.current.state.status).toBe('ready');
+  if (result.current.state.status !== 'ready') throw new Error('Agent did not load');
+  expect(result.current.state.detail.status).toBe('ready');
+  expect(result.current.state.conversation.messages[0]?.content).toBe('Inspect this repository.');
+  expect(readAgentTranscript).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(readAgentTranscript).toHaveBeenCalledTimes(2);
+  await act(async () => completeHistory?.(AGENT_TRANSCRIPT));
+  expect(result.current.state.status).toBe('ready');
+  if (result.current.state.status === 'ready')
+    expect(result.current.state.conversation.messages[0]?.content).toBe('Inspect this repository.');
   unmount();
 });
 

@@ -1,3 +1,7 @@
+import type { ResolvedConfig } from '../config.js';
+import type { OperationOptions } from '../http.js';
+import { command, identity, input, read, segment, type CommandOptions } from '../resources.js';
+import { agent } from './types.js';
 import {
   array,
   boolean,
@@ -16,6 +20,7 @@ export const agentLifecycleCreateRequest = object({
   name: text,
   initial_message: optional(text),
   desktop: optional(boolean),
+  machine_included: optional(boolean),
   workspace_id: optional(text),
   sandbox_id: optional(text),
   image: optional(object({ id: text, version: optional(text) })),
@@ -73,3 +78,33 @@ export const agentLifecycleOperation = object({
 });
 /** Phase readiness is separate from the terminal operation status. */
 export type AgentLifecycleOperation = Output<typeof agentLifecycleOperation>;
+
+export function createAgentLifecycle(
+  config: ResolvedConfig,
+  body: AgentLifecycleCreateRequest,
+  options: CommandOptions,
+) {
+  return read(config, '/api/v1/agents', agentLifecycleCreateReceipt, {
+    ...command(options),
+    method: 'POST',
+    body: input(agentLifecycleCreateRequest, body),
+    expectedStatus: 202,
+  });
+}
+
+export function readAgentLifecycle(config: ResolvedConfig, id: string, options: OperationOptions) {
+  return read(
+    config,
+    `/api/v1/agent-lifecycle/${segment(id)}`,
+    identity(agentLifecycleOperation, id),
+    options,
+  );
+}
+
+export function recoverAgentWorktree(config: ResolvedConfig, id: string, options: CommandOptions) {
+  return read(config, `/api/v1/agents/${segment(id)}/recover-worktree`, identity(agent, id), {
+    ...command(options),
+    method: 'POST',
+    expectedStatus: 202,
+  });
+}

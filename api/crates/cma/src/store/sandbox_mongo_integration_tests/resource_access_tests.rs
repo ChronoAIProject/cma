@@ -4,10 +4,14 @@ mod artifacts;
 mod hierarchy;
 #[path = "resource_access_tests/inventory.rs"]
 mod inventory;
+#[path = "resource_access_tests/provenance.rs"]
+mod provenance;
 #[path = "resource_access_tests/sandbox_inventory.rs"]
 mod sandbox_inventory;
 #[path = "resource_access_tests/share_links.rs"]
 mod share_links;
+#[path = "resource_access_tests/snapshot_reads.rs"]
+mod snapshot_reads;
 use layer2_core::resource_access::*;
 use sha2::{Digest as _, Sha256};
 

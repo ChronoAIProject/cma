@@ -49,6 +49,11 @@ impl CmaLaunchQuota {
 #[async_trait::async_trait]
 impl LaunchQuota for CmaLaunchQuota {
     async fn reserve(&self, caller: &Caller) -> Result<LaunchQuotaPermit, LaunchQuotaError> {
+        // Production admits the daily quota in the same durable transaction as
+        // the Launch. A cancelled response cannot lose or release that charge.
+        if self.limiters.shared.is_some() {
+            return Ok(LaunchQuotaPermit::unmetered());
+        }
         if !is_visitor(caller) {
             return Ok(LaunchQuotaPermit::unmetered());
         }

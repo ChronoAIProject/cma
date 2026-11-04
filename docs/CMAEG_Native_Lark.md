@@ -33,6 +33,7 @@ Configure the required Encrypt Key and Verification Token on the app, then subsc
 - `im.message.receive_v1` for text and enabled media intake.
 - `im.message.recalled_v1` for recall notifications.
 - `im.message.reaction.created_v1` and `im.message.reaction.deleted_v1` for human reaction deltas.
+- Optionally, `im.message.message_read_v1` for [confirmed private-message read status](CMAEG_Native_Lark_Read_Status.md). These observations annotate the original sending consumer and never launch a turn or resend a message.
 
 Grant the documented receive/recall and reaction-read permissions for the conversations the bot needs, plus the send-message permission for native replies. The audit in [incoming message events](CMAEG_Lark_Incoming_Message_Events.md) records the official permissions and evidence. The bot receives reactions only in conversations it belongs to. App publication, installation, membership, effective permission approval and actual event delivery require platform acceptance with the separately provisioned app.
 
@@ -48,9 +49,23 @@ Recall notifications become `cma.message.deleted.v1` with `recall_type` and an *
 
 Unknown targets receive HTTP 503 for a bounded two-minute window after the event timestamp, allowing an original admission or confirmed outbound receipt to settle. Older unavailable targets are acknowledged as refused. Original plans and confirmed targets have bounded retention; this is not a historical message archive. Event arrival order is not assumed.
 
+## Shared contacts, groups and locations
+
+Native receive events also preserve personal contact cards (`share_user`), group
+cards (`share_chat`) and locations as bounded message text. Cards show the shared
+Open ID or chat ID; locations show the supplied name and latitude/longitude.
+The shared identity is content only: the authenticated sender, original chat,
+admission policy, consumers and reply target remain unchanged. CMA does not
+resolve the shared identity, join a shared group, fetch supplied URLs or grant
+attachment access. Coordinates must be finite strings within ±90/±180 degrees,
+and names are limited to 1024 UTF-8 bytes with no control or bidi formatting
+characters. Invalid facts refuse the message before admission. This follows the
+official [received message content](https://open.larksuite.com/document/uAjLw4CM/ukTMukTMukTM/im-v1/message/events/message_content.md)
+contract; source implementation is not connected-platform acceptance.
+
 ## Native replies and confirmed outbound targets
 
-Text replies use the exact retained app and chat through the region's official API. Non-thread replies send to the retained chat, so a recalled original can still receive a conversational response. A thread reply uses the retained message with `reply_in_thread`; failure to address that thread is reported and never falls back to another conversation. Thread creation remains unsupported. Original-conversation history has its own consent and gate, described below.
+Text replies use the exact retained app and chat through the region's official API. Non-thread replies send to the retained chat, so a recalled original can still receive a conversational response. A thread reply uses the retained message with `reply_in_thread`; failure to address that thread is reported and never falls back to another conversation. An independently gated explicit text reply can [start the exact admitted group root thread](CMAEG_Native_Lark_Thread_Start.md). Original-conversation history has its own consent and gate, described below.
 
 The sender checks current source/credential authority before each send, respects the shared delivery gate and pacing, and requires a successful official receipt with an exact chat and new message ID. It then seals a receipt bound to the original plan, sending consumer, provider, partition, conversation, app identity and credential revision. Reactions or recalls on a confirmed outbound target reach only its original sending consumer. Missing or malformed send responses remain uncertain and are never blindly retried. Partial multipart delivery and uncertain receipt persistence are reported as unknown.
 
@@ -75,3 +90,10 @@ admission-time custody and require current consent. Thread scans can
 return empty pages while advancing past newer messages. See the
 [history contract](CMAEG_Native_Lark_History.md) for custody, pagination, content
 omissions, reader-before-writer rollout and platform limits.
+
+## Native reply and context data
+
+The default-off native context writer exposes bounded data through Activity and
+authenticated context reads. See [native quoted-message context](CMAEG_Native_Quoted_Context.md)
+for exact per-platform fields, reference-only limits, replay compatibility and
+reader-first rollout requirements.

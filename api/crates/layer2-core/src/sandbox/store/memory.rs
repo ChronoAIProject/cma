@@ -51,6 +51,9 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
+mod agent_worktree_recovery;
+#[cfg(test)]
+mod agent_worktree_recovery_tests;
 mod bindings;
 mod channel_usage;
 mod command_audit;
@@ -59,6 +62,7 @@ mod events;
 mod interrupting_messages;
 mod provenance;
 mod provenance_inventory;
+mod provider_associations;
 mod queued_cancellations;
 #[cfg(test)]
 mod queued_cancellations_tests;
@@ -89,12 +93,29 @@ mod targeted_controls;
 #[cfg(test)]
 mod targeted_controls_tests;
 mod transactions;
+mod unpublished_recovery;
+#[cfg(test)]
+mod unpublished_recovery_tests;
 mod workspace_lifecycle;
 
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
     fn managed_runtime_version(&self) -> Option<&str> {
         self.managed_runtime_version.as_deref()
+    }
+
+    async fn unpublished_runtime_recovery_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<crate::sandbox::SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
+        unpublished_recovery::snapshot(&self.lock(), id)
+    }
+
+    async fn admit_unpublished_runtime_recovery(
+        &self,
+        request: crate::sandbox::SandboxUnpublishedRecoveryRequest,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        unpublished_recovery::admit(&mut self.lock(), request)
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
@@ -136,6 +157,9 @@ impl SandboxStore for InMemorySandboxStore {
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
                 || current.validate_service_access_successor(&sandbox).is_err()
+                || current
+                    .validate_unpublished_recovery_save(&sandbox)
+                    .is_err()
                 || crate::sandbox::ProvisioningExecution::validate_successor(
                     current.work.execution,
                     sandbox.work.execution,
@@ -289,7 +313,10 @@ impl AgentStore for InMemorySandboxStore {
     }
 
     async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
-        if agent.work.resolved_skills.is_some() || !agent.work.live_skills.is_empty() {
+        if agent.work.resolved_skills.is_some()
+            || !agent.work.live_skills.is_empty()
+            || !agent.work.worktree_recoveries.is_empty()
+        {
             return Err(SandboxStoreError::Conflict);
         }
         let mut state = self.lock();
@@ -315,7 +342,9 @@ impl AgentStore for InMemorySandboxStore {
         let id = agent.id.clone();
         let mut state = self.lock();
         let current = state.agents.get(&id).ok_or(SandboxStoreError::NotFound)?;
-        if current.owner != agent.owner
+        if current.worktree_id != agent.worktree_id
+            || current.work.worktree_recoveries != agent.work.worktree_recoveries
+            || current.owner != agent.owner
             || current.profile != agent.profile
             || current.conversation.settings != agent.conversation.settings
             || current.work.resolved_skills != agent.work.resolved_skills

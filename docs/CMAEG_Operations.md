@@ -50,8 +50,8 @@ loads local SVG images under the gateway's restrictive content security policy.
 The complete Markdown download retains the Mermaid sources and internal links.
 
 Production catalog display name: **Agent Event Gateway**. NyxID slug: `cmaeg`.
-The catalog REST base is `https://bot.chrono-ai.fun/event-gateway/v1`, with OpenAPI at
-`https://bot.chrono-ai.fun/event-gateway/openapi.json`. The `/v1` base is necessary
+The catalog REST base is `https://cma.nyxid.ai/event-gateway/v1`, with OpenAPI at
+`https://cma.nyxid.ai/event-gateway/openapi.json`. The `/v1` base is necessary
 because the NyxID OpenAPI parser discovers paths but does not apply `servers`.
 The public/internal service is auto-connected and forwards caller bearers;
 channel ownership and credential-specific gateway checks remain authoritative.
@@ -151,31 +151,52 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_LARK_WRITES_ENABLED` | `true` or `false` | `false` | Author a separately provisioned native Lark/Feishu app and sealed credentials after all readers support the source. Requires durable routed recovery/admission and routing authoring. Never replaces a NyxID webhook. See [native Lark](CMAEG_Native_Lark.md). |
 | `CMAEG_NATIVE_LARK_INTAKE_ENABLED` | `true` or `false` | `false` | Admit encrypted signed callbacks on `/v1/native-lark/{channel_id}`. Retained work and replies continue through the durable recovery path when intake is paused. |
 | `CMAEG_NATIVE_LARK_MEDIA_ENABLED` | `true` or `false` | `false` | Admits new native image, file, audio, video and rich-post resources after compatible locator readers deploy. Requires `CMAEG_MEDIA_ENABLED`; pauses preserve exact duplicate admission and retained reads. Direct regional message-resource retrieval rechecks original consumer/provider and current source/credential authority, including cache hits. See [native Lark media](CMAEG_Native_Lark_Media.md). |
-| `CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED` | `true` or `false` | `false` | Independent bounded native JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and Baseline H.264 MP4 upload/send gate. Requires retained native source custody and exact routed default/named consumer/provider authority; rejects native captions and controls. Advertises exact MIME/size/video limits through `native_media`. See [native outbound media](CMAEG_Native_Lark_Outbound_Media.md). |
+| `CMAEG_NATIVE_LARK_STICKERS_ENABLED` | `true` or `false` | `false` | Admit authenticated received-sticker facts after all retained-source readers support them. No download or visual interpretation. Disabling preserves exact retained duplicate replay. See [received stickers](CMAEG_Native_Lark_Stickers.md). |
+| `CMAEG_NATIVE_LARK_STICKER_REPLIES_ENABLED` | `true` or `false` | `false` | Advertise and send only the exact event's retained sticker through its original native bot/chat/thread. Independently gated; no caller key, upload, URL, default recipient or initiated send. Existing durable confirmed/unknown reply fences remain authoritative. |
+| `CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED` | `true` or `false` | `false` | Independent bounded native JPEG/PNG, TXT/PDF/Office/ZIP/generic files, mono Opus Ogg and Baseline H.264 MP4 upload/send gate. Requires retained native source custody and exact routed default/named consumer/provider authority; rejects native captions and controls. Advertises exact MIME/size/video limits through `native_media`. See [native outbound media](CMAEG_Native_Lark_Outbound_Media.md). |
 | `CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` | `true` or `false` | `false` | Independently enables consented original native Lark/Feishu chat and exact-thread history through REST/MCP. Each call scans at most 25 raw rows; threads may return empty progress pages. Off disables native history execution and capability discovery. Requires compatible source/admission-proof readers before authoring. See [native history](CMAEG_Native_Lark_History.md). |
+| `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` | `true` or `false` | `false` | Permits explicit `include_media=true` reads to preserve text in supported native Lark/Feishu posts containing images/video, with `omitted_content: ["media"]` and no resource authority. Requires the history gate and existing consent. Omitted/false requests always retain legacy whole-row omission. Deploy gateway v3 cursor readers and compatible opt-in clients before activation. |
+| `CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED` | `true` or `false` | `false` | Issue per-part references for confirmed ordinary native Telegram/Discord split text. Deploy compatible receipt readers before enabling; retained pages remain readable with issuance disabled. See [split-text receipts](CMAEG_Native_Split_Text_Receipts.md). |
+| `CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED` | `true` or `false` | `false` | Issue one native upload with an inline keyboard only after every reader supports durable Telegram media cards. Routed human events only; named consumers also require consumer interaction issuance. Retained callbacks remain readable with issuance disabled. Multipart references are not included. |
+| `CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED` | `true` or `false` | `false` | Issue retained caption/keyboard edit permission on confirmed native Telegram media cards. Enable only after every reader supports the optional media snapshot and card edit marker. Requires media-control issuance; earlier cards remain uneditable. Existing issued edits and callbacks remain readable with issuance disabled. No re-upload or file replacement. |
 | `CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED` | `true` or `false` | `false` | Issue revisioned single-upload caption/replacement references after durable media receipt storage. Retained references remain usable when issuance is disabled. See [native media edits](CMAEG_Native_Media_Edits.md). |
 | `CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED` | `true` or `false` | `false` | Issue revisioned single-upload content/attachment-description/replacement references after durable receipt storage. Historical effects-only references never gain edit authority. |
 | `CMAEG_NATIVE_LARK_CONTROLS_ENABLED` | `true` or `false` | `false` | Issue direct-app JSON 2.0 cards, buttons and choices for the exact original human, conversation and retained existing group thread. Requires native intake and durable routed recovery. Existing callbacks and references retain their authority when issuance is disabled. See [native controls](CMAEG_Native_Lark_Controls.md). |
+| `CMAEG_NATIVE_LARK_THREAD_START_ENABLED` | `true` or `false` | `false` | One explicit text reply may start the exact admitted native Lark/Feishu group root thread. Requires native intake and durable admission; fresh bot/root custody and exact reply receipt. No arbitrary destinations or fallback. See [thread starts](CMAEG_Native_Lark_Thread_Start.md). |
+| `CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED` | `true` or `false` | `false` | One confirmed PNG/JPEG upload with buttons/choices in a single JSON 2.0 native card. Requires native outbound media and native controls; nested `native_media.controls.kinds` is restricted to `image`. Existing confirmed cards retain callback/recovery and image-preserving edits when disabled. See [image controls](CMAEG_Native_Lark_Image_Controls.md). |
+| `CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED` | `true` or `false` | `false` | Send two to four compatible native Telegram attachments as one ordered album. Photos/videos may mix; documents and audio each require their own kind. No album controls or message operation references. Single-upload paths are unchanged. Deploy capability readers before enabling; see [albums](CMAEG_Native_Telegram_Albums.md). |
+| `CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED` | `true` or `false` | `false` | Send exclusive bounded contact, static location and venue content to the original retained native Telegram chat/topic through the keyed durable reply lane. No arbitrary recipient, live tracking, controls, lookup or URL fetch. Upgrade all message readers first; see [structured replies](CMAEG_Native_Telegram_Structured_Replies.md). |
+| `CMAEG_NATIVE_WHATSAPP_STRUCTURED_REPLIES_ENABLED` | `false` | Enable private native WhatsApp contact, location and venue replies after compatible structured-message readers deploy; also requires native WhatsApp writes. See `CMAEG_Native_WhatsApp_Structured_Replies.md`. |
+| `CMAEG_NATIVE_DISCORD_VOICE_ENABLED` | `true` or `false` | `false` | Independently permits one canonical mono 16-bit 16kHz PCM WAV voice attachment (0.1–120 seconds), or one complete mono Opus Ogg stream (0.1–<120 seconds) when the shared media decoder is configured, to the verified original Discord destination. Metadata comes from actual PCM samples; encoded Ogg bytes are uploaded unchanged. No text, controls, edits or public effect references; generic Audio is unchanged. See [Discord voice](CMAEG_Native_Discord_Voice.md). |
+| `CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED` | `true` or `false` | `false` | Independently permits explicit Telegram mono Opus/Ogg voice, bounded GIF or silent MP4 animation and static WebP sticker replies, plus WhatsApp private mono Opus/Ogg voice. Requires compatible readers before enabling; existing generic audio/video and WhatsApp stickers retain their behavior. No controls, albums or public message-operation references are issued for new presentations. Retained reply receipts remain replayable with issuance disabled. See [native presentations](CMAEG_Native_Media_Presentations.md). |
+| `CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED` | `true` or `false` | `false` | Two to four PNG/JPEG images with buttons/choices in one native card; additionally requires image-card issuance. Deploy all serving/rollback readers for the optional ordered `images` authority before enabling. Existing edits preserve every image and callbacks remain readable when disabled. |
+| `CMAEG_NATIVE_LARK_MEDIA_CARD_REPLACEMENTS_ENABLED` | `true` or `false` | `false` | Replace the complete 1–4 PNG/JPEG set on an existing confirmed native image card, including image-count changes. Requires native outbound media; retained cards remain editable when new issuance is disabled. Full preflight/uploads preserve the old card; an unknown PATCH remains fenced and is never replayed. Deploy readers for ordered `images` authority before enabling. See [image replacement](CMAEG_Native_Lark_Image_Controls.md#replace-the-image-set-on-a-confirmed-native-card). |
 | `CMAEG_NATIVE_LARK_FORMS_ENABLED` | `true` or `false` | `false` | Enable the bounded one-form native subset only when native controls are enabled. Independent of relay cards/forms; no new app or callback configuration is created automatically. |
 | `CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue separate-app confirmed native Lark/Feishu text-edit, recall and own-reaction references only after durable exact-message receipt storage. Retained references remain usable when issuance is disabled. See [native message effects](CMAEG_Native_Lark_Message_Effects.md). |
 | `CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED` | `true` or `false` | `false` | Independently issue reaction-only references for the exact original human message after retained routed consumer/provider admission is verified. No received-message edit or recall authority. |
+| `CMAEG_NATIVE_TYPING_ENABLED` | `true` or `false` | `false` | Explicit native Discord/private WhatsApp `sendTyping`, separately activated after compatible-reader and Custom-channel verification. Requires current original-event/consumer custody and native admission/writer gates. WhatsApp also marks the original message read; private original messages must be younger than 24 hours. One bounded call, no automatic retry or heartbeat. See [native typing](CMAEG_Native_Typing.md). |
 | `CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED` | `true` or `false` | `false` | Allows native Meta WhatsApp source and atomic credential writes after all serving and rollback readers support them. The deployment manifest enables owner setup/testing after the compatible-reader rollout and isolated Custom verification; connected Meta acceptance remains unverified. Requires durable routed recovery/admission, routing writes and replay-capable providers; the source needs a dedicated Meta app callback. Retained native sources remain readable with authoring off. See [native WhatsApp](CMAEG_Native_WhatsApp.md). |
 | `CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED` | `true` or `false` | `false` | Permits explicit source `group_ids` opt-ins for existing groups. Requires native authoring and routed durable prerequisites; exact phone OBA and active group membership are proved with bounded read-only Graph requests. Existing groups can be retained/removed with authoring disabled. The deployment manifest enables owner testing after the accepted compatible-reader rollout. See [native groups](CMAEG_Native_WhatsApp_Groups.md). |
 | `CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED` | `true` or `false` | `false` | Admits new opted-in group messages and permits group sends; retained admission replay remains readable when disabled. Requires fresh OBA/group/original-participant proof before every effect and current original-consumer authority. Independent media/template gates still apply; no group stickers, controls, reactions or message edits/deletes. The deployment manifest enables owner testing after the accepted compatible-reader rollout. Connected v25/OBA acceptance remains unverified. |
 | `CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED` | `true` or `false` | `false` | Admits new native image, document, audio/voice, video and sticker messages after compatible attachment and retained-plan readers are deployed. Also requires `CMAEG_MEDIA_ENABLED`. Turning this gate off preserves already-admitted media replay; keep the shared media service enabled for retained retrieval. See [native WhatsApp media](CMAEG_Native_WhatsApp_Media.md). |
 | `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED` | `true` or `false` | `false` | Independent native JPEG/PNG image, TXT/PDF/Word/Excel/PowerPoint documents and AAC/AMR/MP3/M4A/mono Opus Ogg audio plus static/animated WebP sticker and Baseline H.264 MP4/3GPP video reply uploads; bounded format profiles, no audio/sticker captions or voice flag. Requires current native source custody and routed authority. Advertises exact MIME/size limits through `native_media`; unrelated inbound/relay flags do not enable it. Compatible readers and authorized connected Meta acceptance are still required. See [native outbound media](CMAEG_Native_WhatsApp_Outbound_Media.md). |
+| `CMAEG_NATIVE_WHATSAPP_MESSAGE_EVENTS_ENABLED` | `true` or `false` | `false` | Admit private incoming text/caption edits and revokes for WhatsApp Business App coexistence accounts, with source `message_events` consent and retained original-message credential proof. Gate-off preserves admitted recovery; current consent, credentials and original authority remain required. Existing interaction storage only; no new collection. See [incoming changes](CMAEG_Native_WhatsApp_Message_Events.md). |
 | `CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED` | `true` or `false` | `false` | Issue reaction-only references for authenticated received native WhatsApp messages in `received_message` context. Existing references continue to work when issuance is disabled. This requires compatible sealed-reference readers; it grants no deletion, editing or arbitrary-message authority. See [native reactions](CMAEG_Native_WhatsApp_Reactions.md). |
 | `CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED` | `true` or `false` | `false` | Independent native approved-template event replies using the existing typed `whatsapp_template` field. Requires verified private native context, or separately enabled opted-in group context, current source credentials and routed consumer authority. Groups admit header/body components only. Private replies preserve text/image/video/document headers, text/currency/date-time body substitutions and URL buttons. Media IDs/public HTTPS links use the existing template policy; the native upload gate is separate. The deployment manifest enables owner testing after compatible-reader rollout; connected Meta acceptance remains unverified. Does not enable owner-initiated sends or interactive callbacks. See [native templates](CMAEG_Native_WhatsApp.md#approved-template-replies). |
 | `CMAEG_NATIVE_DISCORD_EDITS_ENABLED` | `true` or `false` | `false` | Issue native Discord single-part text/link edit references after all readers and rollback images understand the optional exact destination. Disabling issuance preserves retained references. |
 | `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue 24-hour delete/reaction authority on exact confirmed native Discord messages. Text/link replies also require native edit issuance; native uploads instead require the separate media effects gate. Deploy compatible readers before enabling. Retained references remain readable with issuance off. Reactions change only the bot’s own reaction; custom emoji IDs resolve in the destination guild. |
 | `CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue effects-only references for native uploads fully contained in one confirmed Discord message, with up to four files. Requires the message effects gate, independently of text edits. Multiple native messages and uncertain sends get no reference; content/attachment edits remain unsupported. Deploy serving and rollback readers for the new sealed scope before enabling. Checked-in ConfigMap stays off. See [native media effects](CMAEG_Native_Discord_Media_Effects.md). |
 | `CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED` | `true` or `false` | `false` | Allows new native source `thread_history` opt-ins and explicit bounded `readEventContext` history reads after compatible readers are deployed. Both this gate and source consent are required for execution. Off revokes history reads, retained settings can be removed; ordinary context reads are unchanged. See [native thread history](CMAEG_Protocol.md#bounded-native-discord-thread-history). |
-| `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows independent native Telegram `topic_lifecycle` consent and exact admitted non-General forum-topic close/reopen. Requires durable admission/recovery and existing optional persistent fence readiness. Off revokes execution. See [Telegram topic rollout](#native-telegram-topic-lifecycle-rollout). |
+| `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows independent native Telegram `topic_lifecycle` consent and exact admitted non-General forum-topic rename/close/reopen. Requires durable admission/recovery and existing optional persistent fence readiness. Off revokes execution. See [Telegram topic rollout](#native-telegram-topic-lifecycle-rollout). |
+| `CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED` | `true` or `false` | `false` | Enables independent `topic_creation` owner consent, original-forum creation through `createEventThread`, and rename/close/reopen of its scoped created-topic references. Requires durable admission/recovery, provider replay support and persistent fence readiness. Off revokes execution. Deploy compatible source and v2 thread-reference readers before activation. See [Telegram topic creation](CMAEG_Native_Telegram_Topic_Creation.md). |
+| `CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Enables General rename/close/reopen only with the base Telegram topic gate and exact original native forum-envelope proof. Reopen also unhides General. Retains the existing `topic_lifecycle` source consent and public absent thread. Off revokes General execution. |
 | `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows native source `thread_lifecycle` consent and bounded create/list/rename/archive/reopen/current-bot join/leave operations only when the optional persistent fence collection and grants are ready. Off revokes execution including retained references. See [lifecycle rollout](#native-discord-thread-lifecycle-rollout). |
 | `CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` | `true` or `false` | `false` | Allows independently consented, bounded original-conversation history pages through REST and MCP. Off disables execution and discovery. See [history gate](#native-discord-conversation-history-gate). |
 | `CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` | `true` or `false` | `false` | Persists verified native channel metadata in immutable inbox bodies and issues exact-thread reply evidence. Deploy compatible inbox and sealed-reference readers first. This uses one bounded authenticated channel read per new admitted message, with no per-channel cache; duplicate inbox messages reuse their original evidence. Disabling stops new metadata writes but retained evidence continues to replay. |
 | `CMAEG_NATIVE_DISCORD_ENABLED` | `true` or `false` | `false` | Enables supervised native source connections and durable inbox recovery for explicit canaries or bounded automatic discovery. Off starts no native worker, scans or Discord requests. Authoring remains separately gated. |
 | `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED` | `true` or `false` | `false` | Discovers eligible ready native sources from the persisted channel index in pages of 32, with at most 64 selections/workers per process. Requires native runtime and routed recovery. Explicit canaries take precedence; dynamic selection authorizes verified native inbox admission only. It does not activate arbitrary HTTP, Custom or relay routing. |
+| `CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED` | `true` or `false` | `false` | Captures version-1 descriptive sticker/embed/poll facts for new admitted human messages. Requires native runtime and routed recovery. Deploy compatible `content_projection` inbox readers and drain all predecessor processes before enabling. Retained projections replay with the writer off; rollback binaries must keep the reader until every projected inbox expires. Old inbox bodies retain legacy digests and admission behavior. Adds no URL fetching, poll operations or metadata-only update turns. See [Discord rich content](CMAEG_Native_Discord_Rich_Content.md#durable-replay-and-rollout). |
+| `CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED` | `true` or `false` | `false` | Captures independent version-1 descriptions of supplied forwarded snapshots. Requires native runtime and routed recovery. Deploy compatible `forward_projection` readers and drain predecessors before enabling; keep compatible rollback readers until projected inboxes expire. Original forwarder/current conversation remain authority; no nested URLs or origin channels are fetched. See [Discord forwards](CMAEG_Native_Discord_Forwards.md). |
 | `CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED` | `true` or `false` | `false` | Admits native message edits and deletions into the durable inbox for their original consumers. Enable only after serving and rollback readers support the retained event records. Disabling stops new admissions while retained events recover. See [Discord incoming changes](CMAEG_Discord_Incoming_Message_Events.md). |
 | `CMAEG_DISCORD_REACTIONS_ENABLED` | `true` or `false` | `false` | Allows owner reaction-intent opt-ins and new native reaction admissions. Original inbound context or confirmed outbound receipts select the original consumers. Requires compatible inbox readers; retained recovery continues with issuance off. See [Discord incoming changes](CMAEG_Discord_Incoming_Message_Events.md#native-reaction-opt-in). |
 | `CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` | comma-separated canonical UUID v4 IDs | empty | Initial bounded rollout selection, at most 64 records. When enabled, every selected record must also be in `CMAEG_ROUTED_CHANNEL_RECORDS` and routed recovery must be on. Sources need their original ready channel identity and an explicit routing snapshot. This staged allowlist is not automatic source discovery. |
@@ -183,8 +204,13 @@ applies with all media flags off.**
 | `CMAEG_THREAD_CONTRACT_WRITES_ENABLED` | `true` or `false` | `false` | Advertises and permits new or changed native-thread contracts after all gateway readers and the NyxID native thread-reply endpoint support them. Keeping it false preserves ordinary channel writes and execution of retained contracts; removing a contract remains allowed. Only exact `true`/`false` are accepted. See [Native thread rollout](#native-thread-rollout). |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
 | `CMAEG_NON_HUMAN_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; repeated slugs collapse, and startup fails otherwise, naming the key. Whose agents answer custom events and hand-offs by default: a consumer of a channel with routing that has no `non_human` field answers them only when its provider slug is listed here. A consumer's `non_human` field overrides this per consumer. A CMA consumer bound with `source_user` session affinity needs `non_human:false`, because CMA selects its agent from the verified human sender, which a custom event or hand-off does not have. Aevatar (D-c): add its slug only once its endpoint answers non-human activities. Set it to the empty string to name no provider. The routing audit reads it to decide whether `default` answers custom events (see [Rolling back below multi-consumer routing](#rolling-back-below-multi-consumer-routing)). A separate key because provider entries refuse unknown fields. |
+| `CMAEG_BINDING_PREPARATION_ENABLED` | boolean | `false` | Enables generation preparation for new routed CMA profile targets. Requires durable recovery, exact provider preparation paths and management authentication. Keep enabled after migration even when new replacement enrollment is stopped. See [fresh-event preparation](CMAEG_Fresh_Event_Binding_Preparation.md). |
+| `CMAEG_BINDING_REPLACEMENT_BINDINGS` | comma-separated binding IDs | empty | Explicit replacement enrollment for new eligible admissions only; no wildcard, at most 256 IDs. Requires generation preparation. Clearing the list stops new replacement authority without changing retained admissions. |
 | `CMAEG_ROUTED_RECOVERY_ENABLED` | boolean | `false` | Installs the durable admission adapter, replay executor, tool receipts and supervised recovery scheduler. Required before selecting records or enabling admission. Keep enabled while retained routed work can execute or retry. A stopped recovery worker removes readiness; shutdown uses the existing turn drain deadline. See [durable routed execution](CMAEG_Routed_Execution.md). |
+| `CMAEG_MEDIA_CONTINUATIONS_ENABLED` | boolean | `false` | New routed events targeting an existing CMA Agent durably deliver original attachments and late transcripts through independent Append commands. Requires routed recovery, enabled media service and the optional Gateway-owned Mongo media index. Deploy compatible Agent Manager and Gateway readers before enabling this writer. A ready index keeps recovery active with the flag off. Original event commands are never replayed or interrupted. See [media continuations](CMAEG_Media_Continuations.md). |
+| `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED` | boolean | `false` | Writes versioned bounded native quoted/context data on new durable ordinary admissions; Discord fixes it at inbox capture. Deploy all serving, provider and rollback readers first. Gate-off replays preserve existing snapshots. See [native quoted context](CMAEG_Native_Quoted_Context.md). |
 | `CMAEG_ROUTED_ADMISSION_ENABLED` | boolean | `false` | Allows new routed plans only for explicitly selected records. Set false to pause new admissions with 503 while exact committed retries and recovery continue. This does not disable the channel's legacy path when no routing policy exists. |
+| `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED` | boolean | `false` | Reader-first writer gate for immutable `durable_custom_execution` on new Custom channels. Requires routed recovery/admission, routing writes and replay-capable providers. Retained marked Custom sources keep durable selection without an operator record allowlist; disabling the writer never falls back to legacy execution. Existing unmarked records remain unchanged. See [self-service Custom execution](CMAEG_Custom_Durable_Execution.md). |
 | `CMAEG_ROUTED_CHANNEL_RECORDS` | comma-separated explicit record IDs | empty | At most 64 IDs; no wildcard. Unselected ingress keeps its existing launcher without admission-store reads. Retain selected IDs while their durable identities can be retried; removing selection is not a safe rollback. Provider replay capability must be explicitly configured and proved before a new routed plan is accepted. |
 | `CMAEG_MEDIA_ENABLED` | `true` or `false` | `false` | Master switch for inbound media. Exactly `true` or `false`; any other value, including `True` or `1`, fails startup. Off, every media message is refused with 202 `attachment_unsupported`, and every Lark or Feishu rich-text post with `content_unsupported`, exactly as before media existed. On, authenticated Telegram media from the NyxID relay and the native webhook, and Lark and Feishu image, file, audio and media/video messages from the relay, are admitted as activity attachments, and Lark and Feishu posts as text the observer flattens from the raw event (protocol §6); Lark stickers stay refused. It also governs custom sources: off, management refuses a custom `attachments` setting with `custom_attachments_disabled` and ingress ignores a stored one; on, the setting can be stored and the items it names in custom events are admitted as attachments. Enabling it requires the `cmaeg` container's memory request to equal its limit at 1536Mi or more; `tests/infra_manifests.rs` enforces this. |
 | `CMAEG_MEDIA_MAX_BYTES` | unsigned decimal, bytes | `20971520` | 1..=26214400. Most bytes fetched for one attachment; Telegram and NyxID serve at most 20 MiB themselves. Validated at startup even while `CMAEG_MEDIA_ENABLED` is `false`, like every media budget below; an out-of-bounds or non-decimal value fails startup naming the key. |
@@ -212,8 +238,11 @@ applies with all media flags off.**
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
-| `CMAEG_PUBLIC_URL` | origin URL | Required | Retained console OAuth/CSRF origin and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
-| `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://bot.chrono-ai.fun/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
+| `CMAEG_PUBLIC_URL` | origin URL | Required | Retained event identity and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_CONSOLE_NYXID_PUBLIC_URL` | origin URL | `CMAEG_NYXID_BASE_URL` | Console OAuth discovery, authorization, token, revocation and organization-list origin. Production `https://api.nyxid.ai`; HTTPS required except loopback tests. Discovery must advertise endpoints on this exact origin. Does not change shared creator authentication, retained issuer, service audiences or credentials. |
+| `CMAEG_CONSOLE_PUBLIC_URL` | origin URL | `CMAEG_PUBLIC_URL` | Browser console OAuth/CSRF origin. Production `https://cma.nyxid.ai`; register `/console/callback` on the existing OAuth client and route `/console` to CMAEG before enabling. Same strict origin rules as the public origin. Does not change event identities, master keys, or agent credentials. |
+| `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
+| `CMAEG_PUBLIC_API_ALIASES` | exact base list | empty | Comma-separated retained public API bases, at most eight; same validation as `CMAEG_PUBLIC_API_URL`. Used for existing webhooks, setup links/form Origins and MCP Origins. Keep all issued bases through rollout and rollback; this does not change advertisement. |
 | `CMAEG_ADVERTISE_PUBLIC_API_URL` | `true` or `false` | `true` | First-rollout switch: `false` keeps generated URLs and discovery on the legacy public origin while canonical routes, exact Origin checks and MCP compatibility remain available. Set `true` only after every serving replica supports the canonical namespace and the public routes have been verified. |
 | `CMAEG_MASTER_KEYS` | secret string | Required unless file source is set | Kubernetes Secret environment value containing `kid:base64key[,kid:base64key]`; each key decodes to 32 bytes and the first key is current. |
 | `CMAEG_MASTER_KEYS_FILE` | file path | Optional alternative | Compatibility file source for the same key ring; mutually exclusive with `CMAEG_MASTER_KEYS`. |
@@ -228,6 +257,10 @@ applies with all media flags off.**
 | `CMAEG_MONGODB_AUTHORITY_MODE` | `isolated` or `shared-schema` | Defaults to `isolated`; production uses `shared-schema` in `chrono-bot` | Shared mode admits a database-scoped credential while migrations and stores remain confined to `eg_*` collections. |
 | `CMAEG_NYXID_CLIENT_ID` | string | Required with independent Gateway storage | Reuses Agent Manager's NyxID client ID through its Deployment ConfigMap reference; the Gateway independently verifies the forwarded bearer. |
 | `CMAEG_NYXID_CLIENT_SECRET` | secret string | Required with the client ID | Reuses Agent Manager's client secret through a Secret reference; never put it in a ConfigMap. |
+| `CMAEG_WORKER_CREDENTIAL_TRACKING_ENABLED` | `true` or `false` | `false` | Registers permanent worker credential hashes before provider handoff and sealed Channel admission/import. Requires Gateway-owned Mongo replica-set storage and the additive worker-credential migration. Enable on every writer before owner-key cutover; after the durable cutover barrier, tracking-aware binaries refuse untracked startup/import. See [owner service-key rollout](CMAEG_Owner_Service_Keys.md). |
+| `CMAEG_OWNER_KEYS_ENABLED` | `true` or `false` | `false` | Enables personal owner Bearer keys only with tracking, matching durable cutover, configured service UUID, and fresh NyxID plus Manager/local worker classification on every request. Only parent keys issued strictly after cutover qualify. Legacy remote records are unsupported. Disable owner acceptance before any untracked rollback. See [owner service-key rollout](CMAEG_Owner_Service_Keys.md). |
+| `CMAEG_OWNER_KEY_SERVICE_ID` | canonical UUID | `""` | Exact NyxID Event Gateway catalog service UUID for confidential service-key introspection; required when owner keys are enabled. The existing client must be registered to introspect this service. This is not its public slug or an RFC 8707 resource URL. |
+| `CMAEG_OWNER_KEY_CUTOVER_ID` | canonical UUID | `""` | Exact attestation ID returned by the explicit `--attest-owner-key-cutover` command after all old writers have drained and retained Channels are backfilled. Required when owner keys are enabled and checked against the current durable attestation on every owner request. A retained-record scan does not reconstruct missing pre-cutover custody. |
 | `CMAEG_WEB_ORIGIN` | legacy name | Unused by the shared portal | Retained compatibility constant; exact-origin browser checks now run in Agent Manager's portal bridge. |
 | `CMAEG_COOKIE_KEY_FILE` | legacy name | Unused by the shared portal | Retained compatibility constant; the portal uses the existing CMA browser session and no separate Gateway cookie key. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
@@ -246,12 +279,17 @@ applies with all media flags off.**
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. This relay-only gate does not control native Telegram Bot API or native Discord media uploads. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s non-routed tool deadline; legacy text keeps its configured timeout and 8 s tool deadline. Complete ordinary replies use 15 s/18 s. Compatible runtime tool proxies wait 70 s; retained older Sandbox images may still cut off at 10 s. Routed sends retain their independent 20 s window. Only exact `true`/`false` are accepted. |
 | `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
-| `CMAEG_DISCORD_INTERACTIONS_ENABLED` | boolean | `false` | Issues native Discord buttons and single-select menus in ordinary channels and verified existing threads after all serving and rollback readers support native card identity, optional thread proof, callback inbox snapshots and durable interaction admission. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Disabling stops new issuance; retained callbacks and recovery remain readable. Gateway type-3 callbacks persist Activity before a single type-6 acknowledgement attempt within a 2.5-second budget. Thread controls require retained exact-thread event/reply evidence plus authenticated channel metadata at issuance and for fresh clicks; replies stay in that thread. Multi-select additionally requires `CMAEG_DISCORD_MULTISELECT_ENABLED`; mixed native media remains unsupported and interactive edits have a separate gate. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
+| `CMAEG_DISCORD_INTERACTIONS_ENABLED` | boolean | `false` | Issues native Discord buttons and single-select menus in ordinary channels and verified existing threads after all serving and rollback readers support native card identity, optional thread proof, callback inbox snapshots and durable interaction admission. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Disabling stops new issuance; retained callbacks and recovery remain readable. Gateway type-3 callbacks persist Activity before a single type-6 acknowledgement attempt within a 2.5-second budget. Thread controls require retained exact-thread event/reply evidence plus authenticated channel metadata at issuance and for fresh clicks; replies stay in that thread. Multi-select additionally requires `CMAEG_DISCORD_MULTISELECT_ENABLED`; one mixed native upload requires `CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED`, and interactive edits have a separate gate. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
+| `CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED` | boolean | `false` | Issue one native upload plus buttons/choices in one Discord multipart message after every retained card reader supports the optional compact native `media` receipt. Requires native control and named-consumer gates. Retained callbacks stay readable when disabled. Multiple uploads remain unsupported; media-preserving card edits require their separate gate. Uploads are never split from controls. |
+| `CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED` | boolean | `false` | With the ordinary card-edit gate, binds exact native upload proof to new media-control cards and permits content/control edits preserving that upload. Every retained reader must support optional `media.confirmed` facts and edited media-card revisions first. Fresh native pre-read and complete PATCH echo verify file identity and metadata; ambiguous writes stay fenced. Historical cards without proof, media replacement and forms with media remain unsupported. |
+| `CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED` | boolean | `false` | With the media-card-edit gate, replaces one upload and its full text/controls on the same durable Discord card. Deploy readers for `media.pending_replacement` before issuance. The pending successor has no reference or callback authority; one multipart PATCH must confirm the new file and original destination before binding. Exact replay never uploads again, even if a source URL expires. |
+| `CMAEG_NATIVE_DISCORD_MEDIA_CARD_SETS_ENABLED` | `true` or `false` | `false` | Two to four uploads in one native Discord control card; complete replacement sets and explicit `clear_native_attachments` additionally require retained media-card edit/replacement authority. Disabling new-card issuance does not revoke retained operations. Deploy ordered `media_set` readers first. See [attachment sets and clear](CMAEG_Native_Discord_Card_Edits.md#complete-attachment-sets-and-explicit-removal). |
 | `CMAEG_DISCORD_MULTISELECT_ENABLED` | boolean | `false` | Issues native Discord `choice` controls with `multi: true` after serving and rollback readers support the optional consumed-click selection snapshot. Also requires `CMAEG_DISCORD_INTERACTIONS_ENABLED` and the named-consumer gate when applicable. The submitted whole set is canonicalized in card order, including an explicit empty set. Disabling issuance preserves retained callbacks and recovery. No new API/SDK fields or thread lifecycle authority. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
 | `CMAEG_DISCORD_FORMS_ENABLED` | boolean | `false` | Issues native modal launch buttons for eligible neutral Forms after every serving and rollback reader supports retained form authority, launch attempts and canonical submissions. Requires native Discord interactions and the named-consumer gate when applicable. Text/Choice use native controls; Number/Date use strictly validated text and report degradation. Off or ineligible preserves previous text rendering; retained callbacks and edits survive disabling issuance. Only exact `true`/`false` are accepted. See [native forms](CMAEG_Native_Discord_Forms.md). |
 | `CMAEG_DISCORD_CARD_EDITS_ENABLED` | boolean | `false` | Allows existing native card references to start an edit chain after compatible serving and rollback readers are deployed. An encrypted CAS claim fences the prior revision before one exact-message PATCH; retries replay the persisted receipt or remain unknown without resending. Disabling stops new chains while retained successor edits and operation replays remain supported. Named initial edits additionally require the consumer-interaction gate; adding multi-select requires its gate unless already present. Only exact `true`/`false` are accepted. See [native card edits](CMAEG_Native_Discord_Card_Edits.md). |
 | `CMAEG_DISCORD_CARD_EFFECTS_ENABLED` | boolean | `false` | Allows first CAS adoption of native card delete/reaction capability after all serving and rollback readers understand the retained state, shared PATCH/effect lock and exact consumed-callback recovery. Gate-off preserves adopted capability, successor authority and exact receipts through original expiry; it does not permit rollback to older readers. Only exact `true`/`false` are accepted. See [native card effects](CMAEG_Native_Discord_Card_Effects.md). |
 | `CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED` | boolean | `false` | Issues native private WhatsApp reply buttons and single-choice lists, independently of relay controls. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Enable after all serving and rollback readers support the optional native card authority and native WhatsApp interaction admission kind. Disabling stops issuance/discovery while retained callbacks and plans remain supported. Source/provider revocation still applies. See [native WhatsApp controls](CMAEG_Native_WhatsApp_Controls.md). |
+| `CMAEG_NATIVE_WHATSAPP_MEDIA_CONTROLS_ENABLED` | boolean | `false` | One uploaded image/document/video header with private reply buttons. Requires native outbound-media and interactions gates plus the named-consumer gate when applicable; lists, groups, relay, attachment captions, audio/stickers, albums and media/form mixtures stay unsupported. Discovery reports buttons-only `controls.kinds`; every upload/send rechecks original authority. Reuses native card/receipt storage without a new schema or migration; disabling stops new issuance while retained callbacks remain supported. See [native WhatsApp controls](CMAEG_Native_WhatsApp_Controls.md#one-media-header-with-reply-buttons). |
 | `CMAEG_WHATSAPP_INTERACTIONS_ENABLED` | boolean | `false` | Advertises and issues bounded WhatsApp reply buttons and single-choice lists for raw-verified private events; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Enable only after every gateway reader supports the retained interaction record and NyxID preserves `reply.metadata.interactive` plus raw button/list selections. Disabling stops new issuance; retained callbacks stay readable. No editing, templates or initiated-send authority is implied. |
 | `CMAEG_WHATSAPP_TEMPLATES_ENABLED` | boolean | `false` | Advertises and accepts bounded approved WhatsApp template replies through NyxID; independent of the native template gate. Enable only after every serving NyxID replica honors `reply.metadata.template` and a controlled approved-template send has confirmed a platform message ID. Disabled refuses templates before credential claim; ordinary replies are unchanged. Only exact `true`/`false` are accepted. This enables neither interactive callbacks nor initiated sends. |
 | `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
@@ -296,6 +334,23 @@ combined with RUST_LOG enforces this, so even
 with every media flag off. The latency harness has a separate test-only delay setting
 documented below; it is not a deployment key.
 
+## Updating profile-managed channels
+
+An existing CMA profile-managed binding keeps its service scope, skills, prompt,
+model, environment and conversation affinity pinned to preserve its sandbox and
+conversation history. A channel `PUT` that changes those settings returns HTTP
+409 with a structured `provider_rejected` problem explaining the unsupported
+reconfiguration. The channel record, provider binding, credentials and retained
+work remain unchanged. This applies to private custom connections and catalog
+services alike; adding a connection to the bootstrap key's NyxID allowlist does
+not make the binding profile mutable, and retrying with the same key cannot
+resolve this conflict. Keep the current profile when saving other channel
+settings. Rotate credentials separately with that unchanged profile.
+
+The Gateway recognizes the Manager's exact
+`409 binding_reconfiguration_unsupported` response. Unrecognized provider errors
+remain generic and never expose upstream response details or credentials.
+
 ## Provider response recovery transport
 
 Recovery is an explicit per-provider opt-in. Existing provider definitions omit
@@ -310,9 +365,13 @@ its existing `paths` object:
 Both paths are required and use the CMA Responses v2 dialect. The same strict
 allowlisted origin, normalized templates and encoded opaque path segments apply.
 Redirects are never followed. Do not infer recovery from a provider's POST path
-or name. Leave Nyxbot recovery absent until its deployed API supplies a verified
-snapshot/replay contract. The deployment manifest includes the same opt-in
-example and deliberately leaves both provider entries unchanged.
+or name. The deployment manifest also explicitly configures NyxBot's native
+`/api/v1/nyxbot/responses/{response_id}` snapshot and
+`/api/v1/nyxbot/responses/{response_id}/events` replay paths. The source-derived
+NyxBot conformance tests verify exact response identity, native Agent identity,
+terminal output, exclusive durable cursors and recovery from observation errors
+without another turn POST. This is provider contract evidence, not verification
+that a native platform socket is connected or that a platform message arrived.
 
 The transport only reads an already accepted response using the fresh consumer
 agent key supplied by the dispatcher. CMA's response endpoints recheck current
@@ -464,7 +523,7 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_console_sessions` | none | Console sessions held in memory. Sessions live only in the process: a restart or rollout signs everyone out, and the next page view shows the sign-in page. |
 | `cmaeg_console_session_evictions_total` | `reason` | Sessions ended by `subject_cap` (the account's oldest beyond `CMAEG_CONSOLE_SESSIONS_PER_SUBJECT`), `global_cap` (the least recently seen beyond `CMAEG_CONSOLE_SESSIONS_MAX`), `idle` or `absolute` expiry. A sweep every minute ends expired sessions nobody returns to. |
 | `cmaeg_console_revocations_total` | `outcome` | Best-effort revocations of an ended session's refresh token: `ok`, `failed`, or `dropped` when four are already in flight or no endpoint is known; a dropped token simply expires at NyxID. |
-| `cmaeg_console_rejections_total` | `reason` | Console form posts refused before any handler runs: `origin` when the request does not carry exactly one `Origin` equal to `CMAEG_PUBLIC_URL`, `csrf` when its per-session, per-form token is missing, duplicated or wrong. Every refusal answers a generic 403 page. |
+| `cmaeg_console_rejections_total` | `reason` | Console form posts refused before any handler runs: `origin` when the request does not carry exactly one `Origin` equal to the configured console origin, `csrf` when its per-session, per-form token is missing, duplicated or wrong. Every refusal answers a generic 403 page. |
 | `cmaeg_console_logins_total` | `outcome` | Console sign-in steps: `started` (the sign-in link sent the browser to NyxID), `ok` (a session was created), `expired` (a callback without a valid login cookie or with another `state`; no NyxID call is made), `denied` (NyxID returned no code), `failed` (NyxID refused the code or the identity), `unavailable` (NyxID or the four exchange permits were unavailable) and `rate_limited` (`CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE` reached). Logs carry only the outcome and, for `ok`, an 8-character subject hash prefix. |
 | `cmaeg_console_authorizations_total` | `outcome` | Console requests whose owner authority was derived: `ok`, `refreshed` (the access token was rotated first), `refresh_transient` (NyxID could not refresh a token expiring within 30 seconds; the request got the 503 page), `downgraded` (the selected organization's admin role ended and the session dropped to Personal), `ended` (NyxID refused the refresh token or the identity) and `unavailable` (NyxID could not answer the check; the request got the 503 page). See [Console authority](#console-authority). |
 | `cmaeg_console_observer_dropped_total` | none | Exported only while `CMAEG_CONSOLE_ENABLED=true`. Console observations dropped because the 4,096-entry observation queue was full. Ingress, launch, delivery, management and the resolver only `try_send` to the queue and never wait for it, so a burst the console's one drainer cannot keep up with loses console detail, never traffic. It should stay `0`; a rising count means the console shows gaps. |
@@ -558,6 +617,14 @@ stream lifetime. Normal certificate verification remains enabled. The transport
 uses the workspace's existing locked Hyper, h2, Tokio, and Rustls dependency
 versions; it does not add an alternative TLS stack.
 
+The isolated `turn_metrics` test retains its separate 20-ms first-socket-write
+ceiling. It checks readiness through agent-card discovery on a separate HTTP
+client and initializes process-global tracing/metrics on a disposable fixture.
+Its measured fixture uses a fresh Responses transport and must make exactly one
+POST: its first connection, request serialization and real socket write remain
+inside the timing window. No connection from initialization is reused, and the
+actual socket timestamp and the 20-ms assertion are unchanged.
+
 Run the executable latency gate from `api/`:
 
 ```sh
@@ -575,9 +642,15 @@ The warm run sends 500 callbacks with 16 concurrent callers. Its p50 must stay
 below 50 ms and p99 at or below 1000 ms. It asserts there are no CMA reads or
 additional JWKS fetches. The cold run sends 200 callbacks in 25 rounds of eight;
 each round builds and signs all eight HTTP requests before invalidating the
-cache, then polls their sends concurrently. Synchronous RSA signing during the
-batch's first poll could otherwise let the first restore finish before later
-callers arrive. The eight callers share one restore flight. It asserts 25
+cache, then polls their sends concurrently. A fixture-only gate holds the fake
+CMA read until all eight real HTTP callbacks are pending on the cold resolver;
+the configured read delay starts after that gate. This prevents signing or HTTP
+scheduling from turning a late batch member into a warm hit. The fixture buffers
+each body unchanged, then polls the production callback through its first pending
+restore await; signature verification and timing still run in the real handler.
+A regression deliberately withholds the eighth request past the normal read
+delay and proves the first seven cannot finish. The eight callers share one
+restore flight. It asserts 25
 additional CMA reads, no additional JWKS fetches, every restore wait above
 0.5 ms, launch p99 at most 2000 ms, and restore wait p99 at most 800 ms. The
 initiating caller owns the `cold=true` metric sample; all eight wait on the cold cache.
@@ -637,14 +710,16 @@ warm replica from service. A public route must never forward the private scrape 
 `chrono-bot`, matching the maintainer's 2026-09-22 deployment decision. CMA API
 also keeps one replica. The gateway listens on 8090; its private metrics listener
 uses 9091 and is not exposed through the public Service. The HTTPRoute attaches
-to `gateway-infra/chronoai-gateway`. Its canonical route on `bot.chrono-ai.fun`
+to `gateway-infra/chronoai-gateway`. Its canonical route on `cma.nyxid.ai`
 rewrites `/event-gateway/v1`, `/event-gateway/mcp`, `/event-gateway/openapi.json`
 and `/event-gateway/docs` to the service's existing endpoints. It forwards
 `/event-gateway/connect` and `/event-gateway/legacy-console` unchanged so the
 backend can preserve each browser flow's paths and exact Origin checks. The SPA
 at exactly `/event-gateway` remains on web; `/api/event-gateway` remains CMA's
-cookie-custody bridge. The old `bot-gateway.chrono-ai.fun` route stays installed.
-DNS, certificates, Gateway listeners and NyxID registrations are unchanged.
+cookie-custody bridge. The old `bot.chrono-ai.fun/event-gateway` and
+`bot-gateway.chrono-ai.fun` routes stay installed. See
+[CMA domain migration](CMA_Domain_Migration.md) for the additive listener,
+callback registrations and staged compatibility rollout.
 
 Deploy CMA's dual-base validation first. For the first Gateway upgrade, keep the
 canonical `CMAEG_PUBLIC_API_URL` but temporarily override
@@ -658,7 +733,8 @@ only newly issued links differ. The checked-in configmap describes the final
 `true` state. A ConfigMap change alone does not update existing process
 environments: each phase needs an explicit Pod-template change.
 
-CMA accepts native MCP advertisements at exactly either configured public base.
+CMA accepts native MCP advertisements at the configured public bases and exact
+`CHRONO_CMAEG_PUBLIC_API_ALIASES` entries.
 Its binding/runtime proxy destination remains the retained legacy `/mcp`
 authority, so changing the advertisement never rewrites a binding's immutable
 tool endpoint or breaks replay. The configured canonical URL is an exact
@@ -675,9 +751,10 @@ callbacks, channel IDs, keys and cookies are not rewritten. Existing Telegram
 webhooks on the exact legacy channel URL stay installed until authorized cleanup;
 new webhooks use the canonical base. An unrelated URL is always refused.
 
-`CMAEG_PUBLIC_URL` remains the registered legacy console origin. The canonical
-legacy-console entry uses a fixed redirect to that origin; it cannot accept a
-caller-supplied destination. `/connect` capability tabs continue to work on the
+`CMAEG_CONSOLE_PUBLIC_URL` selects the browser console origin independently of
+the retained `CMAEG_PUBLIC_URL` event identity. When absent it defaults to that
+retained origin. The canonical legacy-console entry uses a fixed redirect to the
+configured console origin; it cannot accept a caller-supplied destination. `/connect` capability tabs continue to work on the
 old host, and new setup links use the prefixed canonical routes. The HTTP OpenAPI
 response advertises `{CMAEG_PUBLIC_API_URL}/v1` after phase two (the retained
 `{CMAEG_PUBLIC_URL}/v1` while the advertisement flag is false); the reviewed
@@ -874,10 +951,30 @@ POST {nyxid}/api/v1/developer/oauth-clients
   client, including rotating its secret. Keep the ChronoAI organization's admin
   set minimal.
 
-The redirect URI must be exactly `{CMAEG_PUBLIC_URL}/console/callback`. The
+The redirect URI must be exactly `{CMAEG_CONSOLE_PUBLIC_URL}/console/callback`
+(or `{CMAEG_PUBLIC_URL}/console/callback` when the console override is absent). The
 console requests `openid profile` and no service access: it sends no `resource`
 and no `requested_service_ids`, and approving the consent page without granting
 services is expected.
+
+**Moving the console to the canonical domain.** Preserve the existing client
+`85619590-ec86-40bb-a96b-657bb89b4aa8`, secret, scopes, owner and old redirect entries;
+add `https://cma.nyxid.ai/console/callback` through NyxID's supported client update.
+Apply the canonical HTTPRoute's `/console` prefix to the Gateway Service without
+rewriting its path. Deploy readers of `CMAEG_CONSOLE_PUBLIC_URL`, then set that
+key to `https://cma.nyxid.ai` and roll only CMAEG. Set
+`CMAEG_CONSOLE_NYXID_PUBLIC_URL=https://api.nyxid.ai` once compatible readers
+are deployed: NyxID discovery retains the old issuer while advertising OAuth
+endpoints on the new API origin. Keep `CMAEG_NYXID_BASE_URL` unchanged because
+shared service authentication still derives its issuer and resource audience
+from that value. Verify the legacy-console entry,
+sign-in authorization `redirect_uri`, PKCE/cookie callback and authenticated
+console page on the new host, plus exact new-origin POST/CSRF enforcement.
+Old host-only console cookies cannot move between domains, so users sign in
+again on the new console. Agent credentials, histories, PVs and API keys are
+independent of these browser sessions. Keep `CMAEG_PUBLIC_URL`, master keys and
+CMA's retained identity/audience values unchanged. Remove old public routes only
+after external callbacks and all running agent tool destinations are verified.
 
 **How sign-in works.** A visitor without a session sees a same-origin sign-in
 page; only its explicit "Sign in with NyxID" link leaves the site, so nothing
@@ -1251,6 +1348,32 @@ kubectl logs -n chrono-bot deploy/cmaeg --since=24h \
 ```
 
 ### Speech-to-text endpoint
+
+The production manifest records the activation verified on 29 October 2026:
+`CMAEG_MEDIA_FFMPEG_DIR=/opt/ffmpeg/bin` and the existing NyxID `llm-openai`
+service's `/audio/transcriptions` endpoint, using `gpt-transcribe`. The dedicated
+operator-provisioned key is stored only in `chrono-bot/cmaeg-stt` as
+`CMAEG_STT_API_KEY`; its scope is `proxy` for that one service, with all-service
+and node access disabled. It is a static service-use key, with manual rotation;
+no human CLI/session token is deployed. A new environment must provision its
+own dedicated credential before enabling this URL. The runtime's empty defaults
+remain available for deployments that intentionally disable transcription.
+
+Production activation passed the media sandbox startup self-check, health and
+readiness, with `cmaeg_media_sandbox_ready 1`. An isolated owner Custom channel
+then delivered a five-second WAV through normalization, transcription and a real
+CMA Agent response. The answer was present only in the recording. The observed
+transcription took 1.016 seconds; the entire first-conversation request took
+20.501 seconds, including Agent startup and model response. Exactly one audio
+transform, one transcript and five metered seconds were recorded. These are
+individual measurements, not latency percentiles. The temporary channel, Agent,
+sandbox and key were retired through supported APIs.
+
+This acceptance covers short audio through a Gateway-owned profile consumer.
+It does not establish connected Telegram/WhatsApp/Lark/Discord source fetching,
+every codec, long audio, reliable late transcript delivery, or original-file
+transfer to existing-Agent consumers. Keep the WAV normalization path enabled;
+this activation does not add `ogg` to the upstream's direct format allowlist.
 
 With `CMAEG_STT_URL` set, the gateway transcribes audio through an
 OpenAI-compatible endpoint: one multipart `POST` per attempt carries `file`
@@ -2974,7 +3097,7 @@ under their independent eight-second total budget.
 ## Native Lark / Feishu conversation history gate
 
 `CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` accepts `true`/`false`, defaults
-to `false`, and is explicitly false in the checked-in ConfigMap. It enables native
+to `false`; the checked-in ConfigMap enables it. It enables native
 history source authoring, execution and optional context discovery independently
 of Discord history, native message/media/control issuance and thread-following.
 Deploy compatible readers and rollback targets before enabling authoring: the
@@ -2991,9 +3114,25 @@ No caller or server automatically drains pages or substitutes the parent chat.
 
 Provision the separate native app with `im:message:readonly` and group
 `im:message.group_msg` permissions. Platform visibility and native acceptance
-remain owner testing; this checked-in false declaration performs no rollout or
-native request. See the [native history contract](CMAEG_Native_Lark_History.md)
+remain owner testing. See the [native history contract](CMAEG_Native_Lark_History.md)
 for cutoff, content omission, cursor, permission and regional limits.
+
+`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` independently accepts `true`/`false`,
+defaults to `false` and remains explicitly false in the checked-in ConfigMap.
+After the history gate and consent checks, a REST query or MCP argument must
+explicitly set `include_media=true` to preserve supported post text, omit media
+and emit the additive `media` omission enum. Absent/false requests always keep
+whole-row omission, including after activation, so unchanged strict clients
+remain compatible. Opt-in on a disabled gate returns 403; opt-in on another
+platform returns 400. No file access or extra platform request is granted.
+
+Legacy v2 cursors retain their existing serialized shape. Opted-in v3 cursors
+bind `include_media: true`; every continuation must repeat the same mode, and a
+mode mismatch returns 400 before platform I/O. Upgrade all gateway cursor readers
+and rollback images before activation. Only opt-in consumers need the new enum;
+their retained mixed pages still require compatible readers. Turning the gate
+off rejects opted-in requests while legacy requests continue. This increment
+does not activate the flag or change history source consent.
 
 
 ## Native Telegram topic lifecycle rollout
@@ -3018,7 +3157,25 @@ Telegram source. Previously unrouted channels enroll in canonical default-only
 routing automatically; the selected provider/key and existing routing are
 preserved. The server requires multi-consumer authoring for that enrollment.
 Message-event retention remains separately controlled. Only new events admitted
-with topic consent can acquire topic authority.
+with topic consent can acquire topic authority. The existing `manageThread` rename
+request changes only the exact admitted topic name (shared limit 1–100 printable
+characters); no new schema or platform gate is needed. Its current context action
+list intentionally stays the conservative close/reopen subset for strict older
+SDK compatibility. It is not an exhaustive operation list. Deploy compatible
+rename writers before advertising rename; mixed older writers may return unsupported.
+
+General additionally requires
+`CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED` (default `false` in the
+ConfigMap), the base topic gate, and all existing storage/routing prerequisites.
+The effective authoring capability is
+`native_telegram_general_topic_lifecycle_enabled`; absent means unavailable.
+Before enabling it, verify original native forum metadata plus absent topic
+markers, current administrator permissions and exact General method bodies.
+Missing topic fields alone and a later forum lookup must never grant authority.
+The original normalized and sealed thread remains absent. General reopen also
+unhides General; the portal and tool description disclose that upstream behavior.
+No new source consent, caller-selected topic, schema collection or fence reset is
+introduced. Turning off only the General gate preserves numbered-topic support.
 
 Turning the operator gate off stops execution, including retained events. Owners
 can remove consent with the gate off. Retain durable records on rollback. An
@@ -3026,3 +3183,17 @@ unknown topic mutation, lost receipt or interrupted dispatch keeps its exact
 bot/chat/topic fence held without a TTL; new keys and event expiry must not reset
 it. This increment exposes no reconciliation/reset command. Read the
 [topic contract](CMAEG_Native_Telegram_Topics.md) before operator acceptance.
+
+## Native WhatsApp incoming changes gate
+
+Native WhatsApp coexistence incoming edits/revokes have separate owner consent
+`message_events` and false-default `CMAEG_NATIVE_WHATSAPP_MESSAGE_EVENTS_ENABLED`.
+Enable only after compatible readers and durable routing are available. Existing
+interaction storage retains encrypted original credential proofs for three days;
+no new collection or readiness migration is required. Gate-off stops new changes
+and original-proof capture while retained recovery remains available subject to
+current consent and authority. See [the full contract](CMAEG_Native_WhatsApp_Message_Events.md).
+
+## Optional media continuation scheduling storage
+
+The continuation worker uses a separate expiring active-head collection, bounded keyset scans and a preserved original retention deadline. It never treats a scheduling head as admission authority. Base Gateway startup does not require the optional migration or role. Deploy compatible readers, then review the optional role/migration and readiness before enabling a worker; older isolated readers reject unrecognized optional grants. See [media continuation storage](CMAEG_Media_Continuation_Storage.md) for exact commands, retention, rollback and verification.

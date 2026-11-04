@@ -7,7 +7,7 @@ listed in [CMA Public APIs](CMA_Public_APIs.md); exact schemas come from each
 service's `GET /openapi.json`.
 
 Start with the public [integration guide](CMAEG_Integration.md), hosted at
-<https://bot.chrono-ai.fun/event-gateway/docs>. It covers creator applications,
+<https://cma.nyxid.ai/event-gateway/docs>. It covers creator applications,
 event sources, Agent tools and downstream providers. The globally auto-connected
 NyxID service is **Agent Event Gateway** (`cmaeg`); its REST proxy is
 `https://nyx-api.chrono-ai.fun/api/v1/proxy/s/cmaeg`, already mapped to `/v1`.

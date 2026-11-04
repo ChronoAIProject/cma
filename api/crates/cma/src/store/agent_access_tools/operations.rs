@@ -108,21 +108,19 @@ impl MongoAgentAccessToolSource {
         }
         let scope = validation::scope(&snapshot, runtime)?;
         validation::request(&snapshot, request, fence)?;
-        let capability = self.capability(&scope)?;
-        let previous = self
-            .store
-            .agent_access_tools
-            .find_one(doc! {"_id": records::hash(&capability)})
-            .session(&mut *session)
-            .await?;
-        let previous = previous
+        let previous = self.current_record(&scope, session).await?;
+        let authority = previous.as_ref().map_or(0, |record| record.authority);
+        let capability = self.capability_at(&scope, authority)?;
+        let transport_origin = previous
             .as_ref()
-            .map(|document| self.read(document))
-            .transpose()?;
+            .and_then(|record| record.transport_origin.clone());
+        let origin = transport_origin
+            .as_deref()
+            .unwrap_or(self.authority(authority)?.0);
         let conversation = previous.and_then(|record| record.conversation);
         require_conversation(&snapshot, conversation.as_deref(), false)?;
         let mut binding = HostedAccessToolBinding::new(
-            &self.origin,
+            origin,
             capability.into(),
             runtime.clone(),
             request,
@@ -149,6 +147,8 @@ impl MongoAgentAccessToolSource {
             .await?;
         self.save(
             &OpenRecord {
+                authority,
+                transport_origin,
                 scope,
                 request: request.clone(),
                 fence,
@@ -174,18 +174,15 @@ impl MongoAgentAccessToolSource {
         )
         .await?;
         let scope = validation::scope(&snapshot, runtime)?;
-        let capability = self.capability(&scope)?;
-        let document = self
-            .store
-            .agent_access_tools
-            .find_one(doc! {"_id": records::hash(&capability)})
-            .session(&mut *session)
+        let mut record = self
+            .current_record(&scope, session)
             .await?
             .ok_or(Error::Refused)?;
-        let mut record = self.read(&document)?;
+        let capability = self.capability_at(&scope, record.authority)?;
+        let origin = self.transport_origin(&record)?;
         validation::request(&snapshot, &record.request, fence)?;
         let mut expected = HostedAccessToolBinding::new(
-            &self.origin,
+            origin,
             capability.clone().into(),
             runtime.clone(),
             &record.request,
@@ -194,7 +191,7 @@ impl MongoAgentAccessToolSource {
         )
         .map_err(|_| Error::Refused)?;
         let mut initial = HostedAccessToolBinding::new(
-            &self.origin,
+            origin,
             capability.into(),
             runtime.clone(),
             &record.request,

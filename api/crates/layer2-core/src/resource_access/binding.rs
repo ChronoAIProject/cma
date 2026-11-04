@@ -96,9 +96,7 @@ fn binding_error(error: BindingError) -> ResourceAccessError {
         BindingError::NotFound | BindingError::Forbidden => AccessError::NotFound.into(),
         BindingError::Conflict
         | BindingError::SkillVersionUpdateUnsupported { .. }
-        | BindingError::ReconfigurationUnsupported => {
-            ResourceAccessStoreError::Conflict.into()
-        }
+        | BindingError::ReconfigurationUnsupported => ResourceAccessStoreError::Conflict.into(),
         BindingError::Corrupt(_) | BindingError::InvalidRequest(_) => {
             ResourceAccessStoreError::Corrupt.into()
         }

@@ -7,6 +7,7 @@ import { ToolCallRow } from './ToolCallRows';
 import { PlanCard } from './PlanCard';
 import { ApprovalCard } from './ApprovalCard';
 import { UserMessage } from './UserMessage';
+import { visibleUserMessage } from './externalEventMessage';
 import { TurnUsage } from './TurnUsage';
 import type { AgentUsage } from '../api/types';
 import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
@@ -62,7 +63,7 @@ function StreamEntryView({
     const delivery =
       message.role === 'assistant'
         ? answerProse(message.content, message.status === 'streaming')
-        : { content: message.content, references: 0 };
+        : { content: visibleUserMessage(message.content), references: 0 };
     const identity = messageIdentity(message.role, user, unknownUserName);
     return (
       <article
@@ -75,7 +76,7 @@ function StreamEntryView({
         <div className="message__body">
           {continued ? null : <span className="message__role">{identity.name}</span>}
           {message.role === 'user' ? (
-            <UserMessage content={message.content} />
+            <UserMessage content={delivery.content} />
           ) : (
             <MessageContent content={delivery.content} streaming={message.status === 'streaming'} />
           )}

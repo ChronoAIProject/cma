@@ -59,3 +59,27 @@ async fn keyed_update_sends_once_and_retains_next_reference() {
     server.assert_drained();
     assert_eq!(server.request_count(), 1);
 }
+
+#[test]
+fn attachment_clear_is_explicit_and_legacy_empty_remains_omitted() {
+    for value in [
+        json!({"text":"Keep files","native_attachments":[]}),
+        json!({"text":"Keep files","clear_native_attachments":false}),
+        json!({"text":"Clear files","clear_native_attachments":true}),
+    ] {
+        let decoded: OutboundMessage = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+    }
+    assert!(
+        serde_json::from_value::<OutboundMessage>(
+            json!({"text":"Clear","clear_native_attachments":null})
+        )
+        .is_err()
+    );
+    let value = json!({"kinds":["image","file","audio","video"],"sources":["base64"],"max_attachments":4,"max_inline_bytes":65536,
+        "controls":{"max_attachments":4,"buttons":true,"choices":true,"caption_max_chars":1024,"update":true,"replace_media":true,"clear_media":true}});
+    let decoded: cma_sdk::cmaeg::types::NativeMediaCapabilities =
+        serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(decoded.controls.as_ref().unwrap().clear_media, Some(true));
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}

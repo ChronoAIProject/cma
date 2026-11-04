@@ -1,8 +1,18 @@
 import { createParser } from 'eventsource-parser';
 import { CmaError, ProtocolError, TransportError } from '../errors.js';
 import { raceWithAbortSignal } from '../http.js';
-import { nullable, object, record, text, type Output } from '../schema.js';
+import {
+  boolean,
+  enumeration,
+  nullable,
+  object,
+  optional,
+  record,
+  text,
+  type Output,
+} from '../schema.js';
 import { OutboundMessageSchema, ProblemSchema } from './types.js';
+import { mediaFrame, type GatewayMediaControlEvent } from './media-stream.js';
 
 const identity = { event_id: text, conversation_id: text };
 const delta = object({ ...identity, text });
@@ -11,6 +21,8 @@ const message = object({
   text: nullable(text),
   message: nullable(OutboundMessageSchema),
   error: nullable(ProblemSchema),
+  status: optional(enumeration('completed', 'incomplete')),
+  media_complete: optional(boolean),
 });
 
 export type GatewayStreamEvent =
@@ -26,18 +38,22 @@ export type GatewayStreamEvent =
       };
     };
 
+/** Superset returned only by explicitly negotiated attachment-response streams. */
+export type GatewayMediaStreamEvent = GatewayStreamEvent | GatewayMediaControlEvent;
+
 export async function* gatewayFrames(
   response: Response,
   signal: AbortSignal,
   eventId: string,
-): AsyncGenerator<GatewayStreamEvent> {
+  mediaResponses = false,
+): AsyncGenerator<GatewayMediaStreamEvent> {
   if (
     response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !==
     'text/event-stream'
   )
     throw new ProtocolError('gateway stream requires text/event-stream');
   if (response.body === null) throw new ProtocolError('gateway stream carried no body');
-  const pending: GatewayStreamEvent[] = [];
+  const pending: GatewayMediaStreamEvent[] = [];
   let bytes = 0;
   let ended = false;
   let conversation: string | undefined;
@@ -54,9 +70,27 @@ export async function* gatewayFrames(
           throw new ProtocolError('gateway stream returned an invalid event envelope');
         const raw: unknown = JSON.parse(frame.data);
         const name = frame.event;
+        const media = mediaResponses ? mediaFrame(name ?? '', raw) : undefined;
+        if (media !== undefined) {
+          if (media.event === 'cmaeg.media.pending') ended = true;
+          else {
+            if (
+              media.data.event_id !== eventId ||
+              (conversation !== undefined && media.data.conversation_id !== conversation)
+            )
+              throw new ProtocolError('gateway stream changed its event or conversation identity');
+            conversation = media.data.conversation_id;
+          }
+          pending.push(media);
+          return;
+        }
         if (name === 'cmaeg.failed') {
-          const error = record(record(raw).error);
-          if (error.code === 'internal' && error.detail === 'sync_backpressure') {
+          const error = record(raw).error;
+          if (
+            error !== null &&
+            record(error).code === 'internal' &&
+            record(error).detail === 'sync_backpressure'
+          ) {
             pending.push({
               event: name,
               data: { error: { code: 'internal', detail: 'sync_backpressure' } },
@@ -85,7 +119,17 @@ export async function* gatewayFrames(
           const value = message(raw);
           if (
             (name === 'cmaeg.completed' && (value.message !== null || value.error !== null)) ||
-            (name === 'cmaeg.failed' && value.error === null)
+            (name === 'cmaeg.failed' &&
+              value.error === null &&
+              !(
+                mediaResponses &&
+                value.status === 'incomplete' &&
+                value.media_complete === false
+              )) ||
+            (value.media_complete !== undefined &&
+              (!mediaResponses ||
+                value.media_complete !== (name === 'cmaeg.completed') ||
+                value.status !== (name === 'cmaeg.completed' ? 'completed' : 'incomplete')))
           )
             throw new ProtocolError('gateway terminal event has an inconsistent outcome');
           pending.push({ event: name, data: value });
@@ -116,7 +160,7 @@ export async function* gatewayFrames(
         throw new ProtocolError('gateway stream is not valid UTF-8 or SSE', { cause });
       }
       if (failure !== undefined) throw failure;
-      while (pending.length > 0) yield pending.shift() as GatewayStreamEvent;
+      while (pending.length > 0) yield pending.shift() as GatewayMediaStreamEvent;
       bytes = 0;
       if (ended) return;
       if (done) throw new TransportError('gateway stream closed before a terminal outcome');

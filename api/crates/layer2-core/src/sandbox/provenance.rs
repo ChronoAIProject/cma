@@ -141,7 +141,7 @@ impl AgentCreationProvenance {
                 || log.seq != 1
                 || log.appended_at != agent.created_at
                 || !matches!(&log.kind, AgentLogKind::Created { workspace_id, worktree_id }
-                    if workspace_id == &agent.workspace_id && worktree_id == &agent.worktree_id)
+                    if workspace_id == &agent.workspace_id && worktree_id == agent.creation_worktree_id())
             {
                 return Err(corrupt());
             }
@@ -187,7 +187,7 @@ impl AgentCreationProvenance {
             sandbox_id: parent.id.clone(),
             sandbox_created_at: parent.created_at.clone(),
             workspace_id: agent.workspace_id.clone(),
-            worktree_id: agent.worktree_id.clone(),
+            worktree_id: agent.creation_worktree_id().clone(),
             owner,
             creation_origin,
             created_by,
@@ -201,6 +201,9 @@ impl AgentCreationProvenance {
         agent: &Agent,
         parent: &Sandbox,
     ) -> Result<(), SandboxStoreError> {
+        agent
+            .validate_worktree_recoveries()
+            .map_err(|_| corrupt())?;
         if !valid_creator(self.created_by.as_ref())
             || self.schema_version != 1
             || self.agent_id != agent.id
@@ -209,7 +212,7 @@ impl AgentCreationProvenance {
             || self.sandbox_id != parent.id
             || self.sandbox_created_at != parent.created_at
             || self.workspace_id != agent.workspace_id
-            || self.worktree_id != agent.worktree_id
+            || &self.worktree_id != agent.creation_worktree_id()
             || agent.owner != parent.owner
             || self.creation_fingerprint != agent.creation_fingerprint
             || self.provisioning_origin != agent.origin

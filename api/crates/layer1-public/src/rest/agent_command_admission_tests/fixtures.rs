@@ -30,6 +30,7 @@ impl OperationStore for Outer {
 pub(super) struct Authority {
     pub membership: Mutex<Result<OrganizationRole, MembershipError>>,
     pub custody_revoked: AtomicBool,
+    pub custody_unavailable: AtomicBool,
 }
 #[async_trait::async_trait]
 impl OrganizationAuthority for Authority {
@@ -69,6 +70,9 @@ impl AgentCommandAdmissionAuthority for Authority {
         _: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         assert_eq!(credential, "request-credential");
+        if self.custody_unavailable.load(Ordering::SeqCst) {
+            return Err(CommandAuthorizationError::Unavailable);
+        }
         if self.custody_revoked.load(Ordering::SeqCst) {
             return Err(CommandAuthorizationError::Revoked);
         }
@@ -146,6 +150,7 @@ pub(super) async fn fixture() -> Fixture {
     let authority = Arc::new(Authority {
         membership: Mutex::new(Ok(OrganizationRole::Admin)),
         custody_revoked: AtomicBool::new(false),
+        custody_unavailable: AtomicBool::new(false),
     });
     let access = Arc::new(ResourceAccessService::new(
         base.store.clone(),

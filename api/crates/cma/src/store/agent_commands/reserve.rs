@@ -20,6 +20,7 @@ pub(in crate::store) async fn apply(
         .bindings
         .conversation_authority(request.binding.as_ref(), session)
         .await?;
+    super::super::media_uploads::require_continuation(store, &request.envelope, session).await?;
     if let Some(existing) = store
         .agent_commands
         .find_one(doc! { "scope": request.scope(), "key_sha256": &request.key_sha256 })

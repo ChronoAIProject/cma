@@ -372,13 +372,16 @@ pub struct AgentCreation {
 
 impl AgentCreation {
     pub fn validate_replay(&self) -> Result<(), SandboxStoreError> {
+        self.agent
+            .validate_worktree_recoveries()
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         let created_log_matches = matches!(
             &self.initial_log.kind,
             crate::sandbox::AgentLogKind::Created {
                 workspace_id,
                 worktree_id,
             } if workspace_id == &self.agent.workspace_id
-                && worktree_id == &self.worktree.id
+                && worktree_id == self.agent.creation_worktree_id()
         );
         if self.agent.worktree_id != self.worktree.id
             || self.agent.workspace_id != self.worktree.workspace_id

@@ -26,6 +26,8 @@ mod resources;
 mod responses_v2;
 #[path = "public_contract/triggers.rs"]
 mod triggers;
+#[path = "public_contract/usage.rs"]
+mod usage;
 #[path = "support/wire.rs"]
 mod wire;
 
@@ -40,6 +42,8 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
         agent_browser::dispatch(c).await
     } else if op.contains("/deliverable-references") || op.contains("/deliverables") {
         deliverables::dispatch(c, corpus).await
+    } else if op.contains("/api/v1/usage") || op.contains("/api/v1/admin/usage") {
+        usage::dispatch(c).await
     } else if op.contains("/api/v1/documents") {
         documents::dispatch(c).await
     } else if op.contains("/event-worker-profiles") {
@@ -50,7 +54,9 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
         || op.contains("/gateway/interaction-records")
     {
         bots::dispatch(c).await
-    } else if op.contains("/cmaeg/bindings") {
+    } else if op.contains("/cmaeg/bindings")
+        || op == "POST /api/v1/cmaeg/worker-credentials/classify"
+    {
         bindings::dispatch(c).await
     } else if op == "GET /api/v2/ui/transport"
         || op == "GET /api/v2/ui/task-experience"
@@ -108,6 +114,11 @@ fn check_error(case: &Case, error: Error) {
         panic!("{} expected API refusal, got {error:?}", case.id)
     };
     assert_eq!(status, case.response.status, "{} status", case.id);
+    if let Some(expected) = expected.as_str() {
+        assert_eq!(code.as_deref(), Some(expected), "{} code", case.id);
+        assert!(extensions.is_empty(), "{} string error extensions", case.id);
+        return;
+    }
     assert_eq!(
         code.as_deref(),
         expected["code"].as_str(),

@@ -25,6 +25,10 @@ use super::problems::{no_store, problem, protocol_headers};
 pub fn management_router(state: ManagementState) -> Router {
     Router::new()
         .route(
+            "/v1/channels/{channel_id}/partition",
+            get(super::partitions::inspect),
+        )
+        .route(
             "/v1/channels/{channel_id}/activity",
             get(super::activity::latest),
         )
@@ -33,6 +37,10 @@ pub fn management_router(state: ManagementState) -> Router {
             get(super::activity::stream),
         )
         .merge(super::outbound::routes())
+        .route(
+            "/v1/channels/{channel_id}/events/{event_id}/media-responses",
+            get(super::media_responses::list),
+        )
         .route("/v1/permissions", get(permission_catalog))
         .route("/v1/channels", get(list_channels).post(create_channel))
         .route(

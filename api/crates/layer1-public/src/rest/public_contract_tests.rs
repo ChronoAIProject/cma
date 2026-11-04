@@ -12,16 +12,19 @@ mod agent_access_cases;
 mod agent_cases;
 mod agent_customization_cases;
 mod agent_event_cases;
+mod agent_worktree_recovery_cases;
 mod artifact_cases;
 mod attachment_cases;
 mod authoring_cases;
 mod binding_cases;
+mod binding_media_cases;
 mod bot_cases;
 mod bot_setup_cases;
 mod channel_usage_cases;
 mod creation_inventory_cases;
 mod credential_cases;
 mod deliverable_cases;
+mod desktop_cases;
 mod document_cases;
 mod domains;
 mod event_worker_cases;
@@ -36,6 +39,7 @@ mod inventory_cases;
 mod lifecycle_cases;
 mod message_feedback_cases;
 mod provenance_cases;
+mod provider_association_cases;
 mod queued_cancellation_cases;
 mod queued_input_cases;
 mod replay;
@@ -56,7 +60,9 @@ mod suggestion_cases;
 mod symbols;
 mod task_experience_cases;
 mod trigger_cases;
+mod usage_cases;
 mod warm_pool_cases;
+mod workspace_prepare_recovery_cases;
 
 use symbols::Symbols;
 
@@ -161,6 +167,21 @@ async fn scenario(name: &str) -> Scenario {
     if let Some(scenario) = Box::pin(deliverable_cases::scenario(name)).await {
         return scenario;
     }
+    if let Some(scenario) = usage_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = binding_media_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = agent_worktree_recovery_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = Box::pin(desktop_cases::scenario(name)).await {
+        return scenario;
+    }
+    if let Some(scenario) = workspace_prepare_recovery_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = document_cases::scenario(name).await {
         return scenario;
     }
@@ -219,6 +240,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = response_control_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = provider_association_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = channel_usage_cases::scenario(name).await {

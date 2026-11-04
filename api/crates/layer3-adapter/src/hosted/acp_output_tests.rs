@@ -55,7 +55,9 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         backlog_sent.send(()).unwrap();
         verified.await.unwrap();
         retained(&mut server, 302, serde_json::json!({
-            "jsonrpc": "2.0", "id": initialize["id"], "error": {"code": -32000, "message": "already initialized"},
+            "jsonrpc": "2.0", "id": initialize["id"], "error": {
+                "code": -32603, "message": "Internal error", "data": {"details": "Already initialized"}
+            },
         })).await;
         let message = tokio::time::timeout(Duration::from_secs(2), server.next())
             .await
@@ -119,7 +121,15 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         }
     }
     // Enqueueing and parsing all 302 frames did not acknowledge anything.
+    use crate::ConversationSettingsSupport;
+    let mut progress = opened.bridge.managed_context_progress().await.unwrap();
+    assert_eq!(*progress.borrow(), 0);
     first_receipt.unwrap().acknowledge().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), progress.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(*progress.borrow(), 1);
     server_task.await.unwrap();
     stop(opened).await;
 }
@@ -252,7 +262,9 @@ async fn startup_idle_deadline_advances_only_after_durable_ack_progress() {
         let (finish, finished) = tokio::sync::oneshot::channel();
         let server_task = tokio::spawn(async move {
             let initialize = receive_json(&mut server).await;
-            retained(&mut server, 1, serde_json::json!({"jsonrpc":"2.0", "id":initialize["id"], "error":{"code":-32000,"message":"already initialized"}})).await;
+            retained(&mut server, 1, serde_json::json!({"jsonrpc":"2.0", "id":initialize["id"], "error":{
+                "code":-32603,"message":"Internal error","data":{"details":"Already initialized"}
+            }})).await;
             let load = loop {
                 let Message::Binary(frame) = server.next().await.unwrap().unwrap() else {
                     panic!("binary frame")

@@ -134,3 +134,61 @@ describe('gateway recent Activity', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+it('reads retained supplementary metadata with owner pagination without following response URLs', async () => {
+  const item = {
+    consumer_id: 'consumer-1',
+    attachment_index: 0,
+    kind: 'transcript',
+    response_id: 'resp_supplement',
+    response_url: '/api/v2/responses/resp_supplement',
+    status: 'completed',
+    delivery: 'delivered',
+    refusal: null,
+  };
+  const result = { items: [item], next_cursor: 16 };
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(result)));
+  const gateway = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+  expect(
+    await gateway.getEventMediaResponses('channel-one', 'event-one', {
+      owner: 'org-one',
+      cursor: 0,
+    }),
+  ).toEqual(result);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const [url, init] = fetch.mock.calls[0]!;
+  expect(String(url)).toBe(
+    'https://gateway.example/v1/channels/channel-one/events/event-one/media-responses?cursor=0',
+  );
+  expect(new Headers(init?.headers).get('x-cmaeg-owner')).toBe('org-one');
+  expect(init?.method).toBe('GET');
+  expect(() => gateway.getEventMediaResponses('channel-one', 'event-one', { cursor: -1 })).toThrow(
+    ValidationError,
+  );
+  const mediaResponses = [
+    {
+      attachment_index: 0,
+      kind: 'transcript',
+      response_id: item.response_id,
+      response_url: item.response_url,
+      status: item.status,
+      delivery: item.delivery,
+      observed_at: '2026-10-29T00:00:00Z',
+    },
+  ];
+  const activity: cmaeg.ActivityPage = {
+    ...page,
+    items: page.items.map((entry) => ({
+      ...entry,
+      consumers: entry.consumers.map((consumer) => ({
+        ...consumer,
+        media_responses: mediaResponses,
+      })),
+    })),
+  };
+  fetch.mockResolvedValueOnce(new Response(JSON.stringify(activity)));
+  expect(await gateway.getChannelActivity('channel-one')).toEqual(activity);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});

@@ -173,6 +173,7 @@ fn source_view(source: &Source) -> SourceView {
             phone_number_id,
             group_ids,
             forms_enabled,
+            message_events,
             admission,
         } => SourceView {
             id,
@@ -187,6 +188,7 @@ fn source_view(source: &Source) -> SourceView {
             settings: vec![
                 format!("App {app_id}; account {waba_id}; dedicated callback required"),
                 format!("Managed static form consent: {forms_enabled}"),
+                format!("Coexistence incoming edit/deletion consent: {message_events}"),
                 format!("Private messages and reactions; {} explicitly allowed existing groups. Media and templates require separate gateway capabilities.",group_ids.len()),
             ],
         },
@@ -206,6 +208,7 @@ fn source_view(source: &Source) -> SourceView {
         },
         Source::Telegram {
             topic_lifecycle: _,
+            topic_creation: _,
             message_events: _,
             channel_posts: _,
             bot_id,

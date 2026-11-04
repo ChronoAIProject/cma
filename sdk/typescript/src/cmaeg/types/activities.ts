@@ -147,6 +147,36 @@ export const CloudEventSchema = extensible({
 });
 export type CloudEvent = Output<typeof CloudEventSchema>;
 
+/** Native reply data, scoped by the enclosing source/conversation; never a capability. */
+export const QuotedContentKindSchema = enumeration(
+  'image',
+  'video',
+  'audio',
+  'file',
+  'sticker',
+  'contact',
+  'location',
+  'poll',
+);
+export type QuotedContentKind = Output<typeof QuotedContentKindSchema>;
+export const QuoteTextOriginSchema = enumeration('selected_quote', 'parent_text', 'parent_caption');
+export type QuoteTextOrigin = Output<typeof QuoteTextOriginSchema>;
+export const QuotedTextSchema = object({ text, truncated: boolean, origin: QuoteTextOriginSchema });
+export type QuotedText = Output<typeof QuotedTextSchema>;
+export const QuotedContentSchema = object({
+  text: optional(nullable(QuotedTextSchema)),
+  kinds: optional(array(QuotedContentKindSchema)),
+});
+export type QuotedContent = Output<typeof QuotedContentSchema>;
+export const QuoteRelationSchema = enumeration('reply', 'context');
+export type QuoteRelation = Output<typeof QuoteRelationSchema>;
+export const QuotedMessageSchema = object({
+  relation: QuoteRelationSchema,
+  message_id: text,
+  content: optional(nullable(QuotedContentSchema)),
+});
+export type QuotedMessage = Output<typeof QuotedMessageSchema>;
+
 export const ActivityKindSchema = tagged(
   {
     message: object({
@@ -154,6 +184,7 @@ export const ActivityKindSchema = tagged(
       attachments: optional(array(AttachmentSchema)),
       mentions_bot: boolean,
       reply_to: optional(nullable(MessageRefSchema)),
+      quoted_message: optional(nullable(QuotedMessageSchema)),
       text: text,
       type: enumeration('message'),
     }),
@@ -304,6 +335,10 @@ export const ThreadHistorySchema = object({
 export type ThreadHistory = Output<typeof ThreadHistorySchema>;
 
 export const CapabilitiesSchema = object({
+  structured_replies: optional(nullable(array(text))),
+  reply_with_received_sticker: optional(nullable(boolean)),
+  native_thread_start: optional(nullable(boolean)),
+  topic_creation: optional(nullable(boolean)),
   native_media_edits: optional(nullable(NativeMediaEditCapabilitiesSchema)),
   thread_history: optional(nullable(boolean)),
   topic_lifecycle: optional(nullable(TopicLifecycleCapabilitiesSchema)),

@@ -39,13 +39,19 @@ export const RelayPlatformCapabilitySchema = object({
 });
 export type RelayPlatformCapability = Output<typeof RelayPlatformCapabilitySchema>;
 export const RelayAuthoringCapabilitiesSchema = object({
+  custom_durable_execution_enabled: optional(nullable(boolean)),
+  response_recovery_providers: optional(nullable(array(text))),
   native_telegram_message_events_enabled: optional(nullable(boolean)),
   native_discord_thread_history_enabled: optional(nullable(boolean)),
   native_telegram_topic_lifecycle_enabled: optional(nullable(boolean)),
+  native_telegram_topic_creation_enabled: optional(nullable(boolean)),
+  native_telegram_general_topic_lifecycle_enabled: optional(nullable(boolean)),
   native_discord_thread_lifecycle_enabled: optional(nullable(boolean)),
   native_lark_conversation_history_enabled: optional(nullable(boolean)),
   native_discord_conversation_history_enabled: optional(nullable(boolean)),
   native_discord_reactions_enabled: optional(nullable(boolean)),
+  native_discord_rich_content_enabled: optional(nullable(boolean)),
+  native_discord_forwards_enabled: optional(nullable(boolean)),
   native_discord_writes_enabled: optional(nullable(boolean)),
   native_discord_auto_activation_enabled: optional(nullable(boolean)),
   native_discord_capacity: optional(nullable(integer)),
@@ -53,6 +59,7 @@ export const RelayAuthoringCapabilitiesSchema = object({
   native_lark_intake_enabled: optional(nullable(boolean)),
   native_lark_controls_enabled: optional(nullable(boolean)),
   native_whatsapp_forms_enabled: optional(nullable(boolean)),
+  native_whatsapp_message_events_enabled: optional(nullable(boolean)),
   native_whatsapp_flow_writes_enabled: optional(nullable(boolean)),
   native_lark_forms_enabled: optional(nullable(boolean)),
   native_whatsapp_writes_enabled: optional(nullable(boolean)),

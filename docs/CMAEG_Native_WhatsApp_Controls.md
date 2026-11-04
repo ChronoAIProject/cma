@@ -39,13 +39,56 @@ Labels must be unique, nonempty, unpadded and free of control characters.
 Styles and selected appearance use the existing declared `plain_option_style`
 degradation. The renderer never truncates labels or silently drops controls.
 
-Mixed controls, multiple control blocks, multi-select, media, templates, forms,
+Mixed controls, multiple control blocks, multi-select, templates, forms,
 links, arbitrary `reply_to`, thread replies and hand-offs are refused on the
 native-control path. The event-bound private recipient and original message
 context come only from the sealed event and currently authorized native source.
 The existing ordinary text fallback remains when native issuance is disabled.
 Service-window restrictions remain Meta's responsibility: these are service
 messages, not approved templates for use outside the 24-hour customer window.
+
+## One media header with reply buttons
+
+`CMAEG_NATIVE_WHATSAPP_MEDIA_CONTROLS_ENABLED` defaults to `false` and enables
+one uploaded image, document or video header with one native private `buttons`
+block. It also requires `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED`,
+`CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED`, and the named-consumer gate when
+applicable. The verified event advertises `native_media.controls` with
+`kinds: ["image", "file", "video"]`, `max_attachments: 1`, `buttons: true`,
+`choices: false`, `caption_max_chars: 0`, and `update: false`. The outer media
+capability still describes ordinary attachments; its audio/sticker kinds do not
+apply to controlled messages. Relay controls and WhatsApp groups do not gain
+this capability.
+
+Use the existing `native_attachments` field for the single header. The same
+bounded JPEG/PNG, document MIME/filename and MP4/3GPP structural validation as
+[ordinary native media](CMAEG_Native_WhatsApp_Outbound_Media.md) applies. Put
+explanation text in the message body (at most 1,024 characters); a header
+attachment cannot carry a caption. Media on lists, audio/sticker headers,
+multiple uploads, media/forms, and media edits/replacement remain unsupported.
+Unsupported mixtures fail before card persistence or upload. Disabling any
+required issuance gate refuses combined media/controls before an external
+write and does not strip the upload or fall back to numbered text.
+
+The current official reply-buttons guide, reviewed on 2026-10-29, explicitly
+lists document, image, text and video header types and supports uploaded media
+IDs. This implementation uses the existing authenticated upload path, never a
+caller-supplied Graph ID or a direct media URL in the Graph message. Preflight
+validates the whole request and media bytes before creating the durable card.
+The original native card is persisted before upload. Each upload and recipient
+send has an independent current-authority check, so revocation between them
+prevents the send. Upload uncertainty never advances to the recipient message;
+send/receipt/binding uncertainty never causes fallback or another send.
+
+The retained card stores the existing text/buttons and native source/owner
+custody, without downloaded bytes, media URLs or upload IDs. The exact confirmed
+recipient message is bound through the existing receipt and card path. This
+increment adds no storage field, collection or migration and grants no media
+edit authority. Existing compatible native-control readers can consume the
+same callbacks after the new issuance gate is disabled. Text-only card and
+Graph message bytes remain unchanged. Mocked local tests establish this adapter
+contract; actual Meta v25.0 rendering, permissions and client acceptance still
+require connected acceptance.
 
 ## Send and callback authority
 
@@ -57,7 +100,7 @@ The encrypted card retains its original event, channel record, source revision,
 provider binding, actor, and `DispatchOwner` for both default and named consumers.
 That owner includes the original partition and provider conversation.
 
-Card persistence precedes the only Graph send attempt. Issued IDs are bounded
+Card persistence precedes the recipient Graph send attempt (and any header upload). Issued IDs are bounded
 `cw1b`/`cw1l` record/revision/action locators. A successful response must confirm one
 message ID for the exact recipient. CMA persists its native send receipt before
 binding the card to that message. Unconfirmed acceptance or binding returns an

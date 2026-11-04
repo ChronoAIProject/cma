@@ -102,6 +102,25 @@ Repository access, missing ref and unsafe preparation errors are separate from
 task execution outcomes. A terminal preparation failure retains the original
 operation and draft; correcting its source requires an explicit new task.
 
+For a new Sandbox, `machine_included: true` selects the deployment's immutable
+Linux desktop image. The Machine contains an XFCE desktop with an applications
+menu, taskbar, desktop icons, Thunar file manager, terminal and Chromium launcher.
+Closing Chromium leaves the desktop and launchers available. Desktop preferences,
+files and the Chromium profile live in the retained home. Omission defaults to
+false. This option cannot be combined with `image`, `sandbox_id`, or `workspace_id`; existing environments retain their
+original desktop capability. A deployment without a configured desktop image
+refuses the request before provisioning. The returned Agent detail has `desktop`
+set when its retained Sandbox supports desktop access and the Agent is not isolated.
+
+An owner discovers the stream with `GET /api/v1/agents/{id}/desktop`, then opens
+the returned `websocket_url` using the same bearer or CMA browser authentication.
+The stream carries RFB over binary WebSocket frames; it is compatible with noVNC.
+Cookie connections require the exact CMA `Origin`. Shared conversation access
+does not grant desktop control. A second browser connection to the same Sandbox
+receives `409 desktop_busy`; inactive/unavailable desktops return `404`, and an
+unreachable display returns `503`. Connections expire after 30 minutes and may
+reconnect. The owner and non-isolated Agents use the same desktop and browser.
+
 To add an Agent to an existing owned, ready Workspace, pass `workspace_id` to
 the same lifecycle endpoint. This path retains the Workspace and parent Sandbox;
 it rejects `image` and `repository` because those belong to the existing
@@ -431,6 +450,44 @@ The binding records the authenticated manager separately from the resource owner
 in the profile. A different manager cannot read or replace that binding.
 Responses use `Cache-Control: no-store` and never contain supplied key material.
 
+`POST /api/v1/cmaeg/worker-credentials/classify` is a read-only Gateway
+machine endpoint. It accepts exactly `{"sha256":"<64 lowercase hex>"}` and
+returns exactly `{"classification":"known_worker"}` or
+`{"classification":"unknown"}`. A recognized digest includes current, rotated
+and retired binding keys. The response exposes no owner or resource metadata.
+An unknown result is only one input to Gateway authorization; it is never proof
+that an owner key is eligible on its own.
+
+This operation requires the existing Gateway NyxID service-account access JWT
+(`sa=true`, `token_type=access`) and both current management capabilities
+`cma:provider:bindings` and `cma:gateway:records`. The exact supplied bearer must
+pass existing provider userinfo and authenticated introspection; the verified
+subject, type, active disposition and unexpired lifetime must agree. Decoding a
+JWT is only an initial refusal filter and cannot establish authority. Browser
+cookies, ordinary owner access tokens or API keys (even with management
+permissions), binding worker keys, delegated actors, identity-forwarding proofs
+and resource-scoped credentials are refused. Only the exact POST path without
+query parameters uses this authentication lane; no shared prefix is widened.
+
+The JSON body is limited to 1 KiB and rejects unknown fields, uppercase,
+prefixed or incorrectly sized digests. Authentication has a two-second deadline;
+classification has a one-second deadline. Production starts a fresh causal
+session and first reads the uniquely indexed current-key hash on the primary
+with linearizable read concern. A current match is immediately `known_worker`.
+Otherwise the same session carries that response's `operationTime` as
+`afterClusterTime` into a primary majority read of indexed retained key history.
+This prevents a history read from preceding the unique-document barrier or
+previously acknowledged registrations and rotations in another Manager process.
+The query does not claim linearizable semantics for a non-unique history filter.
+Missing barrier timestamps fail closed. Each Mongo operation has a 750 ms
+server deadline, and the complete storage check has a 900 ms deadline. Existing
+binding writes retain their majority acknowledgement. The stronger classification
+read and its tighter deadline apply only to this new endpoint; existing Manager
+owner/worker authentication lookups keep their previous behavior. All results
+use `Cache-Control: no-store`; no negative cache is used. Invalid credentials return 401/403, invalid input returns 400, and missing
+or unavailable provider authority, store failures and deadlines return 503.
+**No failure is converted to `unknown`.**
+
 `PUT /api/v1/cmaeg/bindings/{binding_id}` accepts
 `{schema_version:1,profile,profile_digest,agent_key,tools:{native_mcp_url,nyxid_service_slug}}`.
 The digest is `sha256:` followed by the canonical profile digest. The response
@@ -443,8 +500,39 @@ provisioning is asynchronous: `GET` reports `provisioning`, `ready`, `failed`
 (with a reason), or `retired`. Repeating the same digest and key returns the
 retained reservation. A supplied key hash can belong to only one binding;
 retired records retain that reservation. Reusing the key on another binding
-returns a conflict. A changed profile waits for prior work to settle, retires
-old conversation Agents, and keeps compatible Sandbox and Workspace snapshots.
+returns a conflict. Metadata-only profile changes retain the original hierarchy,
+generation and conversations; changes to pinned runtime configuration are refused.
+
+An identical PUT can return a failed, idle profile binding to `ready` after its
+original Sandbox has recovered to `active` and its original Workspace is
+`ready`. Admission requires the same manager, owner, profile digest, key and
+tool endpoint, no previous environment or pending lifecycle/conversation work,
+and the exact current credential generation already present in encrypted
+custody. The transaction fences the binding and both backing resources. This
+retry preserves the binding generation, resource IDs and terminal conversations;
+it does not provision resources, replace credentials or reopen deleted Agents.
+A busy, removed or changed hierarchy returns a conflict, and a retired binding
+cannot be recovered through PUT. Replays of healthy ready bindings keep their
+existing behavior.
+
+The existing binding reconciler also discovers these failed, idle reservations
+in bounded pages and applies the same recovery transaction using their retained
+encrypted credential. An unrecovered reservation remains failed while later
+pages continue. No owner credential needs to be extracted for operator recovery;
+the reconciler verifies its hash and exact current Sandbox authority in custody.
+
+The separate, default-disabled fresh-event preparation protocol supports a new
+generation only after an original owned Sandbox is fully retired and its home
+released. `POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections`
+authenticates the current manager, owner and supplied binding key and returns a
+current generation pin or an exact immutable reservation intent without writes.
+`POST /api/v1/cmaeg/bindings/{binding_id}/preparations` requires that same intent,
+key and its exact `Idempotency-Key`, plus the enabled preparation writer. Its
+receipt names the newly reserved generation, Sandbox and Workspace; the old
+retired hierarchy and history remain retained. This operation does not recover
+the original released home. See
+[fresh-event preparation](CMAEG_Fresh_Event_Binding_Preparation.md) for eligibility,
+replay, reader compatibility and isolated activation requirements.
 
 The optional `target` field selects `{"type":"profile"}` (the default) or
 `{"type":"existing_agent","agent_id":"agt_existing"}`. Existing-agent binding
@@ -470,6 +558,24 @@ Once reserved, a conversation still provisioning its Agent returns
 `429 conversation_not_ready` and `Retry-After: 1` on Responses requests. Retry
 the same input and idempotency key; a preparation refusal admits no turn.
 Missing, foreign, failed or retired conversations remain 404.
+
+`GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` reads
+the retained current-generation mapping with binding management authority and
+`Cache-Control: no-store`. It returns binding/generation, canonical conversation,
+Agent identity, conversation state and nullable `agent_status`. A missing Agent
+record returns null status; a retained deletion tombstone returns `deleted`.
+Borrowed Agents use the canonical `existing_agent` alias. This endpoint does
+not create or repair resources and remains usable for orphaned mappings.
+Responses admission through a binding returns `410 partition_agent_missing`
+when its mapped Agent record is absent, or `409 partition_agent_unavailable`
+when its lifecycle refuses input, including a retained deletion tombstone.
+Neither response requests automatic retry.
+
+After a preparation reserves a guarded generation, conversation PUT requires
+one positive canonical `x-cma-binding-generation` header and Responses v2
+requires the matching `binding_generation` field. These are checked before
+conversation allocation or source-user routing. Unguarded legacy bindings keep
+their existing request contract.
 
 A profile binding whose owned Sandbox or Workspace is missing or being removed
 returns `409 binding_resources_unavailable` on binding GET/PUT and conversation
@@ -505,10 +611,38 @@ access. Gateway reference verification and the `expires_at` deadline remain
 part of the gateway's provider-integration protocol; these operations add no
 native MCP tool names.
 
+The exact bound consumer Agent key may publish late media for an already admitted
+ExternalEvent under `.../events/{event_id}/media/{attachment_index}`. `POST
+/attachment` accepts raw bytes with required `Content-Type` and `Content-Length`,
+plus query fields `name`, `sha256`, `event_expires_at` and optional
+`gateway_binding_generation`. It returns 201 with the verified Agent attachment
+receipt. `GET /attachment` recovers that same successful receipt (200), or returns
+404 while it is absent/pending. Uploads are limited to 20 MiB, two concurrent body
+slots and a 45-second body deadline; authorization precedes body buffering.
+
+`POST /supplement` accepts `gateway_binding_generation`, `event_expires_at`, the
+exact artifact claim and `derived_text`. Its 202 response names a separate command
+and Responses v2 URL, queued status, queue deadline, and five server metadata
+fields binding the parent command/response/fingerprint, artifact slot and new
+command fingerprint. The original ExternalEvent is never resubmitted. Manager
+rechecks Gateway artifact authority before admission and runtime input; each
+parent/index/kind slot remains permanent across retries. Media responses use
+`Cache-Control: private, no-store`; refusals retain the JSON string `error`
+envelope, including 503 `media_continuation_unavailable` for transient source or
+storage failures. See [Event media continuations](CMA_Event_Media_Continuations.md)
+for the exact wire schema, lifetime, durable retry proof and delivery contract.
+
 Both DELETE operations return 204 after durable retirement admission. Conversation
 cleanup stops the Agent and removes its Worktree through the existing workers;
-binding cleanup also retires its Sandbox. Once retired, a binding or conversation
-id cannot be resurrected in the same generation. Supplied keys use encrypted
+binding cleanup first admits retirement of its exact owned Sandbox, fencing
+revival before waiting for conversation cleanup. This lets a paused Sandbox's
+existing retirement worker remove its retained provider object and prove process
+absence without starting a replacement Pod. Paused Agents with an earlier
+`binding_retired` stop then settle under the same parent/generation/home/provider
+absence checks; no runtime close receipt or completed turn is fabricated. A
+borrowed ExistingAgent target only loses its binding association and retains its
+Agent and resumable Sandbox. Once retired, a binding or conversation id cannot
+be resurrected in the same generation. Supplied keys use encrypted
 custody and are never minted, renewed, or revoked by the managed-key controller.
 
 Binding PUT with the same profile digest and a changed supplied key rotates the
@@ -1373,12 +1507,19 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
 | `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+| `POST /api/v1/cmaeg/worker-credentials/classify` | WorkerCredentialDigest | Gateway service bearer only | 200 WorkerCredentialClassificationView; 400/401/403/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}` | PutBindingRequest | - | 200 BindingView; 400/401/403/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}` | - | - | 204 empty; 401/403/409/503 ProblemDocument |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections` | InspectPreparationRequest | - | 200 PreparationInspectionView; 400/401/403/404/409/503 ProblemDocument |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/preparations` | PrepareBindingRequest | Idempotency-Key | 200 PreparationReceiptView; 400/401/403/404/409/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 200 BindingConversationInspectionView; 400/401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` | - | - | 200 EventContext; 401/403/404/503 Responses error |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | raw binary; upload query | Content-Type, Content-Length | 201 AgentAttachment; 400/403/409/413/429/503 media error |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | - | - | 200 AgentAttachment; 403/404/503 media error |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement` | BindingMediaSupplement | - | 202 supplementary command; 400/403/409/503 media error |
 | `GET /api/v1/gateway/channel-records` | - | owner, after, limit | 200 GatewayRecordPageView |
 | `PUT /api/v1/gateway/channel-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
 | `GET /api/v1/gateway/channel-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
@@ -1470,9 +1611,20 @@ pools and retained homes keep their admitted templates.
 | `POST /api/v1/agents/{id}/skills` | InstallAgentSkillRequest; key | - | 202 AgentSkillsView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
+| `POST /api/v1/agents/{id}/recover-worktree` | -; required key | - | 202 AgentView |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
+| `GET /api/v1/agents/{id}/desktop` | - | - | 200 DesktopDescriptor; 404 ProblemDocument |
+| `GET /api/v1/agents/{id}/desktop/ws` | WebSocket upgrade; browser Origin | - | 101 RFB stream; 400/403 refusal; 404/409/503 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
 | `POST /api/v1/workspaces/{id}/agents` | CreateAgentRequest; key | - | 201 AgentView |
+
+`recover-worktree` admits another initial worktree preparation attempt for a
+failed Agent that has never become ready. The Agent ID and persistent volume are
+preserved; the failed worktree and its evidence remain retained while a fresh
+worktree is allocated. This bodyless operation requires the owner with CMA use
+authority or a CMA administrator. Reuse the original key after an uncertain
+response. HTTP 202 means recovery is admitted, not that preparation is complete.
+Ineligible states return HTTP 409 `agent_worktree_recovery_conflict`.
 
 ### Agent home files
 
@@ -1667,6 +1819,23 @@ See [Agent sharing](Agent_Sharing.md) for audience and permission semantics.
 | `POST /api/v1/agents/{id}/interrupt` | -; key | - | 202 empty |
 | `POST /api/v1/agents/{id}/steer` | AgentTextRequest; key | - | 202 empty |
 
+### Sandbox allocation usage
+
+All quantities measure allocated resource-time. CPU and RAM accrue while the
+runtime is bound; disk accrues while the persistent home remains allocated,
+including while paused. Existing Sandboxes report partial lifecycle coverage.
+See [Sandbox usage](CMA_Sandbox_Usage.md) for units, authorization, retention,
+billing integration and TypeScript examples. Responses are private and no-store.
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/usage` | - | - | 200 UsageSummaryView |
+| `GET /api/v1/usage/sandboxes` | - | cursor, limit | 200 UsagePageView |
+| `GET /api/v1/usage/sandboxes/{id}` | - | - | 200 SandboxUsageView |
+| `GET /api/v1/usage/sandboxes/{id}/events` | - | cursor, limit | 200 UsageEventsView |
+| `GET /api/v1/admin/usage` | - | owner | 200 UsageSummaryView |
+| `GET /api/v1/admin/usage/sandboxes` | - | owner, cursor, limit | 200 UsagePageView |
+
 ### Agent usage
 
 | Operation | Body / Key | Query | Response |
@@ -1779,6 +1948,7 @@ See [Agent sharing](Agent_Sharing.md) for audience and permission semantics.
 |---|---|---|---|
 | `GET /api/v1/agents/{id}/channel-usage` | - | - | 200 AgentChannelUsageView |
 | `GET /api/v1/agents/{id}/channel-usage/history` | - | cursor, limit | 200 AgentChannelUsageHistoryView |
+| `GET /api/v1/agents/{id}/provider-associations` | - | cursor, limit | 200 AgentProviderAssociationsView |
 
 Channel usage is separate from immutable creation origin. An authorized summary
 contains `agent_id` and `channel_usage` with `active`, `has_history`, nullable
@@ -1789,6 +1959,14 @@ reason and before/after binding generations, including reset, rebind and detach.
 Current policy, original authority deadline and retained Agent identity are
 rechecked after buffering. Public callers cannot write channel facts through
 these routes, and channel use grants no additional CMA resource rights.
+
+
+**Coverage:** `channel-usage` and its history describe the legacy explicit Bridge
+usage projection only. Provider binding/conversation admission does not populate
+that projection. An empty result does not establish that the Agent was never
+associated with a provider, and must not be used as deletion eligibility. Use
+`provider-associations` for retained Manager membership; neither route invents
+missing event-use history.
 
 The creation inventory also returns the safe `channel_usage` summary on each row.
 `channel_active=true|false` and `channel_history=true|false` combine with creation
@@ -1940,6 +2118,23 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `POST /api/v1/sandboxes/{id}/workspaces` | CreateWorkspaceRequest; key | - | 201 WorkspaceView |
 | `GET /api/v1/workspaces/{id}` | - | - | 200 AccessibleWorkspaceDetailView |
 | `DELETE /api/v1/workspaces/{id}` | -; key | - | 202 WorkspaceView |
+| `POST /api/v1/workspaces/{id}/recover-prepare` | -; required key | - | 202 WorkspaceView |
+
+`recover-prepare` admits another preparation attempt for the same failed Workspace;
+HTTP 202 confirms admission, not readiness. The Workspace must never have reached
+Ready, have no resolved commit, Agents, Worktrees, pending preparation or active
+lease, and retain an Active, idle parent Sandbox. Its original identity, source,
+path, profile and data remain bound to the recovery. The owner needs
+`UseOwnSandboxes`; an operator with `ControlAnySandbox` may also admit recovery,
+with the actual operator retained as the requester.
+
+The command has no body and requires a valid `Idempotency-Key`. Repeating the same
+key replays its result. A new key is eligible only after a previous attempt has
+failed terminally; it cannot bypass active or uncertain work. Missing or invalid
+keys return 400, unauthenticated callers 401, and insufficient capability 403.
+Missing or foreign Workspaces return 404. Ineligible state returns 409 with
+`workspace_prepare_recovery_conflict`; unavailable storage returns 503. Read the
+original Workspace to observe eventual preparation success or failure.
 
 ### Service connections
 
@@ -2093,3 +2288,75 @@ membership is required even for an empty page; failures do not become a false
 successful empty scope. Ownership and whole-Sandbox grants are filtered and
 deduplicated before pagination. The hidden lookahead and held evidence are
 checked after count IO, before releasing either rows or `next`.
+
+### Retained Agent provider associations
+
+`GET /api/v1/agents/{id}/provider-associations?limit=50&cursor=...` requires
+current management authority over that Agent (personal owner or authorized
+organization management). Provider manager or worker credentials do not gain
+owner-management access through this route. Foreign resources remain concealed;
+ordinary shared viewers cannot read the associations. Each buffered result is
+revalidated against current resource policy and Agent incarnation before release.
+The read and its schemas appear in both `/agent-manager/openapi.json` and the
+full `/openapi.json` compatibility document.
+
+The response contains `agent_id`, owner subject `owner`, `agent_created_at`,
+`items`, and optional `next`. Each item identifies the retained `binding_id`,
+`binding_generation`, `provider_conversation_id`, `relationship` (`managed` or
+`borrowed`), and exact `sandbox_id`, `workspace_id`, `worktree_id`. It separately
+reports `conversation_state`, `binding_state`, `current_binding_generation`, and
+`is_current_generation`. `binding_state` means the **current parent binding's
+state at this page's database read snapshot**; a historical conversation has
+its own retained generation and state. Retired associations remain visible even
+when the parent's current environment has changed several generations later.
+
+`association_created_at` and `association_updated_at` are reservation lifecycle
+timestamps. They are **not** first or last message/event usage, delivery receipts,
+or evidence that the Agent can be deleted. These records do not expose a Gateway
+channel identifier or name because Manager does not retain those authoritative
+Gateway facts. Agent creation origin remains unchanged. A former Worktree is accepted only
+when it belongs to the Agent's already-validated retained recovery chain; the
+response retains that association's original Worktree ID.
+
+Pages use a nonunique Manager index on `(record.owner, record.agent_id, _id)` and
+an exclusive opaque cursor scoped to the owner and exact Agent creation record.
+The default limit is 50, with an allowed range of 1–200. A page reads ancestry,
+conversations, and their binding parents under one database snapshot, fetching
+at most `limit + 1` association rows and bounded parent records. Separate pages
+use fresh snapshots: a concurrent newly inserted association whose key sorts
+before an already consumed cursor requires a fresh traversal to observe it.
+The cursor is not an authorization credential. Invalid or foreign continuations
+return `400 invalid_query`; changed authority returns `409 resource_access_changed`;
+missing/corrupt ancestry or parents return a typed error rather than empty success.
+
+Deployment creates the additive `owner_agent_association` index in the existing
+`BindingCollections::open` schema initialization. The service must finish this
+index setup before it becomes ready. Reads explicitly hint that index, so a
+missing index causes a bounded failure rather than a collection scan. No backfill,
+new collection, runtime restart, Agent origin change, or association write is
+needed. Existing unique binding/generation/Agent constraints are preserved.
+
+Example (a retired managed association whose parent is currently generation 3):
+
+```json
+{
+  "agent_id": "agt_example",
+  "owner": "owner-subject",
+  "agent_created_at": "2026-10-01T00:00:00Z",
+  "items": [{
+    "binding_id": "binding-example",
+    "binding_generation": 1,
+    "provider_conversation_id": "event-0001",
+    "relationship": "managed",
+    "sandbox_id": "sbx_example",
+    "workspace_id": "wks_example",
+    "worktree_id": "wkt_example",
+    "conversation_state": "retired",
+    "binding_state": "ready",
+    "current_binding_generation": 3,
+    "is_current_generation": false,
+    "association_created_at": "2026-10-02T00:00:00Z",
+    "association_updated_at": "2026-10-03T00:00:00Z"
+  }]
+}
+```

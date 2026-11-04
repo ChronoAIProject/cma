@@ -169,3 +169,135 @@ spec:
           requestRedirect:
             scheme: https
             statusCode: 301
+---
+# Additive Nyxid entry. Keep the old routes during the staged domain migration.
+# Public URL, OAuth and callback cutover: docs/CMA_Domain_Migration.md.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cma-web-nyxid
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-web
+    app.kubernetes.io/part-of: cma
+spec:
+  parentRefs:
+    - name: chronoai-gateway
+      namespace: gateway-infra
+      sectionName: https-nyxid
+  hostnames:
+    - cma.nyxid.ai
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/event-gateway
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-agent-manager
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/image-manager
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-image-manager
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/agent-manager
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /api
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-agent-manager
+          port: 80
+          weight: 1
+    # Keep the browser on one origin without placing the web pod in the API's
+    # trusted-proxy chain. API, auth, and exact discovery matches win over `/`,
+    # so GFE forwards the original client chain straight to the control plane.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+        - path:
+            type: PathPrefix
+            value: /auth
+        - path:
+            type: Exact
+            value: /openapi.json
+        - path:
+            type: Exact
+            value: /agent-manager/openapi.json
+        - path:
+            type: Exact
+            value: /.well-known/agent-card.json
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-agent-manager
+          port: 80
+          weight: 1
+    # Image Manager remains optional; this discovery route does not enable it.
+    - matches:
+        - path:
+            type: Exact
+            value: /image-manager/openapi.json
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-image-manager
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-web
+          port: 80
+          weight: 1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cma-nyxid-http-redirect
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/part-of: cma
+spec:
+  parentRefs:
+    - name: chronoai-gateway
+      namespace: gateway-infra
+      sectionName: http
+  hostnames:
+    - cma.nyxid.ai
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

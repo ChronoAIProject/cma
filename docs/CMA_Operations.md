@@ -5,6 +5,10 @@ The current runtime contract is **3**, not the contract-2 image named in the
 original #832 plan. Product semantics are defined in [CMA Model](CMA_Model.md);
 public routes are in [REST](API_REST.md).
 
+For the staged move to `cma.nyxid.ai`, including additive HTTPRoutes, the URL
+inventory, application cutover gates and rollback, see
+[CMA domain migration](CMA_Domain_Migration.md).
+
 ## CMAEG
 
 CMAEG (CMA Event Gateway) is a separate stateless service that receives
@@ -541,6 +545,16 @@ results are not retried. This transport alone does not attach tools to an Agent:
 binding provenance, retained endpoint configuration and confirmed conversation
 setup are checked separately before a provider Agent can become ready.
 
+Provider tool resolution and open confirmation use at most five transaction
+attempts in total, retrying only MongoDB-labelled transient failures. Every attempt
+rereads authority and applies all binding/lineage fences. Concurrent startup
+output may write the same Sandbox and Agent records. A rejected authority or
+non-transient storage failure is not retried; an uncertain commit remains
+unavailable and never becomes an unproved successful confirmation. The
+`Provider tool authority transaction did not complete` log identifies the
+Agent identity, operation, stage, fixed error category and attempt number without driver error
+text or record contents. The public adapter error stays unchanged.
+
 A provider binding can retain one tool endpoint as part of its immutable supplied
 credential authority. Exact replays and key rotation preserve that endpoint;
 changing or removing it under the same binding identity is refused. Binding
@@ -659,6 +673,34 @@ The historical cluster context in [Sandbox Provider](Sandbox_Provider.md) is
 Confirm it is still the target before any context-pinned command. Do not change
 account/project context globally while other work may be active.
 
+Agent startup work, runtime message updates and conversation admissions share a
+per-Agent transaction queue within each API store instance. This reduces local
+write conflicts while a prepared Agent publishes its connection and first
+message. Different Agents remain independent; unused queue entries are pruned.
+The queue owns no durable authority: each operation still starts a fresh Mongo
+transaction and validates revisions, ownership and work fences. Cross-process
+writers retain the existing conflict retries and unknown-commit reconciliation.
+
+Startup diagnostics record separate prepared-resource intent, worktree replay,
+Agent-home replay, receipt publication, conversation open and Ready-publication
+durations. Conversation traces also separate prepared close and load calls while
+retaining their aggregate protocol-session timing. Slow Agent work publications (at least 100 ms) and publications with
+multiple Mongo attempts also report queue time and attempt count. These logs
+contain bounded Agent identity, work step, fence and timings only. A false
+`commit_confirmed` includes errors, cancellation and ambiguous commits; it does
+not prove that a transaction failed to commit. Use the durable reconciliation
+result for that distinction. Timing instrumentation grants no authority and does
+not change startup checks, retries or readiness criteria.
+
+Native inspection timings separate exclusive HTTP checkout, the authority graph,
+runtime policy, the process-status exchange and the fresh post-status home read.
+The graph and policy reads overlap. They and the status exchange are nested
+inside `native_observation`; do not add all phase durations together. Each event
+identifies only the Sandbox, phase, elapsed milliseconds, completion and result.
+`completed=false` means the observation future was dropped before returning;
+`succeeded=true` means it returned `Ok`, which can still select the ordinary
+bootstrap fallback. Neither field proves runtime readiness or a committed write.
+
 ### Image Identity
 
 All three Dockerfiles declare final-image OCI source, revision and version
@@ -739,7 +781,8 @@ longer reserves buffers for CMA archive transfers.
 CMA uses two independent origins. `CHRONO_NYXID_BASE_URL` is the API/OAuth
 origin; `CHRONO_NYXID_PUBLIC_URL` is the browser registration/connect origin and
 must be one canonical HTTPS origin. Production configuration names
-`https://nyx-api.chrono-ai.fun` and `https://nyx.chrono-ai.fun` respectively.
+`https://nyx-api.chrono-ai.fun` (retained issuer/back-channel identity) and
+`https://nyxid.ai` respectively.
 `CHRONO_SERVER_PUBLIC_URL` remains the CMA browser origin so its host-only cookie
 and callback return to the same application.
 
@@ -837,6 +880,16 @@ key and body; use a fresh key only after a definitive refusal. A successful
 
 ## Configuration Inventory
 
+The lifecycle flags `machine_included` and `desktop` retain independent meanings.
+`machine_included` selects `CHRONO_MACHINE_SANDBOX_IMAGE` and records
+`CMA_MACHINE_INCLUDED=1` for the shared desktop and authenticated noVNC transport.
+`desktop` requests per-Agent browser preparation before the first task, subject
+to task-experience admission and `CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE` proof.
+A request enabling both must verify the selected machine image against that exact
+desktop image reference. Accepted operations retain both original flags on replay.
+Both runtime build targets install the current browser command alongside the
+supervisor; the Omarchy toolchain donor does not determine that command version.
+
 Every quoted `CHRONO_*` key read by `cma/src/config.rs` and its modules is listed
 below. `.github/scripts/check-config-keys.sh` checks manifest/reference parity;
 `.github/scripts/check-config-docs.mjs` checks this documentation. Secret values
@@ -846,7 +899,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 |---|---|
 | `CHRONO_SERVER_BIND` | Listen address, default `0.0.0.0:8080` |
 | `CHRONO_SERVER_PUBLIC_URL` | CMA browser origin; default local `http://localhost:8080`, production explicit |
-| `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed origins; default local `http://localhost:5173` |
+| `CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION` | Disabled when empty. Explicit JSON with `revision` (monotonically increasing, at least 2), `origin` (must equal the current public origin) and `agents` (1–64 exact Agent IDs, or `["*"]`). Requires managed document context. Deploy compatible readers first; admit at most two idle maintenance attempts per reconciliation sweep. The durable operation retains its target across recovery. Busy/queued/approval/native-goal conversations defer. Existing capability and native conversation are preserved; only an acknowledged refresh changes the installed transport receipt. A later target must use a larger revision. See the domain migration runbook. |
+| `CHRONO_PROVIDER_TOOL_RELAY` | Disabled when empty. Explicit JSON with `bindings` (1–32 exact binding IDs), `from_endpoint` (the original HTTPS MCP endpoint), and `upstream` (exactly the configured public origin plus `/event-gateway/mcp`). Enrolls new provider conversations at `/api/v1/provider-tools` using a separate signed capability; the current issuer credential stays in encrypted server custody. Existing conversations require the same fenced idle migration selected by `CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION`. Pending enrollment permits discovery only; effects require confirmed installation and current published native identity. Preserves original open receipts and runtime proxy configuration. Deploy compatible readers with the relay disabled and drain older readers before enabling it; isolated Mongo roles must include the new `provider_tool_relays` collection. Keep a compatible rollback binary after enrollment. The fixed upstream never follows redirects or retries uncertain remote calls. |
+| `CHRONO_AGENT_ACCESS_RETAINED_ORIGINS` | Comma-separated prior canonical HTTPS origins, at most four, empty by default. Existing Agent tool credentials remain verifiable and keep their exact installed endpoint and conversation binding. New runtime incarnations use the current public origin. This is independent of browser CORS; retain direct API routing on old hosts while live Agents depend on them. Never rotate the encryption key or rewrite Agent records to migrate a browser domain. |
+| `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed browser origins; default local `http://localhost:5173`. Cookie-authenticated Event Gateway writes and actor-link consent accept these origins plus `CHRONO_SERVER_PUBLIC_URL`; Desktop WebSockets use the same explicit origin set; duplicate, missing cookie-auth Origin and unlisted origins remain refused. Retain both CMA domains during migration. |
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
 | `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the integrated v2 browser transport; false code default, true in the production ConfigMap for new Agent tabs (including durable Starting input). Existing tabs retain their selected transport. Deploy with the matching API/Web release, ConfigMap compare-and-set, and API rollout; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_TASK_EXPERIENCE_POLICY` | Strict JSON, absent defaults to `{"mode":"disabled","accounts":[],"capabilities":[]}`; production also disables it. Modes: `disabled`, `accounts`, `all`. Exact authenticated subject ids only (at most1000, nonempty, at most256 UTF-8 bytes, no whitespace/control characters); ids are never returned to clients. Explicit capabilities: `task_home_admission`, `suggested_followup_admission`, `desktop_enable`, `browser_takeover`, `replay_presentation`. Unknown/duplicate fields, capabilities or accounts and contradictory settings fail startup: accounts must be empty outside accounts mode; disabled must have no capabilities. Empty account cohort admits nobody. Policy eligibility does not establish environment capability. Changes require an API rollout with compatible retained readers; closing new admission preserves exact accepted recovery, manual conversation, retained history/files/feedback, browser status and explicit return. See `plans/cma-ui-optimization/19-ROLLOUT-POLICY.md`. |
@@ -854,9 +910,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_IMAGE_MANAGER_BASE_URL` | Image Manager service base URL used for delegated image resolution; defaults to the CMA public origin with `/api/image-manager` when unset |
 | `CHRONO_NYXID_BASE_URL` | Required API/OAuth HTTP(S) origin in provider mode |
+| `CHRONO_CMAEG_BINDING_PREPARATION_ENABLED` | Strict boolean, default `false`. Allows management-authenticated reservation/replay for an explicitly retired and released binding hierarchy; inspection stays read-only. Enable only after compatible serving and rollback readers plus Gateway enrollment. See [fresh-event preparation](CMAEG_Fresh_Event_Binding_Preparation.md). |
 | `CHRONO_CMAEG_BASE_URL` | CMAEG management HTTP(S) origin; production `http://cma-event-gateway`. Set together with its public origin; omitting both disables Bot routes/workers. |
 | `CHRONO_CMAEG_PUBLIC_URL` | Retained CMAEG public HTTP(S) origin accepted for exact legacy callbacks; production `https://bot-gateway.chrono-ai.fun`. |
-| `CHRONO_CMAEG_PUBLIC_API_URL` | Canonical CMAEG public API base, defaulting to `CHRONO_CMAEG_PUBLIC_URL`; production `https://bot.chrono-ai.fun/event-gateway`. HTTPS with clean optional path segments, no credentials/query/fragment/trailing slash (loopback HTTP allowed for tests). Returned callback and event endpoints must match one exact canonical or legacy base for the same channel. |
+| `CHRONO_CMAEG_PUBLIC_API_URL` | Canonical CMAEG public API base, defaulting to `CHRONO_CMAEG_PUBLIC_URL`; production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments, no credentials/query/fragment/trailing slash (loopback HTTP allowed for tests). Returned callback and event endpoints must match one exact canonical or legacy base for the same channel. |
 | `CHRONO_NYXID_PUBLIC_URL` | Required exact canonical HTTPS browser origin in provider mode |
 | `CHRONO_NYXID_CLIENT_ID` | Provider-issued OAuth client id, not a chosen display name |
 | `CHRONO_NYXID_CLIENT_SECRET` | Required OAuth client secret reference |
@@ -870,11 +927,14 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SANDBOX_NAMESPACE` | Required DNS-label namespace for CMA-owned provider resources |
 | `CHRONO_SANDBOX_IMAGE` | Required immutable OCI reference ending in `@sha256:<64 lowercase hex digits>` |
 | `CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE` | Optional exact image reference verified for desktop creation; unset or the empty string defaults to no verified desktop runtime. A configured value must have a nonempty image name followed by `@sha256:` and exactly 64 lowercase hexadecimal digits; invalid values fail desktop-service composition. The selected image (or an existing Sandbox's recorded runtime image) must match the complete reference exactly. This declaration does not replace runtime proof: the adapter must expose browser and retained-home support, configured capacity must be at least 1000 millicores and 2048 MiB, and an existing Sandbox must be active, without a pending lifecycle operation, and pass current runtime checks. It neither enables the task-experience policy nor upgrades or restarts existing Sandboxes. |
+| `CHRONO_MACHINE_SANDBOX_IMAGE` | Optional immutable OCI reference for the Agent Manager **Machine Included** choice. It must point to a runtime built with `RUNTIME_DESKTOP=1` (XFCE session, panel, desktop icons, Thunar, terminal and Chromium). Leaving it unset makes that choice fail closed. |
 | `CHRONO_SANDBOX_PROVIDER` | Runtime provider selector: `opensandbox` (default) or `agent-sandbox`; selects the direct agent-sandbox backend for new allocations |
 | `CHRONO_RETAIN_OPENSANDBOX` | Whether to retain the legacy OpenSandbox endpoint configuration; `true` by default, and required while existing OpenSandbox runtimes remain addressable |
 | `CHRONO_AGENT_SANDBOX_ENABLED` | Optional boolean override for the direct agent-sandbox adapter; defaults to the provider selection |
-| `CHRONO_NATIVE_PREPARED_TARGET` | Deployment-owned count of credential-free native Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires native allocation and `native_vct_full_home_v2`. A matching ready native pool must exist first. A separate durable collection bounds all preparing, ready and retiring reservations to two across replicas. Explicit default Agent Manager creation atomically takes one matching reservation; other requests use normal creation. Set to `0` to retire unclaimed prepared capacity while preserving owned Sandboxes. |
+| `CHRONO_NATIVE_PREPARED_TARGET` | Deployment-owned count of credential-free agent-only native Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires native allocation and `native_vct_full_home_v2`. A matching ready native pool must exist first. A separate durable collection bounds preparing, ready and retiring reservations to two per image class across replicas. Explicit default Agent Manager creation atomically takes one matching reservation; other requests use normal creation. Set to `0` to retire unclaimed agent-only prepared capacity while preserving owned Sandboxes and machine spares. |
+| `CHRONO_NATIVE_MACHINE_PREPARED_TARGET` | Independent count of credential-free machine Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires a pinned machine image, native allocation and full native home. Starts the desktop and Agent before owner adoption. Its durable target and admission fence are independent from agent-only preparations. Keep the compatible preparation reader during rollback after enablement. |
 | `CHRONO_NATIVE_WARM_POOL_TARGET` | Number of unclaimed native agent-sandbox members kept ready for SandboxClaim admission (`0`–`1000`). Defaults to `1` when `CHRONO_SANDBOX_PROVIDER=agent-sandbox`, and `0` for legacy OpenSandbox. Requires a native VCT home. Agent Manager persists this deployment-owned target keyed by the exact runtime image, resources and Pod policy before serving, then reconciles `SandboxTemplate`, `SandboxWarmPool` and `SandboxClaim` resources. Existing targets and claimed Sandboxes retain their original policy. |
+| `CHRONO_NATIVE_MACHINE_WARM_POOL_TARGET` | Independent unclaimed capacity for `CHRONO_MACHINE_SANDBOX_IMAGE` (`0`–`1000`). Defaults to `1` only with a configured machine image and native allocation, otherwise `0`. Positive capacity requires a native VCT home and a distinct machine image. Startup persists and checks both pool plans before serving. The manifest keeps machine capacity at `0` until its production image is verified and promoted. |
 | `CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT` | `direct` (default) connects to the owned Pod IP on TCP 9090. `kubernetes-portforward` uses authenticated Kubernetes `pods/portforward` streams to port 9090. `kubernetes-exec` uses `pods/exec` and the runtime image's `/usr/bin/python3` to relay stdio to fixed `127.0.0.1:9090`. Both carry control, history and conversation WebSockets with the same pinned CA and renewable credentials as CRD operations. The selected subresource needs `get`/`create` authorization. No local listening port, local subprocess, router or `pods/proxy` permission is used. |
 | `CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE` | Required readable secret file when the direct agent-sandbox adapter is enabled; never store the control key in a ConfigMap |
 | `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS` | Optional Kubernetes RuntimeClass passed to agent-sandbox Pods |
@@ -917,6 +977,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE` | Ordinary request budget/burst; default 600 |
 | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` | Creation request budget/burst; default 10 |
 | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` | Agent input request budget/burst; default 120 |
+| `CHRONO_USAGE_BILLING_ENABLED` | Default false. Enables durable delivery of recorded Sandbox resource-time to NyxID's existing Lago organization; metering remains active when false. |
+| `CHRONO_USAGE_LAGO_API_URL` | Complete HTTPS API base ending `/api/v1`; required when usage billing is enabled. Supply the effective API path used by NyxID, including any reverse-proxy prefix. |
+| `CHRONO_USAGE_LAGO_PLAN_CODE` | Existing NyxID Lago plan code, normally `starter`. Never creates customers, subscriptions, prices or wallets. |
+| `CHRONO_USAGE_LAGO_API_KEY` | Secret reference for that Lago organization. Required when usage billing is enabled; never exposed to browsers or Sandbox runtimes. |
 | `CHRONO_SERVER_TRUSTED_PROXY_CIDRS` | Exact trusted load-balancer peers; empty by default, production explicit |
 | `CHRONO_SERVER_TRUSTED_PROXY_HOPS` | Trusted rightmost forwarded hops, 1-16; default 1 |
 | `CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS` | Empty or the complete build-pinned set; must not overlap trusted peer ranges |
@@ -957,6 +1021,17 @@ checkpoint writer hold; they cannot create new holds or transfer archives.
 `RUST_LOG` controls tracing and defaults to `info`; it is not a `CHRONO_*`
 configuration field. Log level changes never authorize credential-value output.
 Keep model/service/provider configuration out of ad hoc frontend build flags.
+
+The API Deployment sets `TOKIO_WORKER_THREADS=2`, consumed by Tokio's existing
+multithread runtime before CMA starts. Its one-CPU quota would otherwise select
+one worker. Production desktop measurements found CPU work occupying that sole
+worker for about a second, delaying both desktop frames and liveness responses.
+Two workers let the operating system schedule interactive IO while one task is
+busy. This does not increase the CPU quota or replace profiling and moving
+expensive work off async workers; simultaneous CPU work can still delay IO.
+Apply this as an API-only rollout, preserving live Sandbox Pods and conversation
+history. Verify the worker count and public desktop input-to-pixel latency after
+the rollout. Rollback restores the previous worker setting on the same API image.
 
 Execution policy is pinned before each effect and participates in its operation
 fingerprint. A changed timeout or clone-depth environment value must not change
@@ -1121,6 +1196,14 @@ relay exits when its stdin or stdout closes, including under backpressure;
 a successful exec exit preserves buffered response bytes for the caller.
 A lost response
 does not trigger transport-level replay or discovery of a replacement Pod.
+
+Native HTTP retains at most 16 reusable connections with a 60-second idle
+timeout. Cache pressure evicts the least recently used idle connection; active
+and queued requests are never evicted. Successful request completion updates
+recency. Sorting by runtime name previously discarded frequently used prepared
+runtimes and added another Kubernetes exec handshake during ownership transfer.
+Reuse still checks the exact current Pod and container incarnation after
+exclusive checkout; this cache retains transport connections, never authority.
 
 Enable a stream mode only after a canary using the deployment's actual remote
 identity proves control, history, long-lived WebSocket communication and cleanup
@@ -1619,8 +1702,12 @@ production manifest enables the existing NyxID service identity protocol:
 Configure `CHRONO_NYXID_PROXY_ISSUER` to the exact discovery issuer and
 `CHRONO_NYXID_PROXY_JWKS_URL` to its trusted HTTPS signing-key endpoint. The
 production issuer is `https://nyx-api.chrono-ai.fun`, not the login frontend.
-CMA requires the exact `CHRONO_NYXID_SERVICE_ID` and an audience equal to
-`CHRONO_SERVER_PUBLIC_URL` without its trailing slash. It never follows a
+CMA requires the exact `CHRONO_NYXID_SERVICE_ID` and the exact optional
+`CHRONO_NYXID_PROXY_AUDIENCE`. When absent, the audience defaults to
+`CHRONO_SERVER_PUBLIC_URL` without its trailing slash. Production explicitly pins
+`https://bot.chrono-ai.fun` as the retained service identity, independent of the
+browser domain; migrating the browser does not invalidate existing per-user
+NyxID connection audiences. It never follows a
 signing-key URL supplied by a token. Invalid or duplicate identity headers
 cannot fall back to a browser cookie or unrelated bearer token.
 
@@ -1829,3 +1916,28 @@ collection. CMA does not deserialize platform setup state or platform
 credentials. The gateway alone encrypts and interprets these records. The
 existing `cma:gateway:records` capability covers the namespace; no new shared
 credential, Secret Manager dependency or user credential store is introduced.
+
+
+### Retained Event Gateway public bases
+
+`CHRONO_CMAEG_PUBLIC_API_ALIASES` and `CMAEG_PUBLIC_API_ALIASES` are optional
+comma-separated lists of at most eight exact HTTPS API bases (loopback HTTP is
+allowed for local tests). Empty means no extra bases. Each base follows the same
+canonical, clean-path validation as the primary public API URL: no userinfo,
+query, fragment, empty path segment or trailing slash. These aliases do not
+change the primary advertised URL or the retained legacy console origin.
+
+Deploy both services with the new base listed as an alias first. Their readers
+then accept coherent callback/event pairs, setup links, original Telegram webhook
+activation/retirement and native MCP advertisements from all exact configured
+bases. Webhook setup preserves an already installed recognized URL. Binding
+runtime proxy authority remains the original legacy MCP endpoint. Setup pages
+keep their original path and host-only capability cookie; form Origins must
+match a configured base with that exact path prefix. MCP accepts only the exact
+configured origins. The browser request never supplies a trusted base.
+
+After every serving and rollback reader is compatible, change both public API
+URLs to `https://cma.nyxid.ai/event-gateway` and retain
+`https://bot.chrono-ai.fun/event-gateway` in both alias lists. Keep
+`https://bot-gateway.chrono-ai.fun` as the legacy public origin. On rollback retain
+readers and all three reachable bases for links and webhooks already issued.

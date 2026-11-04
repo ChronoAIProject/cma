@@ -148,3 +148,110 @@ spec:
           name: cma-event-gateway
           port: 80
           weight: 1
+---
+# New-domain transport only. URL advertisement stays on the existing base until
+# retained callback and webhook aliases are supported; see docs/CMA_Domain_Migration.md.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cma-event-gateway-public-nyxid
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-event-gateway
+    app.kubernetes.io/part-of: cma
+spec:
+  parentRefs:
+    - name: chronoai-gateway
+      namespace: gateway-infra
+      sectionName: https-nyxid
+  hostnames:
+    - cma.nyxid.ai
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /event-gateway/v1
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /v1
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /event-gateway/mcp
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /mcp
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    # GKE supports prefix rewrites only, including the discovery document.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /event-gateway/openapi.json
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /openapi.json
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /event-gateway/docs
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /docs
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /event-gateway/connect
+        - path:
+            type: PathPrefix
+            value: /event-gateway/legacy-console
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /console
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1

@@ -90,6 +90,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
             get(super::suggestions::read),
         )
         .route(
+            "/api/v1/agents/{id}/recover-worktree",
+            post(super::agent_worktree_recovery::recover_worktree),
+        )
+        .route(
             "/api/v1/agents/{id}/message-feedback",
             get(super::message_feedback::list),
         )

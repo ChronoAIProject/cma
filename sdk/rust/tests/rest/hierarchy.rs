@@ -1,5 +1,71 @@
 use super::*;
 
+#[tokio::test]
+async fn agent_worktree_recovery_is_keyed_bodyless_and_checks_exact_identity_and_status() {
+    let server = Server::new().await;
+    let path = "/agents/agent-1/recover-worktree";
+    let mut pending = agent();
+    pending["status"] = json!("starting");
+    for _ in 0..2 {
+        server.expect("POST", path, None, 202, Some(pending.clone()));
+        let agent = server
+            .client
+            .agents()
+            .recover_worktree("agent-1", &key())
+            .await
+            .unwrap();
+        assert_eq!(agent.id, "agent-1");
+        assert_eq!(agent.status, AgentStatus::Starting);
+    }
+    let mut foreign = pending.clone();
+    foreign["id"] = json!("another-agent");
+    for (status, response) in [(202, foreign), (200, pending)] {
+        server.expect("POST", path, None, status, Some(response));
+        assert!(matches!(
+            server
+                .client
+                .agents()
+                .recover_worktree("agent-1", &key())
+                .await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn workspace_prepare_recovery_is_keyed_bodyless_and_checks_exact_identity_and_status() {
+    let server = Server::new().await;
+    let path = "/workspaces/workspace-1/recover-prepare";
+    let mut pending = workspace();
+    pending["status"] = json!("preparing");
+    for _ in 0..2 {
+        server.expect("POST", path, None, 202, Some(pending.clone()));
+        let workspace = server
+            .client
+            .workspaces()
+            .recover_prepare("workspace-1", &key())
+            .await
+            .unwrap();
+        assert_eq!(workspace.id, "workspace-1");
+        assert_eq!(workspace.status, WorkspaceStatus::Preparing);
+    }
+    let mut foreign = pending.clone();
+    foreign["id"] = json!("another-workspace");
+    for (status, response) in [(202, foreign), (200, pending)] {
+        server.expect("POST", path, None, status, Some(response));
+        assert!(matches!(
+            server
+                .client
+                .workspaces()
+                .recover_prepare("workspace-1", &key())
+                .await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.assert_drained();
+}
+
 #[test]
 fn sandbox_detail_preserves_optional_pinned_providers() {
     let legacy: SandboxDetail = serde_json::from_value(sandbox_detail()).unwrap();
@@ -16,6 +82,28 @@ fn sandbox_detail_preserves_optional_pinned_providers() {
     for (field, value) in [("agent_provider", "unknown"), ("model_access", "unknown")] {
         let mut body = sandbox_detail();
         body[field] = json!(value);
+        assert!(serde_json::from_value::<SandboxDetail>(body).is_err());
+    }
+}
+
+#[test]
+fn sandbox_colour_is_optional_and_only_in_its_single_spelling() {
+    let legacy: SandboxDetail = serde_json::from_value(sandbox_detail()).unwrap();
+    assert!(legacy.summary.sandbox.color.is_none());
+    let mut body = sandbox_detail();
+    body["color"] = json!("#2f96fa");
+    let detail: SandboxDetail = serde_json::from_value(body).unwrap();
+    assert_eq!(detail.summary.sandbox.color.as_deref(), Some("#2f96fa"));
+    for invalid in [
+        json!("#2F96FA"),
+        json!("2f96fa"),
+        json!("#2f96f"),
+        json!("blue"),
+        json!(null),
+        json!(7),
+    ] {
+        let mut body = sandbox_detail();
+        body["color"] = invalid;
         assert!(serde_json::from_value::<SandboxDetail>(body).is_err());
     }
 }
@@ -138,6 +226,7 @@ async fn shared_sandbox_inventory_preserves_safe_summaries_and_personal_method_t
         organization: Some("org".into()),
         shared: false,
         filters: SandboxListOptions {
+            exclude_retired: false,
             status: Some(SandboxStatus::Active),
             page: PageOptions {
                 cursor: None,
@@ -234,6 +323,7 @@ async fn aggregate_shared_sandbox_scope_pages_and_refuses_mixed_scope_locally() 
         shared: true,
         organization: None,
         filters: SandboxListOptions {
+            exclude_retired: false,
             status: Some(SandboxStatus::Active),
             page: PageOptions {
                 cursor: Some("sandbox-0".into()),
@@ -267,6 +357,58 @@ async fn aggregate_shared_sandbox_scope_pages_and_refuses_mixed_scope_locally() 
             .client
             .sandboxes()
             .list_accessible(&AccessibleSandboxListOptions::default())
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn visible_inventory_filter_is_explicit_and_combines_with_scope_and_cursor() {
+    let server = Server::new().await;
+    let options = SandboxListOptions {
+        exclude_retired: true,
+        page: PageOptions {
+            cursor: Some("next".into()),
+            limit: Some(1),
+        },
+        ..Default::default()
+    };
+    server.expect(
+        "GET",
+        "/sandboxes?cursor=next&limit=1&exclude_retired=true",
+        None,
+        200,
+        Some(json!({"items":[]})),
+    );
+    assert!(
+        server
+            .client
+            .sandboxes()
+            .list(&options)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    server.expect(
+        "GET",
+        "/sandboxes?cursor=next&limit=1&exclude_retired=true&shared=true",
+        None,
+        200,
+        Some(json!({"items":[]})),
+    );
+    assert!(
+        server
+            .client
+            .sandboxes()
+            .list_accessible(&AccessibleSandboxListOptions {
+                shared: true,
+                filters: options,
+                ..Default::default()
+            })
             .await
             .unwrap()
             .items

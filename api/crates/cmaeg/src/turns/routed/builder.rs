@@ -35,6 +35,7 @@ pub struct ProductionFrozenTurnBuilder {
     media: Option<Arc<MediaService>>,
     prepare: PrepareConfig,
     media_tool_providers: Arc<MediaToolProviders>,
+    media_continuations: bool,
 }
 impl ProductionFrozenTurnBuilder {
     pub fn new(providers: Arc<ProviderClient>, keys: Arc<MasterKeyRing>) -> Self {
@@ -44,6 +45,7 @@ impl ProductionFrozenTurnBuilder {
             media: None,
             prepare: PrepareConfig::default(),
             media_tool_providers: Arc::default(),
+            media_continuations: false,
         }
     }
     pub fn with_media(mut self, media: Option<Arc<MediaService>>, prepare: PrepareConfig) -> Self {
@@ -55,11 +57,17 @@ impl ProductionFrozenTurnBuilder {
         self.media_tool_providers = providers;
         self
     }
+    /// Enabled only after both the continuation reader and dedicated index are ready.
+    pub fn with_media_continuations(mut self, enabled: bool) -> Self {
+        self.media_continuations = enabled;
+        self
+    }
     async fn build(
         &self,
         plan: &AdmittedPlan,
         target: &StoredTarget,
         current: &ResolvedChannel,
+        generation: Option<u64>,
     ) -> Result<FrozenTurn, ExecutionError> {
         if !plan.targets.contains(target) {
             return Err(ExecutionError::Invalid);
@@ -117,11 +125,12 @@ impl ProductionFrozenTurnBuilder {
             // PUT is the existing durable, idempotent get-or-create. Never use
             // a Responses POST as a probe or create a detached preparation task.
             self.providers
-                .ensure_conversation(
+                .ensure_conversation_at_generation(
                     &target.launch.provider.slug,
                     &target.launch.provider.binding_id,
                     &turn.conversation_id,
                     credential,
+                    generation,
                 )
                 .await
                 .map_err(provider_error)?;
@@ -140,8 +149,9 @@ impl ProductionFrozenTurnBuilder {
                 audience,
                 Some(&target.launch.event.partition_key),
             );
-            let body = FrozenTurn {
+            let mut body = FrozenTurn {
                 conversation_id: turn.conversation_id,
+                binding_generation: generation,
                 idempotency_key: turn.idempotency_key,
                 input: rendered.input,
                 metadata: rendered.metadata,
@@ -155,6 +165,18 @@ impl ProductionFrozenTurnBuilder {
                     policy: current.definition.reply.clone(),
                 },
             };
+            if self.media_continuations
+                && target.launch.provider.slug.as_str() == "cma_codex"
+                && !target.launch.provider.target.is_profile()
+                && render_media::attachments(&plan.activity)
+                    .iter()
+                    .any(|item| item.source.is_some())
+            {
+                let schedule =
+                    super::media_schedule::MediaSchedule::capture(&plan.activity, &media.media)?;
+                body.metadata
+                    .insert(super::media_schedule::KEY.into(), schedule.encode()?);
+            }
             body.validate(
                 plan,
                 target,
@@ -174,10 +196,19 @@ impl FrozenTurnBuilder for ProductionFrozenTurnBuilder {
         target: &'a StoredTarget,
         current: &'a ResolvedChannel,
     ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
-        Box::pin(self.build(plan, target, current))
+        Box::pin(self.build(plan, target, current, None))
+    }
+    fn prepare_at_generation<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        current: &'a ResolvedChannel,
+        generation: Option<u64>,
+    ) -> BoxFuture<'a, Result<FrozenTurn, ExecutionError>> {
+        Box::pin(self.build(plan, target, current, generation))
     }
 }
-fn provider_error(error: ProviderError) -> ExecutionError {
+pub(super) fn provider_error(error: ProviderError) -> ExecutionError {
     match error {
         ProviderError::Busy { .. } | ProviderError::Capacity => ExecutionError::Busy,
         ProviderError::InvalidRequest(_) => ExecutionError::Invalid,

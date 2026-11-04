@@ -6,7 +6,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use http::{header, HeaderValue, Request, Uri};
-use kube::client::{Body, ClientBuilder};
+use kube::client::Body;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
@@ -20,14 +20,14 @@ const ENDPOINT: &str =
 const RESPONSE_LIMIT: usize = 64 * 1024;
 const REFRESH_MARGIN: u64 = 60;
 
+mod transport;
+
 pub(super) fn client(config: kube::Config) -> Result<kube::Client> {
     let layer = MetadataLayer {
         target: config.cluster_url.clone(),
         tokens: Arc::new(MetadataTokens::new(ENDPOINT, Duration::from_secs(5))?),
     };
-    let builder = ClientBuilder::try_from(config)
-        .map_err(|_| unavailable("native Kubernetes client or mounted CA is unavailable"))?;
-    Ok(builder.with_layer(&layer).build())
+    transport::client(config, &layer)
 }
 
 struct CachedToken {

@@ -32,6 +32,9 @@ pub enum Source {
         /// Explicit owner consent to create and publish managed static WhatsApp Flows.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         forms_enabled: Option<bool>,
+        /// Incoming private edits/deletions on Business App coexistence accounts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
         /// Explicit existing-group opt-in for an Official Business Account phone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group_ids: Option<Vec<String>>,
@@ -60,9 +63,12 @@ pub enum Source {
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
-        /// Opt in to close/reopen of the exact original forum topic.
+        /// Opt in to rename/close/reopen of the exact original forum topic.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         topic_lifecycle: Option<bool>,
+        /// Create and manage new topics in the original admitted forum supergroup.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        topic_creation: Option<bool>,
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_events: Option<bool>,
@@ -147,6 +153,9 @@ pub enum SourceRequest {
         /// Explicit owner consent to create and publish managed static WhatsApp Flows.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         forms_enabled: Option<bool>,
+        /// Incoming private edits/deletions on Business App coexistence accounts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
         /// Explicit existing-group opt-in for an Official Business Account phone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group_ids: Option<Vec<String>>,
@@ -175,9 +184,12 @@ pub enum SourceRequest {
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
-        /// Opt in to close/reopen of the exact original forum topic.
+        /// Opt in to rename/close/reopen of the exact original forum topic.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         topic_lifecycle: Option<bool>,
+        /// Create and manage new topics in the original admitted forum supergroup.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        topic_creation: Option<bool>,
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_events: Option<bool>,
@@ -260,6 +272,9 @@ pub enum SourceKind {
         /// Explicit owner consent to create and publish managed static WhatsApp Flows.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         forms_enabled: Option<bool>,
+        /// Incoming private edits/deletions on Business App coexistence accounts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
     },
     /// Native Discord ingress.
     #[serde(rename = "discord")]

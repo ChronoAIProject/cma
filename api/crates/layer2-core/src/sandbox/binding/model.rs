@@ -71,6 +71,8 @@ pub struct ProviderBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_endpoint: Option<String>,
     pub generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_guard: Option<super::BindingGenerationGuard>,
     pub work: BindingWork,
     pub previous: Option<PreviousBindingEnvironment>,
     pub created_at: String,
@@ -123,6 +125,7 @@ impl ProviderBinding {
             key_sha256,
             tool_endpoint,
             generation: 1,
+            generation_guard: None,
             work,
             previous: None,
             created_at: at.clone(),
@@ -150,6 +153,10 @@ impl ProviderBinding {
                 .is_some_and(|value| !super::valid_tool_endpoint(value))
             || self.revision == 0
             || self.generation == 0
+            || self
+                .generation_guard
+                .as_ref()
+                .is_some_and(|guard| !guard.valid(self.generation))
             || !(1..=BINDING_CONFORMANCE_LEVEL).contains(&self.level)
             || self.honoured != self.profile.honoured
             || self.refused != self.profile.refused
@@ -235,14 +242,13 @@ impl ProviderBinding {
             .iter()
             .zip(&profile.agent.skills)
             .find_map(|(current, requested)| {
-                (current.version != requested.version)
-                    .then(|| {
-                        (
-                            current.id.as_str().into(),
-                            current.version.clone().unwrap_or_default(),
-                            requested.version.clone().unwrap_or_default(),
-                        )
-                    })
+                (current.version != requested.version).then(|| {
+                    (
+                        current.id.as_str().into(),
+                        current.version.clone().unwrap_or_default(),
+                        requested.version.clone().unwrap_or_default(),
+                    )
+                })
             })
     }
 

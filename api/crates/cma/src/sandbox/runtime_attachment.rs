@@ -93,12 +93,88 @@ pub(crate) fn retained_runtime_request(
     )
 }
 
+/// Reconstruct only the already reserved, same-image failed revival. Both full
+/// requests still require independent exact provider/home proof; never substitute
+/// a generation read from provider metadata or the high-water fence alone.
+pub(crate) fn reserved_recovery_runtime_request(
+    snapshot: &layer2_core::sandbox::SandboxUnpublishedRecoverySnapshot,
+    deployment: &str,
+) -> layer3_adapter::Result<Option<RuntimeAdoptionRequest>> {
+    let invalid = || AdapterError::Rejected("failed recovery reservation changed".into());
+    let generation = snapshot
+        .recovery_provision_reservation()
+        .map_err(|_| invalid())?
+        .map(|reservation| reservation.generation)
+        .or_else(|| {
+            snapshot
+                .sandbox
+                .legacy_unpublished_allocation()
+                .then_some(snapshot.sandbox.lifecycle.runtime_generation_high_water)
+        });
+    let Some(generation) = generation else {
+        return Ok(None);
+    };
+    let sandbox = &snapshot.sandbox;
+    let binding = sandbox.unpublished_recovery_binding().ok_or_else(invalid)?;
+    let mut request = retained_runtime_request(sandbox, binding, deployment)?;
+    if sandbox_spec(sandbox, deployment) != request.spec
+        || sandbox
+            .admitted_runtime_update_target()
+            .is_some_and(|image| image != binding.runtime_version)
+    {
+        return Err(invalid());
+    }
+    // This candidate is never authority by itself. The caller must prove the
+    // complete rendered request and original retained graph independently.
+    request.generation = generation;
+    Ok(Some(request))
+}
+
+/// Recovery may have proved the exact pending provider allocation while keeping
+/// the older bound source. Use that durable evidence for suspension and the next
+/// transition; unrelated retained-binding reconstruction remains unchanged.
+pub(crate) fn recovery_runtime_request(
+    sandbox: &Sandbox,
+    binding: &layer2_core::sandbox::RuntimeBinding,
+    deployment: &str,
+) -> layer3_adapter::Result<RuntimeAdoptionRequest> {
+    let mut request = retained_runtime_request(sandbox, binding, deployment)?;
+    if let Some(state) = &sandbox.lifecycle.unpublished_recovery {
+        state
+            .validate_for(sandbox)
+            .map_err(|_| AdapterError::Rejected("admitted recovery allocation changed".into()))?;
+        if let Some(reservation) = &state.proof.reserved_provision {
+            if sandbox.lifecycle.suspended_runtime.as_deref() != Some(binding) {
+                return Err(AdapterError::Rejected(
+                    "recovery allocation has no exact retained source".into(),
+                ));
+            }
+            request.generation = reservation.generation;
+        }
+        if let Some(generation) = state.proof.observed_provision_generation {
+            request.generation = generation;
+        }
+    }
+    Ok(request)
+}
+
 /// Attach this replica to durable authority without allocating another runtime.
 pub(crate) async fn adopt_bound_runtime(
     adapter: &dyn SandboxAdapter,
     sandbox: &Sandbox,
     deployment_id: &str,
 ) -> layer3_adapter::Result<RuntimeHandle> {
+    Ok(inspect_bound_runtime(adapter, sandbox, deployment_id)
+        .await?
+        .0)
+}
+
+/// Fresh identity proof and optional capabilities from that same runtime process.
+pub(crate) async fn inspect_bound_runtime(
+    adapter: &dyn SandboxAdapter,
+    sandbox: &Sandbox,
+    deployment_id: &str,
+) -> layer3_adapter::Result<(RuntimeHandle, Option<RuntimeStatus>)> {
     let binding = sandbox
         .runtime
         .as_ref()
@@ -132,7 +208,7 @@ pub(crate) async fn adopt_bound_runtime(
         .await?
         .ok_or_else(runtime_absent)?;
     validate_bound_inspection(sandbox, generation, &inspected)?;
-    Ok(handle)
+    Ok((handle, inspected.status))
 }
 
 pub(crate) fn validate_bound_inspection(

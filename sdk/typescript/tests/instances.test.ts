@@ -13,6 +13,33 @@ import {
 } from './resource-fixtures.js';
 
 describe('Sandbox hierarchy resources', () => {
+  it('recovers original Workspace preparation with a keyed empty command and exact identity', async () => {
+    const test = transport();
+    const pending = { ...workspace, status: 'preparing' };
+    for (let replay = 0; replay < 2; replay += 1) {
+      test.answer(pending, 202);
+      expect(await test.client.workspaces.recoverPrepare(workspace.id, command)).toEqual(pending);
+      const sent = test.calls.at(-1)!;
+      expect(sent.url).toContain(`/api/v1/workspaces/${workspace.id}/recover-prepare`);
+      expect(sent.init.method).toBe('POST');
+      expect(sent.init.body).toBeUndefined();
+      expect(new Headers(sent.init.headers).get('idempotency-key')).toBe(command.idempotencyKey);
+    }
+    const count = test.calls.length;
+    expect(() =>
+      test.client.workspaces.recoverPrepare(workspace.id, { idempotencyKey: '' }),
+    ).toThrow(ValidationError);
+    expect(test.calls).toHaveLength(count);
+    test.answer({ ...pending, id: 'another-workspace' }, 202);
+    await expect(
+      test.client.workspaces.recoverPrepare(workspace.id, command),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    test.answer(pending, 200);
+    await expect(
+      test.client.workspaces.recoverPrepare(workspace.id, command),
+    ).rejects.toBeInstanceOf(ProtocolError);
+  });
+
   it('accepts optional pinned providers and rejects malformed provider projections', async () => {
     const test = transport();
     const detail = {
@@ -37,6 +64,21 @@ describe('Sandbox hierarchy resources', () => {
       { model_access: null },
     ]) {
       test.answer({ ...detail, ...invalid });
+      await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
+  it('keeps a Sandbox colour only in its single lowercase #rrggbb spelling', async () => {
+    const test = transport();
+    const summary = { ...sandbox, workspace_count: 0, worktree_count: 0, agent_count: 0 };
+    const detail = { ...summary, workspaces: [] };
+    test.answer({ ...detail, color: '#2f96fa' });
+    expect((await test.client.sandboxes.read(sandbox.id)).color).toBe('#2f96fa');
+    test.answer({ items: [{ ...summary, color: '#62d079' }] });
+    expect((await test.client.sandboxes.list()).items[0]).toMatchObject({ color: '#62d079' });
+    test.answer(detail);
+    expect((await test.client.sandboxes.read(sandbox.id)).color).toBeUndefined();
+    for (const color of ['#2F96FA', '2f96fa', '#2f96f', 'blue', null, 7]) {
+      test.answer({ ...detail, color });
       await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
     }
   });

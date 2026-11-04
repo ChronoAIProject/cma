@@ -7,10 +7,35 @@ pub(in crate::hosted) struct Files {
     text: Mutex<String>,
     status_reads: std::sync::atomic::AtomicUsize,
     pub(in crate::hosted) writes: std::sync::atomic::AtomicUsize,
+    pub(in crate::hosted) goal_probes: std::sync::atomic::AtomicUsize,
     fault: u8,
 }
 #[async_trait::async_trait]
 impl HostedBackend for Files {
+    async fn run_recovery_command(
+        &self,
+        handle: &RuntimeHandle,
+        command: &crate::hosted::RuntimeRecoveryCommand,
+    ) -> crate::Result<Vec<u8>> {
+        self.goal_probes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(handle.0, "retained-runtime");
+        assert_eq!(command.program, "/usr/bin/python3");
+        assert_eq!(&command.args[..2], ["-I", "-c"]);
+        let request: serde_json::Value = serde_json::from_slice(&command.input).unwrap();
+        assert_eq!(request["home"], "/home/cma/.cma/agents/agent/home");
+        if self.fault == 9 {
+            return Err(AdapterError::Unavailable("probe unavailable".into()));
+        }
+        if self.fault == 8 {
+            return Ok(b"unknown output".to_vec());
+        }
+        Ok(serde_json::to_vec(&serde_json::json!({
+            "version":1,
+            "session":if self.fault == 7 { serde_json::json!("other") } else { request["session"].clone() },
+            "goal_absent":self.fault != 6,
+        })).unwrap())
+    }
     async fn provision(
         &self,
         _: crate::provider::ProviderSandboxRequest,
@@ -51,6 +76,7 @@ impl HostedBackend for Files {
                     agent_skill_install: false,
                     agent_model_catalog: false,
                     agent_browser: false,
+                    agent_resource_preparation: false,
                     sandbox_id: identity.sandbox_id,
                     generation: identity.generation + u64::from(self.fault == 5),
                     home_identity: identity.home_identity,
@@ -128,6 +154,7 @@ pub(in crate::hosted) fn binding_with_tools(
         text: Mutex::new("Old managed\n\nOwner exact text  \n".into()),
         status_reads: std::sync::atomic::AtomicUsize::new(0),
         writes: std::sync::atomic::AtomicUsize::new(0),
+        goal_probes: std::sync::atomic::AtomicUsize::new(0),
         fault,
     });
     let binding = HostedContextRefresh::new(

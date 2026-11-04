@@ -13,6 +13,106 @@ impl RuntimeRoutingStore for Routes {
             .or_insert(default_new))
     }
 }
+
+struct RecoveryBackend(&'static str);
+
+#[async_trait::async_trait]
+impl HostedBackend for RecoveryBackend {
+    async fn inspect_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<super::super::NonexecutingRuntimeProof>> {
+        Ok(Some(super::super::NonexecutingRuntimeProof {
+            version: 1,
+            idle_bootstrap: None,
+            handle: handle.clone(),
+            request_sha256: crate::provider_request_digest(request)?,
+            home_identity: home.identity()?,
+            sandbox_generation: 1,
+            sandbox_resource_version: "1".into(),
+            pod_name: self.0.into(),
+            pod_uid: "owned".into(),
+            pod_resource_version: "1".into(),
+            runtime_container_id: "containerd://owned".into(),
+            runtime_restart_count: 1,
+            state_sha256: "a".repeat(64),
+        }))
+    }
+    async fn run_recovery_command(
+        &self,
+        handle: &RuntimeHandle,
+        command: &super::super::RuntimeRecoveryCommand,
+    ) -> Result<Vec<u8>> {
+        assert_eq!(command.program, "/usr/bin/python3");
+        assert_eq!(command.args, ["-I"]);
+        assert_eq!(command.input, b"private-input");
+        Ok(format!("{}:{}", self.0, handle.0).into_bytes())
+    }
+    async fn provision(&self, _: ProviderSandboxRequest) -> Result<RuntimeHandle> {
+        unreachable!("inspection cannot allocate a runtime")
+    }
+    async fn exchange(&self, _: &RuntimeHandle, _: RequestFrame) -> Result<ResponseFrame> {
+        unreachable!("inspection cannot use the supervisor control API")
+    }
+    async fn open_agent(
+        &self,
+        _: &RuntimeHandle,
+        _: FencedRequest<AgentLaunch>,
+        _: Option<String>,
+        _: HostedAgentOpenSettings,
+        _: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        unreachable!("inspection cannot open an agent")
+    }
+    async fn teardown(&self, _: &RuntimeHandle) -> Result<()> {
+        unreachable!("inspection cannot delete a runtime")
+    }
+}
+
+#[tokio::test]
+async fn recovery_command_keeps_exact_runtime_route_and_never_falls_back_or_allocates() {
+    let routes = Arc::new(Routes::default());
+    let mut backend = RuntimeBackends {
+        home_routes: None,
+        agent_sandbox: Some(Arc::new(RecoveryBackend("native"))),
+        opensandbox: Some(Arc::new(RecoveryBackend("legacy"))),
+        allocate_agent_sandbox: true,
+        routing: routes.clone(),
+    };
+    let command = super::super::RuntimeRecoveryCommand {
+        program: "/usr/bin/python3".into(),
+        args: vec!["-I".into()],
+        input: b"private-input".to_vec(),
+    };
+    let native = RuntimeHandle::new("agent-sandbox:claimed:sandbox-uid");
+    let legacy = RuntimeHandle::new("existing-provider-runtime");
+    for default_new in [true, false] {
+        backend.allocate_agent_sandbox = default_new;
+        for (handle, provider) in [(&native, "native"), (&legacy, "legacy")] {
+            assert_eq!(
+                backend
+                    .run_recovery_command(handle, &command)
+                    .await
+                    .unwrap(),
+                format!("{provider}:{}", handle.0).into_bytes()
+            );
+        }
+    }
+    backend.agent_sandbox = None;
+    assert!(matches!(
+        backend.run_recovery_command(&native, &command).await,
+        Err(AdapterError::Unavailable(_))
+    ));
+    backend.agent_sandbox = Some(Arc::new(super::super::InMemoryHostedBackend::default()));
+    assert!(matches!(
+        backend.run_recovery_command(&native, &command).await,
+        Err(AdapterError::Unsupported(_))
+    ));
+    assert!(routes.0.lock().await.is_empty());
+}
+
 #[tokio::test]
 async fn unknown_creation_retry_keeps_original_backend_across_default_change() {
     let old = Arc::new(super::super::InMemoryHostedBackend::default());
@@ -433,4 +533,64 @@ async fn retained_runtime_adoption_suspension_and_resume_refuse_cross_cluster_ho
         assert!(fixture.old.inventory().await.unwrap().is_empty());
         assert!(fixture.native.inventory().await.unwrap().is_empty());
     }
+}
+
+#[tokio::test]
+async fn nonexecuting_proof_keeps_runtime_route_and_never_falls_back_or_allocates() {
+    let routes = Arc::new(Routes::default());
+    let mut backend = RuntimeBackends {
+        home_routes: None,
+        agent_sandbox: Some(Arc::new(RecoveryBackend("native"))),
+        opensandbox: Some(Arc::new(RecoveryBackend("legacy"))),
+        allocate_agent_sandbox: false,
+        routing: routes.clone(),
+    };
+    let request = crate::hosted::HostedDeployment::default()
+        .render_runtime(&runtime_request("owned", 1).spec, 1)
+        .unwrap();
+    let home_request = home_request("owned");
+    let home = HomeVolumeAttachment {
+        receipt: HomeVolumeReceipt {
+            native_authority: None,
+            volume_id: home_request.volume_id.clone(),
+            request_sha256: home_request.computed_sha256(),
+            storage_reference: "original".into(),
+            storage_generation: "original-uid".into(),
+        },
+        request: home_request,
+    };
+    let native = RuntimeHandle::new("agent-sandbox:owned:sandbox-uid");
+    for default_new in [false, true] {
+        backend.allocate_agent_sandbox = default_new;
+        for (handle, provider) in [
+            (&native, "native"),
+            (&RuntimeHandle::new("existing-legacy"), "legacy"),
+        ] {
+            let proof = backend
+                .inspect_nonexecuting_runtime(handle, &request, &home)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(proof.pod_name, provider);
+            backend
+                .verify_nonexecuting_runtime(handle, &request, &home, &proof)
+                .await
+                .unwrap();
+        }
+    }
+    backend.agent_sandbox = None;
+    assert!(matches!(
+        backend
+            .inspect_nonexecuting_runtime(&native, &request, &home)
+            .await,
+        Err(AdapterError::Unavailable(_))
+    ));
+    backend.agent_sandbox = Some(Arc::new(super::super::InMemoryHostedBackend::default()));
+    assert!(matches!(
+        backend
+            .inspect_nonexecuting_runtime(&native, &request, &home)
+            .await,
+        Err(AdapterError::Unsupported(_))
+    ));
+    assert!(routes.0.lock().await.is_empty());
 }

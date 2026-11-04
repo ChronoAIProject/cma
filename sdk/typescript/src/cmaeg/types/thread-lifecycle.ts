@@ -18,7 +18,10 @@ export const ThreadRefSchema = text;
 export type ThreadRef = Output<typeof ThreadRefSchema>;
 export const ThreadListViewSchema = enumeration('active', 'archived');
 export type ThreadListView = Output<typeof ThreadListViewSchema>;
-export const CreateThreadRequestSchema = object({ name: text, auto_archive_duration: integer });
+export const CreateThreadRequestSchema = object({
+  name: text,
+  auto_archive_duration: optional(integer),
+});
 export type CreateThreadRequest = Output<typeof CreateThreadRequestSchema>;
 export const ThreadActionSchema = enumeration(
   'close',

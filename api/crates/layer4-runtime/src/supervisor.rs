@@ -23,6 +23,8 @@ const MAX_AGENT_SLOTS: usize = 16;
 mod agent;
 #[path = "supervisor_agent_recovery.rs"]
 mod agent_recovery;
+#[path = "supervisor_agent_resources.rs"]
+mod agent_resources;
 #[path = "supervisor_agent_validation.rs"]
 mod agent_validation;
 #[path = "supervisor_attachment.rs"]
@@ -81,14 +83,43 @@ pub(crate) struct Supervisor {
     resources: crate::resources::Sampler,
     writer_boundary: SupervisorBoundary,
     http: reqwest::Client,
+    // Dropping the supervisor terminates the isolated desktop session.
+    desktop_process: Option<crate::desktop_process::DesktopProcess>,
 }
 
 impl Supervisor {
+    pub(crate) fn desktop_websocket_token(&self) -> Option<&str> {
+        self.desktop_process
+            .as_ref()
+            .map(crate::desktop_process::DesktopProcess::websocket_token)
+    }
+
     pub(crate) async fn start(
         config: RuntimeConfig,
         writer_boundary: SupervisorBoundary,
     ) -> Result<Arc<Self>> {
         let supervisor = Self::new(config, writer_boundary)?;
+        if supervisor.config.machine_included {
+            let ready = async {
+                loop {
+                    if tokio::net::TcpStream::connect("127.0.0.1:6080")
+                        .await
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(30), ready)
+                .await
+                .map_err(|_| {
+                    RuntimeError::unavailable(
+                        "desktop_start_failed",
+                        "desktop did not become ready",
+                    )
+                })?;
+        }
         supervisor.recover_journals().await?;
         Ok(supervisor)
     }
@@ -134,6 +165,11 @@ impl Supervisor {
             RecoveryState::Absent | RecoveryState::Terminal => (Phase::Provisioned, None),
         };
         let checkpoint = CheckpointStore::new(&config);
+        let desktop_process = if config.machine_included {
+            Some(crate::desktop_process::DesktopProcess::start(&config)?)
+        } else {
+            None
+        };
         Ok(Arc::new(Self {
             config,
             boot_id,
@@ -156,6 +192,7 @@ impl Supervisor {
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .expect("skill HTTP client builds"),
+            desktop_process,
         }))
     }
 
@@ -200,7 +237,8 @@ impl Supervisor {
         }
         if matches!(
             request,
-            RequestFrame::PrepareWorkspace(_)
+            RequestFrame::RecoverWorkspacePrepare(_)
+                | RequestFrame::PrepareWorkspace(_)
                 | RequestFrame::WorkspaceSetup(_)
                 | RequestFrame::RemoveWorkspace(_)
         ) {
@@ -219,18 +257,20 @@ impl Supervisor {
             if let Err(error) = self.authorize_preparation(&request).await {
                 return error.response(operation);
             }
-            let removal_writer = if let RequestFrame::RemoveWorkspace(reference) = &request {
-                let guard = match self.removal_writer_guard() {
-                    Ok(guard) => guard,
-                    Err(error) => return error.response(operation),
-                };
+            let removal_writer = match self.removal_writer_guard() {
+                Ok(guard) => guard,
+                Err(error) => return error.response(operation),
+            };
+            if let RequestFrame::RemoveWorkspace(reference) = &request {
                 if let Err(error) = self.ensure_workspace_idle(&reference.name).await {
                     return error.response(operation);
                 }
-                guard
-            } else {
-                None
-            };
+            }
+            if let RequestFrame::RecoverWorkspacePrepare(frame) = &request {
+                if let Err(error) = self.authorize_workspace_recovery(frame).await {
+                    return error.response(operation);
+                }
+            }
             return match crate::workspace_runtime::dispatch(
                 self.config.clone(),
                 operation_guard,

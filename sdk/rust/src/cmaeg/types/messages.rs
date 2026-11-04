@@ -199,9 +199,21 @@ pub enum FormFieldKind {
     Date {},
 }
 
+/// One confirmed native text part; the aggregate outcome can still be unknown.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfirmedMessagePart {
+    /// Zero-based rendered text position.
+    pub index: u16,
+    /// Exact native destination under the original consumer authority.
+    pub message_ref: MessageRef,
+}
+
 /// CMAEG `IntentReceipt` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct IntentReceipt {
+    /// Confirmed split-text parts. Legacy receipts omit this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_parts: Vec<ConfirmedMessagePart>,
     /// Wire field `delivery`.
     pub delivery: DeliveryOutcome,
     /// Wire field `message_ref`.
@@ -214,6 +226,27 @@ pub struct IntentReceipt {
 /// CMAEG `OutboundMessage` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutboundMessage {
+    /// Exclusive contact, static location or venue, when advertised by the original event.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub structured_content: Option<super::StructuredContent>,
+    /// Resend only the exact target event's retained native Lark sticker.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub reply_with_received_sticker: Option<bool>,
+    /// Update-only explicit removal; supported only when clear_media is advertised.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub clear_native_attachments: Option<bool>,
     /// Update-only patch: omitted preserves; an empty caption/text clears; null refuses.
     #[serde(
         default,
@@ -270,6 +303,10 @@ pub enum NativeMediaKind {
     Audio,
     /// Video attachment.
     Video,
+    /// Native mono Opus voice presentation, only when advertised.
+    Voice,
+    /// Native animation presentation, only when advertised.
+    Animation,
     /// Sticker presentation, only when advertised by the event destination.
     Sticker,
 }
@@ -311,6 +348,15 @@ pub struct NativeAttachment {
 /// Deployment-attested outbound media capabilities.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeMediaCapabilities {
+    /// Explicit native presentation profiles; omitted when issuance is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_profiles: Option<Vec<NativePresentationProfile>>,
+    /// Ordered album constraints; omitted when disabled for this destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub albums: Option<NativeAlbumCapabilities>,
+    /// Same-message native upload and controls, omitted when not supported for this event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controls: Option<MediaControlsCapabilities>,
     /// Media categories supported for this event's destination.
     pub kinds: Vec<String>,
     /// Accepted source forms, such as url or base64.
@@ -337,6 +383,68 @@ pub struct NativeMediaCapabilities {
     /// Bounded video profile; absent when no destination-specific profile is declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<NativeVideoCapabilities>,
+}
+
+/// Explicit native presentation profile advertised by the exact destination.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativePresentationProfile {
+    /// Per-presentation attachment limit, when narrower than ordinary media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_attachments: Option<usize>,
+    /// Whether ordinary message text may accompany this presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<bool>,
+    /// Native presentation kind.
+    pub kind: String,
+    /// Accepted MIME types.
+    pub mime_types: Vec<String>,
+    /// Per-file encoded byte ceiling.
+    pub max_bytes: u64,
+    /// Whether the native attachment may carry a caption.
+    pub caption: bool,
+    /// Exact codec/container and dimension constraints.
+    pub profile: String,
+    /// Whether delivery grants message operation references.
+    pub message_operations: bool,
+}
+
+/// Exact album constraints; no public operation authority is issued for its members.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeAlbumCapabilities {
+    /// Minimum number of attachments sent together.
+    pub min_attachments: u64,
+    /// Maximum number of attachments sent together.
+    pub max_attachments: u64,
+    /// An album's kinds must all belong to one group.
+    pub kind_groups: Vec<Vec<String>>,
+    /// Whether interactive controls can accompany an album.
+    pub controls: bool,
+    /// Whether album delivery issues message operation references.
+    pub message_operations: bool,
+}
+
+/// Native upload and controls in one confirmed platform message.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaControlsCapabilities {
+    /// Exact kinds allowed with controls; absent means the parent media kinds apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kinds: Option<Vec<String>>,
+    /// Maximum upload count in the same controlled message.
+    pub max_attachments: u64,
+    /// Whether native buttons can accompany the upload.
+    pub buttons: bool,
+    /// Whether native choices can accompany the upload.
+    pub choices: bool,
+    /// Caption character limit; metadata byte bounds also apply.
+    pub caption_max_chars: u32,
+    /// Whether content/control edits may preserve this message's confirmed upload.
+    pub update: bool,
+    /// Replace the supported upload set on the same durable card through a confirmed PATCH.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace_media: Option<bool>,
+    /// Whether explicit clear_native_attachments may remove every upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clear_media: Option<bool>,
 }
 
 /// Exact dimensions, size and animation limits for native sticker delivery.

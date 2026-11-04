@@ -5,6 +5,49 @@ import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/agents/{id}/environment': ({ client, param }) =>
     client.agentFiles.environment(param('id')),
+  'POST /api/v1/cmaeg/worker-credentials/classify': ({ client, body }) =>
+    client.providerBindings.classifyWorkerCredential(body),
+  'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment':
+    ({ client, param, fixture, query }) =>
+      client.providerBindings.media.upload(
+        param('binding_id'),
+        param('conversation_id'),
+        param('event_id'),
+        Number(param('attachment_index')),
+        new Blob([fixture.request.rawBody ?? ''], {
+          type: fixture.request.headers['content-type'],
+        }),
+        {
+          name: query.get('name')!,
+          sha256: query.get('sha256')!,
+          event_expires_at: Number(query.get('event_expires_at')),
+          gateway_binding_generation: query.has('gateway_binding_generation')
+            ? Number(query.get('gateway_binding_generation'))
+            : undefined,
+        },
+      ),
+  'GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment':
+    ({ client, param }) =>
+      client.providerBindings.media.get(
+        param('binding_id'),
+        param('conversation_id'),
+        param('event_id'),
+        Number(param('attachment_index')),
+      ),
+  'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement':
+    ({ client, param, body }) =>
+      client.providerBindings.media.supplement(
+        param('binding_id'),
+        param('conversation_id'),
+        param('event_id'),
+        Number(param('attachment_index')),
+        body,
+      ),
+  'POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections': ({ client, param, body }) =>
+    client.providerBindings.inspectPreparation(param('binding_id'), body),
+  'POST /api/v1/cmaeg/bindings/{binding_id}/preparations': ({ client, param, body, command }) =>
+    client.providerBindings.prepare(param('binding_id'), body, command),
+  'GET /api/v1/agents/{id}/desktop': ({ client, param }) => client.agents.desktop(param('id')),
   'GET /api/v1/agents/{id}/files/tree': ({ client, param, query }) =>
     client.agentFiles.list(param('id'), query.get('path') ?? ''),
   'GET /api/v1/agents/{id}/files/content': ({ client, param, query }) =>
@@ -126,6 +169,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.providerBindings.delete(param('binding_id')),
   'PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({ client, param }) =>
     client.providerBindings.ensureConversation(param('binding_id'), param('conversation_id')),
+  'GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({ client, param }) =>
+    client.providerBindings.inspectConversation(param('binding_id'), param('conversation_id')),
   'DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({
     client,
     param,
@@ -169,6 +214,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
       param('record_id'),
       query.has('expected_version') ? Number(query.get('expected_version')) : undefined,
     ),
+  'GET /api/v1/agents/{id}/provider-associations': ({ client, param, options }) =>
+    client.agents.providerAssociations(param('id'), options),
   'GET /api/v1/agents/{id}/channel-usage': ({ client, param }) =>
     client.agents.channelUsage(param('id')),
   'GET /api/v1/agents/{id}/channel-usage/history': ({ client, param, options }) =>
@@ -208,6 +255,13 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/sandboxes': ({ client, options, query }) =>
     client.sandboxes.listAccessible({
       ...(options as AccessibleSandboxListOptions),
+      excludeRetired: query.has('exclude_retired')
+        ? query.get('exclude_retired') === 'true'
+          ? true
+          : query.get('exclude_retired') === 'false'
+            ? false
+            : (query.get('exclude_retired') as never)
+        : undefined,
       shared: query.has('shared')
         ? query.get('shared') === 'true'
           ? true
@@ -242,6 +296,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.workspaces.readAccessible(param('id')),
   'DELETE /api/v1/workspaces/{id}': ({ client, param, command }) =>
     client.workspaces.delete(param('id'), command),
+  'POST /api/v1/workspaces/{id}/recover-prepare': ({ client, param, command }) =>
+    client.workspaces.recoverPrepare(param('id'), command),
   'GET /api/v1/workspaces/{id}/worktrees': ({ client, param, options }) =>
     client.worktrees.listAccessible(param('id'), options),
   'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.readAccessible(param('id')),
@@ -277,6 +333,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.agents.create(param('id'), body, command),
   'DELETE /api/v1/agents/{id}': ({ client, param, command }) =>
     client.agents.delete(param('id'), command),
+  'POST /api/v1/agents/{id}/recover-worktree': ({ client, param, command }) =>
+    client.agents.recoverWorktree(param('id'), command),
   'POST /api/v1/agents/{id}/input': ({ client, param, body, command }) =>
     client.agents.input(param('id'), body, command),
   'POST /api/v1/agents/{id}/steer': ({ client, param, body, command }) =>

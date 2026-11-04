@@ -63,7 +63,7 @@ of the public contract.
 | profile authoring | 4 |
 | profile marketplace | 3 |
 | profiles | 1 |
-| provider bindings | 6 |
+| provider bindings | 8 |
 | resource access | 7 |
 | response controls v2 | 5 |
 | responses | 7 |
@@ -157,6 +157,7 @@ of the public contract.
 | `POST /api/v1/agents/{id}/artifacts` |
 | `GET /api/v1/agents/{id}/artifacts/{artifact_id}` |
 | `GET /api/v1/agents/{id}/artifacts/{artifact_id}/download` |
+| `GET /api/v1/agents/{id}/provider-associations` |
 | `GET /api/v1/agents/{id}/channel-usage` |
 | `GET /api/v1/agents/{id}/channel-usage/history` |
 | `GET /api/v1/agents/{id}/events` |
@@ -235,8 +236,11 @@ of the public contract.
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}` |
 | `GET /api/v1/cmaeg/bindings/{binding_id}` |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}` |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections` |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/preparations` |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` |
 
 ### resource access
@@ -398,7 +402,7 @@ historical revisions. The complete configuration is returned in `profile`.
 
 ## Supplemental browser, discovery and operational routes
 
-These router surfaces supplement the 180 OpenAPI operations above. Browser
+These router surfaces supplement the 182 OpenAPI operations above. Browser
 identity and connection flows retain their cookie, redirect and same-origin
 requirements; they are not generic resource CRUD. `GET /auth/signup-options`
 and the public Trigger embed routes are already included in the OpenAPI table.
@@ -496,3 +500,8 @@ strict readers reject. This prevents a rolled-back worker from silently executin
 original input. Drain or cancel edited pending inputs before rolling back to a
 release without queued input support. Forward recovery reads the retained revisions;
 active or completed dispatch records remain compatible after the marker is removed.
+
+Provider associations expose retained Manager membership under current Agent management
+authority. Reservation timestamps do not represent message usage. The legacy
+`channel-usage` projection does not cover provider admissions; its empty result
+does not prove that an Agent has no provider associations. See `API_REST.md`.

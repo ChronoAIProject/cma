@@ -258,12 +258,25 @@ impl Sandbox {
     }
 }
 
-/// Must be evaluated in the same transaction that fences each live Agent.
+/// Must be evaluated in the same transaction that fences every Agent.
+/// Deleted publication already requires the owned worktree to be Removed;
+/// retained turn and output-checkpoint fields are immutable terminal history.
 pub fn runtime_update_agents_are_idle(agents: &[Agent]) -> bool {
     agents.iter().all(|agent| {
+        // Deletion preserves the interrupted turn as history. Once deletion
+        // and cleanup finish, that historical sequence cannot be dispatched.
+        // Keep every real queue, operation, lease and cleanup fence below.
+        let deleted = agent.status == AgentStatus::Deleted;
         (!agent.status.is_live()
             || matches!(agent.status, AgentStatus::Ready | AgentStatus::Paused))
-            && agent.conversation.active_turn.is_none()
+            && (!deleted
+                || (agent
+                    .deleted_at
+                    .as_deref()
+                    .and_then(seconds_from_rfc3339)
+                    .is_some()
+                    && agent.work.cleanup_debt.is_empty()))
+            && (deleted || agent.conversation.active_turn.is_none())
             && agent
                 .conversation
                 .operation

@@ -89,9 +89,11 @@ fn management_state(
         records,
         creator_auth,
         cmaeg::ManagementConfig {
+            console_public_url: None,
             master_keys: Arc::new(ring),
             public_url: "http://127.0.0.1:8090".into(),
             public_api_url: "http://127.0.0.1:8090".into(),
+            public_api_aliases: vec![],
             advertise_public_api_url: true,
             cma_base_url: cma.base_url.clone(),
             tools_nyxid_slug: "cmaeg".into(),
@@ -201,6 +203,11 @@ mod creation;
 #[path = "management/reconciliation.rs"]
 mod reconciliation;
 
+#[path = "management/reconfiguration.rs"]
+mod reconfiguration;
+
+#[path = "management/partitions.rs"]
+mod partitions;
 #[path = "management/targets.rs"]
 mod targets;
 
@@ -258,3 +265,9 @@ mod native_discord;
 
 #[path = "management/native_telegram.rs"]
 mod native_telegram;
+
+#[path = "management/native_lark.rs"]
+mod native_lark;
+
+#[path = "management/custom_execution.rs"]
+mod custom_execution;

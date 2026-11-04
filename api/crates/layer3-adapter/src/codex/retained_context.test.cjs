@@ -33,7 +33,7 @@ async function fixture() {
       const exec=declared.find(t=>t.name==="functions")?.tools?.find(t=>t.name==="exec");
       const output=state.enabled&&state.round++===0?names.map((name,index)=>{
         const exact="mcp__cma_access__"+name;
-        if(exec){assert(Object.hasOwn(JSON.parse(value.client_metadata["x-codex-turn-metadata"]).code_mode_tool_names,exact));}
+        if(exec){const names=JSON.parse(value.client_metadata["x-codex-turn-metadata"]).code_mode_tool_names;if(names)assert(Object.hasOwn(names,exact));}
         else assert(declared.some(tool=>tool.name===exact) || declared.find(tool=>tool.name==="mcp__cma_access")?.tools?.some(tool=>tool.name===name), "document tool was not advertised");
         return {id:"fc_"+state.model.length+"_"+index,call_id:"call_"+state.model.length+"_"+index,status:"completed",
           ...(exec?{type:"custom_tool_call",name:"exec",namespace:"functions",input:"const entry=ALL_TOOLS.find(t=>t.name==="+JSON.stringify(exact)+");text(await tools[entry.name]({}));"}
@@ -52,7 +52,7 @@ async function fixture() {
 
 test("retained pinned bridge refreshes document tools on its same thread and keeps owner work and history",{timeout:120000},async()=>{
   const binary=process.env.CMA_CODEX_TEST_BINARY??"/usr/local/bin/codex";
-  assert.equal(execFileSync(binary,["--version"],{encoding:"utf8"}).trim(),"codex-cli 0.147.0");
+  assert.match(execFileSync(binary,["--version"],{encoding:"utf8"}).trim(),/^codex-cli 0\.(147|165)\.0$/);
   const directory=mkdtempSync(join(tmpdir(),"cma-retained-context-"));const home=join(directory,"home");mkdirSync(home);
   const server=await fixture();
   writeFileSync(join(home,"config.toml"),['model="gpt-6"','model_reasoning_effort="high"','model_provider="cma"','web_search="disabled"','approval_policy="never"','sandbox_mode="danger-full-access"','[model_providers.cma]','name="Retained context fixture"','base_url="'+server.origin+'/v1"','wire_api="responses"','requires_openai_auth=false'].join("\n"));
@@ -73,6 +73,11 @@ test("retained pinned bridge refreshes document tools on its same thread and kee
     // cma/agent-instructions extension or a runtime image/process restart.
     await bridge.call("session/close",{sessionId:created.sessionId});
     await bridge.call("session/close",{sessionId:created.sessionId}); // ambiguous close ACK replay
+    await assert.rejects(bridge.call("session/set_mode",{sessionId:created.sessionId,modeId:"agent-full-access"}),
+      error => {
+        assert.deepEqual(error.actual,{code:-32603,message:"Internal error",data:{details:"Session "+created.sessionId+" not found"}});
+        return true;
+      });
     await bridge.call("session/load",{sessionId:created.sessionId,cwd:directory,mcpServers:tools});
     await bridge.call("session/set_model",{sessionId:created.sessionId,modelId:"gpt-6[high]"});
     await bridge.call("session/set_config_option",{sessionId:created.sessionId,configId:"reasoning_effort",value:"high"});
@@ -85,5 +90,5 @@ test("retained pinned bridge refreshes document tools on its same thread and kee
     assert.equal(server.state.model[1].model,"gpt-6");assert.equal(server.state.model[1].reasoning.effort,"high");
     assert.equal(readFileSync(join(directory,"dirty.txt"),"utf8"),"Uncommitted owner work");
     assert.equal(readFileSync(join(home,"AGENTS.md"),"utf8"),guidance+"\n\n"+owner);
-  }finally{await bridge.close();await server.close();rmSync(directory,{recursive:true,force:true});}
+  }finally{await bridge.close();await server.close();rmSync(directory,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 });

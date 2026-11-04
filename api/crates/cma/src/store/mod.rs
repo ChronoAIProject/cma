@@ -31,6 +31,9 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+mod agent_worktree_recovery;
+mod agent_worktree_recovery_records;
+mod agent_write_coordination;
 mod agents;
 pub mod auth;
 mod bindings;
@@ -50,6 +53,7 @@ mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
+mod media_uploads;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]
@@ -74,6 +78,7 @@ mod marketplace_support;
 mod marketplace_visibility;
 mod message_feedback;
 pub mod mongo;
+mod mongo_latency;
 pub(crate) mod native_prepared;
 pub mod operation;
 mod operator_profiles;
@@ -85,10 +90,12 @@ mod profile_index_tests;
 mod profile_operator_mongo_integration_tests;
 mod profile_references;
 mod profiles;
+pub(crate) mod request_limits;
 mod resource_access;
 mod sandbox_admission;
 #[cfg(test)]
 mod sandbox_admission_mongo_integration_tests;
+pub(crate) mod sandbox_colors;
 mod sandbox_controls;
 mod sandbox_credentials;
 mod sandbox_events;
@@ -101,6 +108,8 @@ mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_reconciliation;
 mod sandbox_transactions;
+mod sandbox_unpublished_recovery;
+pub(crate) mod sandbox_usage;
 mod sandbox_worker_store;
 mod sandboxes;
 #[cfg(test)]
@@ -116,6 +125,7 @@ mod trigger_first_messages;
 mod warm_sandboxes;
 pub(crate) use native_prepared::{NativePreparedClaim, NativePreparedPlan};
 mod workspace_admission;
+mod workspace_prepare_recovery;
 mod workspace_profiles;
 mod workspace_removal;
 mod workspace_worker_store;

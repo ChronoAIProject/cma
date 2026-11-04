@@ -8,6 +8,7 @@ pub enum Classification {
     RawJson,
     BodySize,
     QueryShape,
+    BinaryHeaders,
 }
 
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
@@ -29,6 +30,32 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
     (
         "feedback-reasons-unknown-reason",
         Classification::TypedShape,
+    ),
+    ("usage-sandboxes-zero-limit", Classification::Local),
+    ("usage-admin-sandboxes-zero-limit", Classification::Local),
+    (
+        "binding-media-missing-length",
+        Classification::BinaryHeaders,
+    ),
+    ("binding-media-missing-type", Classification::BinaryHeaders),
+    ("binding-media-encoding", Classification::BinaryHeaders),
+    ("binding-media-too-large", Classification::BinaryHeaders),
+    (
+        "binding-media-incomplete-body",
+        Classification::BinaryHeaders,
+    ),
+    ("preparation-inspect-invalid-json", Classification::RawJson),
+    ("preparation-reserve-invalid-json", Classification::RawJson),
+    ("preparation-reserve-missing-key", Classification::Local),
+    ("agent-worktree-recovery-missing-key", Classification::Local),
+    ("agent-worktree-recovery-invalid-key", Classification::Local),
+    (
+        "workspace-prepare-recovery-missing-key",
+        Classification::Local,
+    ),
+    (
+        "workspace-prepare-recovery-invalid-key",
+        Classification::Local,
     ),
     ("document-create-missing-key", Classification::Local),
     ("document-create-invalid-key", Classification::Local),
@@ -301,6 +328,8 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "channel-inventory-invalid-history",
         Classification::TypedShape,
     ),
+    ("provider-associations-zero-limit", Classification::Local),
+    ("provider-associations-large-limit", Classification::Local),
     ("channel-usage-zero-limit", Classification::Local),
     ("channel-usage-large-limit", Classification::Local),
     ("channel-usage-invalid-cursor", Classification::Local),
@@ -1090,6 +1119,29 @@ pub fn classify(case: &Case) -> Option<Classification> {
 
 pub fn assert_unrepresentable(case: &Case, class: Classification) {
     match class {
+        Classification::BinaryHeaders => {
+            let headers = &case.request.headers;
+            let invalid = match case.id.as_str() {
+                "binding-media-missing-length" => !headers.contains_key("content-length"),
+                "binding-media-missing-type" => !headers.contains_key("content-type"),
+                "binding-media-encoding" => {
+                    headers.get("content-encoding").map(String::as_str) == Some("gzip")
+                }
+                "binding-media-too-large" => {
+                    headers["content-length"].parse::<usize>().unwrap() > 20 * 1024 * 1024
+                }
+                "binding-media-incomplete-body" => {
+                    headers["content-length"].parse::<usize>().unwrap()
+                        != case.request.expanded_raw_body().unwrap().len()
+                }
+                _ => false,
+            };
+            assert!(
+                invalid,
+                "{} typed binary upload derives exact headers",
+                case.id
+            );
+        }
         Classification::MediaType => {
             let content_type = case.request.headers.get("content-type").map(String::as_str);
             assert_eq!(

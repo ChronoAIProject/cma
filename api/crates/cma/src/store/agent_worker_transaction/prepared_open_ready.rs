@@ -1,47 +1,24 @@
 //! A fresh observed hierarchy must still be live at the atomic Ready publication.
 use super::*;
-use layer2_core::sandbox::store::{validate_prepared_agent_open_ready, PreparedAgentOpenContext};
+use layer2_core::sandbox::store::PreparedAgentOpenContext;
 
-pub(super) async fn eligible(
+pub(super) async fn proof_revision(
     store: &MongoSandboxStore,
-    mutation: &AgentWorkMutation,
+    current: &Agent,
     observed: &PreparedAgentOpenContext,
-) -> Result<bool, SandboxStoreError> {
-    let mut session = store
-        .client
-        .start_session()
-        .snapshot(true)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let current = store
-        .agents
-        .find_one(doc! {"_id": mutation.agent.id.as_str()})
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_agent)
-        .transpose()?
-        .ok_or(SandboxStoreError::NotFound)?;
-    let eligible = super::super::native_prepared::open_ready_proof_revision(
+    session: &mut mongodb::ClientSession,
+) -> Result<u64, ApplyError> {
+    super::super::native_prepared::open_ready_proof_revision(
         store,
-        &current,
+        current,
         &observed.sandbox,
         &observed.workspace,
         &observed.worktree,
-        &mut session,
+        session,
     )
-    .await?
-    .is_some();
-    if eligible {
-        validate_prepared_agent_open_ready(
-            &current,
-            &observed.worktree,
-            current.conversation.last_seq,
-            mutation,
-        )?;
-    }
-    Ok(eligible)
+    .await
+    .map_err(ApplyError::Domain)?
+    .ok_or(ApplyError::PreparedIneligible)
 }
 
 pub(super) async fn fence(
@@ -49,6 +26,7 @@ pub(super) async fn fence(
     agent: &Agent,
     tree: &Worktree,
     observed: &PreparedAgentOpenContext,
+    revision: u64,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     let sandbox = store
@@ -77,12 +55,8 @@ pub(super) async fn fence(
     {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
-    let revision = super::super::native_prepared::open_ready_proof_revision(
-        store, agent, &sandbox, &workspace, tree, session,
-    )
-    .await
-    .map_err(ApplyError::Domain)?
-    .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+    // The proof read and these exact parent observations share this transaction.
+    // A concurrent preparation/parent write must still conflict with its fence.
     for (collection, id, revision) in [
         (&store.sandboxes, sandbox.id.as_str(), sandbox.revision),
         (&store.workspaces, workspace.id.as_str(), workspace.revision),

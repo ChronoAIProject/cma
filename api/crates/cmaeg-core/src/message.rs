@@ -22,6 +22,9 @@ pub use media_update::{NativeMediaReplacement, NativeMediaUpdate};
 #[path = "whatsapp_template.rs"]
 mod whatsapp_template;
 pub use whatsapp_template::*;
+#[path = "structured_content.rs"]
+mod structured_content;
+pub use structured_content::StructuredContent;
 
 pub const MAX_MESSAGE_TEXT_BYTES: usize = 32 * 1_024;
 pub const MAX_BLOCKS: usize = 16;
@@ -29,6 +32,20 @@ pub const MAX_BLOCKS: usize = 16;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutboundMessage {
+    /// Exclusive contact card, static location or venue; only when advertised for the original event.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "media_update::present"
+    )]
+    #[schema(nullable = false)]
+    pub structured_content: Option<StructuredContent>,
+    /// Resend only the exact retained native Lark sticker received in this event.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reply_with_received_sticker: bool,
+    /// Explicitly remove every native attachment; updateMessage only when advertised.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clear_native_attachments: bool,
     /// Explicit single-media update; accepted only by updateMessage.
     #[serde(
         default,
@@ -43,7 +60,8 @@ pub struct OutboundMessage {
     /// Explicit native media delivery. Legacy attachment blocks remain links.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub native_attachments: Vec<NativeAttachment>,
-    /// Request the verified source thread; never fall back when unavailable.
+    /// Request the verified source thread; native Lark may start the exact admitted
+    /// group root thread with one text reply when explicitly advertised. Never fall back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thread_reply: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -175,8 +193,50 @@ pub struct BlockRendering {
 impl OutboundMessage {
     /// Validate a provider response before handing it to a delivery adapter.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(content) = &self.structured_content {
+            if self.reply_with_received_sticker
+                || self.clear_native_attachments
+                || self.native_media_update.is_some()
+                || self.whatsapp_template.is_some()
+                || !self.native_attachments.is_empty()
+                || self.thread_reply
+                || self.text.is_some()
+                || !self.blocks.is_empty()
+                || self.reply_to.is_some()
+            {
+                return Err(ValidationError::new(
+                    "/structured_content",
+                    "structured content is exclusive of all other message fields",
+                ));
+            }
+            return content.validate();
+        }
+        if self.reply_with_received_sticker {
+            if self.clear_native_attachments
+                || self.native_media_update.is_some()
+                || self.whatsapp_template.is_some()
+                || !self.native_attachments.is_empty()
+                || self.thread_reply
+                || self.text.is_some()
+                || !self.blocks.is_empty()
+                || self.reply_to.is_some()
+            {
+                return Err(ValidationError::new(
+                    "/reply_with_received_sticker",
+                    "received sticker replies are exclusive of all other message fields",
+                ));
+            }
+            return Ok(());
+        }
+        if self.clear_native_attachments && !self.native_attachments.is_empty() {
+            return Err(ValidationError::new(
+                "/clear_native_attachments",
+                "clear cannot be combined with replacement attachments",
+            ));
+        }
         if let Some(update) = &self.native_media_update {
-            if self.text.is_some()
+            if self.clear_native_attachments
+                || self.text.is_some()
                 || !self.blocks.is_empty()
                 || !self.native_attachments.is_empty()
                 || self.whatsapp_template.is_some()
@@ -192,7 +252,8 @@ impl OutboundMessage {
         }
         if let Some(template) = &self.whatsapp_template {
             template.validate()?;
-            if self.text.is_some()
+            if self.clear_native_attachments
+                || self.text.is_some()
                 || !self.blocks.is_empty()
                 || !self.native_attachments.is_empty()
                 || self.thread_reply

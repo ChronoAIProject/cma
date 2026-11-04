@@ -1,10 +1,74 @@
 //! Exact forum-topic operations. No caller-selected chat or topic reaches this adapter.
 use super::{Error, TelegramClient};
-use cmaeg_core::{channel::Secret, thread_lifecycle::TopicAction};
+use cmaeg_core::channel::Secret;
 use serde_json::json;
 
+/// Keep unit-variant bytes stable: existing close/reopen ledger hashes use them.
+/// Rename includes the exact name, so reusing its key with another name conflicts.
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Mutation<'a> {
+    Close,
+    Reopen,
+    Rename { name: &'a str },
+}
+
+/// General is proven from the retained native forum envelope, never a missing ID alone.
+pub(crate) enum Scope {
+    Numbered(String),
+    General,
+}
+pub(crate) struct CreatedTopic {
+    pub id: String,
+    pub name: String,
+}
+impl Scope {
+    pub(crate) fn id(&self) -> &str {
+        match self {
+            Self::Numbered(id) => id,
+            Self::General => "1",
+        }
+    }
+}
+
 impl TelegramClient {
-    /// The first increment requires administrator rights even for a creator-owned topic.
+    pub(crate) async fn create_topic(
+        &self,
+        token: &Secret,
+        bot: &str,
+        chat: &str,
+        name: &str,
+    ) -> Result<CreatedTopic, Error> {
+        if !super::media_token_matches(token, bot) || !valid_chat(chat) {
+            return Err(Error::Rejected);
+        }
+        cmaeg_core::thread_lifecycle::CreateThreadRequest {
+            name: name.into(),
+            auto_archive_duration: None,
+        }
+        .validate_telegram()
+        .map_err(|_| Error::Rejected)?;
+        let value = self
+            .call(
+                token,
+                "createForumTopic",
+                &json!({"chat_id":chat,"name":name}),
+            )
+            .await?;
+        let id = value["message_thread_id"]
+            .as_i64()
+            .filter(|id| *id > 1)
+            .ok_or(Error::Unconfirmed)?
+            .to_string();
+        if value["name"] != name || !value["icon_color"].is_u64() {
+            return Err(Error::Unconfirmed);
+        }
+        Ok(CreatedTopic {
+            id,
+            name: name.into(),
+        })
+    }
+    /// Requires administrator rights even for a creator-owned topic.
     /// Reads are completed before the shared tool performs its final custody check.
     pub(crate) async fn topic_permissions(
         &self,
@@ -54,17 +118,40 @@ impl TelegramClient {
         token: &Secret,
         bot: &str,
         chat: &str,
-        topic: &str,
-        action: TopicAction,
+        topic: &Scope,
+        action: Mutation<'_>,
     ) -> Result<(), Error> {
-        if !super::media_token_matches(token, bot) || !valid_chat(chat) || !valid_topic(topic) {
+        if !super::media_token_matches(token, bot)
+            || !valid_chat(chat)
+            || matches!(topic, Scope::Numbered(id) if !valid_topic(id))
+        {
             return Err(Error::Rejected);
         }
-        let method = match action {
-            TopicAction::Close => "closeForumTopic",
-            TopicAction::Reopen => "reopenForumTopic",
+        let mut body = json!({"chat_id":chat});
+        if let Scope::Numbered(id) = topic {
+            body["message_thread_id"] = json!(id.parse::<i64>().map_err(|_| Error::Rejected)?);
+        }
+        let method = match (action, topic) {
+            (Mutation::Close, Scope::General) => "closeGeneralForumTopic",
+            (Mutation::Reopen, Scope::General) => "reopenGeneralForumTopic",
+            (Mutation::Close, Scope::Numbered(_)) => "closeForumTopic",
+            (Mutation::Reopen, Scope::Numbered(_)) => "reopenForumTopic",
+            (Mutation::Rename { name }, scope) => {
+                // Telegram accepts 128 characters; the shared public contract is 100.
+                if name.trim().is_empty()
+                    || name.chars().count() > 100
+                    || name.chars().any(cmaeg_core::activity::forbidden_text_char)
+                {
+                    return Err(Error::Rejected);
+                }
+                body["name"] = json!(name);
+                match scope {
+                    Scope::General => "editGeneralForumTopic",
+                    Scope::Numbered(_) => "editForumTopic",
+                }
+            }
         };
-        let result = self.call(token, method, &json!({"chat_id":chat,"message_thread_id":topic.parse::<i64>().map_err(|_| Error::Rejected)?})).await?;
+        let result = self.call(token, method, &body).await?;
         if result != true {
             return Err(Error::Unconfirmed);
         }

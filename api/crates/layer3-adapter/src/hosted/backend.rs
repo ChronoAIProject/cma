@@ -7,9 +7,25 @@ use crate::{
     ConversationUpdate, Result, RuntimeHandle, RuntimeObservation,
 };
 
+/// Trusted provider-rendered maintenance command; never user-supplied exec.
+/// The lifecycle adapter supplies authority for inspection or admitted recovery.
+/// Configuration belongs on stdin, not in Kubernetes command arguments.
+/// Fields are crate-private to keep command construction inside the adapter.
+#[doc(hidden)]
+pub struct RuntimeRecoveryCommand {
+    pub(crate) program: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) input: Vec<u8>,
+}
+
 /// Kernel-specific settings used while opening its ACP conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedAgentOpenSettings {
+    /// Exact provider-proved initialize error for an already initialized bridge.
+    /// This permits reattachment only; it never supplies conversation/tool authority.
+    pub already_initialized_error: Option<serde_json::Value>,
+    /// Provider-proved read-only evidence of an exact completed conversation open.
+    pub open_completion: Option<super::HostedOpenCompletionProtocol>,
     /// Trusted control-plane binding; never supplied by a provider renderer.
     pub context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub permission_mode: Option<String>,
@@ -19,6 +35,9 @@ pub struct HostedAgentOpenSettings {
     pub access_tool: Option<super::HostedAccessToolBinding>,
     /// Control-plane correlation for an already admitted turn; not launch data.
     pub recovered_prompt: Option<crate::PromptIdentity>,
+    /// Control-plane admitted context replay; input stays restricted to this
+    /// operation until its tools and settings have been acknowledged.
+    pub recovered_context_sequence: Option<u64>,
 }
 
 /// Provider-specific rendering needed by the otherwise shared hosted adapter.
@@ -28,6 +47,8 @@ pub trait HostedAgentRuntime: Send + Sync {
 
     fn open_settings(&self, request: &AgentOpenRequest) -> Result<HostedAgentOpenSettings> {
         Ok(HostedAgentOpenSettings {
+            already_initialized_error: None,
+            open_completion: None,
             context_refresh: None,
             permission_mode: None,
             own_credential: request.options.own_credential,
@@ -35,6 +56,7 @@ pub trait HostedAgentRuntime: Send + Sync {
             provider_tool: None,
             access_tool: None,
             recovered_prompt: None,
+            recovered_context_sequence: None,
         })
     }
 }
@@ -42,6 +64,15 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    async fn open_desktop(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<crate::DesktopConnectionHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime desktop is unavailable".into(),
+        ))
+    }
+
     async fn reserve_home_request(
         &self,
         _runtime: &ProviderSandboxRequest,
@@ -197,6 +228,67 @@ pub trait HostedBackend: Send + Sync {
         _home: &crate::HomeVolumeAttachment,
     ) -> Result<Option<crate::RuntimeInspection>> {
         Ok(None)
+    }
+
+    /// Fresh observation only; this must never bind or start a runtime process.
+    async fn inspect_nonexecuting_runtime(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<Option<super::NonexecutingRuntimeProof>> {
+        Err(crate::AdapterError::Unsupported(
+            "nonexecuting runtime inspection".into(),
+        ))
+    }
+
+    /// Replay the complete provider proof immediately before the admitted action.
+    async fn verify_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        proof: &super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        if self
+            .inspect_nonexecuting_runtime(handle, request, home)
+            .await?
+            .as_ref()
+            != Some(proof)
+        {
+            return Err(crate::AdapterError::Rejected(
+                "nonexecuting runtime evidence changed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Revalidate the complete fresh observation immediately before a suspension
+    /// CAS using its original object UID/resourceVersion. No generic fallback.
+    async fn suspend_nonexecuting_runtime(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+        _proof: &super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "nonexecuting runtime suspension".into(),
+        ))
+    }
+
+    /// Internal bounded provider maintenance on the exact existing runtime.
+    /// Only the lifecycle adapter may authorize the provider-rendered command.
+    /// Implementations must fence resource identity, bound I/O and duration,
+    /// and require successful termination before returning stdout.
+    async fn run_recovery_command(
+        &self,
+        _handle: &RuntimeHandle,
+        _command: &RuntimeRecoveryCommand,
+    ) -> Result<Vec<u8>> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime recovery commands are not supported".into(),
+        ))
     }
 
     async fn reclaim(&self, _observation: &RuntimeObservation) -> Result<()> {

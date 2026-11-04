@@ -1,0 +1,36 @@
+/*
+ * A reply's fenced code (§13, §29): the language and a Copy key ride inside the frame's top
+ * edge, so the block keeps one border and the key never covers the first line of code.
+ */
+.code-block {
+  position: relative;
+  min-width: 0;
+}
+
+.code-block__header {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  pointer-events: none;
+}
+
+.code-block__header > * {
+  pointer-events: auto;
+}
+
+.code-block__language {
+  color: var(--dsw-alias-label-caption);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* Two classes outrank the reply's `pre` rule, so the code starts below the header. */
+.code-block .code-block__pre {
+  padding-top: 40px;
+}

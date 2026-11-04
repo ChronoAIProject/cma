@@ -1,6 +1,8 @@
 //! Typed management, event and tool protocol documents.
 mod channels;
 pub use channels::*;
+mod partitions;
+pub use partitions::*;
 mod sources;
 pub use sources::*;
 mod native_media_update;
@@ -18,7 +20,9 @@ pub use primitives::*;
 mod attachment_source;
 pub use attachment_source::*;
 mod activities;
+mod quoted_message;
 pub use activities::*;
+pub use quoted_message::*;
 mod channel_activity;
 pub use channel_activity::*;
 mod connections;
@@ -46,3 +50,9 @@ pub use thread_lifecycle::*;
 
 mod form_preparation;
 pub use form_preparation::*;
+
+mod media_continuation;
+pub use media_continuation::*;
+
+mod structured_content;
+pub use structured_content::*;

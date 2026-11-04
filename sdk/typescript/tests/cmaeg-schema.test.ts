@@ -33,7 +33,7 @@ import {
   SourceSchema,
 } from '../src/cmaeg/types.js';
 
-it('keeps omitted native WhatsApp capabilities unavailable on older servers', () => {
+it('preserves older discovery and optional provider recovery and WhatsApp capabilities', () => {
   const legacy = {
     dynamic_sources_writes_enabled: true,
     relay_raw_verification_writes_enabled: true,
@@ -43,12 +43,33 @@ it('keeps omitted native WhatsApp capabilities unavailable on older servers', ()
     platforms: [],
   };
   expect(RelayAuthoringCapabilitiesSchema(legacy)).toEqual(legacy);
+  for (const providers of [null, [], ['cma_codex', 'nyxbot']]) {
+    const value = { ...legacy, response_recovery_providers: providers };
+    expect(RelayAuthoringCapabilitiesSchema(value)).toEqual(value);
+  }
   for (const enabled of [false, true, null]) {
     const value = {
       ...legacy,
       native_whatsapp_writes_enabled: enabled,
       native_whatsapp_auto_activation_enabled: enabled,
     };
+    expect(RelayAuthoringCapabilitiesSchema(value)).toEqual(value);
+  }
+});
+
+it('does not infer General topics from the numbered topic gate on older servers', () => {
+  const legacy = {
+    dynamic_sources_writes_enabled: true,
+    relay_raw_verification_writes_enabled: true,
+    multi_consumer_writes_enabled: true,
+    native_bot_mentions_writes_enabled: false,
+    thread_contract_writes_enabled: false,
+    native_telegram_topic_lifecycle_enabled: true,
+    platforms: [],
+  };
+  expect(RelayAuthoringCapabilitiesSchema(legacy)).toEqual(legacy);
+  for (const enabled of [false, true, null]) {
+    const value = { ...legacy, native_telegram_general_topic_lifecycle_enabled: enabled };
     expect(RelayAuthoringCapabilitiesSchema(value)).toEqual(value);
   }
 });
@@ -553,4 +574,19 @@ it('keeps Telegram topic consent independent and discovers only close/reopen', (
   expect(TopicLifecycleCapabilitiesSchema({ ...caps, list: 'original_thread' })).toEqual(caps);
   const request = { target: { type: 'event', event_ref: 'cmaeg1.ev.fixture' }, action: 'close' };
   expect(ManageThreadRequestSchema(request)).toEqual(request);
+  const rename = { ...request, action: 'rename', name: 'Incident triage' };
+  expect(ManageThreadRequestSchema(rename)).toEqual(rename);
+  expect(() => TopicLifecycleCapabilitiesSchema({ ...caps, actions: ['rename'] })).toThrow();
+});
+
+it('retains independent Telegram creation consent and rejects a null archive duration', () => {
+  const legacy = { type: 'telegram', bot_id: '77', admission: { type: 'all' } };
+  expect(SourceSchema(legacy)).toEqual(legacy);
+  expect(SourceSchema({ ...legacy, topic_creation: true })).toEqual({
+    ...legacy,
+    topic_creation: true,
+  });
+  const request = { name: 'Release planning' };
+  expect(CreateThreadRequestSchema(request)).toEqual(request);
+  expect(() => CreateThreadRequestSchema({ ...request, auto_archive_duration: null })).toThrow();
 });

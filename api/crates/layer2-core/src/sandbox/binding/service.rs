@@ -45,33 +45,9 @@ pub struct BindingService {
     pub(super) policy: BindingPolicy,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum BindingError {
-    #[error("forbidden")]
-    Forbidden,
-    #[error("binding not found")]
-    NotFound,
-    #[error("invalid binding request: {0}")]
-    InvalidRequest(String),
-    #[error("binding changed or is not ready")]
-    Conflict,
-    #[error(
-        "skill {id:?} is installed at version {installed:?}; changing it to version {requested:?} is unsupported for an existing binding"
-    )]
-    SkillVersionUpdateUnsupported {
-        id: String,
-        installed: String,
-        requested: String,
-    },
-    #[error("This binding's sandbox or workspace is missing or removed. Reconnect the channel to an available agent.")]
-    ResourcesUnavailable,
-    #[error("This binding update cannot preserve the existing Agent conversation and home. Service scope, skills, prompt, model, environment and conversation affinity remain pinned; update the existing resources through their supported controls. The binding and its retained work have not been changed. Rotate a credential with the current profile before changing metadata.")]
-    ReconfigurationUnsupported,
-    #[error("binding dependency unavailable: {0}")]
-    Unavailable(String),
-    #[error("binding data is not usable: {0}")]
-    Corrupt(String),
-}
+#[path = "error.rs"]
+mod error;
+pub use error::BindingError;
 
 impl BindingService {
     pub fn new<S>(
@@ -222,9 +198,19 @@ impl BindingService {
                     if value.profile_digest == digest
                         && value.key_sha256 == credential.sha256() =>
                 {
+                    if matches!(value.state, BindingState::Failed { .. }) {
+                        return self
+                            .credentials
+                            .retry_recovered_binding(&value, credential)
+                            .await
+                            .map_err(credential_error);
+                    }
                     value
                 }
                 Some(value) if value.profile_digest == digest => {
+                    if matches!(value.state, BindingState::Failed { .. }) {
+                        return Err(BindingError::Conflict);
+                    }
                     return self
                         .credentials
                         .rotate_binding(&value, credential)
@@ -339,6 +325,19 @@ impl BindingService {
         id: &str,
         conversation_id: &str,
     ) -> Result<(BindingConversation, bool), BindingError> {
+        self.ensure_conversation_at_generation(caller, id, conversation_id, None)
+            .await
+    }
+
+    /// A provider request pins its parent before source-user routing. A
+    /// generation change cannot redirect a late ensure into a new hierarchy.
+    pub async fn ensure_conversation_at_generation(
+        &self,
+        caller: &Caller,
+        id: &str,
+        conversation_id: &str,
+        expected_generation: Option<u64>,
+    ) -> Result<(BindingConversation, bool), BindingError> {
         if !super::model::valid_id(conversation_id, 8) {
             return Err(BindingError::InvalidRequest(
                 "invalid conversation identifier".into(),
@@ -346,6 +345,9 @@ impl BindingService {
         }
         for _ in 0..8 {
             let binding = self.read(caller, id).await?;
+            binding
+                .require_generation(expected_generation)
+                .map_err(|_| BindingError::Conflict)?;
             let conversation_id = if binding.existing_agent.is_some() {
                 EXISTING_AGENT_CONVERSATION
             } else {
@@ -460,16 +462,5 @@ pub(super) fn credential_error(error: crate::CoreError) -> BindingError {
         crate::CoreError::InvalidRequest(detail) => BindingError::InvalidRequest(detail),
         crate::CoreError::InvalidState(_) => BindingError::Conflict,
         other => unavailable(other),
-    }
-}
-
-impl From<SandboxStoreError> for BindingError {
-    fn from(error: SandboxStoreError) -> Self {
-        match error {
-            SandboxStoreError::NotFound => Self::NotFound,
-            SandboxStoreError::Conflict | SandboxStoreError::Duplicate => Self::Conflict,
-            SandboxStoreError::Corrupt(detail) => Self::Corrupt(detail),
-            other => unavailable(other),
-        }
     }
 }

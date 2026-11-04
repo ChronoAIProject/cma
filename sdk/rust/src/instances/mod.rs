@@ -27,6 +27,8 @@ pub struct SandboxListOptions {
     pub page: PageOptions,
     /// Exact lifecycle status filter.
     pub status: Option<SandboxStatus>,
+    /// Exclude retired history before pagination; defaults to false.
+    pub exclude_retired: bool,
 }
 
 /// Personal or explicit current organization Sandbox inventory.
@@ -60,6 +62,9 @@ impl Sandboxes<'_> {
         if let Some(status) = options.filters.status {
             query.push(("status", status.as_str().into()));
         }
+        if options.filters.exclude_retired {
+            query.push(("exclude_retired", "true".into()));
+        }
         if let Some(organization) = &options.organization {
             query.push(("organization", organization.clone()));
         }
@@ -80,6 +85,9 @@ impl Sandboxes<'_> {
         let mut query = options.page.query();
         if let Some(status) = options.status {
             query.push(("status", status.as_str().into()));
+        }
+        if options.exclude_retired {
+            query.push(("exclude_retired", "true".into()));
         }
         self.client.get(&["sandboxes"], &query).await
     }
@@ -191,6 +199,23 @@ impl Workspaces<'_> {
             )
             .await
     }
+    /// Retry original preparation only for a failed, never-ready Workspace.
+    /// The same key replays; use a new key only after a terminal failed attempt.
+    pub async fn recover_prepare(&self, id: &str, key: &IdempotencyKey) -> Result<Workspace> {
+        let value: Workspace = self
+            .client
+            .command::<_, ()>(
+                Method::POST,
+                &["workspaces", id, "recover-prepare"],
+                None,
+                key,
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        identity(&value.id, id)?;
+        Ok(value)
+    }
+
     /// List personal/shared summaries under current parent Sandbox access.
     pub async fn list_accessible(
         &self,

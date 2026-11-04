@@ -17,6 +17,8 @@ import { Button } from '../ui/Button';
 import { workedFor } from './turnTiming';
 import { MessageMediaContext, type MessageMediaAccess } from './mediaSources';
 import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDeliveries';
+import { ConversationEmpty } from './ConversationEmpty';
+import type { ResourceStatus } from '../character/status';
 
 interface MessageStreamProps {
   readonly onReplay?: (turn: string) => void;
@@ -26,6 +28,8 @@ interface MessageStreamProps {
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
   readonly children?: ReactNode;
   readonly emptyMessage?: string;
+  /** The Agent's recorded status, which poses the empty conversation's character. */
+  readonly agentStatus?: ResourceStatus;
   readonly optimisticMessages?: readonly OptimisticMessage[];
   readonly viewPosition?: AgentViewPosition;
   readonly user?: MessageUser;
@@ -43,7 +47,8 @@ export function MessageStream({
   approvalReadOnly = false,
   onApproval,
   children,
-  emptyMessage = 'Start the conversation.',
+  emptyMessage = 'Tell the Agent what you need in your own words, for example “Compare three project management tools for a small team.”',
+  agentStatus,
   optimisticMessages,
   viewPosition,
   user,
@@ -129,7 +134,7 @@ export function MessageStream({
         {items.length === 0 &&
         !optimisticMessages?.length &&
         conversation.activeRunId === undefined ? (
-          <p className="message-stream__empty">{emptyMessage}</p>
+          <ConversationEmpty message={emptyMessage} status={agentStatus} />
         ) : null}
         {items.map((entry) =>
           entry.kind === 'tools' ? (

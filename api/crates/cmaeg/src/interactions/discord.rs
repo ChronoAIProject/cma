@@ -15,6 +15,12 @@ use serde_json::{json, Value};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
+    /// Same-message upload fact. Issuance requires the media-controls reader floor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<super::discord_media::Media>,
+    /// Ordered facts for two to four uploads; mutually exclusive with legacy media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_set: Option<Vec<super::discord_media::Media>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread: Option<ThreadIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -88,6 +94,8 @@ pub(super) fn identity(
         return Err(Error::Denied);
     };
     Ok(Identity {
+        media: None,
+        media_set: None,
         form: None,
         thread,
         bot_id: bot_id.clone(),
@@ -112,7 +120,14 @@ pub(crate) fn valid(card: &Card) -> bool {
             .as_ref()
             .is_none_or(|click| click.selection.is_none());
     };
-    card.native_whatsapp_flow.is_none()
+    card.message.native_attachments.is_empty()
+        && !card.message.clear_native_attachments
+        && identity.media_items().is_ok_and(|items| {
+            items
+                .iter()
+                .all(|media| media.valid_for(card) && identity.form.is_none())
+        })
+        && card.native_whatsapp_flow.is_none()
         && card.lark.is_none()
         && card.whatsapp.is_none()
         && ThreadIdentity::optional_matches(
@@ -166,7 +181,13 @@ pub(crate) fn render(message: &OutboundMessage, id: &str, revision: u64) -> Resu
     if revision == 0
         || message.reply_to.is_some()
         || message.whatsapp_template.is_some()
-        || !message.native_attachments.is_empty()
+        || message.clear_native_attachments
+        || message.native_attachments.len() > cmaeg_core::message::MAX_NATIVE_ATTACHMENTS
+        || (!message.native_attachments.is_empty()
+            && message
+                .blocks
+                .iter()
+                .any(|block| matches!(block, Block::Form { .. })))
     {
         return Err(Error::Denied);
     }

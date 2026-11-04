@@ -56,6 +56,7 @@ export interface AgentLifecycleCreateInput {
   readonly name: string;
   readonly initial_message?: string;
   readonly desktop?: boolean;
+  readonly machine_included?: boolean;
   readonly workspace_id?: string;
   readonly sandbox_id?: string;
   readonly image?: { readonly id: string; readonly version?: string };
@@ -264,7 +265,9 @@ export interface CmaWebClient {
     options: CommandOptions,
   ) => Promise<void>;
   readonly botViews?: BotClient;
-  listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
+  listSandboxes(
+    options?: PageOptions & { readonly excludeRetired?: boolean },
+  ): Promise<ResourcePage<SandboxSummary>>;
   readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;
   readWorkspace(id: string, options?: ReadOptions): Promise<WorkspaceDetail>;
   readAgent(id: string, options?: ReadOptions): Promise<AgentDetail>;

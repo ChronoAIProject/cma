@@ -22,22 +22,37 @@ test("persistence patch refuses unexpected or already patched bridge bytes", () 
     /Unexpected Codex ACP source/,
   );
   assert.throws(
-    () => persistConversations(readFileSync(bridgePath, "utf8")),
+    () =>
+      persistConversations(
+        readFileSync(process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath, "utf8"),
+      ),
     /Unexpected Codex ACP source/,
   );
 });
 
 function startBridge(directory) {
-  const child = spawn("codex-acp", [], {
-    cwd: directory,
-    env: {
-      ...process.env,
-      CODEX_HOME: directory,
-      CODEX_PATH: "/usr/local/bin/codex",
+  const child = spawn(
+    process.env.CMA_ACP_TEST_BRIDGE ? process.execPath : "codex-acp",
+    process.env.CMA_ACP_TEST_BRIDGE ? [process.env.CMA_ACP_TEST_BRIDGE] : [],
+    {
+      cwd: directory,
+      env: {
+        ...process.env,
+        CODEX_HOME: directory,
+        CODEX_PATH: process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex",
+      },
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"],
     },
-    detached: true,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  );
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  const signalGroup = (signal) => {
+    try {
+      process.kill(-child.pid, signal);
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  };
   child.stderr.resume();
   const pending = new Map();
   let sequence = 0;
@@ -48,6 +63,11 @@ function startBridge(directory) {
   });
   return {
     async call(method, params) {
+      const frame = await this.frame(method, params);
+      assert.equal(frame.error, undefined, JSON.stringify(frame.error));
+      return frame.result;
+    },
+    async frame(method, params) {
       const id = ++sequence;
       const result = new Promise((resolve) => pending.set(id, resolve));
       child.stdin.write(
@@ -64,8 +84,7 @@ function startBridge(directory) {
             );
           }),
         ]);
-        assert.equal(frame.error, undefined, JSON.stringify(frame.error));
-        return frame.result;
+        return frame;
       } finally {
         clearTimeout(timer);
         pending.delete(id);
@@ -73,16 +92,10 @@ function startBridge(directory) {
     },
     async close() {
       lines.close();
-      if (child.exitCode !== null) return;
-      const exited = new Promise((resolve) => child.once("exit", resolve));
-      process.kill(-child.pid, "SIGTERM");
-      const force = setTimeout(() => {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {}
-      }, 1500);
+      signalGroup("SIGTERM");
+      const force = setTimeout(() => signalGroup("SIGKILL"), 1500);
       try {
-        await exited;
+        await closed;
       } finally {
         clearTimeout(force);
       }
@@ -114,6 +127,15 @@ test(
       await bridge.call("initialize", {
         protocolVersion: 1,
         clientCapabilities: {},
+      });
+      const repeated = await bridge.frame("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      });
+      assert.deepEqual(repeated.error, {
+        code: -32603,
+        message: "Internal error",
+        data: { details: "Already initialized" },
       });
     };
     try {
@@ -153,12 +175,15 @@ test(
       assert(
         resumed.every(
           (entry) =>
-            entry.type !== "response_item" && entry.type !== "event_msg",
+            entry.type !== "response_item" && (entry.type !== "event_msg" ||
+              // CLI 0.165 persists settings on resume without creating a turn.
+              (entry.payload.type === "thread_settings_applied" && entry.payload.thread_id === session.sessionId)),
         ),
       );
     } finally {
       await bridge?.close();
-      rmSync(directory, { recursive: true });
+      // Native descendants can finish their home writes after the bridge exits.
+      rmSync(directory, { recursive: true, maxRetries: 10, retryDelay: 100 });
     }
   },
 );

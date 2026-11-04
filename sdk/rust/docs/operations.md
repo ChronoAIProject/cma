@@ -120,3 +120,31 @@ resource authorization. Closing admission preserves original accepted request
 recovery, keys and records. Browser status/receipt recovery and explicit return
 remain available while new acquire/input/renew is disabled. Replay is presentation
 only; authorized history remains readable. Native lease behavior is unchanged.
+
+## Sandbox allocation usage
+
+`client.usage()` reads lifetime allocated resource-time through the public Usage
+APIs. CPU and RAM accrue while a runtime remains bound; retained disk accrues
+while paused. These quantities describe allocated capacity, not measured CPU
+utilization or filesystem bytes. Uptime and base quantities use exact `u64`
+integers. `complete_lifecycle == false` marks history that predates metering.
+
+```rust,no_run
+# async fn example(client: &cma_sdk::Client) -> cma_sdk::Result<()> {
+let totals = client.usage().summary().await?;
+let page = client.usage().sandboxes(&cma_sdk::PageOptions::default()).await?;
+for sandbox in page.items {
+    let history = client.usage().events(&sandbox.sandbox_id, &Default::default()).await?;
+    println!("{}: {} retained intervals", sandbox.name, history.items.len());
+}
+println!("{} CPU millicore-seconds", totals.totals.cpu_millis_seconds);
+# Ok(())
+# }
+```
+
+Follow `next` with `PageOptions.cursor`; lists and history default to 50 records
+and accept limits from 1 through 200. Administrators use
+`admin_summary(Some(owner))` or `admin_sandboxes(Some(owner), &page)`; `None`
+selects all owners. Individual Sandbox and history reads also accept current
+administrator authority. Cross-owner reads without that authority return 404.
+Deleted Sandboxes retain their metered history.

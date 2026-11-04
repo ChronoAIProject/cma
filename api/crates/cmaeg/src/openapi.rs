@@ -23,6 +23,7 @@ use utoipa::OpenApi;
     paths(
         http::activity::latest,
         http::activity::stream,
+        http::media_responses::list,
         http::outbound::prepare,
         http::outbound::read,
         http::outbound::commit,
@@ -38,6 +39,7 @@ use utoipa::OpenApi;
         http::management::permission_catalog,
         http::creation::recover_channel,
         http::management::get_channel,
+        http::partitions::inspect,
         http::management::update_channel,
         http::management::delete_channel,
         http::management::test_channel,
@@ -51,6 +53,7 @@ use utoipa::OpenApi;
         http::whatsapp::challenge,
         http::whatsapp::callback,
         http::events::receive_event,
+        http::event_attestation::attest_event,
         http::tools::reply_to_event,
         http::form_preparation::prepare_form_reply,
         http::form_preparation::read_form_preparation,

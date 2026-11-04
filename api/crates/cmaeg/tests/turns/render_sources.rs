@@ -50,6 +50,7 @@ fn rendered(definition: &ChannelDefinition, source: SourceKind, text: &str) -> S
         attachments: vec![],
         mentions_bot: true,
         reply_to: None,
+        quoted_message: None,
         album_id: None,
     };
     let input = render_input::render(

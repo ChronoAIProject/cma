@@ -231,6 +231,13 @@ impl RoutedDelivery {
                     | ResponsesEvent::Incomplete { .. }
             ),
         };
+        let operation = storage::hash(&storage::bytes(&(
+            &target.id,
+            &checkpoint.response_id,
+            checkpoint.cursor,
+            &checkpoint.frame_hash,
+            &checkpoint.effect_hash,
+        ))?);
         if let Some(previous) = &lease.state.delivery {
             if previous.cursor == checkpoint.cursor {
                 if previous.response_id != checkpoint.response_id
@@ -242,7 +249,20 @@ impl RoutedDelivery {
                 }
                 match &previous.status {
                     DeliveryStatus::Settled { receipt } if previous.status.settled() => {
-                        let receipt = receipt.clone();
+                        let receipt = match receipt {
+                            Some(receipt) => Some(
+                                self.journal
+                                    .receipts(
+                                        &operation,
+                                        &lease.state.owner,
+                                        lease.state.retained_until,
+                                    )
+                                    .load(receipt)
+                                    .await
+                                    .map_err(|_| ExecutionError::Unavailable)?,
+                            ),
+                            None => None,
+                        };
                         if checkpoint.terminal && !self.close(&plan, target).await? {
                             return Ok(FrameDelivery::Unknown);
                         }
@@ -333,13 +353,6 @@ impl RoutedDelivery {
         let mut automatic = None;
         let mut suppressed = false;
         let mut replayed = None;
-        let operation = storage::hash(&storage::bytes(&(
-            &target.id,
-            &checkpoint.response_id,
-            checkpoint.cursor,
-            &checkpoint.frame_hash,
-            &checkpoint.effect_hash,
-        ))?);
         if matches!(effect, ReplayEffect::Reply(_)) {
             match store
                 .admit(&plan, target, Kind::Automatic, operation.clone())
@@ -403,7 +416,7 @@ impl RoutedDelivery {
                                         *message,
                                         reply_gate,
                                         destination,
-                                        operation,
+                                        operation.clone(),
                                     )
                                     .await
                             }
@@ -427,23 +440,12 @@ impl RoutedDelivery {
                 }
             }
         };
-        if let (Some(claim), Some(receipt)) = (&automatic, &receipt) {
-            store.finish(claim, receipt).await?;
-        }
-        if receipt.as_ref().is_some_and(|value| {
-            matches!(value.delivery, DeliveryOutcome::Unknown { .. })
-                || storage::bytes(value).map_or(true, |bytes| bytes.len() > 16 * 1024)
-        }) {
-            self.record(lease, DeliveryStatus::Unknown).await?;
+        if !self
+            .record_receipt(lease, &operation, automatic.as_deref(), receipt.as_ref())
+            .await?
+        {
             return Ok(FrameDelivery::Unknown);
         }
-        self.record(
-            lease,
-            DeliveryStatus::Settled {
-                receipt: receipt.clone(),
-            },
-        )
-        .await?;
         if lease
             .state
             .delivery

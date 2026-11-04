@@ -16,6 +16,7 @@ use std::{
 
 #[derive(Clone)]
 pub struct Config {
+    pub snapshot_body: Option<Value>,
     pub replay_frames: Option<Vec<Value>>,
     pub mirror_replay_metadata: bool,
     pub event_context: Option<Value>,
@@ -40,6 +41,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            snapshot_body: None,
             replay_frames: None,
             mirror_replay_metadata: false,
             event_context: None,
@@ -204,7 +206,8 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
         return response.body(body).unwrap();
     }
     if parts.method == axum::http::Method::GET
-        && parts.uri.path().starts_with("/bindings/")
+        && (parts.uri.path().starts_with("/bindings/")
+            || parts.uri.path().starts_with("/api/v1/cmaeg/bindings/"))
         && parts.uri.path().contains("/conversations/")
         && parts.uri.path().contains("/events/")
     {
@@ -227,7 +230,13 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
         }
         return Response::builder()
             .header("content-type", "application/json")
-            .body(Body::from(snapshot("completed").to_string()))
+            .body(Body::from(
+                config
+                    .snapshot_body
+                    .clone()
+                    .unwrap_or_else(|| snapshot("completed"))
+                    .to_string(),
+            ))
             .unwrap();
     }
     let body = if post && config.post_idle {

@@ -148,6 +148,9 @@ mod tests {
             event,
             message: OutboundMessage {
                 whatsapp_template: None,
+                structured_content: None,
+                reply_with_received_sticker: false,
+                clear_native_attachments: false,
                 native_media_update: None,
                 native_attachments: Vec::new(),
                 thread_reply: false,
@@ -179,6 +182,7 @@ mod tests {
         assert_eq!(message.text.as_deref(), Some(text));
         receipt
             .send(IntentReceipt {
+                message_parts: vec![],
                 message_ref: None,
                 rendering: RenderingReport {
                     outcome: RenderingOutcome::Unsupported,

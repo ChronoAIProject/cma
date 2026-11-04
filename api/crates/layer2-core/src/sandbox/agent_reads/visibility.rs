@@ -4,18 +4,29 @@ use crate::sandbox::{AgentLogEntry, AgentLogKind, AgentTranscript, AgentTurnOutc
 /// scope. Redaction is a projection and never modifies the original log.
 #[derive(Debug, Clone)]
 pub struct AgentVisibleLogEntry {
+    /// Internal proof for response projection, never serialized into public history.
+    pub deferred_failure_detail: Option<String>,
     pub seq: u64,
     pub appended_at: String,
     pub kind: Option<AgentLogKind>,
 }
 impl AgentVisibleLogEntry {
     pub(super) fn from_entry(entry: AgentLogEntry, personal: bool) -> Self {
+        let deferred_failure_detail = match &entry.kind {
+            AgentLogKind::TurnFailed { failure, .. }
+                if failure.class == crate::sandbox::agent_io::SOURCE_DEFERRED_FAILURE =>
+            {
+                Some(failure.detail.clone())
+            }
+            _ => None,
+        };
         let kind = if personal {
             Some(entry.kind)
         } else {
             shared_kind(entry.kind)
         };
         Self {
+            deferred_failure_detail,
             seq: entry.seq,
             appended_at: entry.appended_at,
             kind,

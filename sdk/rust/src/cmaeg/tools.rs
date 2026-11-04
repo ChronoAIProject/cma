@@ -230,12 +230,33 @@ impl Cmaeg {
         event_ref: &str,
         cursor: Option<&str>,
     ) -> Result<ConversationHistoryPage> {
+        self.history_page(event_ref, cursor, false).await
+    }
+    /// Opt in to text from mixed native Lark/Feishu posts and `media` omission markers.
+    /// Requires the server gate and original source consent. Use this method for every
+    /// continuation of an opted-in read. It grants no file/download authority.
+    pub async fn read_event_history_with_media(
+        &self,
+        event_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<ConversationHistoryPage> {
+        self.history_page(event_ref, cursor, true).await
+    }
+    async fn history_page(
+        &self,
+        event_ref: &str,
+        cursor: Option<&str>,
+        include_media: bool,
+    ) -> Result<ConversationHistoryPage> {
         let segments = ["v1", "events", event_ref, "history"];
         let mut request = Request::get(&segments);
-        let query = cursor
+        let mut query = cursor
             .map(|cursor| ("cursor", cursor.to_owned()))
             .into_iter()
             .collect::<Vec<_>>();
+        if include_media {
+            query.push(("include_media", "true".to_owned()));
+        }
         request.query = &query;
         request.root = true;
         self.client.request(request).await

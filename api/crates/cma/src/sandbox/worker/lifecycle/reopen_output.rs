@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::time::Duration;
 
+use futures_util::FutureExt as _;
 use layer2_core::sandbox::store::AgentReopenGuard;
 use layer2_core::sandbox::{AgentConversationError, AgentMessageAssembly, AgentUpdateRecorder};
 use layer2_core::{now_rfc3339, AgentId};
@@ -45,9 +46,12 @@ async fn drain<T>(
     let mut assembly = AgentMessageAssembly::default();
     loop {
         tokio::select! {
+            biased;
             result = &mut operation => return result,
             update = receiver.recv() => {
-                let update = update.ok_or_else(|| AdapterError::Unavailable("reopen output receiver ended".into()))?;
+                let Some(update) = update else {
+                    return prefer_opening_failure(operation.as_mut(), AdapterError::Unavailable("reopen output receiver ended".into()));
+                };
                 let receipt = match &update {
                     ConversationUpdate::RuntimeOutput { receipt, .. } => Some(receipt),
                     ConversationUpdate::Lost { .. } => return Err(AdapterError::Unavailable("reopen output contains a gap".into())),
@@ -56,7 +60,11 @@ async fn drain<T>(
                 loop {
                     match recorder.record_reopen_update(agent_id, guard, &mut assembly, update.clone(), now_rfc3339()).await {
                         Ok(_) => {
-                            if let Some(receipt) = receipt { receipt.acknowledge().await?; }
+                            if let Some(receipt) = receipt {
+                                if let Err(error) = receipt.acknowledge().await {
+                                    return prefer_opening_failure(operation.as_mut(), error);
+                                }
+                            }
                             break;
                         }
                         Err(AgentConversationError::Unavailable(_)) => tokio::time::sleep(Duration::from_secs(1)).await,
@@ -65,6 +73,20 @@ async fn drain<T>(
                 }
             }
         }
+    }
+}
+
+/// Opening may have failed while the fenced recorder was committing. Its
+/// cleanup closes ACK ownership, but must not replace the original refusal.
+/// Poll once: an unresolved open cannot delay custody failure, and even an
+/// opening success cannot make a failed output acknowledgement successful.
+fn prefer_opening_failure<T>(
+    operation: impl Future<Output = layer3_adapter::Result<T>>,
+    output_error: AdapterError,
+) -> layer3_adapter::Result<T> {
+    match operation.now_or_never() {
+        Some(Err(error)) => Err(error),
+        Some(Ok(_)) | None => Err(output_error),
     }
 }
 

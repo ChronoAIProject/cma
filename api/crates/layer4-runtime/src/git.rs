@@ -10,6 +10,9 @@ use crate::failure::{Result, RuntimeError};
 use crate::writer_fence::ManagedSpawnPermit;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(120);
+// Clone and worktree addition both materialize the complete current tree.
+// Large checkouts can still be writing files after the ordinary Git budget.
+const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(600);
 const OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(crate) struct GitOutput {
@@ -34,6 +37,47 @@ impl GitRunner {
         cwd: &std::path::Path,
         args: I,
         operation: &'static str,
+    ) -> Result<GitOutput>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.checked_with_timeout(cwd, args, operation, GIT_TIMEOUT)
+            .await
+    }
+
+    pub(crate) async fn checked_clone<I, S>(
+        &self,
+        cwd: &std::path::Path,
+        args: I,
+    ) -> Result<GitOutput>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.checked_checkout(cwd, args, "clone workspace").await
+    }
+
+    pub(crate) async fn checked_checkout<I, S>(
+        &self,
+        cwd: &std::path::Path,
+        args: I,
+        operation: &'static str,
+    ) -> Result<GitOutput>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.checked_with_timeout(cwd, args, operation, CHECKOUT_TIMEOUT)
+            .await
+    }
+
+    async fn checked_with_timeout<I, S>(
+        &self,
+        cwd: &std::path::Path,
+        args: I,
+        operation: &'static str,
+        timeout: Duration,
     ) -> Result<GitOutput>
     where
         I: IntoIterator<Item = S>,
@@ -93,7 +137,7 @@ impl GitRunner {
         let stdout = tokio::spawn(read_bounded(stdout));
         let stderr = tokio::spawn(read_bounded(stderr));
 
-        let status = match tokio::time::timeout(GIT_TIMEOUT, child.wait()).await {
+        let status = match tokio::time::timeout(timeout, child.wait()).await {
             Ok(status) => status.map_err(|error| {
                 RuntimeError::unavailable(
                     "git_wait_failed",
@@ -106,7 +150,7 @@ impl GitRunner {
                 let _ = child.wait().await;
                 return Err(RuntimeError::unavailable(
                     "git_timeout",
-                    format!("git {operation} exceeded 120 seconds"),
+                    format!("git {operation} exceeded {} seconds", timeout.as_secs()),
                 ));
             }
         };
@@ -195,14 +239,5 @@ fn terminate_session(session: Option<i32>) {
 fn terminate_session(_session: Option<i32>) {}
 
 #[cfg(test)]
-mod tests {
-    use super::retain_inherited_environment;
-
-    #[test]
-    fn inherited_git_environment_is_removed() {
-        assert!(!retain_inherited_environment("GIT_DIR"));
-        assert!(!retain_inherited_environment("GIT_CONFIG_COUNT"));
-        assert!(retain_inherited_environment("PATH"));
-        assert!(retain_inherited_environment("HTTPS_PROXY"));
-    }
-}
+#[path = "git_tests.rs"]
+mod tests;

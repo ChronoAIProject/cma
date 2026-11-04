@@ -1,3 +1,5 @@
+import type { ResolvedConfig } from '../config.js';
+import { query, read, segment, type EventOptions } from '../resources.js';
 import { agentStatus, failure } from '../instances/types.js';
 import {
   array,
@@ -148,3 +150,20 @@ export const agentEventKind = tagged({
 export type AgentEventKind = Output<typeof agentEventKind>;
 export const agentEvent = object({ seq: integer, appended_at: text, kind: agentEventKind });
 export type AgentEvent = Output<typeof agentEvent>;
+
+export function readAgentEvents(
+  config: ResolvedConfig,
+  id: string,
+  options: EventOptions & { readonly toolOutput?: boolean },
+) {
+  return read(
+    config,
+    query(`/api/v1/agents/${segment(id)}/events`, {
+      after: options.after,
+      limit: options.limit,
+      tool_output: options.toolOutput ? 'true' : undefined,
+    }),
+    object({ items: array(agentEvent), next: optional(integer) }),
+    options,
+  );
+}

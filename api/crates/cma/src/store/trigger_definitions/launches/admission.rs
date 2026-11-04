@@ -154,6 +154,7 @@ async fn admit_once(
             "new Launch ID already has orphan event rows",
         )));
     }
+    super::visitor_quota::admit(&store.launch_data, launch, session).await?;
     let trigger =
         counters::record_admission(store, trigger, launch.state == LaunchState::Ready, session)
             .await
@@ -247,7 +248,7 @@ enum Attempt {
     Created(Box<AdmissionReceipt>),
 }
 
-enum AttemptError {
+pub(super) enum AttemptError {
     Retry(&'static str),
     Domain(LaunchStoreError),
     Driver(mongodb::error::Error),

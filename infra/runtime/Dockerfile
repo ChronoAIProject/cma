@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+ARG OMARCHY_CMA_BASE=runtime
 # CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
 # not in the Sandbox environment, so existing runtime identities stay stable.
 # Bot-pod image for a contract-3 CMA Sandbox.
@@ -136,9 +137,13 @@ ARG CODEX_VERSION=0.147.0
 ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
 ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
+ARG DESKTOP_CODEX_VERSION=0.165.0
+ARG DESKTOP_CODEX_NATIVE_SHA256_AMD64=c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5
+ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f193439595fda84096f1caaceec543f
+ARG DESKTOP_CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c
+ARG CODEX_ACP_SHA256=ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66
 
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
@@ -146,6 +151,7 @@ ARG NODE_VERSION=24.19.0
 ARG NODE_SHA256_AMD64=14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647
 ARG NODE_SHA256_ARM64=01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc
 ARG TARGETARCH
+ARG RUNTIME_DESKTOP=0
 
 # The root filesystem is read-only in production and the runtime user is not
 # privileged. User-space installers therefore write under /home/cma. Python
@@ -178,6 +184,7 @@ RUN apt-get update \
         xz-utils \
         zlib1g \
         zstd \
+    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium dbus-x11 fonts-liberation novnc scrot wmctrl x11vnc x11-xserver-utils x11-utils xdotool xvfb websockify xfce4-session xfce4-panel xfdesktop4 xfwm4 xfce4-settings xfce4-appfinder gvfs thunar xfce4-terminal adwaita-icon-theme librsvg2-common; else test "${RUNTIME_DESKTOP}" = "0"; fi \
     && git --version \
     && rm -rf /var/lib/apt/lists/*
 
@@ -226,6 +233,14 @@ RUN set -eux; \
 # metadata, launcher, bridge source, and architecture-specific native binary
 # are all checked against the reviewed pinned artifacts.
 RUN set -eux; \
+    if [ "${RUNTIME_DESKTOP}" = "1" ]; then \
+      CODEX_VERSION="${DESKTOP_CODEX_VERSION}"; \
+      CODEX_NATIVE_SHA256_AMD64="${DESKTOP_CODEX_NATIVE_SHA256_AMD64}"; \
+      CODEX_NATIVE_SHA256_ARM64="${DESKTOP_CODEX_NATIVE_SHA256_ARM64}"; \
+      CODEX_LAUNCHER_SHA256="${DESKTOP_CODEX_LAUNCHER_SHA256}"; \
+      mkdir -p /etc/codex; \
+      printf '[features]\ncomputer_use = true\n' > /etc/codex/config.toml; \
+    fi; \
     npm install -g "@openai/codex@${CODEX_VERSION}" \
         "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}"; \
     npm cache clean --force; \
@@ -240,6 +255,10 @@ RUN set -eux; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     echo "${want}  ${native}" | sha256sum -c -
+
+# ACP's dependency can retain an older CLI. Always execute the verified global
+# CLI selected above; this does not alter persisted Agent launch requests.
+ENV CODEX_PATH=/usr/local/bin/codex
 
 # Install the platform CLI from its pinned release and verify the published
 # checksum before placing the binary on PATH.
@@ -318,6 +337,16 @@ RUN set -eux; \
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bin/cma-browser
 
+# A Machine Included Sandbox starts this rootless desktop session from the
+# supervisor.  noVNC is bound to loopback; CMA must relay it through the
+# authenticated control plane before a browser can reach the screen.
+COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /usr/local/bin/cma-desktop-session
+COPY api/crates/layer4-runtime/src/desktop/ /usr/share/cma-desktop/
+# Keep the original asset available to retained homes whose XFCE preferences
+# still reference it; new homes select the bundled owner-provided PNG.
+RUN test -s /usr/share/cma-desktop/wallpaper.png
+COPY api/crates/layer4-runtime/src/desktop/chromium.desktop /usr/share/applications/chromium.desktop
+
 # Native SandboxTemplates use this same image as a non-root init container:
 # --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
 # home mounts at /home, with separate persistent state/transfer directories.
@@ -328,6 +357,7 @@ COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bi
 # These exact-source patches and restart proofs use synthetic credentials and
 # local model/tool fixtures only. Native tools must survive rotation and reload.
 RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
+    --mount=type=bind,source=api/crates/layer3-adapter/src/runtime_control_relay.py,target=/tmp/runtime_control_relay.py,readonly \
     node /tmp/cma-codex-source/persist_conversations.cjs \
     && node /tmp/cma-codex-source/subscription_auth.cjs \
     && node /tmp/cma-codex-source/managed_model_catalog.cjs \
@@ -336,9 +366,13 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && node /tmp/cma-codex-source/session_commands.cjs \
     && node /tmp/cma-codex-source/agent_instructions.cjs \
     && node /tmp/cma-codex-source/turn_steering.cjs \
+    && node /tmp/cma-codex-source/open_completion.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
     && test -x /usr/local/bin/codex-acp \
-    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs \
+    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/endpoint_migration.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs \
+    && python3 /tmp/cma-codex-source/recovery_test.py \
+    && python3 /tmp/cma-codex-source/recovery_desktop_test.py \
+    && node --test /tmp/cma-codex-source/recovery_native.test.cjs \
     && test ! -e /tmp/cma-checkpoints
 
 # Refresh the final filesystem after expensive dependency layers are cached.
@@ -408,5 +442,59 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}" \
       dev.chrono.cma.runtime-contract="3" \
+      dev.chrono.cma.runtime-desktop="${RUNTIME_DESKTOP}" \
       dev.chrono.cma.runtime-bootstrap="1" \
       dev.chrono.cma.home-layout="2"
+
+# Explicit experimental target. The default target remains the Debian runtime.
+# CI supplies a verified native CMA artifact as OMARCHY_CMA_BASE.
+FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
+FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy
+COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
+COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-tools.sh
+COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
+COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
+RUN bash /tmp/install-omarchy.sh && rm /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+COPY --from=omarchy-cma /usr/local/bin/ /usr/local/bin/
+# Toolchain donor stays pinned; the supervisor must match this source revision.
+COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bin/cma-browser
+COPY --from=omarchy-cma /usr/local/lib/ /usr/local/lib/
+COPY --from=omarchy-cma /etc/codex/ /etc/codex/
+COPY --from=omarchy-cma /usr/share/cma-runtime-home/ /usr/share/cma-runtime-home/
+COPY --from=omarchy-cma /usr/share/cma-desktop/ /usr/share/cma-desktop/
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/session.sh /usr/local/bin/cma-desktop-session
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/inner-session.sh /usr/local/bin/cma-omarchy-inner-session
+COPY api/crates/layer4-runtime/src/omarchy/hyprland.lua /usr/share/cma-omarchy/hyprland.lua
+COPY api/crates/layer4-runtime/src/omarchy/graphics-device.py /usr/share/cma-omarchy/graphics-device.py
+COPY api/crates/layer4-runtime/src/omarchy/chromium.desktop /usr/share/applications/chromium.desktop
+RUN groupadd --gid 10001 cma \
+    && useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash cma \
+    && cp -a /usr/share/cma-runtime-home/. /home/cma/ \
+    && mkdir -p /var/lib/cma-runtime /var/lib/cma-transfer \
+    && chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer \
+    && codex --version && node --version && nyxid --version && gh --version
+WORKDIR /home/cma
+USER 10001:10001
+ENV HOME=/home/cma CHRONO_RUNTIME_GENERATION=1 CHRONO_RUNTIME_HOME_IDENTITY="" \
+    PATH=/home/cma/.local/bin:/usr/local/bin:/usr/share/omarchy/bin:/usr/bin \
+    CHRONO_RUNTIME_BIND=0.0.0.0:9090 TERM=xterm-256color \
+    CODEX_PATH=/usr/local/bin/codex OMARCHY_PATH=/usr/share/omarchy
+EXPOSE 9090
+ENTRYPOINT ["/usr/local/bin/layer4-runtime"]
+ARG CHRONO_BUILD_SHA=local-unpinned
+ARG CHRONO_BUILD=omarchy-prototype
+LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+      org.opencontainers.image.version="${CHRONO_BUILD}" \
+      dev.chrono.cma.runtime-contract="3" dev.chrono.cma.runtime-desktop="1" \
+      dev.chrono.cma.runtime-bootstrap="1" dev.chrono.cma.home-layout="2" \
+      dev.chrono.cma.desktop-environment="omarchy-4.0.6" \
+      dev.chrono.cma.omarchy-revision="237f1b4071a0bff2296c6d740ba2b9fd695ebfa0"
+
+FROM runtime AS default-runtime
+ARG CHRONO_BUILD_SHA=local-unpinned
+ARG CHRONO_BUILD=development
+LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+      org.opencontainers.image.version="${CHRONO_BUILD}"

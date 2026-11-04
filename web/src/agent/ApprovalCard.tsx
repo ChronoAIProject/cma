@@ -1,6 +1,7 @@
 import type { ApprovalDecision } from './controller';
 import type { ApprovalRequest } from './model';
 import { Button } from '../ui/Button';
+import { CharacterAvatar } from '../character/CharacterAvatar';
 import './ApprovalCard.css';
 
 /**
@@ -36,12 +37,23 @@ export function ApprovalCard({
   const heading = `approval-${approval.id}`;
   return (
     <section className="approval" aria-labelledby={heading}>
-      <div className="approval__request">
-        <span className="approval__eyebrow">Approval</span>
-        <h2 id={heading}>{approval.reason}</h2>
-        {approval.message === undefined ? null : (
-          <p className="approval__detail">{approval.message}</p>
-        )}
+      <div className="approval__head">
+        {approval.decision === undefined ? (
+          // Only a request still waiting on a person carries the asking character (§28).
+          <CharacterAvatar
+            pose="approval"
+            tone="warning"
+            size={40}
+            className="approval__character"
+          />
+        ) : null}
+        <div className="approval__request">
+          <span className="approval__eyebrow">Approval</span>
+          <h2 id={heading}>{approval.reason}</h2>
+          {approval.message === undefined ? null : (
+            <p className="approval__detail">{approval.message}</p>
+          )}
+        </div>
       </div>
       {approval.decision === undefined && readOnly ? (
         <p className="approval__waiting">

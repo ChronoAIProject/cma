@@ -3,11 +3,14 @@ import { Button } from '../ui/Button';
 import { ServiceError, serviceRequest, type Denied } from './client';
 
 export interface RelayAuthoringCapabilities {
+  readonly custom_durable_execution_enabled?: boolean | null;
+  readonly response_recovery_providers?: readonly string[] | null;
   readonly native_lark_writes_enabled?: boolean | null;
   readonly native_lark_intake_enabled?: boolean | null;
   readonly native_lark_controls_enabled?: boolean | null;
   readonly native_lark_forms_enabled?: boolean | null;
   readonly native_whatsapp_forms_enabled?: boolean | null;
+  readonly native_whatsapp_message_events_enabled?: boolean | null;
   readonly native_whatsapp_flow_writes_enabled?: boolean | null;
   readonly native_whatsapp_writes_enabled?: boolean | null;
   readonly native_whatsapp_groups_writes_enabled?: boolean | null;
@@ -15,6 +18,8 @@ export interface RelayAuthoringCapabilities {
   readonly native_telegram_message_events_enabled?: boolean | null;
   readonly native_discord_thread_history_enabled?: boolean | null;
   readonly native_telegram_topic_lifecycle_enabled?: boolean | null;
+  readonly native_telegram_topic_creation_enabled?: boolean | null;
+  readonly native_telegram_general_topic_lifecycle_enabled?: boolean | null;
   readonly native_discord_thread_lifecycle_enabled?: boolean | null;
   readonly native_discord_conversation_history_enabled?: boolean | null;
   readonly native_lark_conversation_history_enabled?: boolean | null;
@@ -161,6 +166,16 @@ export function nativeDiscordUnavailable(
   )
     return 'This gateway has not enabled automatic activation for new direct Discord channels.';
   return undefined;
+}
+
+/** Additive discovery: older gateways still enforce eligibility when saving. */
+export function nativeDiscordProviderUnavailable(
+  discovery: RelayDiscovery,
+  provider: string,
+): string | undefined {
+  const supported = discovery.authoring?.response_recovery_providers;
+  if (!provider || supported == null || supported.includes(provider)) return undefined;
+  return `${provider} does not support reconnecting to interrupted Discord responses on this gateway yet. Choose another agent provider before creating a direct Discord channel.`;
 }
 
 export function nativeWhatsappUnavailable(

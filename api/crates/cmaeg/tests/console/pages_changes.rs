@@ -117,6 +117,7 @@ impl SourceChanges for RecordingSources {
             let source = match request.source {
                 SourceRequest::NativeLark(source) => Source::NativeLark(source),
                 SourceRequest::Whatsapp {
+                    message_events,
                     app_id,
                     waba_id,
                     phone_number_id,
@@ -124,6 +125,7 @@ impl SourceChanges for RecordingSources {
                     forms_enabled,
                     admission,
                 } => Source::Whatsapp {
+                    message_events,
                     app_id,
                     waba_id,
                     phone_number_id,
@@ -139,6 +141,7 @@ impl SourceChanges for RecordingSources {
                 }
                 SourceRequest::Telegram {
                     topic_lifecycle,
+                    topic_creation,
                     message_events,
                     channel_posts,
                     bot_id,
@@ -146,6 +149,7 @@ impl SourceChanges for RecordingSources {
                     admission,
                 } => Source::Telegram {
                     topic_lifecycle,
+                    topic_creation,
                     message_events,
                     channel_posts,
                     bot_id,

@@ -64,6 +64,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
         result.push(match source {
             SourceRequest::NativeLark(source) => Source::NativeLark(source.clone()),
             SourceRequest::Whatsapp {
+                message_events,
                 forms_enabled,
                 group_ids,
                 app_id,
@@ -71,6 +72,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 phone_number_id,
                 admission,
             } => Source::Whatsapp {
+                message_events: *message_events,
                 forms_enabled: *forms_enabled,
                 group_ids: group_ids.clone(),
                 app_id: app_id.clone(),
@@ -80,6 +82,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
             },
             SourceRequest::Telegram {
                 topic_lifecycle,
+                topic_creation,
                 message_events,
                 channel_posts,
                 bot_id,
@@ -87,6 +90,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 admission,
             } => Source::Telegram {
                 topic_lifecycle: *topic_lifecycle,
+                topic_creation: *topic_creation,
                 message_events: *message_events,
                 channel_posts: *channel_posts,
                 bot_id: bot_id.clone(),

@@ -67,12 +67,15 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     "channel_usage_events",
     AGENT_COMMANDS,
     AGENT_ARTIFACTS,
+    super::media_uploads::COLLECTION,
     SANDBOX_CONTROLS,
     AGENT_COMMAND_ORDERS,
     RESOURCE_POLICIES,
     RESOURCE_SHARES,
     RESOURCE_SHARE_COMMANDS,
     SANDBOX_EVENTS,
+    super::sandbox_usage::STATES,
+    super::sandbox_usage::EVENTS,
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
     WARM_SANDBOXES,
@@ -98,6 +101,7 @@ pub struct MongoSandboxStore {
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
+    pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
     pub(super) agent_access_tools: Collection<Document>,
     pub(super) agent_access_requests: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
@@ -108,6 +112,7 @@ pub struct MongoSandboxStore {
     pub(super) channel_usage_events: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
     pub(super) agent_artifacts: Collection<Document>,
+    pub(super) media_uploads: Collection<Document>,
     pub(super) sandbox_controls: Collection<Document>,
     pub(super) command_authorization_audits: Collection<Document>,
     pub(super) agent_command_orders: Collection<Document>,
@@ -115,6 +120,8 @@ pub struct MongoSandboxStore {
     pub(super) resource_share_commands: Collection<Document>,
     pub(super) resource_shares: Collection<Document>,
     pub(super) sandbox_events: Collection<Document>,
+    pub(super) sandbox_usage: Collection<Document>,
+    pub(super) sandbox_usage_events: Collection<Document>,
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
     pub(super) sandbox_profiles: Collection<Document>,
@@ -128,6 +135,7 @@ pub struct MongoSandboxStore {
     pub(super) native_prepared: Collection<Document>,
     pub(super) warm_runtime_version: Option<String>,
     pub(super) managed_runtime_version: Option<String>,
+    pub(super) managed_machine_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
     // Coalesced process-local hints; durable discovery owns recovery and authority.
@@ -141,6 +149,11 @@ pub struct MongoSandboxStore {
 impl MongoSandboxStore {
     pub(crate) fn with_managed_runtime_version(mut self, version: String) -> Self {
         self.managed_runtime_version = Some(version);
+        self
+    }
+
+    pub(crate) fn with_machine_runtime_version(mut self, version: Option<String>) -> Self {
+        self.managed_machine_runtime_version = version;
         self
     }
 
@@ -167,6 +180,7 @@ impl MongoSandboxStore {
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
+            agent_writes: Default::default(),
             agent_access_tools: majority_collection(
                 &database,
                 super::agent_access_tools::COLLECTION,
@@ -183,6 +197,7 @@ impl MongoSandboxStore {
             channel_usage_events: majority_collection(&database, "channel_usage_events"),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
             agent_artifacts: majority_collection(&database, AGENT_ARTIFACTS),
+            media_uploads: majority_collection(&database, super::media_uploads::COLLECTION),
             sandbox_controls: majority_collection(&database, SANDBOX_CONTROLS),
             command_authorization_audits: majority_collection(
                 &database,
@@ -193,6 +208,8 @@ impl MongoSandboxStore {
             resource_share_commands: majority_collection(&database, RESOURCE_SHARE_COMMANDS),
             resource_shares: majority_collection(&database, RESOURCE_SHARES),
             sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
+            sandbox_usage: majority_collection(&database, super::sandbox_usage::STATES),
+            sandbox_usage_events: majority_collection(&database, super::sandbox_usage::EVENTS),
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
             sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
@@ -206,6 +223,7 @@ impl MongoSandboxStore {
             native_prepared: majority_collection(&database, super::native_prepared::COLLECTION),
             warm_runtime_version: None,
             managed_runtime_version: None,
+            managed_machine_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -214,6 +232,7 @@ impl MongoSandboxStore {
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
+        super::sandbox_usage::ensure_indexes(&store).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;

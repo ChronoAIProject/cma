@@ -85,6 +85,11 @@ pub(super) fn agent_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        // Preparation checks both authority and its lookup projection, so a
+        // malformed projection cannot hide a live child or force a full scan.
+        IndexModel::builder()
+            .keys(doc! { "record.sandbox_id": 1 })
+            .build(),
     ]
 }
 
@@ -103,6 +108,9 @@ pub(super) fn agent_updated_at(agent: &Agent) -> &str {
 }
 
 pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreError> {
+    agent
+        .validate_worktree_recoveries()
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     agent
         .work
         .validate_resolved_skills(&agent.profile.content.skills)
@@ -159,6 +167,9 @@ pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreErro
 pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError> {
     let mut agent: Agent = read_record(document).map_err(SandboxStoreError::Corrupt)?;
     super::trigger_first_messages::hydrate(document, &mut agent)?;
+    agent
+        .validate_worktree_recoveries()
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     agent
         .work
         .validate_resolved_skills(&agent.profile.content.skills)
@@ -316,6 +327,13 @@ impl AgentStore for MongoSandboxStore {
                     "record.title": record_title_value(&agent),
                     "owner": agent.owner.as_str(),
                     "record.owner": agent.owner.as_str(),
+                    "worktree_id": agent.worktree_id.as_str(),
+                    "record.worktree_id": agent.worktree_id.as_str(),
+                    "record.work.worktree_recoveries": if agent.work.worktree_recoveries.is_empty() {
+                        Bson::Null
+                    } else {
+                        record_bson(&agent.work.worktree_recoveries).map_err(SandboxStoreError::Corrupt)?
+                    },
                     "record.profile": record_bson(&agent.profile)
                         .map_err(SandboxStoreError::Corrupt)?,
                     "record.conversation.settings": record_bson(&agent.conversation.settings)

@@ -48,7 +48,7 @@ impl AgentWorker {
             .await?
         {
             return self
-                .replay_prepared_resources(agent, context, now + started.elapsed())
+                .replay_and_open_prepared(agent, context, now + started.elapsed())
                 .await;
         }
         let request = WorktreeRequest::new(
@@ -216,12 +216,26 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        self.open_conversation_with_context(agent, None, now).await
+    }
+
+    pub(super) async fn open_conversation_with_context(
+        &self,
+        agent: Agent,
+        prepared: Option<AgentContext>,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
         let attempt_now = now;
-        let context = match self.startup_context(&agent).await {
+        let mut timing = super::startup_timing::StartupTiming::new(&agent);
+        let context = match match prepared {
+            Some(context) => self.prepared_open_context(&agent, context).await,
+            None => self.startup_context(&agent).await,
+        } {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
+        timing.completed("open_context");
         if agent.conversation.conversation_id.is_some()
             || agent.conversation.runtime_generation.is_some()
         {
@@ -255,6 +269,7 @@ impl AgentWorker {
                 now + started.elapsed(),
             )
             .await?;
+        timing.completed("open_intent");
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         let opened = self
             .open_starting(
@@ -265,6 +280,7 @@ impl AgentWorker {
                 now + started.elapsed(),
             )
             .await;
+        timing.completed("open_runtime");
         let now = now + started.elapsed();
         let (channel, updates) = match opened {
             Ok(opened) => opened,
@@ -286,10 +302,11 @@ impl AgentWorker {
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
         let result = async {
-            match self
+            let published = self
                 .publish_prepared_open_ready(&agent, &context, &evidence, &attachment, now)
-                .await
-            {
+                .await;
+            timing.completed("prepared_open_ready_publication");
+            match published {
                 Ok(true) => {
                     tracing::info!(agent_id = %agent.id, "Prepared Agent Open and Ready published atomically");
                     return self
@@ -302,6 +319,7 @@ impl AgentWorker {
                         .await;
                 }
                 Err(SandboxStoreError::Conflict) => {
+                    tracing::info!(agent_id = %agent.id, outcome = "conflict", "Prepared Agent publication selected ordinary readiness checks");
                     return self
                         .retain_completed_open_after_conflict(
                             &agent,
@@ -313,7 +331,9 @@ impl AgentWorker {
                         .await;
                 }
                 Err(error) => return Err(error),
-                Ok(false) => {}
+                Ok(false) => {
+                    tracing::info!(agent_id = %agent.id, outcome = "ineligible", "Prepared Agent publication selected ordinary readiness checks");
+                }
             }
             self.startup_progress(
                 agent,

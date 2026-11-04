@@ -1,9 +1,21 @@
 import type { ResolvedConfig } from './config.js';
+import { BindingEventMedia } from './provider-binding-media.js';
+export * from './provider-binding-media.js';
 import { requestVoid, type OperationOptions } from './http.js';
-import { input, read, segment } from './resources.js';
+import { command, input, read, segment, type CommandOptions } from './resources.js';
+import {
+  BindingPreparationInspectionSchema,
+  BindingPreparationReceiptSchema,
+  InspectBindingPreparationSchema,
+  PrepareBindingSchema,
+  type InspectBindingPreparation,
+  type PrepareBinding,
+} from './provider-binding-preparation.js';
+export * from './provider-binding-preparation.js';
 import {
   array,
   enumeration,
+  nullable,
   object,
   optional,
   positiveInteger,
@@ -12,6 +24,13 @@ import {
   text,
   type Output,
 } from './schema.js';
+
+export const WorkerCredentialDigestSchema = object({ sha256: text });
+export type WorkerCredentialDigest = Output<typeof WorkerCredentialDigestSchema>;
+export const WorkerCredentialClassificationSchema = object({
+  classification: enumeration('known_worker', 'unknown'),
+});
+export type WorkerCredentialClassification = Output<typeof WorkerCredentialClassificationSchema>;
 
 export const BindingTargetSchema = tagged(
   {
@@ -53,10 +72,56 @@ const putBinding = object({
 });
 export type ProviderBinding = Output<typeof binding>;
 export type BindingConversation = Output<typeof conversation>;
+export const BindingConversationInspectionSchema = object({
+  binding_id: text,
+  generation: positiveInteger,
+  conversation_id: text,
+  agent_id: text,
+  state: text,
+  agent_status: nullable(text),
+});
+export type BindingConversationInspection = Output<typeof BindingConversationInspectionSchema>;
 export type PutProviderBinding = Output<typeof putBinding>;
-/** Gateway management authority only; binding keys use Responses and context reads. */
+/** Binding management requires Gateway authority; media operations use the bound consumer key. */
 export class ProviderBindings {
-  constructor(private readonly config: ResolvedConfig) {}
+  readonly media: BindingEventMedia;
+  constructor(private readonly config: ResolvedConfig) {
+    this.media = new BindingEventMedia(config);
+  }
+  /** Gateway service-account bearer only; errors never become an unknown result. */
+  classifyWorkerCredential(body: WorkerCredentialDigest, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      '/api/v1/cmaeg/worker-credentials/classify',
+      WorkerCredentialClassificationSchema,
+      {
+        ...options,
+        method: 'POST',
+        body: input(WorkerCredentialDigestSchema, body),
+      },
+    );
+  }
+  /** Inspect the current generation without allocating or mutating resources. */
+  inspectPreparation(id: string, body: InspectBindingPreparation, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `${path(id)}/preparation-inspections`,
+      BindingPreparationInspectionSchema,
+      {
+        ...options,
+        method: 'POST',
+        body: input(InspectBindingPreparationSchema, body),
+      },
+    );
+  }
+  /** Reserve with the exact retained intent and operation key; never invent a key on retry. */
+  prepare(id: string, body: PrepareBinding, options: CommandOptions) {
+    return read(this.config, `${path(id)}/preparations`, BindingPreparationReceiptSchema, {
+      ...command(options),
+      method: 'POST',
+      body: input(PrepareBindingSchema, body),
+    });
+  }
   put(id: string, body: PutProviderBinding, options: OperationOptions = {}) {
     return read(this.config, path(id), binding, {
       ...options,
@@ -73,6 +138,14 @@ export class ProviderBindings {
       method: 'DELETE',
       expectedStatus: 204,
     });
+  }
+  inspectConversation(id: string, conversationId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      path(id, conversationId),
+      BindingConversationInspectionSchema,
+      options,
+    );
   }
   ensureConversation(id: string, conversationId: string, options: OperationOptions = {}) {
     return read(this.config, path(id, conversationId), conversation, {

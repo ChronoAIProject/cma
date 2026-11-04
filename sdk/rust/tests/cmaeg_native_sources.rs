@@ -109,3 +109,43 @@ fn native_telegram_channel_posts_are_an_independent_optional_source_opt_in() {
         assert_eq!(serde_json::to_value(request).unwrap(), value);
     }
 }
+
+#[test]
+fn native_whatsapp_incoming_changes_consent_is_optional_and_independent() {
+    let legacy = json!({"type":"whatsapp","app_id":"12345","waba_id":"23456","phone_number_id":"34567","admission":{"type":"all"}});
+    for enabled in [false, true] {
+        let mut value = legacy.clone();
+        value["message_events"] = enabled.into();
+        assert_eq!(
+            serde_json::to_value(serde_json::from_value::<Source>(value.clone()).unwrap()).unwrap(),
+            value
+        );
+        assert_eq!(
+            serde_json::to_value(serde_json::from_value::<SourceRequest>(value.clone()).unwrap())
+                .unwrap(),
+            value
+        );
+    }
+}
+
+#[test]
+fn telegram_general_authoring_is_optional_and_never_inferred_from_numbered_topics() {
+    let legacy = json!({"dynamic_sources_writes_enabled":true,"relay_raw_verification_writes_enabled":true,"multi_consumer_writes_enabled":true,"native_bot_mentions_writes_enabled":false,"thread_contract_writes_enabled":false,"native_telegram_topic_lifecycle_enabled":true,"platforms":[]});
+    let parsed: RelayAuthoringCapabilities = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(
+        parsed
+            .native_telegram_general_topic_lifecycle_enabled
+            .is_none()
+    );
+    assert_eq!(serde_json::to_value(parsed).unwrap(), legacy);
+    for enabled in [false, true] {
+        let mut value = legacy.clone();
+        value["native_telegram_general_topic_lifecycle_enabled"] = enabled.into();
+        let parsed: RelayAuthoringCapabilities = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(
+            parsed.native_telegram_general_topic_lifecycle_enabled,
+            Some(enabled)
+        );
+        assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+    }
+}

@@ -217,3 +217,159 @@ async fn runtime_update_mongo_fence_conflicts_with_a_turn_after_idle_snapshot() 
     assert_eq!(store.get_agent(&ready.id).await.unwrap(), Some(working));
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn runtime_update_mongo_preserves_deleted_turn_output_and_removed_worktree() {
+    use crate::store::sandbox_mongo::record_bson;
+    use layer2_core::sandbox::store::{AgentMessageCheckpoint, WorktreeStore};
+    use layer2_core::sandbox::{
+        AgentMessageAssembly, AgentOperationIntent, AgentOperationRecord, AgentStopReason,
+        AgentUpdateOutcome, Worktree, WorktreeStatus,
+    };
+
+    let (client, name, store) = database().await;
+    let sandbox = active_sandbox("sbx_update_deleted_history");
+    store.create_sandbox(sandbox.clone()).await.unwrap();
+    let mut deleted = ready_agent(&sandbox, "agt_deleted_history");
+    deleted.conversation.active_turn = Some(98);
+    deleted.conversation.last_seq = 120;
+    let mut operation = AgentOperationRecord::new(
+        97,
+        1,
+        98,
+        AgentOperationIntent::send_message("historical request"),
+        IDLE_AT.into(),
+    )
+    .unwrap();
+    operation.mark_execution_observed(IDLE_AT.into()).unwrap();
+    deleted.conversation.operation = Some(operation);
+    deleted
+        .transition(
+            AgentStatus::Stopped,
+            IDLE_AT.into(),
+            Some(AgentStopReason::Owner),
+        )
+        .unwrap();
+    deleted
+        .transition(AgentStatus::Deleted, IDLE_AT.into(), None)
+        .unwrap();
+    deleted.validate_conversation().unwrap();
+    insert_agent(&store, &deleted, IDLE_AT).await;
+    let logs = (2..=120)
+        .map(|seq| {
+            log_document(&AgentLogEntry {
+                agent_id: deleted.id.clone(),
+                seq,
+                appended_at: IDLE_AT.into(),
+                kind: if seq == 120 {
+                    AgentLogKind::Deleted
+                } else {
+                    AgentLogKind::AgentMessage {
+                        content: "historical output".into(),
+                    }
+                },
+            })
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    store.agent_log.insert_many(logs).await.unwrap();
+    let workspace = workspace(&sandbox);
+    store.create_workspace(workspace.clone()).await.unwrap();
+    let worktree = Worktree {
+        id: deleted.worktree_id.clone(),
+        workspace_id: deleted.workspace_id.clone(),
+        sandbox_id: deleted.sandbox_id.clone(),
+        owner: deleted.owner.clone(),
+        name: "wt-1".into(),
+        path: "/home/cma/update/.worktrees/wt-1".into(),
+        branch: "cma/wt-1".into(),
+        base_commit: "a".repeat(40),
+        status: WorktreeStatus::Removed,
+        agent_id: Some(deleted.id.clone()),
+        revision: 1,
+    };
+    store.create_worktree(worktree.clone()).await.unwrap();
+    let mut assembly = serde_json::to_value(AgentMessageAssembly::default()).unwrap();
+    assembly["content"] = serde_json::json!("x".repeat(66));
+    let checkpoint = AgentMessageCheckpoint {
+        version: 1,
+        update_id: uuid::Uuid::new_v4().to_string(),
+        update_fingerprint: "a".repeat(64),
+        native_conversation_id: deleted.conversation.conversation_id.clone().unwrap(),
+        runtime_generation: 1,
+        active_turn: Some(98),
+        after_seq: 120,
+        assembly: serde_json::from_value(assembly).unwrap(),
+        outcome: AgentUpdateOutcome {
+            appended: vec![],
+            turn_closed: false,
+        },
+        output: Some(layer3_adapter::RuntimeOutputSource {
+            native_conversation_id: deleted.conversation.conversation_id.clone().unwrap(),
+            stream_id: uuid::Uuid::new_v4().to_string(),
+            cursor: 673,
+            payload_sha256: "b".repeat(64),
+        }),
+    };
+    checkpoint.validate().unwrap();
+    store
+        .agents
+        .update_one(
+            doc! { "_id": deleted.id.as_str() },
+            doc! {
+                "$set": { "agent_message_checkpoint": record_bson(&checkpoint).unwrap() }
+            },
+        )
+        .await
+        .unwrap();
+    let before = store
+        .agents
+        .find_one(doc! { "_id": deleted.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    let history = store.agent_log(&deleted.id, 0, 200).await.unwrap();
+    assert_eq!(
+        store
+            .schedule_image_rotation(rotation(&sandbox.id))
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+    let next = store.get_sandbox(&sandbox.id).await.unwrap().unwrap();
+    let Some(SandboxLifecycleOperation::ImageRotation { identity, .. }) = next.lifecycle.operation
+    else {
+        panic!("rotation not admitted")
+    };
+    assert!(
+        identity.agents.is_empty(),
+        "Deleted Agent must never be reopened"
+    );
+    let mut after = store
+        .agents
+        .find_one(doc! { "_id": deleted.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.remove("sandbox_maintenance_fence"),
+        Some(1_i64.into())
+    );
+    assert_eq!(
+        mongodb::bson::serialize_to_vec(&after).unwrap(),
+        mongodb::bson::serialize_to_vec(&before).unwrap(),
+        "Agent record and private output sidecar must be byte-for-byte unchanged"
+    );
+    assert_eq!(store.agent_log(&deleted.id, 0, 200).await.unwrap(), history);
+    assert_eq!(store.get_agent(&deleted.id).await.unwrap(), Some(deleted));
+    assert_eq!(
+        store.get_workspace(&workspace.id).await.unwrap(),
+        Some(workspace)
+    );
+    assert_eq!(
+        store.get_worktree(&worktree.id).await.unwrap(),
+        Some(worktree)
+    );
+    client.database(&name).drop().await.unwrap();
+}

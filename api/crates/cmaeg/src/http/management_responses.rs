@@ -180,6 +180,30 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::Conflict,
             "The selected skill version cannot be changed on an existing channel Agent. Create a replacement channel with the requested profile.".into(),
         ),
+        ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 409, code })
+            if code == "binding_reconfiguration_unsupported" => (
+            StatusCode::CONFLICT,
+            ProblemCode::ProviderRejected,
+            "This channel's existing agent configuration is pinned. Changing its service scope, skills, prompt, model, environment, or conversation affinity through a channel update is not supported. The provider binding, credentials, and retained work have not been changed. Keep the current profile to save other channel settings, and rotate credentials separately using that profile. Retrying with the same key will not apply this change.".into(),
+        ),
+        ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 404, code })
+            if code == "binding_not_found" => (
+            StatusCode::NOT_FOUND,
+            ProblemCode::ProviderRejected,
+            "The binding, conversation, or target Agent is not available to this channel owner.".into(),
+        ),
+        ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 409, code })
+            if code == "binding_not_ready" => (
+            StatusCode::CONFLICT,
+            ProblemCode::ProviderRejected,
+            "The binding or target Agent is not ready. Inspect the target's lifecycle state and the binding configuration before retrying.".into(),
+        ),
+        ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 400, code })
+            if code == "invalid_binding" => (
+            StatusCode::BAD_REQUEST,
+            ProblemCode::ProviderRejected,
+            "The provider refused the binding profile or target. Check the channel configuration before retrying.".into(),
+        ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { .. }) => (
             StatusCode::BAD_GATEWAY,
             ProblemCode::ProviderRejected,
@@ -267,10 +291,55 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "conflict");
-        assert!(body["detail"]
-            .as_str()
-            .unwrap()
-            .contains("skill version"));
+        assert!(body["detail"].as_str().unwrap().contains("skill version"));
+    }
+
+    #[tokio::test]
+    async fn known_reconfiguration_refusal_is_actionable_and_keeps_its_conflict_status() {
+        let response = management_error(ManagementError::Provider(
+            crate::providers::ProviderError::Rejected {
+                status: 409,
+                code: "binding_reconfiguration_unsupported".into(),
+            },
+        ));
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/problem+json"
+        );
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "provider_rejected");
+        assert_eq!(body["status"], 409);
+        let detail = body["detail"].as_str().unwrap();
+        assert!(detail.contains("service scope"));
+        assert!(detail.contains("have not been changed"));
+        assert!(detail.contains("Keep the current profile"));
+    }
+
+    #[tokio::test]
+    async fn unrecognized_refusals_do_not_expose_provider_error_text() {
+        for (status, code) in [
+            (409, "private-provider-credential-must-not-leak"),
+            (400, "binding_reconfiguration_unsupported"),
+        ] {
+            let response = management_error(ManagementError::Provider(
+                crate::providers::ProviderError::Rejected {
+                    status,
+                    code: code.into(),
+                },
+            ));
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["detail"], "provider rejected the channel request");
+            assert!(!String::from_utf8_lossy(&bytes).contains(code));
+        }
     }
 
     #[test]

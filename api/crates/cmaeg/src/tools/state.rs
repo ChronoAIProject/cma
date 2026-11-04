@@ -19,8 +19,12 @@ use cmaeg_core::{
 use std::{sync::Arc, time::Duration};
 use tokio::sync::oneshot;
 use tracing::Instrument;
+#[path = "state_validation.rs"]
+mod validation;
+pub(super) use validation::validate;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub native_typing: Option<Arc<super::NativeTyping>>,
     pub native_whatsapp_forms: Option<Arc<crate::whatsapp::forms::service::Forms>>,
     pub native_media_edits: Option<Arc<crate::native_media::Client>>,
     pub native_lark_effects: Option<Arc<super::NativeLarkEffectsClient>>,
@@ -33,6 +37,8 @@ pub struct ToolsState {
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
+    pub native_telegram_media_controls_enabled: bool,
+    pub native_telegram_media_control_edits_enabled: bool,
     pub telegram_effects: Option<Arc<super::MessageEffectsClient>>,
     /// Advertise new Lark effects; retained references remain executable when false.
     pub lark_effects_issuance_enabled: bool,
@@ -40,14 +46,29 @@ pub struct ToolsState {
     /// Advertise templates only after the WhatsApp relay contract is verified.
     pub whatsapp_templates_enabled: bool,
     pub discord_interactions_enabled: bool,
+    pub native_discord_media_controls_enabled: bool,
+    pub native_discord_media_card_edits_enabled: bool,
+    pub native_discord_media_card_replacements_enabled: bool,
+    pub native_discord_media_card_sets_enabled: bool,
     pub whatsapp_interactions_enabled: bool,
     /// Native issuance only; retained callback consumption is independent.
     pub native_whatsapp_interactions_enabled: bool,
+    pub native_whatsapp_media_controls_enabled: bool,
     pub consumer_interactions_enabled: bool,
     /// Advertise native relay media only after the deployed NyxID contract is verified.
     pub native_media_enabled: bool,
     /// Bounded native Lark image/document/audio/video uploads, independently default-off.
     pub native_lark_outbound_media_enabled: bool,
+    pub native_lark_sticker_replies_enabled: bool,
+    pub native_lark_media_controls_enabled: bool,
+    pub native_lark_multi_image_controls_enabled: bool,
+    pub native_lark_media_card_replacements_enabled: bool,
+    pub native_media_presentations_enabled: bool,
+    pub native_discord_voice_enabled: bool,
+    pub native_telegram_structured_replies_enabled: bool,
+    pub native_whatsapp_structured_replies_enabled: bool,
+    pub native_telegram_albums_enabled: bool,
+    pub native_lark_thread_start_enabled: bool,
     /// Bounded native WhatsApp image/document/audio/sticker/video uploads, independently gated.
     pub native_whatsapp_outbound_media_enabled: bool,
     /// Approved native template replies, independently default-off from relay templates/uploads.
@@ -70,6 +91,7 @@ pub struct ToolsState {
     pub tracker: Arc<TurnTracker>,
     pub public_origin: String,
     pub public_api_url: String,
+    pub public_api_aliases: Vec<String>,
     pub advertise_public_api_url: bool,
     /// The media service turns share, or `None` while inbound media is
     /// disabled; attachment reads are then refused.
@@ -165,11 +187,18 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
-            if message.native_media_update.is_some() {
+            if message.structured_content.is_some() && idempotency_key.is_none() {
+                return Err(invalid("structured_content_requires_idempotency_key"));
+            }
+            if message.native_media_update.is_some() || message.clear_native_attachments {
                 return Err(Problem::new(
                     ProblemCode::InvalidRequest,
                     400,
-                    "native_media_update_requires_updateMessage",
+                    if message.clear_native_attachments {
+                        "native_attachment_clear_requires_updateMessage"
+                    } else {
+                        "native_media_update_requires_updateMessage"
+                    },
                 ));
             }
             let (channel, event, _) = self
@@ -200,6 +229,12 @@ impl ToolsState {
                 {
                     return Ok(receipt);
                 }
+            }
+            if message.structured_content.is_some() {
+                return Err(invalid("structured_content_requires_retained_routing"));
+            }
+            if message.reply_with_received_sticker {
+                return Err(invalid("received_sticker_requires_retained_routing"));
             }
             let (receipt, received) = oneshot::channel();
             let result = self
@@ -246,6 +281,13 @@ impl ToolsState {
             let (channel, event, _) = self
                 .authorize_event(caller, reference, "sendTyping")
                 .await?;
+            if matches!(
+                event.reply,
+                cmaeg_core::seal::ReplyAddress::Whatsapp { .. }
+                    | cmaeg_core::seal::ReplyAddress::Discord { .. }
+            ) {
+                return self.send_native_typing(caller, &channel, &event).await;
+            }
             let (receipt, received) = oneshot::channel();
             self.deliver(
                 DeliveryCommand::Typing {
@@ -293,20 +335,23 @@ impl ToolsState {
                 self,
             );
             response.received_message = received_message;
-            response.capabilities.topic_lifecycle =
-                self.topic_capabilities(caller, &event, &channel).await;
-            response.capabilities.thread_lifecycle =
-                self.thread_capabilities(caller, &event, &channel).await;
-            response.capabilities.conversation_history =
-                self.history_capabilities(caller, &event, &channel).await;
+            response.capabilities.typing |= self
+                .native_typing_capability(caller, &channel, &event, verified)
+                .await;
+            self.enrich_conversation_capabilities(
+                caller,
+                &event,
+                &channel,
+                &mut response.capabilities,
+            )
+            .await;
             Ok(response)
         }
         .await;
         observation.finish(if result.is_ok() { "success" } else { "error" });
         result
     }
-    /// Verify an ingress snapshot before any provider command exists. No local
-    /// cache or provider read participates in this cryptographic attestation.
+    /// Verify ingress cryptographically without a provider command, cache or read.
     pub async fn verify_context(
         &self,
         caller: AgentCaller,
@@ -337,12 +382,11 @@ impl ToolsState {
             self,
         );
         response.received_message = received_message;
-        response.capabilities.topic_lifecycle =
-            self.topic_capabilities(caller, &event, &channel).await;
-        response.capabilities.thread_lifecycle =
-            self.thread_capabilities(caller, &event, &channel).await;
-        response.capabilities.conversation_history =
-            self.history_capabilities(caller, &event, &channel).await;
+        response.capabilities.typing |= self
+            .native_typing_capability(caller, &channel, &event, true)
+            .await;
+        self.enrich_conversation_capabilities(caller, &event, &channel, &mut response.capabilities)
+            .await;
         Ok(response)
     }
     pub(super) async fn deliver<T>(
@@ -438,23 +482,6 @@ pub(crate) fn owner(
         ));
     }
     Ok(matched)
-}
-pub(super) fn validate(message: &OutboundMessage) -> Result<(), Problem> {
-    message.validate().map_err(|error| {
-        Problem::new(
-            if error.message.contains("32768") {
-                ProblemCode::PayloadTooLarge
-            } else {
-                ProblemCode::InvalidRequest
-            },
-            if error.message.contains("32768") {
-                413
-            } else {
-                400
-            },
-            error.to_string(),
-        )
-    })
 }
 fn open_error(error: OpenError) -> Problem {
     match error {

@@ -1,5 +1,6 @@
 import { Documents } from './documents.js';
 import { TaskExperiencePolicy } from './task-experience.js';
+import { SandboxUsage } from './usage.js';
 import { EventWorkerProfiles } from './event-worker-profiles.js';
 import { ProviderBindings } from './provider-bindings.js';
 import { GatewayRecords } from './gateway-records.js';
@@ -43,6 +44,7 @@ export class Cma {
   readonly #config: ResolvedConfig;
   readonly documents: Documents;
   readonly taskExperience: TaskExperiencePolicy;
+  readonly usage: SandboxUsage;
   readonly providerBindings: ProviderBindings;
   readonly gatewayRecords: GatewayRecords;
   readonly gatewayConnectionRecords: GatewayRecords;
@@ -84,6 +86,7 @@ export class Cma {
     this.#config = resolveConfig(config);
     this.documents = new Documents(this.#config);
     this.taskExperience = new TaskExperiencePolicy(this.#config);
+    this.usage = new SandboxUsage(this.#config);
     this.providerBindings = new ProviderBindings(this.#config);
     this.gatewayRecords = new GatewayRecords(this.#config);
     this.gatewayConnectionRecords = new GatewayRecords(this.#config, 'connection-records');

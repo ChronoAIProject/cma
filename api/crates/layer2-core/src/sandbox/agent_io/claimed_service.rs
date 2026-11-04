@@ -12,6 +12,9 @@ impl AgentOperationService {
         authority: &CommandExecutionAuthorization,
         command: &AdmittedAgentCommand,
     ) -> Result<AgentMessageOutcome, AgentOperationError> {
+        authority
+            .require_source_guard()
+            .map_err(|_| AgentOperationError::Forbidden)?;
         command
             .validate()
             .map_err(|_| AgentOperationError::Corrupt("command ledger is invalid".into()))?;
@@ -64,10 +67,11 @@ impl AgentOperationService {
             .validate()
             .map_err(|_| AgentOperationError::Corrupt("command ledger is invalid".into()))?;
         let envelope = &command.receipt.envelope;
-        if envelope.owner
-            != (AgentOwner::Person {
-                subject: caller.subject.clone(),
-            })
+        if envelope.continuation.is_some()
+            || envelope.owner
+                != (AgentOwner::Person {
+                    subject: caller.subject.clone(),
+                })
             || !matches!(&envelope.actor,
                 AgentActor::Human { subject } | AgentActor::Api { subject, delegation_id: None }
                 if subject == &caller.subject)

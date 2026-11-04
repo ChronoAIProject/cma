@@ -152,6 +152,62 @@ async fn pending_publication(harness: &Harness) -> Agent {
     agent
 }
 
+#[tokio::test]
+async fn publication_after_durable_update_does_not_backdate_or_retry_the_connection() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let pending = pending_publication(&harness).await;
+    let claimed = harness
+        .store
+        .claim_agent_work(
+            &pending.id,
+            "agent-worker",
+            rfc3339_at(harness.now),
+            rfc3339_at(harness.now + Duration::from_secs(30)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let target = Harness::target(&claimed);
+    let attachment = harness
+        .registry
+        .staged_attachment(&target, claimed.work.lease.as_ref().unwrap().fence)
+        .unwrap()
+        .unwrap();
+    harness.registry.publish_and_activate(&attachment).unwrap();
+    // Metadata or a replay acknowledgement can commit after the original claim.
+    // Publication must retain that state and must not backdate its work record.
+    let mut confirmed = claimed.clone();
+    confirmed.title = Some("updated while reconnecting".into());
+    confirmed.updated_at = rfc3339_at(harness.now + Duration::from_secs(5));
+    confirmed.revision += 1;
+    harness
+        .store
+        .save_agent(claimed.revision, confirmed.clone())
+        .await
+        .unwrap();
+    harness
+        .worker
+        .finish_connection_publication(claimed, &attachment, harness.now)
+        .await
+        .unwrap();
+    let published = harness.stored(&pending.id).await;
+    assert_eq!(published.work.step, AgentWorkStep::None);
+    assert!(published.work.lease.is_none());
+    assert!(published.updated_at >= confirmed.updated_at);
+    assert_eq!(published.title, confirmed.title);
+    assert_eq!(
+        published.conversation.settings,
+        confirmed.conversation.settings
+    );
+    assert_eq!(
+        published.conversation.conversation_id,
+        confirmed.conversation.conversation_id
+    );
+    assert_eq!(published.work.receipts, confirmed.work.receipts);
+    assert_eq!(open_count(&harness).await, 1);
+    assert!(harness.registry.published_target_is_attached(&target));
+}
+
 async fn open_count(harness: &Harness) -> usize {
     harness
         .backend

@@ -76,8 +76,11 @@ it.each(['cancel', 'approval'] as const)(
   },
 );
 
-it('settles a definitive no-admission refusal and permits a fresh control for the next turn', async () => {
+it('re-observes once and retries a stale revision while the same turn is active', async () => {
   const h = activeHarness();
+  h.observe
+    .mockResolvedValueOnce(json(observation('resp_1', 1, 10)))
+    .mockResolvedValueOnce(json(observation('resp_1', 1, 12)));
   h.control.mockResolvedValueOnce(
     json(
       {
@@ -95,36 +98,26 @@ it('settles a definitive no-admission refusal and permits a fresh control for th
   await waitFor(() => expect(result.current.inputAvailability.allowed).toBe(true));
   await act(() => result.current.interrupt());
   expect(result.current.pendingControl).toBe(false);
-  expect(result.current.actionError).toContain('target changed');
-  await act(async () => {
-    h.durable(2, { type: 'turn_completed', turn_sequence: 1 });
-    h.durable(
-      3,
-      { type: 'turn_started', turn_sequence: 3 },
-      {
-        response_id: 'resp_new',
-        command_id: 'cmd_new',
-        turn_sequence: 3,
-      },
-    );
-  });
-  h.observe.mockResolvedValueOnce(json(observation('resp_new', 3, 12)));
-  await act(() => result.current.interrupt());
   expect(result.current.actionError).toBeUndefined();
   expect(h.control).toHaveBeenCalledTimes(2);
   const first = h.control.mock.calls[0]![1]!;
   const second = h.control.mock.calls[1]![1]!;
-  expect(h.control.mock.calls[1]![0]).toBe('resp_new');
+  expect(h.control.mock.calls[1]![0]).toBe('resp_1');
+  expect(JSON.parse(String(first.body))).toMatchObject({
+    turn_sequence: 1,
+    expected_agent_revision: 10,
+  });
   expect(JSON.parse(String(second.body))).toMatchObject({
-    turn_sequence: 3,
+    turn_sequence: 1,
     expected_agent_revision: 12,
   });
   expect(new Headers(second.headers).get('idempotency-key')).not.toBe(
     new Headers(first.headers).get('idempotency-key'),
   );
+  expect(h.observe).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(result.current.controlNotice).toBeUndefined());
   // Completed means control delivery. The actual response remains active.
-  expect(result.current.state).toMatchObject({ conversation: { activeRunId: '3' } });
+  expect(result.current.state).toMatchObject({ conversation: { activeRunId: '1' } });
   unmount();
 });
 

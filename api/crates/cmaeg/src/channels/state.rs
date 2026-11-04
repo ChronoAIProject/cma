@@ -10,7 +10,11 @@ use cmaeg_core::{
     seal::{ChannelPointer, MasterKeyRing},
     ValidationError,
 };
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
@@ -28,7 +32,9 @@ pub struct ManagementState {
     pub creator_auth: Arc<CreatorAuthenticator>,
     pub master_keys: Arc<MasterKeyRing>,
     pub public_url: String,
+    pub console_public_url: String,
     pub public_api_url: String,
+    pub public_api_aliases: Vec<String>,
     pub advertise_public_api_url: bool,
     pub cma_base_url: String,
     pub tools_nyxid_slug: String,
@@ -42,11 +48,16 @@ pub struct ManagementState {
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
+    /// Writer gate only; retained opt-ins continue through the durable reader.
+    pub custom_durable_execution_enabled: bool,
+    /// Providers whose existing-Agent original-media continuation path is ready.
+    pub custom_existing_agent_media_providers: BTreeSet<String>,
     pub multi_consumer_writes_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
     pub native_whatsapp_groups_writes_enabled: bool,
+    pub native_whatsapp_message_events_enabled: bool,
     pub native_whatsapp_forms_enabled: bool,
     pub native_whatsapp_flow_writes_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
@@ -58,10 +69,14 @@ pub struct ManagementState {
     pub native_telegram_durable_admission_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_telegram_topic_lifecycle_enabled: bool,
+    pub native_telegram_topic_creation_enabled: bool,
+    pub native_telegram_general_topic_lifecycle_enabled: bool,
     pub native_discord_thread_lifecycle_enabled: bool,
     pub native_lark_conversation_history_enabled: bool,
     pub native_discord_conversation_history_enabled: bool,
     pub native_discord_reactions_enabled: bool,
+    pub native_discord_rich_content_enabled: bool,
+    pub native_discord_forwards_enabled: bool,
     pub native_discord: crate::discord::selection::Selection,
     pub native_discord_admission_enabled: bool,
     pub outbound_messages_writes_enabled: bool,
@@ -83,7 +98,10 @@ pub(crate) struct CachedResponse {
 impl ManagementState {
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
+            durable_custom_execution: self.custom_durable_execution_enabled,
             native_lark: self.native_lark_writes_enabled,
+            native_whatsapp_message_events: self.native_whatsapp_message_events_enabled
+                && self.native_whatsapp_admission_enabled,
             native_whatsapp_forms: self.native_whatsapp_forms_enabled
                 && self.native_whatsapp_flow_writes_enabled
                 && self.native_whatsapp_admission_enabled,
@@ -100,11 +118,18 @@ impl ManagementState {
             telegram_message_events: self.native_telegram_message_events_writes_enabled,
             discord_thread_history: self.native_discord_thread_history_enabled,
             telegram_topic_lifecycle: self.native_telegram_topic_lifecycle_enabled,
+            telegram_topic_creation: self.native_telegram_topic_creation_enabled,
             discord_thread_lifecycle: self.native_discord_thread_lifecycle_enabled,
             native_lark_conversation_history: self.native_lark_conversation_history_enabled,
             discord_conversation_history: self.native_discord_conversation_history_enabled,
             discord_reactions: self.native_discord_reactions_enabled,
         }
+    }
+
+    pub(crate) fn public_api_bases(&self) -> impl Iterator<Item = &str> {
+        [self.public_api_url.as_str(), self.public_url.as_str()]
+            .into_iter()
+            .chain(self.public_api_aliases.iter().map(String::as_str))
     }
 
     pub fn advertised_api_url(&self) -> &str {
@@ -157,9 +182,11 @@ impl ManagementState {
             providers,
             records,
             creator_auth,
+            console_public_url: config.console_origin().to_owned(),
             master_keys: config.master_keys,
             public_url: config.public_url,
             public_api_url: config.public_api_url,
+            public_api_aliases: config.public_api_aliases,
             advertise_public_api_url: config.advertise_public_api_url,
             cma_base_url: config.cma_base_url,
             tools_nyxid_slug: config.tools_nyxid_slug,
@@ -168,6 +195,8 @@ impl ManagementState {
             native_bot_mentions_writes_enabled: false,
             thread_contract_writes_enabled: false,
             media_enabled: false,
+            custom_durable_execution_enabled: false,
+            custom_existing_agent_media_providers: BTreeSet::new(),
             multi_consumer_writes_enabled: false,
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
@@ -178,6 +207,7 @@ impl ManagementState {
             native_lark_writes_enabled: false,
             native_lark_admission_enabled: false,
             native_lark: None,
+            native_whatsapp_message_events_enabled: false,
             native_whatsapp_forms_enabled: false,
             native_whatsapp_flow_writes_enabled: false,
             native_whatsapp_writes_enabled: false,
@@ -190,10 +220,14 @@ impl ManagementState {
             native_telegram_durable_admission_enabled: false,
             native_discord_thread_history_enabled: false,
             native_telegram_topic_lifecycle_enabled: false,
+            native_telegram_topic_creation_enabled: false,
+            native_telegram_general_topic_lifecycle_enabled: false,
             native_discord_thread_lifecycle_enabled: false,
             native_lark_conversation_history_enabled: false,
             native_discord_conversation_history_enabled: false,
             native_discord_reactions_enabled: false,
+            native_discord_rich_content_enabled: false,
+            native_discord_forwards_enabled: false,
             native_discord: Default::default(),
             native_discord_admission_enabled: false,
             outbound_messages_writes_enabled: false,

@@ -18,6 +18,8 @@ use layer2_core::{SandboxId, SandboxProfileId, ServiceId, SubjectId};
 
 use super::*;
 
+#[path = "credential/model_catalog_tests.rs"]
+mod model_catalog_tests;
 #[path = "credential/node_access_tests.rs"]
 mod node_access_tests;
 #[path = "credential/provided_tests.rs"]
