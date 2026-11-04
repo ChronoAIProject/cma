@@ -180,6 +180,8 @@ mod binary_routing;
 mod binary_support;
 #[path = "management/boundaries.rs"]
 mod boundaries;
+#[path = "management/github_integrations.rs"]
+mod github_integrations;
 #[path = "management/lifecycle.rs"]
 mod lifecycle;
 #[path = "management/list.rs"]
