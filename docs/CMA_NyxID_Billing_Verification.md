@@ -102,3 +102,59 @@ The tests verify desired-state requests and responses. They do not certify
 physical termination during node/control-plane partitions, live NyxID/Lago
 invoice outcomes, or end-user price consent. Those remain controlled activation
 requirements; this change does not enable paid admission.
+
+## CI authority-catalog repair — 5 November 2026
+
+CI run `41865437880` exposed a missing Agent Manager grant: full store startup
+creates `sandbox_billing_state` even with funding disabled. The collection now
+uses the same constant in storage and the exact authority catalog, so generated
+runtime grants and startup credential validation include it. The authenticated
+bootstrap regression checks `sandbox_billing_due` on `{retry_at: 1, _id: 1}` after
+both initial startup and reopen. Grant regressions require the collection and
+reject `dropIndex` authority on it. The grant fix does not modify funding or
+lifecycle implementations.
+
+The PR adds only this collection and explicit index; `sandbox_usage` and
+`sandbox_usage_events` already have catalog entries. Agent Manager's existing
+runtime role owns startup DDL and has no separate migrator role. Exact actions
+and the existing-role update procedure are documented in
+[service isolation](CMA_Service_Isolation.md#sandbox-funding-grants) and linked
+from deployment readiness. Both billing flags remain false.
+
+After merging `origin/develop` through `c21108356` (#1317 and #1318) without
+conflicts, final local verification used Rust 1.96.1, `CARGO_BUILD_JOBS=4`,
+disabled incremental/debug output and
+`RUST_MIN_STACK=33554432`:
+
+| Repair verification | Result |
+| --- | --- |
+| Authenticated Agent Manager isolation checks | 4 passed, including full production assembly startup twice and foreign collection denial |
+| Standard API workspace suite | 7,166 passed; 669 standard-selection skips |
+| Isolated media-memory and socket-latency budgets | 2 passed |
+| Mandatory Mongo contracts | 455 passed across 12 disposable replica sets |
+| Format and all-target/all-feature workspace Clippy | Passed |
+| Locked workspace build, doctest gate and dependency policy | Passed; no workspace doctest examples are defined |
+| Compiled runtime-role output | Exact billing actions and service collection boundaries verified |
+| Native recovery and retained transport proofs | 40 tests with 1 skip, and 7 tests passed |
+| Source size and its validator regressions | 5,091 files checked; 11 regressions passed; isolation module is 489 lines |
+| Root/SDK/infra/docs structure and layer boundaries | Passed |
+| Deployment configuration and documentation inventory | Passed |
+| Mongo runner and authenticated-readiness regressions | 7 and 5 passed |
+
+Both Mongo runs used the repository's pinned Docker MongoDB 8.0.13 image.
+The isolated credential run reused the authenticated fixture setup from
+`.github/scripts/image-manager-mongo-contract.sh`, then executed:
+
+```sh
+cargo nextest run --workspace --locked --run-ignored all --test-threads 1 \
+  -E 'package(=cma) and test(~store::isolation::tests::)' --success-output final
+```
+
+The full Mongo run used `.github/scripts/mongo-contract-tests.sh` unchanged,
+including its two-fixture concurrency bound and owned-container/volume cleanup.
+The first runner-regression attempt hit fixture timing bounds on the shared
+machine; the unchanged rerun passed all seven checks. The final workspace suite
+exited successfully with one nextest lingering-process warning in the existing
+`lost_create_response_recovers_same_uid_and_changed_spec_is_refused` HTTP fixture;
+its exact isolated rerun passed without the warning. These are local results;
+production role provisioning, rollout and activation remain the lead's work.
