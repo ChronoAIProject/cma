@@ -51,6 +51,7 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
         ))
         .merge(hierarchy.router)
         .merge(rest::sandbox_usage::tests::router())
+        .merge(rest::sandbox_metrics::tests::router())
         .merge(events.router)
         .merge(access)
         .merge(rest::resource_access_router(events.access.clone()))

@@ -146,3 +146,10 @@ by NyxID. They do not create rows in NyxID's internal `/billing/usage` ledger, a
 CMA does not enforce NyxID prepaid-credit reservations or an overdraft policy.
 Those limitations must remain explicit when choosing paid pricing. Billing is
 disabled in the checked-in manifest until the provider configuration is verified.
+
+## Measured resource reports
+
+See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for the new
+owner/admin report APIs, CPU/working-set/PVC semantics, coverage, retention,
+read-model migration, monitoring permissions and production verification.
+The existing allocated usage ledger and billing quantities keep their meanings.

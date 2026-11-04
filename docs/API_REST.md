@@ -2367,3 +2367,10 @@ Example (a retired managed association whose parent is currently generation 3):
   }]
 }
 ```
+
+## Measured Sandbox usage reports
+
+See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for the new
+owner/admin report APIs, CPU/working-set/PVC semantics, coverage, retention,
+read-model migration, monitoring permissions and production verification.
+The existing allocated usage ledger and billing quantities keep their meanings.

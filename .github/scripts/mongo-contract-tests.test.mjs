@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const requiredPrefixes = [
+  'store::usage_reports::tests::',
   'usage_billing::tests::',
   'store::request_limits::tests::',
   'store::sandbox_mongo_integration_tests::sandbox_usage_tests::',

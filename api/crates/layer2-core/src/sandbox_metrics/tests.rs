@@ -68,7 +68,12 @@ fn resets_long_gaps_and_assignment_boundaries_never_invent_cpu() {
     );
     let mut b = binding(BindingKind::Compute);
     let t = aggregate::totals(
-        &aggregate::aggregate(&[b.clone()], &[s.clone()], Range { from: 0, to: 360 }).unwrap(),
+        &aggregate::aggregate(
+            &[b.clone()],
+            std::slice::from_ref(&s),
+            Range { from: 0, to: 360 },
+        )
+        .unwrap(),
     );
     assert_eq!(t[0].integral, 120.);
     assert_eq!(t[0].covered_seconds, 90.);
@@ -104,7 +109,7 @@ fn shared_pvc_is_counted_once_and_conflicting_attachments_are_refused() {
     let t = aggregate::totals(
         &aggregate::aggregate(
             &[b.clone(), b.clone()],
-            &[s.clone()],
+            std::slice::from_ref(&s),
             Range { from: 0, to: 60 },
         )
         .unwrap(),

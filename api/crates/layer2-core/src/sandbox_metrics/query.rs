@@ -107,13 +107,11 @@ impl ReportInput {
         let minimum = allowed
             .into_iter()
             .find(|step| {
-                *step >= minimum
-                    && *step % minimum == 0
-                    && (to - 1) / step - from / step + 1 <= 2016
+                *step >= minimum && *step % minimum == 0 && (to - 1) / step - from / step < 2016
             })
             .ok_or_else(|| invalid("No supported chart resolution."))?;
         let step = self.step_seconds.unwrap_or(minimum);
-        if step < minimum || !allowed.contains(&step) || step % canonical != 0 {
+        if step < minimum || !allowed.contains(&step) || !step.is_multiple_of(canonical) {
             return Err(invalid(&format!(
                 "step_seconds must be an allowed day-dividing multiple; minimum {minimum} seconds."
             )));
@@ -291,11 +289,39 @@ impl SeriesQuery {
         if !(1..=20).contains(&top)
             || self.series_id.as_deref().is_some_and(|s| !literal(s, 256))
             || (self.group_by == GroupBy::Total && self.series_id.is_some())
+            || (self.group_by == GroupBy::Sandbox
+                && self
+                    .series_id
+                    .as_deref()
+                    .is_some_and(|id| !opaque_id(id, "sbx_")))
         {
             return Err(invalid(
                 "Invalid series selection; top must be from 1 through 20.",
             ));
         }
         Ok(usize::from(top))
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OwnerQuery {
+    pub search: String,
+    pub limit: Option<u16>,
+    pub cursor: Option<String>,
+}
+impl OwnerQuery {
+    pub fn validate(&self) -> Result<u16> {
+        if !self.search.is_empty() && !literal(&self.search, 128) {
+            return Err(invalid(
+                "Owner search must be a literal prefix of at most 128 characters.",
+            ));
+        }
+        PageQuery {
+            limit: self.limit,
+            cursor: self.cursor.clone(),
+            ..Default::default()
+        }
+        .validate(true)
     }
 }

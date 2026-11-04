@@ -149,3 +149,76 @@ async fn metrics_identity_exposes_new_pod_and_container_incarnation_and_paused_h
     assert!(paused.runtime.is_none());
     readonly(&fixture);
 }
+
+#[tokio::test]
+async fn metrics_candidates_prove_native_pool_or_claim_without_inventing_owner() {
+    let (fixture, _, _) = setup().await;
+    let page = client(&fixture, false)
+        .metric_candidates(None)
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert!(!page.items[0].unassigned_pool);
+    assert_eq!(page.items[0].pod.pod_name, "cma-claim-cold");
+    assert_eq!(page.items[0].pvc_uid, "pvc-uid");
+    let pool_path;
+    {
+        let mut state = fixture.state.lock().unwrap();
+        pool_path = state
+            .rows
+            .keys()
+            .find(|k| k.contains("/sandboxwarmpools/"))
+            .unwrap()
+            .clone();
+        let pool = state.rows[&pool_path].clone();
+        let member = state.rows.get_mut(MEMBER).unwrap();
+        member["metadata"]["ownerReferences"] = json!([{"apiVersion":API_VERSION,"kind":"SandboxWarmPool","name":pool["metadata"]["name"],"uid":pool["metadata"]["uid"],"controller":true}]);
+        let annotations = member["metadata"]["annotations"].as_object_mut().unwrap();
+        annotations.remove("cma/sandbox");
+        annotations.remove("cma/native-home-origin");
+    }
+    let page = client(&fixture, false)
+        .metric_candidates(None)
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert!(page.items[0].unassigned_pool);
+    {
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .rows
+            .get_mut(&pool_path)
+            .unwrap()["metadata"]["uid"] = json!("replacement");
+    }
+    let page = client(&fixture, false)
+        .metric_candidates(None)
+        .await
+        .unwrap();
+    assert!(page.items.is_empty());
+    assert_eq!(page.unproven, 1);
+    readonly(&fixture);
+}
+#[tokio::test]
+async fn metrics_candidates_reject_pvc_controller_reuse_and_unknown_container() {
+    for change in ["volume", "container"] {
+        let (fixture, _, _) = setup().await;
+        {
+            let mut state = fixture.state.lock().unwrap();
+            if change == "volume" {
+                state.rows.get_mut(VOLUME).unwrap()["metadata"]["ownerReferences"][0]["uid"] =
+                    json!("replacement");
+            } else {
+                state.rows.get_mut(POD).unwrap()["spec"]["containers"][0]["name"] = json!("pause");
+            }
+        }
+        let page = client(&fixture, false)
+            .metric_candidates(None)
+            .await
+            .unwrap();
+        assert!(page.items.is_empty());
+        assert_eq!(page.unproven, 1);
+        readonly(&fixture);
+    }
+}
