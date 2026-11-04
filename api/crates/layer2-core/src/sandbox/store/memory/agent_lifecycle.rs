@@ -1,6 +1,6 @@
 use super::*;
 use crate::sandbox::store::{
-    apply_agent_connection_recovery, apply_agent_sign_in,
+    apply_agent_connection_recovery, apply_agent_sign_in, validate_agent_cleanup_capacity_log,
     validate_agent_work_mutation_with_sandbox, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome,
     AgentConnectionRecoveryRequest, AgentWorkMutation, AgentWorkerStore,
@@ -169,6 +169,14 @@ fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), 
         .agents
         .get(&mutation.agent.id)
         .ok_or(SandboxStoreError::NotFound)?;
+    validate_agent_cleanup_capacity_log(
+        current,
+        mutation,
+        state
+            .agent_logs
+            .get(&current.id)
+            .and_then(|entries| entries.last()),
+    )?;
     let current_worktree = state
         .worktrees
         .get(&current.worktree_id)
