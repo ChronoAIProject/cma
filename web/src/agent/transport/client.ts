@@ -1,4 +1,4 @@
-import type { Cma, V2ResponseReceipt } from '@chronoai/cma-sdk';
+import type { Cma, V2ResponseReceipt, AnswerContext } from '@chronoai/cma-sdk';
 import type { ReadOptions } from '../../api/client';
 import {
   agentTransportJournal,
@@ -83,11 +83,13 @@ export class AgentV2Session {
     onAccepted: (receipt: V2ResponseReceipt) => void,
     signal?: AbortSignal,
     onReceiptObserved?: (receipt: V2ResponseReceipt) => void,
+    answerContext?: AnswerContext,
   ) {
     await this.authorize(signal);
     return submitAgentInput(this.sdk, this.journal, input, {
       onAccepted,
       onReceiptObserved,
+      answerContext,
       signal,
       authorize: () => this.authorize(signal),
     });
@@ -105,6 +107,7 @@ export class AgentV2Session {
 
 /** The authenticated server flag selects a new tab; retained v2 work keeps its transport. */
 export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
+  const sessions = new Map<string, AgentV2Session>();
   const select = async (
     agent: string,
     read: ReadOptions = {},
@@ -133,8 +136,18 @@ export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
     }
     await session.authorize(read.signal);
     selected ??= journal.select(enabled);
+    sessions.set(agent, session);
     return selected === 'responses_v2' ? session : undefined;
   };
   const open = (agent: string, read: ReadOptions = {}) => select(agent, read);
-  return { open, ...createTransportPreparation(select, open) };
+  const legacySession = (agent: string | undefined, owner: string | undefined) => {
+    const session = agent === undefined ? undefined : sessions.get(agent);
+    if (session?.owner !== owner) return undefined;
+    try {
+      return session?.journal.selected() === 'agui' ? session : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  return { open, legacySession, ...createTransportPreparation(select, open) };
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::agent_lifecycle::ImageResolver;
+use crate::auth::AuthMode;
 use layer1_public::rest::{AgentLifecycleImageReference, AgentLifecycleProvisioningError};
 use layer2_core::bots::BotError;
 use layer2_core::bots::{BotControl, BotService, BotWorker};
@@ -228,6 +229,7 @@ fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
             BotError::Invalid("sign in again to authorize the selected image".into())
         }
         AgentLifecycleProvisioningError::Invalid(error)
+        | AgentLifecycleProvisioningError::DesktopUnsupported(error)
         | AgentLifecycleProvisioningError::Conflict(error) => BotError::Invalid(error),
         AgentLifecycleProvisioningError::ConnectionRequired { .. }
         | AgentLifecycleProvisioningError::Unavailable => BotError::Unavailable,

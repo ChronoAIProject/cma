@@ -13,9 +13,31 @@ pub use agent_client_protocol_schema::v1::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, MessageId,
     PermissionOption, PermissionOptionId, PermissionOptionKind, PromptResponse,
     RequestPermissionRequest, SessionId as ConversationId, SessionUpdate,
-    StopReason as TurnStopReason, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind, Usage as TurnUsage, UsageUpdate,
+    StopReason as TurnStopReason, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus,
+    ToolCallUpdate, ToolCallUpdateFields, ToolKind, Usage as TurnUsage, UsageUpdate,
 };
+
+pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<&str> {
+    if let Some(content) = &fields.content {
+        return content
+            .iter()
+            .filter_map(|item| match item {
+                ToolCallContent::Content(block) => match &block.content {
+                    ContentBlock::Text(block) => Some(block.text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+    }
+    fields
+        .raw_output
+        .as_ref()
+        .and_then(|output| output.get("formatted_output"))
+        .and_then(serde_json::Value::as_str)
+        .into_iter()
+        .collect()
+}
 
 /// Opaque adapter-owned route used to answer a durable permission request.
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

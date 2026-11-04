@@ -150,7 +150,7 @@ export function profileSummary(profile: PublisherProfile): string {
   if (profile.kind === 'sandbox')
     return `${String(profile.content.cpu_millis)} millicores, ${String(profile.content.memory_mib)} MiB; ${profile.content.nyxid_services.join(', ') || 'no connected services'}`;
   if (profile.kind === 'workspace')
-    return profile.content.location.type === 'git_repository'
+    return profile.content.location.type !== 'directory'
       ? profile.content.location.url
       : profile.content.location.name;
   return `${profile.content.model ?? 'Deployment model'}, ${profile.content.thinking_effort} effort, ${profile.content.permission_level}`;

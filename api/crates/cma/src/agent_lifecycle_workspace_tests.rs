@@ -76,3 +76,57 @@ fn contextual_permission_and_readiness_errors_do_not_retry_forever() {
         AgentLifecycleProvisioningError::Conflict(_)
     ));
 }
+
+#[tokio::test]
+async fn lifecycle_callback_distinguishes_unknown_retained_deleted_and_missing_agents() {
+    use layer2_core::sandbox::{
+        store::{AgentStore, InMemorySandboxStore},
+        Agent, AgentStatus,
+    };
+    let store = InMemorySandboxStore::default();
+    let origin = layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap();
+    let mut agent: Agent = serde_json::from_value(json!({
+        "id":"agt_page", "worktree_id":"wkt_page", "workspace_id":"wks_page", "sandbox_id":"sbx_page",
+        "owner":"owner", "creation_key":"page", "creation_fingerprint":"a".repeat(64),
+        "profile":{"id":"agp_page", "revision":1, "digest":"b".repeat(64), "content":{
+            "thinking_effort":"high", "permission_level":"autonomous"
+        }},
+        "status":"starting", "conversation":{"last_seq":0,"queued_messages":[]},
+        "work":layer2_core::sandbox::AgentWorkState::new(layer2_core::sandbox::AgentWorkStep::None, layer2_core::now_rfc3339()),
+        "created_at":"2026-11-04T00:00:00Z", "updated_at":"2026-11-04T00:00:00Z",
+        "origin":{"type":"manual"}, "revision":1
+    })).unwrap();
+    store.create_agent(agent.clone()).await.unwrap();
+    for (id, expected) in [
+        (None, None),
+        (
+            Some("agt_page"),
+            Some(json!("https://cma.example/agents/agt_page")),
+        ),
+        (Some("agt_missing"), Some(serde_json::Value::Null)),
+        (Some("agt_page"), Some(serde_json::Value::Null)),
+    ] {
+        if expected == Some(serde_json::Value::Null) && id == Some("agt_page") {
+            agent.status = AgentStatus::Deleted;
+            agent.revision += 1;
+            store.save_agent(1, agent.clone()).await.unwrap();
+        }
+        let view = AgentLifecycleOperationView {
+            id: "operation".into(),
+            status: "running".into(),
+            phase: "agent_startup".into(),
+            agent_id: id.map(Into::into),
+            error: None,
+            events: vec![],
+            connection: None,
+            callback_url: progress::callback_url(&store, &origin, "operation", id).await,
+        };
+        assert_eq!(
+            serde_json::to_value(view)
+                .unwrap()
+                .get("callback_url")
+                .cloned(),
+            expected
+        );
+    }
+}

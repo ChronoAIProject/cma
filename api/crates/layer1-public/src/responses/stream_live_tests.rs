@@ -22,6 +22,7 @@ async fn opening() -> (Open, Agent) {
             cursor: 5,
             sequence: 0,
             pending: Default::default(),
+            tools: Default::default(),
             announced: true,
             output_count: 0,
             next_output_index: 0,
@@ -46,7 +47,7 @@ fn fragment(agent: &Agent, after_seq: u64, kind: AgentLiveFragmentKind) -> Agent
 }
 
 fn response(agent: &Agent, text: &str) -> crate::responses::ResponseObject {
-    let mut response = retrieve::empty(agent, 3);
+    let mut response = retrieve::empty(&crate::agent_page::AgentPageOrigin::test(), agent, 3);
     response.output.push(OutputMessage {
         id: retrieve::output_id(&agent.id, 3, 0),
         kind: "message",
@@ -154,7 +155,11 @@ async fn live_assembly_is_utf8_bounded_and_reasoning_remains_ephemeral() {
         .unwrap();
     assert_eq!(done["cma:truncated"], true);
     assert!(open.live.reasoning_text.is_empty());
-    assert!(retrieve::empty(&agent, 3).output.is_empty());
+    assert!(
+        retrieve::empty(&crate::agent_page::AgentPageOrigin::test(), &agent, 3)
+            .output
+            .is_empty()
+    );
     open.message_delta(&"x".repeat(MAX_DURABLE_AGENT_MESSAGE_BYTES + 8));
     assert_eq!(
         open.live.message_text.len(),

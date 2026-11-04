@@ -20,6 +20,7 @@ import type {
   WorkspaceDetail,
 } from './types';
 import type {
+  Cma,
   AccessibleAgentSource,
   AgentAttachment,
   AgentProvenance,
@@ -30,6 +31,7 @@ import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
 import type { AgentFilesClient } from './agentFiles';
+import type { AgentBrowserClient, AgentBrowserControlClient } from '@chronoai/cma-sdk';
 import type { DocumentsClient } from './documents';
 
 export interface ReadOptions {
@@ -45,12 +47,15 @@ export interface CommandOptions extends ReadOptions {
 }
 
 export interface AgentStreamOptions extends ReadOptions {
+  readonly idempotencyKey?: string;
   readonly after?: number;
   readonly onEvent: (event: AgentLiveEvent) => void;
 }
 
 export interface AgentLifecycleCreateInput {
   readonly name: string;
+  readonly initial_message?: string;
+  readonly desktop?: boolean;
   readonly machine_included?: boolean;
   readonly workspace_id?: string;
   readonly sandbox_id?: string;
@@ -163,8 +168,34 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly operationReplay?: Pick<
+    import('@chronoai/cma-sdk').Cma['agentEventsV2'],
+    'snapshot' | 'head' | 'events'
+  >;
+  readonly readSuggestedReplies?: (
+    agentId: string,
+    scope: { readonly turn_sequence: number; readonly answer_sequence: number },
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<import('@chronoai/cma-sdk').SuggestedReplyReading>;
+  readonly deliverables?: Pick<
+    Cma['agents'],
+    'answerDeliverables' | 'readAnswerDeliverable' | 'downloadAnswerDeliverable'
+  >;
+  readonly readFeedbackDetails?: (
+    agentId: string,
+    messageId: string,
+    options?: ReadOptions,
+  ) => Promise<import('./feedbackTypes').FeedbackDetails>;
+  readonly setFeedbackReasons?: (
+    agentId: string,
+    messageId: string,
+    body: import('./feedbackTypes').FeedbackReasonRequest,
+    options?: ReadOptions,
+  ) => Promise<import('./feedbackTypes').FeedbackDetails>;
   readonly documents?: DocumentsClient;
   readonly files?: AgentFilesClient;
+  readonly browser?: AgentBrowserClient;
+  readonly browserControl?: AgentBrowserControlClient;
   readonly readMessageFeedback?: (
     agentId: string,
     options?: ReadOptions,
@@ -188,6 +219,13 @@ export interface CmaWebClient {
   readonly agentTransport?: ReturnType<typeof createAgentTransport>;
   readonly resourceViews?: ResourceViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
+  readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly taskExperience?: import('@chronoai/cma-sdk').TaskExperienceClient;
+  readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly readDesktopCapability?: (
+    scope: { readonly workspace_id?: string; readonly sandbox_id?: string },
+    options?: ReadOptions,
+  ) => Promise<import('@chronoai/cma-sdk').DesktopCapability>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
     options: CommandOptions,

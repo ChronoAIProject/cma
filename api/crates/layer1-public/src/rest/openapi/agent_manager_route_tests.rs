@@ -82,9 +82,15 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
             ),
         ))
         .merge(rest::agent_artifacts_router(AgentArtifactService::new(
-            events.store,
-            events.access,
-        )));
+            events.store.clone(),
+            events.access.clone(),
+        )))
+        .merge(rest::answer_deliverables_router(
+            layer2_core::sandbox::answer_deliverables::AnswerDeliverableService::new(
+                agents.state.reads.clone(),
+                AgentArtifactService::new(events.store, events.access),
+            ),
+        ));
     for (path, methods) in OPERATIONS {
         let concrete = path
             .split('/')

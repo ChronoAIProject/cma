@@ -211,10 +211,19 @@ for (const width of [1600, 1024, 390]) {
         fixture.append({ type: 'turn_completed', turn_sequence: 1 });
         await expect(desktop.getByRole('status')).toContainText('Ask the Agent');
         await expectPaintedDesktop();
-        await page.getByRole('button', { name: 'Show files', exact: true }).click();
+        const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+        if (width >= 1284) {
+          await expect(computer).toBeVisible();
+          await page.getByRole('button', { name: 'Hide Agent computer', exact: true }).click();
+        }
+        await expect(computer).toHaveCount(0);
+        await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+        await expect(computer).toBeVisible();
         await expectPaintedDesktop();
-        await page.getByRole('button', { name: 'Close files', exact: true }).click();
+        await computer.getByRole('button', { name: 'Back to conversation', exact: true }).click();
+        await expect(computer).toHaveCount(0);
         await expectPaintedDesktop();
+        await expect(message).toHaveValue('Open a terminal and run pwd where I can see it.');
         expect(fixture.writes).toEqual([]);
         expect(fixture.boundary.writes).toEqual([]);
       } finally {

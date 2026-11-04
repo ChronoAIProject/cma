@@ -981,6 +981,7 @@
           ],
           "agents": [
             {
+              "task_status": "unknown",
               "id": "agt_contract",
               "worktree_id": "wkt_agt_contract",
               "workspace_id": "wks_route",
@@ -994,6 +995,7 @@
               "updated_at": "2026-09-05T00:00:00Z"
             },
             {
+              "task_status": "unknown",
               "id": "agt_sibling",
               "worktree_id": "wkt_agt_sibling",
               "workspace_id": "wks_route",
@@ -1071,6 +1073,7 @@
           ],
           "agents": [
             {
+              "task_status": "unknown",
               "id": "agt_contract",
               "worktree_id": "wkt_agt_contract",
               "workspace_id": "wks_route",
@@ -1084,6 +1087,7 @@
               "updated_at": "2026-09-05T00:00:00Z"
             },
             {
+              "task_status": "unknown",
               "id": "agt_sibling",
               "worktree_id": "wkt_agt_sibling",
               "workspace_id": "wks_route",

@@ -6,7 +6,9 @@ mod admin;
 mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
+pub mod agent_browser_control;
 mod agent_context;
+pub mod agent_environment;
 pub mod agent_filesystem;
 pub mod agent_io;
 pub mod agent_live_skills;
@@ -14,6 +16,8 @@ mod agent_managed_context;
 mod agent_operation;
 mod agent_preferences;
 mod agent_settings;
+pub mod desktop_creation;
+pub mod task_experience;
 pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};
 mod agent_settings_authority;
 pub use agent_live_skills::{AgentSkillInstallStatus, AgentSkillInstallation};
@@ -33,6 +37,7 @@ mod agent_runtime;
 mod agent_service;
 mod agent_work;
 mod agent_worktree_recovery;
+pub mod answer_deliverables;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
     AgentWorktreeRecoveryMutation,
@@ -51,6 +56,7 @@ mod conversation_observation;
 mod conversation_observation_fold;
 pub mod message_feedback;
 pub mod provider_associations;
+pub mod suggestions;
 pub use conversation_observation::{
     AgentDescriptionSource, AgentObservations, AgentRuntimeMetadata, AgentTurnUsage,
     AgentUsageCheckpoint,
@@ -81,6 +87,8 @@ mod first_message_dispatch;
 mod first_message_service;
 pub use failed_provision::SandboxFailedRuntimeProvision;
 mod hierarchy;
+mod task_status;
+pub use task_status::AgentTaskStatus;
 mod home;
 mod home_native;
 pub use home_native::SandboxNativePool;
@@ -227,12 +235,12 @@ pub use credential_prerequisite::{
 pub use error::SandboxModelError;
 pub use event::{
     AgentAvailableCommand, AgentConfigOption, AgentLogEntry, AgentLogKind, AgentPlanStep,
-    SandboxEvent, SandboxEventKind,
+    RecordedToolOutput, SandboxEvent, SandboxEventKind,
 };
 pub use execution::ProvisioningExecution;
 pub use first_message::{
-    FirstMessageDelivery, FirstMessageFailure, FirstMessagePurpose, FirstMessageRecord,
-    MAX_FIRST_MESSAGE_BYTES,
+    FirstMessageDelivery, FirstMessageFailure, FirstMessagePreparation, FirstMessagePurpose,
+    FirstMessageRecord, MAX_FIRST_MESSAGE_BYTES,
 };
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{

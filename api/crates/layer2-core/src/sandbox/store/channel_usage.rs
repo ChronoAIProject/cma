@@ -3,6 +3,7 @@ use crate::{sandbox::channel_usage::*, AgentId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentChannelUsageSnapshot {
+    pub task_status: crate::sandbox::AgentTaskStatus,
     pub provenance: AgentProvenanceSnapshot,
     pub state: AgentChannelUsageState,
 }

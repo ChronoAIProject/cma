@@ -95,8 +95,7 @@ for (const width of [390, 360, 320]) {
         const form = page.getByRole('form', { name: 'Message Agent' });
         const box = (await page.locator('.agent-composer__box').boundingBox())!;
         for (const control of [
-          form.getByRole('button', { name: /^Model and reasoning effort/ }),
-          form.getByRole('button', { name: 'Permission mode', exact: true }),
+          form.getByRole('button', { name: /^Agent settings:/ }),
           form.getByRole('button', { name: 'Context usage', exact: true }),
         ]) {
           await insideViewport(control);
@@ -167,7 +166,7 @@ test('LOCAL shell resize preserves draft, desktop navigation width and manual co
 });
 
 for (const authenticated of [false, true]) {
-  test(`LOCAL landing cannot expand navigation when ${authenticated ? 'signed in' : 'signed out'}`, async ({
+  test(`LOCAL landing preserves ${authenticated ? 'signed in task navigation' : 'signed out compact navigation'}`, async ({
     page,
     baseURL,
   }) => {
@@ -178,23 +177,39 @@ for (const authenticated of [false, true]) {
         route.fulfill({ json: { authenticated: false } }),
       );
     await page.goto('/');
-    await expect(page.getByRole('button', { name: 'Get Started' })).toBeVisible();
+    if (authenticated) {
+      await expect(page.getByRole('heading', { name: 'What would you like to do?' })).toBeVisible();
+      await page.getByLabel('Your task').fill('Retain this Home draft across screen sizes.');
+      await page.getByRole('button', { name: 'Hide navigation', exact: true }).click();
+    } else await expect(page.getByRole('button', { name: 'Get Started' })).toBeVisible();
     for (const width of [1440, 800, 320]) {
       await page.setViewportSize({ width, height: 900 });
       await settleShell(page, width, rail(width));
-      await expect(page.getByRole('button', { name: /(?:Show|Hide) navigation/ })).toHaveCount(0);
-      await expect(page.getByRole('separator', { name: 'Resize navigation' })).toHaveCount(0);
+      if (authenticated) {
+        await expect(page.getByLabel('Your task')).toHaveValue(
+          'Retain this Home draft across screen sizes.',
+        );
+        await expect(
+          page.getByRole('button', { name: 'Show navigation', exact: true }),
+        ).toBeVisible();
+      } else
+        await expect(page.getByRole('button', { name: /(?:Show|Hide) navigation/ })).toHaveCount(0);
+      await expect(page.getByRole('separator', { name: 'Resize navigation' })).toHaveCount(
+        authenticated ? 1 : 0,
+      );
       await expect(page.locator('.frame[data-sidebar-overlay]')).toHaveCount(0);
     }
     if (authenticated) {
       await page.setViewportSize({ width: 1440, height: 900 });
-      await page.getByRole('button', { name: 'Get Started' }).click();
+      await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
       await expect(
         page.getByRole('button', { name: 'Hide navigation', exact: true }),
       ).toBeVisible();
       await page.getByRole('link', { name: 'CMA home' }).click();
-      await expect(page.getByRole('button', { name: 'Get Started' })).toBeVisible();
-      await expect(page.getByRole('button', { name: /(?:Show|Hide) navigation/ })).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: 'What would you like to do?' })).toBeVisible();
+      await expect(page.getByLabel('Your task')).toHaveValue(
+        'Retain this Home draft across screen sizes.',
+      );
     }
     expect(boundary.writes).toEqual([]);
   });

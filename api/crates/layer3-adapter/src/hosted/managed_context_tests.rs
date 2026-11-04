@@ -75,6 +75,7 @@ impl HostedBackend for Files {
                     agent_attachment_upload: false,
                     agent_skill_install: false,
                     agent_model_catalog: false,
+                    agent_browser: false,
                     agent_resource_preparation: false,
                     sandbox_id: identity.sandbox_id,
                     generation: identity.generation + u64::from(self.fault == 5),

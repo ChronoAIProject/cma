@@ -16,6 +16,12 @@ pub(crate) struct GithubProxyConfig {
     upstream: String,
 }
 
+impl GithubProxyConfig {
+    pub(crate) fn socket(&self) -> std::path::PathBuf {
+        self.directory.join("api.sock")
+    }
+}
+
 pub(crate) fn configuration(
     state_root: &Path,
     environment: &mut BTreeMap<String, String>,
