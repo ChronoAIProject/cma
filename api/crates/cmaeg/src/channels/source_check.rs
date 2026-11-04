@@ -125,6 +125,14 @@ pub async fn check(
                 if present { "The configured authentication references are present; caller credentials were not tested." } else { "The configured authentication reference is unavailable." }));
             "custom".into()
         }
+        Source::Github { app_ref, .. } => {
+            let configured = state
+                .github
+                .as_ref()
+                .is_some_and(|gateway| gateway.has_app(app_ref));
+            checks.push(github_webhook_check(app_ref, configured));
+            "github".into()
+        }
     };
     checks.push(item("external_delivery", "External delivery", false,
         "Send a message from the configured platform to verify incoming delivery. This check sends no external messages."));
@@ -146,5 +154,30 @@ fn item(id: &str, label: &str, passed: bool, detail: &str) -> SourceCheck {
             SourceCheckStatus::Unavailable
         },
         detail: detail.into(),
+    }
+}
+
+fn github_webhook_check(app_ref: &str, configured: bool) -> SourceCheck {
+    let detail = if configured {
+        format!("App {app_ref} is loaded; signature and installation checks run at delivery.")
+    } else {
+        format!("App {app_ref} is selected by this channel but is not loaded in CMAEG.")
+    };
+    item("webhook", "GitHub native webhook", configured, &detail)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{github_webhook_check, SourceCheckStatus};
+
+    #[test]
+    fn github_source_check_requires_the_selected_app_to_be_loaded() {
+        let unavailable = github_webhook_check("pilot", false);
+        assert!(matches!(unavailable.status, SourceCheckStatus::Unavailable));
+        assert!(unavailable.detail.contains("not loaded"));
+
+        let passed = github_webhook_check("pilot", true);
+        assert!(matches!(passed.status, SourceCheckStatus::Passed));
+        assert!(passed.detail.contains("is loaded"));
     }
 }

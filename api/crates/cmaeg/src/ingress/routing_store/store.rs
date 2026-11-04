@@ -199,6 +199,24 @@ impl PlanStore {
         })
     }
 
+    pub async fn lookup_task(
+        &self,
+        owner: &str,
+        admission_id: &str,
+    ) -> Result<Option<AdmittedPlan>, AdmissionError> {
+        if owner.is_empty() || admission_id.is_empty() {
+            return Err(AdmissionError::Invalid);
+        }
+        let Some(bytes) = self.read(admission_id).await? else {
+            return Ok(None);
+        };
+        let manifest: Manifest = codec::decode(&bytes)?;
+        if manifest.id != admission_id || manifest.identity.owner != owner {
+            return Ok(None);
+        }
+        self.restore(&manifest).await.map(Some)
+    }
+
     pub(super) async fn restore(
         &self,
         manifest: &Manifest,

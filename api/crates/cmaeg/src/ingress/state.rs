@@ -76,6 +76,30 @@ impl IngressState {
         self.activity = observer;
         self
     }
+
+    pub(crate) async fn launch_github(
+        &self,
+        request: super::launch::LaunchRequest,
+        body: Vec<u8>,
+    ) -> super::launch::LaunchOutcome {
+        let Some(routed) = self.routed.as_ref() else {
+            return super::launch::LaunchOutcome::Refused(cmaeg_core::problem::Problem::new(
+                cmaeg_core::problem::ProblemCode::ProviderUnavailable,
+                503,
+                "github_routing_unavailable",
+            ));
+        };
+        let Ok(hold) = self.inflight.clone().acquire_owned().await else {
+            return super::launch::LaunchOutcome::Refused(cmaeg_core::problem::Problem::new(
+                cmaeg_core::problem::ProblemCode::ProviderUnavailable,
+                503,
+                "github_ingress_unavailable",
+            ));
+        };
+        routed
+            .launch_github_verified(request, body, hold, self.activity.as_ref())
+            .await
+    }
     pub fn with_media_enabled(mut self, enabled: bool) -> Self {
         self.media_enabled = enabled;
         self

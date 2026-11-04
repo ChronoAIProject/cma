@@ -3,7 +3,10 @@
 mod creator;
 pub mod owner_keys;
 
-pub use creator::{Creator, CreatorAuthError, CreatorAuthState, CreatorAuthenticator};
+pub use creator::{
+    Administrator, Creator, CreatorAuthError, CreatorAuthState, CreatorAuthenticator,
+    IntegrationOwner,
+};
 
 pub mod agent;
 pub mod webhook;
