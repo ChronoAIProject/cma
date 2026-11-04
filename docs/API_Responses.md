@@ -32,6 +32,21 @@ an explicit refusal of new admission; callers can remove the expired suggestion.
 Permission or network failures alone never prove that a prior request was refused.
 Clients without a condition retain ordinary append semantics.
 
+A terminally failed Agent closes new command admission. A request that was never
+accepted returns `409 agent_command_not_admissible`, including when its observed
+revision predates the startup failure. Inspect the Agent's status and failure;
+repeating that request cannot reopen it. `agent_command_admission_conflict` is
+reserved for a changed observation of an otherwise eligible Agent.
+
+An already accepted exact scope/key/input remains replayable after startup fails:
+it returns the original command and response identities, including the retained
+terminal failure once the command worker settles it. A changed input under that
+key still conflicts. The creation-time `first_message` is a separate durable
+reservation; its presence does not prove that a subsequent Responses request was
+accepted. Preserve uncertain request identities and retrieve or replay them
+before deciding whether replacement work is safe. See
+[failed conversation startup](CMA_Recovery_Failures.md#failed-conversation-startup).
+
 Internally this condition uses the existing `after_turn` order and reserved
 `cma.answer_sequence` metadata. Applications must not supply that metadata key;
 the condition consumes one of the 16 metadata entries. Persisted commands retain

@@ -19,3 +19,27 @@ pub(super) fn immutable_agent_fields_changed(current: &Agent, next: &Agent) -> b
         || current.created_at != next.created_at
         || current.origin != next.origin
 }
+
+pub(super) fn first_message_matches(
+    current: &Agent,
+    next: &Agent,
+    mutation: &super::AgentWorkMutation,
+    kind: super::agent_work_transition_validation::PublicationKind,
+) -> Result<bool, super::SandboxStoreError> {
+    use super::agent_work_transition_validation::PublicationKind;
+    use crate::sandbox::AgentWorkStep;
+    let mut expected = current.conversation.first_message.clone();
+    if kind == PublicationKind::StartupFailure
+        && matches!(
+            current.work.step,
+            AgentWorkStep::OpenConversation | AgentWorkStep::PublishReady
+        )
+    {
+        if let Some(first) = expected.as_mut() {
+            first
+                .fail_startup(mutation.appended_at.clone())
+                .map_err(|_| super::SandboxStoreError::Conflict)?;
+        }
+    }
+    Ok(expected == next.conversation.first_message)
+}
