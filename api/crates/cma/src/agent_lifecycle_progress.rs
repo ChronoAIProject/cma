@@ -135,3 +135,53 @@ impl InlineAgentLifecycle {
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)
     }
 }
+
+#[async_trait]
+impl AgentLifecycleOperationReader for InlineAgentLifecycle {
+    async fn read(
+        &self,
+        caller: &Caller,
+        operation_id: &str,
+    ) -> Result<AgentLifecycleOperationView, AgentLifecycleOperationReadError> {
+        let record = self
+            .operations
+            .read_for_owner(&caller.subject, operation_id)
+            .await
+            .map_err(|_| AgentLifecycleOperationReadError::Unavailable)?
+            .ok_or(AgentLifecycleOperationReadError::NotFound)?;
+        let mut view = record.view();
+        view.callback_url = callback_url(
+            self.agent_records.as_ref(),
+            &self.agent_page_origin,
+            &record.id,
+            record.agent_id.as_deref(),
+        )
+        .await;
+        Ok(view)
+    }
+}
+
+/// Missing or Deleted Agents yield null; observation errors leave the link unknown.
+pub(super) async fn callback_url(
+    store: &dyn layer2_core::sandbox::store::AgentStore,
+    origin: &layer1_public::agent_page::AgentPageOrigin,
+    operation_id: &str,
+    agent_id: Option<&str>,
+) -> Option<Option<String>> {
+    let id = agent_id?;
+    match store.get_agent(&AgentId(id.into())).await {
+        Ok(agent) => Some(
+            agent
+                .filter(|agent| agent.status != layer2_core::sandbox::AgentStatus::Deleted)
+                .and_then(|agent| origin.agent_url(agent.id.as_str())),
+        ),
+        Err(_) => {
+            tracing::warn!(
+                operation_id,
+                agent_id = id,
+                "could not observe lifecycle Agent page availability"
+            );
+            None
+        }
+    }
+}

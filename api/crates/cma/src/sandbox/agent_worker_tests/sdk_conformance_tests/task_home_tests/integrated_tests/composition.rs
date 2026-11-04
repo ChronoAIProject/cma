@@ -40,6 +40,7 @@ pub(super) async fn router_with_policy(
     let commands = AgentCommandService::new(store.clone(), access.clone(), authority.clone())
         .with_task_experience(policy.clone());
     let services = AgentProjectionServices::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         store.clone(),
         profiles.clone(),
         harness.registry.clone(),
@@ -103,6 +104,8 @@ pub(super) async fn router_with_policy(
         sandboxes.clone(),
         workspaces.clone(),
         services.agents(),
+        store.clone(),
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
         ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
         ProfileCapacityBounds {
@@ -170,7 +173,11 @@ pub(super) async fn router_with_policy(
         .merge(services.conversation_router(context, harness.updates.clone(), "http://127.0.0.1"))
         .merge(services.agent_events_router(flags, harness.updates.clone()))
         .merge(layer1_public::responses::v2::router(
-            layer1_public::responses::v2::ResponsesV2State::new(commands, services.reads()),
+            layer1_public::responses::v2::ResponsesV2State::new(
+                layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
+                commands,
+                services.reads(),
+            ),
         ))
         .merge(rest::hierarchy_router(hierarchy))
         .merge(rest::resource_access_router(access.clone()))

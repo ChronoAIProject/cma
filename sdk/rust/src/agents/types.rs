@@ -203,6 +203,9 @@ pub struct AgentBootstrap {
 /// Complete owner-facing Agent resource with its hierarchy.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Agent {
+    /// Browser page for the actual CMA Agent, when available.
+    #[serde(default)]
+    pub callback_url: Option<String>,
     /// Canonical runtime observations, absent on retained older runtimes.
     pub runtime_metadata: Option<AgentRuntimeMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
