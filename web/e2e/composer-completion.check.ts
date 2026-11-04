@@ -164,7 +164,7 @@ for (const transport of ['agui', 'responses'] as const) {
           true,
         );
         await expect(page.getByText('notes.txt', { exact: true })).toBeVisible();
-        await expect(page.getByText(/Completed in/)).toHaveCount(0);
+        await expect(page.getByText(/Done in/)).toHaveCount(0);
         terminal = true;
         if (transport === 'agui') stream!.write(proof.completed.tail);
         else
@@ -172,9 +172,7 @@ for (const transport of ['agui', 'responses'] as const) {
             stream!.write(
               `event: cma.agent.event\nid: ${item.cursor}\ndata: ${JSON.stringify({ ...item, agent_id: 'agt_contract', incarnation: proof.completed.responses.incarnation })}\n\n`,
             );
-        await expect(page.locator('header').getByRole('status')).toHaveText(
-          'Completed in 4 minutes',
-        );
+        await expect(page.locator('header').getByRole('status')).toHaveText('Done in 4m');
         expect(await field.evaluate((element, previous) => element === previous, original)).toBe(
           true,
         );
@@ -203,13 +201,11 @@ for (const transport of ['agui', 'responses'] as const) {
           fullPage: true,
         });
         await page.reload();
-        await expect(page.locator('header').getByRole('status')).toHaveText(
-          'Completed in 4 minutes',
-        );
+        await expect(page.locator('header').getByRole('status')).toHaveText('Done in 4m');
         outcome = 'interrupted';
         await page.reload();
         await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
-        await expect(page.getByText(/Completed in/)).toHaveCount(0);
+        await expect(page.getByText(/Done in/)).toHaveCount(0);
         expect((v2?.boundary ?? boundary).errors).toEqual([]);
         expect((v2?.boundary ?? boundary).unexpected).toEqual([]);
       } finally {

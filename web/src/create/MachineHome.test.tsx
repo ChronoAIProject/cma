@@ -139,6 +139,7 @@ it.each([
     await waitFor(() =>
       expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
     );
+    fireEvent.click(screen.getByText('Desktop options', { exact: true }));
     expect(screen.getByRole('checkbox', { name: 'Include a shared desktop' })).toBeDisabled();
     expect(screen.getByText(/an existing Sandbox keeps its original setup/)).toBeVisible();
     expect(writes).toHaveLength(0);

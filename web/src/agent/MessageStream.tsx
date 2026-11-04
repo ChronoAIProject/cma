@@ -23,6 +23,7 @@ import type { ResourceStatus } from '../character/status';
 interface MessageStreamProps {
   readonly onReplay?: (turn: string) => void;
   readonly conversation: ConversationState;
+  readonly hideLatestDuration?: boolean;
   readonly approvalBusy?: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
@@ -43,6 +44,7 @@ interface MessageStreamProps {
 export function MessageStream({
   onReplay,
   conversation,
+  hideLatestDuration = false,
   approvalBusy = false,
   approvalReadOnly = false,
   onApproval,
@@ -159,6 +161,7 @@ export function MessageStream({
               continued={entry.kind === 'message' && continued.has(entry.item.id)}
               duration={
                 entry.kind === 'message' &&
+                (!hideLatestDuration || entry.item.runId !== conversation.latestTurnId) &&
                 entry.item.runId !== undefined &&
                 entry.item.runId !== conversation.activeRunId &&
                 finalReply.get(entry.item.runId) === entry.item.id

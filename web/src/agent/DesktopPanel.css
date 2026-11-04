@@ -159,6 +159,16 @@
   height: 100%;
   border: 0;
 }
+.agent-desktop[data-embedded] {
+  height: 100%;
+  min-height: 320px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+}
+.agent-desktop[data-embedded] .agent-desktop__header {
+  padding: 12px;
+  gap: 8px;
+}
 @media (prefers-reduced-motion: reduce) {
   .agent-desktop__header,
   .agent-desktop__frame {
