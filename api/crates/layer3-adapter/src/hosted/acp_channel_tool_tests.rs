@@ -150,7 +150,11 @@ async fn unsupported_or_unproved_existing_runtime_cannot_silently_omit_required_
             updates,
         )
         .await;
-        assert!(matches!(result, Err(crate::AdapterError::Unsupported(_))));
+        if existing {
+            assert!(matches!(result, Err(crate::AdapterError::Rejected(_))));
+        } else {
+            assert!(matches!(result, Err(crate::AdapterError::Unsupported(_))));
+        }
         serving.await.unwrap();
     }
 }

@@ -8,6 +8,7 @@ mod execution_tests;
 mod queued_cancellation_tests;
 mod queued_input_tests;
 mod sandbox_controls_tests;
+mod startup_failure_tests;
 mod suggested_reply_tests;
 mod targeted_control_tests;
 mod work_tests;
