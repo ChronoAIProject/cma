@@ -30,7 +30,11 @@ impl ProviderHostedControlTransport {
                 .header(auth.0, auth.1)
                 .header(
                     reqwest::header::ACCEPT,
-                    crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+                    format!(
+                        "{}, {}",
+                        crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+                        crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
+                    ),
                 )
                 .json(request)
                 .send()

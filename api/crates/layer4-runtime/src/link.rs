@@ -154,12 +154,19 @@ async fn control(
     if let layer3_adapter::wire::ResponseFrame::RuntimeStatus(status) = &mut response {
         // Retained API readers deny unknown fields. Only an explicit opt-in may
         // receive the new capability; the request JSON remains compatible.
-        status.agent_resource_preparation = headers
-            .get_all(header::ACCEPT)
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .flat_map(|value| value.split(','))
-            .any(|value| value.trim() == layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE);
+        let accepts = |media_type| {
+            headers
+                .get_all(header::ACCEPT)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .flat_map(|value| value.split(','))
+                .any(|value| value.trim() == media_type)
+        };
+        status.agent_resource_preparation =
+            accepts(layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE);
+        if accepts(layer3_adapter::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE) {
+            supervisor.advertise_agent_computer_capabilities(status);
+        }
     }
     Json(response).into_response()
 }
