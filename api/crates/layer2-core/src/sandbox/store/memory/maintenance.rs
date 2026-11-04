@@ -50,7 +50,7 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
         if current.profile.always_on == Some(true) {
             return Ok(SandboxMaintenanceOutcome::NotEligible);
         }
-        let activities = live_agent_activities(&state, &current.id)?;
+        let activities = live_agent_activities(&state, &current.id, &request.requested_at)?;
         if request.auto_pause_enabled {
             return persist_application(
                 &mut state,
@@ -88,6 +88,52 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
                     apply_inactivity_pause(&current, &activities, &request)?,
                     request.requested_at,
                 )
+            })
+    }
+
+    async fn preview_inactivity_pause(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+        validate_inactivity_pause_request(&request)?;
+        let state = self.lock();
+        let current = state
+            .sandboxes
+            .get(&request.sandbox_id)
+            .cloned()
+            .ok_or(SandboxStoreError::NotFound)?;
+        if current.profile.always_on == Some(true) {
+            return Ok(SandboxMaintenanceOutcome::NotEligible);
+        }
+        let activities = live_agent_activities(&state, &current.id, &request.requested_at)?;
+        if request.auto_pause_enabled {
+            return preview_application(&current, &activities, &request);
+        }
+        if let crate::sandbox::SandboxCredentialSource::Binding { binding_id, .. } =
+            &current.credential.source
+        {
+            let binding = state
+                .bindings
+                .get(binding_id)
+                .ok_or(SandboxStoreError::NotFound)?;
+            if binding.sandbox_id != current.id || binding.owner != current.owner {
+                return Err(SandboxStoreError::Conflict);
+            }
+            if binding
+                .profile
+                .environment
+                .as_ref()
+                .is_some_and(|environment| environment.always_keep_alive)
+            {
+                return Ok(SandboxMaintenanceOutcome::NotEligible);
+            }
+        }
+        self.profiles
+            .with_sandbox_availability(&current.profile.id, |availability| {
+                if availability.always_keep_alive {
+                    return Ok(SandboxMaintenanceOutcome::NotEligible);
+                }
+                preview_application(&current, &activities, &request)
             })
     }
 
@@ -152,15 +198,33 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
 pub(super) fn live_agent_activities(
     state: &State,
     sandbox_id: &SandboxId,
+    observed_at: &str,
 ) -> Result<Vec<SandboxAgentActivity>, SandboxStoreError> {
+    let observed = crate::seconds_from_rfc3339(observed_at).ok_or(
+        SandboxStoreError::InvalidTransaction("sandbox session observation is invalid"),
+    )?;
+    let open_session = state.sandbox_sessions.iter().any(|((id, _), expires_at)| {
+        id == sandbox_id
+            && crate::seconds_from_rfc3339(expires_at).is_some_and(|expires| expires > observed)
+    });
     sandbox_agents(state, sandbox_id)?
         .into_iter()
         .filter(|agent| agent.status.is_live())
         .map(|agent| {
             let newest = newest_agent_log(state, &agent)?;
-            SandboxAgentActivity::from_live_agent(&agent, newest).map_err(|error| {
-                SandboxStoreError::Corrupt(format!("stored live Agent is invalid: {error}"))
-            })
+            let mut activity =
+                SandboxAgentActivity::from_live_agent(&agent, newest).map_err(|error| {
+                    SandboxStoreError::Corrupt(format!("stored live Agent is invalid: {error}"))
+                })?;
+            // A command can be admitted before its Agent checkpoint catches up.
+            // Treat every nonterminal durable receipt as external activity so a
+            // queued UI/API/channel/trigger input cannot be mistaken for idle.
+            activity.external_activity_present = state.agent_commands.values().any(|command| {
+                command.receipt.envelope.agent_id == agent.id && !command.status.is_terminal()
+            });
+            activity.open_terminal_or_desktop_session =
+                open_session || crate::sandbox::has_open_desktop_session(&agent.sandbox_id);
+            Ok(activity)
         })
         .collect()
 }
@@ -232,6 +296,17 @@ fn persist_application(
     append_sandbox_event(&mut candidate, &id, appended_at, event)?;
     *state = candidate;
     Ok(SandboxMaintenanceOutcome::Scheduled)
+}
+
+fn preview_application(
+    current: &Sandbox,
+    activities: &[SandboxAgentActivity],
+    request: &SandboxInactivityPauseRequest,
+) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+    match apply_inactivity_pause(current, activities, request)? {
+        SandboxMaintenanceApplication::Complete(outcome) => Ok(outcome),
+        SandboxMaintenanceApplication::Persist { .. } => Ok(SandboxMaintenanceOutcome::Scheduled),
+    }
 }
 
 pub(super) fn validate_event_stream(

@@ -74,6 +74,14 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
         schedule(self, MaintenanceRequest::Inactivity(request)).await
     }
 
+    async fn preview_inactivity_pause(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+        validate_inactivity_pause_request(&request)?;
+        preview(self, MaintenanceRequest::Inactivity(request)).await
+    }
+
     async fn set_sandbox_always_on(
         &self,
         sandbox_id: SandboxId,
@@ -194,4 +202,28 @@ async fn schedule(
         "sandbox maintenance exhausted its retry budget: {}",
         last_transient.unwrap_or_else(|| "no driver result".into())
     )))
+}
+
+async fn preview(
+    store: &MongoSandboxStore,
+    request: MaintenanceRequest,
+) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+    let mut session = store
+        .client
+        .start_session()
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    start_transaction(&mut session)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    let result = apply(store, &request, &mut session).await;
+    let abort = session.abort_transaction().await;
+    if let Err(error) = abort {
+        return Err(SandboxStoreError::Unavailable(error.to_string()));
+    }
+    match result {
+        Ok(receipt) => Ok(receipt.outcome),
+        Err(ApplyError::Domain(error)) => Err(error),
+        Err(ApplyError::Driver(error)) => Err(SandboxStoreError::Unavailable(error.to_string())),
+    }
 }

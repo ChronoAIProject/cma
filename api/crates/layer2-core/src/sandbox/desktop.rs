@@ -1,13 +1,17 @@
 //! Owner-authorized access to the desktop of a retained Sandbox.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use layer3_adapter::{DesktopConnectionHandle, RuntimeHandle, SandboxAdapter};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
-use super::{AgentReadService, AgentStatus, SandboxStatus};
-use crate::{AgentId, Caller, Capability};
+use super::{
+    register_open_desktop_session, unregister_open_desktop_session, AgentReadService, AgentStatus,
+    SandboxStatus,
+};
+use crate::ids::SandboxCommandId;
+use crate::{rfc3339_at, AgentId, Caller, Capability, SandboxId};
 
 pub use layer3_adapter::DesktopFrame;
 
@@ -29,11 +33,23 @@ pub struct DesktopService {
 
 pub struct DesktopConnection {
     connection: DesktopConnectionHandle,
+    sandbox_id: SandboxId,
+    session_id: String,
     runtime_id: String,
     _lease: OwnedMutexGuard<()>,
 }
 
+impl Drop for DesktopConnection {
+    fn drop(&mut self) {
+        unregister_open_desktop_session(&self.sandbox_id);
+    }
+}
+
 impl DesktopConnection {
+    pub fn session_ids(&self) -> (SandboxId, String) {
+        (self.sandbox_id.clone(), self.session_id.clone())
+    }
+
     pub async fn send(&mut self, frame: DesktopFrame) -> Result<(), DesktopError> {
         self.connection
             .send(frame)
@@ -108,9 +124,27 @@ impl DesktopService {
         id: &AgentId,
         connection: &mut DesktopConnection,
     ) -> bool {
-        self.authorize(caller, id)
+        let Ok((sandbox_id, runtime)) = self.authorize(caller, id).await else {
+            return false;
+        };
+        if runtime != connection.runtime_id {
+            return false;
+        }
+        self.reads
+            .renew_sandbox_session(
+                &SandboxId(sandbox_id),
+                &connection.session_id,
+                &session_expiry(),
+            )
             .await
-            .is_ok_and(|(_, runtime)| runtime == connection.runtime_id)
+            .is_ok()
+    }
+
+    pub async fn close(&self, sandbox_id: SandboxId, session_id: String) {
+        let _ = self
+            .reads
+            .close_sandbox_session(&sandbox_id, &session_id)
+            .await;
     }
 
     pub async fn open(
@@ -126,7 +160,7 @@ impl DesktopService {
                 .get(&sandbox_id)
                 .and_then(Weak::upgrade)
                 .unwrap_or_default();
-            leases.insert(sandbox_id, Arc::downgrade(&lease));
+            leases.insert(sandbox_id.clone(), Arc::downgrade(&lease));
             lease.try_lock_owned().map_err(|_| DesktopError::Busy)?
         };
         let connection = tokio::time::timeout(
@@ -137,10 +171,23 @@ impl DesktopService {
         .await
         .map_err(|_| DesktopError::RuntimeUnavailable)?
         .map_err(|_| DesktopError::RuntimeUnavailable)?;
+        let sandbox_id = SandboxId(sandbox_id);
+        let session_id = SandboxCommandId::generate().to_string();
+        self.reads
+            .open_sandbox_session(&sandbox_id, &session_id, &session_expiry())
+            .await
+            .map_err(|_| DesktopError::Unavailable)?;
+        register_open_desktop_session(&sandbox_id);
         Ok(DesktopConnection {
             connection,
+            sandbox_id,
+            session_id,
             runtime_id,
             _lease: lease,
         })
     }
+}
+
+fn session_expiry() -> String {
+    rfc3339_at(SystemTime::now() + Duration::from_secs(90))
 }

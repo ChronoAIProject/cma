@@ -38,6 +38,38 @@ pub enum SandboxMaintenanceOutcome {
     NotEligible,
 }
 
+/// Short lived owner-facing terminal/desktop session leases. The lease is
+/// additive evidence for inactivity and is fenced by the store adapter so a
+/// concurrent open stream cannot race a pause admission.
+#[async_trait]
+pub trait SandboxSessionStore: Send + Sync {
+    async fn open_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        session_id: &str,
+        lease_expires_at: &str,
+    ) -> Result<(), SandboxStoreError>;
+
+    async fn renew_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        session_id: &str,
+        lease_expires_at: &str,
+    ) -> Result<(), SandboxStoreError>;
+
+    async fn close_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        session_id: &str,
+    ) -> Result<(), SandboxStoreError>;
+
+    async fn has_open_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        observed_at: &str,
+    ) -> Result<bool, SandboxStoreError>;
+}
+
 /// A fully decided mutation which an adapter can persist transactionally.
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +192,13 @@ pub trait SandboxMaintenanceStore: Send + Sync {
     ) -> Result<Page<SandboxId>, SandboxStoreError>;
 
     async fn schedule_inactivity_pause(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError>;
+
+    /// Evaluate the same evidence and policy fences as an inactivity pause
+    /// without committing the resulting lifecycle mutation.
+    async fn preview_inactivity_pause(
         &self,
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError>;
