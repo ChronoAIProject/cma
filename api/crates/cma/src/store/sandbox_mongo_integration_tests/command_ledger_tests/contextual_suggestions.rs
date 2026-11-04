@@ -16,6 +16,7 @@ use tower::ServiceExt;
 
 mod completed_operation;
 mod lifecycle;
+#[cfg(feature = "real-model-suggestion-samples")]
 mod samples;
 
 struct NoRuntime;
