@@ -108,6 +108,68 @@ async fn metrics_admission_coalesces_and_enforces_tenant_and_shared_queue_limits
 }
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn metrics_admission_reserves_exact_bytes_across_budget_changes() {
+    let original = fixture().await;
+    let mut store = (*original).clone();
+    store.budgets.report_bytes = 200;
+    store.budgets.tenant_bytes = 300;
+    store.budgets.global_bytes = 450;
+    let at = now();
+    let query = ReportInput::default().validate(at).unwrap();
+    store
+        .submit(scope("owner", false), query.clone(), at)
+        .await
+        .unwrap();
+    let mut larger_worker = store.clone();
+    larger_worker.budgets.report_bytes = 300;
+    let lease = larger_worker
+        .claim_report("report:0", "larger-worker")
+        .await
+        .unwrap()
+        .unwrap();
+    let chart = doc! {"_id":"budget-test","document_schema_version":1_i64,"record":"x".repeat(210)};
+    assert!(matches!(
+        larger_worker
+            .write_report_chunk(&lease, &[], vec![chart])
+            .await,
+        Err(MetricsError::Busy)
+    ));
+    let mut changed = query.clone();
+    changed.filters.search = "second".into();
+    assert!(matches!(
+        store
+            .submit(scope("owner", false), changed.clone(), at)
+            .await,
+        Err(MetricsError::Busy)
+    ));
+    let mut reduced = store.clone();
+    reduced.budgets.report_bytes = 100;
+    reduced
+        .submit(scope("owner", false), changed, at)
+        .await
+        .unwrap();
+    reduced
+        .submit(scope("another", false), query.clone(), at)
+        .await
+        .unwrap();
+    // Only 50 bytes remain globally. The new 100-byte reservation must fail,
+    // even though three jobs times the new smaller budget would leave room.
+    assert!(matches!(
+        reduced.submit(scope("third", false), query, at).await,
+        Err(MetricsError::Busy)
+    ));
+    assert_eq!(
+        store
+            .collection(JOBS)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        3
+    );
+    store.db.drop().await.unwrap();
+}
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn metrics_lease_takeover_fences_old_writes_and_cache_rechecks_current_owner() {
     let store = fixture().await;
     let at = now();
