@@ -10,7 +10,17 @@ admission11/12, saved generation13, operation output14, browser-aware runtime
 status15, desktop preparation journal16, control identity/revision17 and replay18.
 Task19 policy adds no migration that may delete these records on disable.
 
-The parent baseline decoder rejects the new `agent_browser` runtime field.
+The parent baseline decoder rejects an unnegotiated `agent_browser` runtime field.
+The integrated runtime preserves the legacy status shape unless the caller sends
+`Accept: application/vnd.chrono.cma.agent-computer-status+json`. This opt-in
+advertises browser, filesystem and attachment capabilities supported by that
+runtime. The separate `agent-resources-status` media type opts in only to resource
+preparation; callers can request both media types in one Accept header. Embedded
+Workspace status remains in the legacy shape regardless of Accept. Both native
+and provider transports request the new capabilities; retained runtimes can ignore
+the header, leaving unsupported capabilities absent. This wire compatibility does
+not lower the durable-record recovery floor.
+
 The real old15 executable accepts its legacy positive control but fails on
 retained desktop metadata. Neither is an approved rollback binary. No older
 schema is substituted to make accepted work readable.
