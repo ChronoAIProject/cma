@@ -469,6 +469,7 @@ fn sandbox() -> Sandbox {
             id: SandboxProfileId::generate(),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

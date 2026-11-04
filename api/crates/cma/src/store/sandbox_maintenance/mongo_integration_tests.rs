@@ -153,6 +153,7 @@ fn pause(id: &SandboxId) -> SandboxInactivityPauseRequest {
         sandbox_id: id.clone(),
         requested_at: LATER.into(),
         pause_after_seconds: 900,
+        auto_pause_enabled: false,
     }
 }
 

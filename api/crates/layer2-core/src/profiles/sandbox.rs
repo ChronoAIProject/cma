@@ -267,6 +267,10 @@ pub struct SandboxProfileSnapshot {
     pub id: SandboxProfileId,
     pub revision: u32,
     pub digest: String,
+    /// Per-Sandbox owner preference. `None` preserves historical profile
+    /// availability until the platform auto-pause policy is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub always_on: Option<bool>,
     pub content: SandboxProfileContent,
 }
 
@@ -276,6 +280,7 @@ impl From<&SandboxProfileRevision> for SandboxProfileSnapshot {
             id: revision.profile_id.clone(),
             revision: revision.revision,
             digest: revision.digest.clone(),
+            always_on: None,
             content: revision.content.clone(),
         }
     }
