@@ -66,7 +66,12 @@ pub(crate) async fn conversation_fixture_with_registry<R: AgentRuntimeRegistry +
         Arc::new(defaults),
     );
     (
-        crate::AgentConversationState::new(reads, operations, context),
+        crate::AgentConversationState::new(
+            crate::agent_page::AgentPageOrigin::test(),
+            reads,
+            operations,
+            context,
+        ),
         store,
     )
 }

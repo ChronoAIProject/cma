@@ -9,6 +9,7 @@ use layer2_core::OperationStore;
 pub struct AgentRoutesState {
     pub(in crate::rest) suggestions:
         Option<Arc<layer2_core::sandbox::suggestions::SuggestionService>>,
+    pub(crate) agent_page_origin: crate::agent_page::AgentPageOrigin,
     pub(in crate::rest) message_feedback:
         Option<Arc<layer2_core::sandbox::message_feedback::MessageFeedbackService>>,
     pub(in crate::rest) skill_support:
@@ -56,6 +57,7 @@ impl AgentRoutesState {
     }
 
     pub fn new(
+        agent_page_origin: crate::agent_page::AgentPageOrigin,
         agents: Arc<AgentService>,
         reads: Arc<AgentReadService>,
         agent_operations: Arc<AgentOperationService>,
@@ -63,6 +65,7 @@ impl AgentRoutesState {
     ) -> Self {
         Self {
             suggestions: None,
+            agent_page_origin,
             message_feedback: None,
             skill_support: None,
             commands: None,

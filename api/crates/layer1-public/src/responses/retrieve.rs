@@ -47,7 +47,7 @@ pub(super) async fn retrieve(
         Ok(snapshot) => snapshot,
         Err(error) => return read_failure(error, "response_not_found"),
     };
-    match project(&agent, &history, turn) {
+    match project(&state.agent_page_origin, &agent, &history, turn) {
         Some(response) => Json(response).into_response(),
         None => not_found(),
     }
@@ -84,6 +84,7 @@ pub(super) fn parse_response_id(value: &str) -> Option<(AgentId, u64)> {
 }
 
 pub(super) fn project(
+    origin: &crate::agent_page::AgentPageOrigin,
     agent: &Agent,
     history: &[AgentLogEntry],
     turn: u64,
@@ -101,7 +102,7 @@ pub(super) fn project(
         .iter()
         .position(|entry| matches!(entry.kind, AgentLogKind::TurnStarted { .. }))
         .map_or(history.len(), |offset| start + 1 + offset);
-    let mut response = empty(agent, turn);
+    let mut response = empty(origin, agent, turn);
     response.model = super::model::for_turn(
         agent.profile.content.model.as_deref(),
         turn,
@@ -207,8 +208,13 @@ pub(super) fn output_id(agent: &AgentId, turn: u64, index: usize) -> String {
     }
 }
 
-pub(super) fn empty(agent: &Agent, turn: u64) -> ResponseObject {
+pub(super) fn empty(
+    origin: &crate::agent_page::AgentPageOrigin,
+    agent: &Agent,
+    turn: u64,
+) -> ResponseObject {
     ResponseObject {
+        callback_url: origin.agent_url(agent.id.as_str()),
         id: response_id(&agent.id, turn),
         object: "response",
         created_at: 0,

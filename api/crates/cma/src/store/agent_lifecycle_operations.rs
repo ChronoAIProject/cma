@@ -401,6 +401,7 @@ impl LifecycleRecord {
 
     pub(crate) fn view(&self) -> AgentLifecycleOperationView {
         AgentLifecycleOperationView {
+            callback_url: None,
             id: self.id.clone(),
             status: self.status.clone(),
             phase: self.phase.clone(),

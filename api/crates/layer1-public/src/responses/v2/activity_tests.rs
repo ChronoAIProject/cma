@@ -61,7 +61,12 @@ fn response(kinds: &[AgentLogKind]) -> V2ResponseObject {
         },
         metadata: Default::default(),
     };
-    project(reading, &snapshot).unwrap()
+    project(
+        &crate::agent_page::AgentPageOrigin::test(),
+        reading,
+        &snapshot,
+    )
+    .unwrap()
 }
 fn started(call: &str, title: &str) -> AgentLogKind {
     AgentLogKind::ToolCallStarted {

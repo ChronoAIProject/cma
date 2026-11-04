@@ -156,6 +156,7 @@ pub(crate) fn router(state: AgentConversationState, store: Arc<InMemorySandboxSt
         AgentCommandWorker::new(store, execution, "protocol-contract-worker".into()).unwrap();
     let v2 = state.commands.clone().map_or_else(Router::new, |commands| {
         crate::responses::v2::router(crate::responses::v2::ResponsesV2State::new(
+            crate::agent_page::AgentPageOrigin::test(),
             commands,
             state.reads.clone(),
         ))
