@@ -83,7 +83,13 @@ fn project(kinds: &[AgentLogKind], turn: u64, active: bool) -> (ResponseObject, 
             kind: kind.clone(),
         })
         .collect();
-    let legacy = super::super::retrieve::project(&agent, &entries, turn).unwrap();
+    let legacy = super::super::retrieve::project(
+        &crate::agent_page::AgentPageOrigin::test(),
+        &agent,
+        &entries,
+        turn,
+    )
+    .unwrap();
     let snapshot = AgentEventStreamSnapshot {
         id: agent.id.clone(),
         created_at: AT.into(),
@@ -128,7 +134,12 @@ fn project(kinds: &[AgentLogKind], turn: u64, active: bool) -> (ResponseObject, 
     };
     (
         legacy,
-        super::projection::project(reading, &snapshot).unwrap(),
+        super::projection::project(
+            &crate::agent_page::AgentPageOrigin::test(),
+            reading,
+            &snapshot,
+        )
+        .unwrap(),
     )
 }
 

@@ -102,6 +102,13 @@ Repository access, missing ref and unsafe preparation errors are separate from
 task execution outcomes. A terminal preparation failure retains the original
 operation and draft; correcting its source requires an explicit new task.
 
+Agent detail GETs (personal and shared) and lifecycle operations expose optional
+`callback_url`, the browser page `{CHRONO_SERVER_PUBLIC_URL}/agents/{encoded agent_id}`
+with any trailing origin slash removed; request headers and caller data do not set it.
+Lifecycle operations omit it before an Agent ID exists or if its store observation fails,
+return a URL for a retained non-Deleted Agent, and return explicit `null` for a
+Deleted or missing Agent; receipt and list shapes are unchanged.
+
 For a new Sandbox, `machine_included: true` selects the deployment's immutable
 Linux desktop image. The Machine contains an XFCE desktop with an applications
 menu, taskbar, desktop icons, Thunar file manager, terminal and Chromium launcher.

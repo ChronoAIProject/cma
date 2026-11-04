@@ -285,6 +285,7 @@
             "event": "response.created",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,
@@ -327,6 +328,7 @@
             "event": "response.in_progress",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,
@@ -369,6 +371,7 @@
             "event": "response.completed",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,
@@ -434,6 +437,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "callback_url": "https://cma.example/agents/agt_contract",
           "id": "resp_agt_contract_12",
           "object": "response",
           "created_at": 1700000000,
@@ -719,6 +723,7 @@
             "event": "response.created",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,
@@ -761,6 +766,7 @@
             "event": "response.in_progress",
             "data": {
               "response": {
+                "callback_url": "https://cma.example/agents/agt_contract",
                 "id": "resp_agt_contract_12",
                 "object": "response",
                 "created_at": 1700000000,

@@ -182,6 +182,9 @@ pub struct AgentLifecycleEvent {
 /// Owner-visible durable provisioning progress.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentLifecycleOperation {
+    /// Browser page for the actual CMA Agent, when available.
+    #[serde(default)]
+    pub callback_url: Option<String>,
     /// Durable operation identity.
     pub id: String,
     /// Global provisioning state.

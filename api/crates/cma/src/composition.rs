@@ -53,7 +53,6 @@ pub(crate) struct ControlPlaneComposition {
     pub native_prepared: crate::sandbox::native_prepared::NativePreparedWorker,
     pub agent_access_worker: crate::agent_access_worker::AgentAccessWorker,
 }
-
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
         let mut stores = MongoStores::connect_with_authority(
@@ -150,7 +149,10 @@ impl ControlPlaneComposition {
         .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
         let resource_access = bindings::resource_access(&stores, auth.clone());
+        let agent_page_origin = layer1_public::agent_page::AgentPageOrigin::new(&config.public_url)
+            .map_err(|error| error.to_string())?;
         let projections = AgentProjectionServices::new(
+            agent_page_origin.clone(),
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
             Arc::clone(&live_agents),
@@ -164,9 +166,7 @@ impl ControlPlaneComposition {
             adapter.clone(),
         )))
         .with_resource_access(resource_access.clone())
-        .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(Arc::clone(
-            &adapter,
-        ))));
+        .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
             config.image_manager_base_url.clone(),
         )
@@ -175,6 +175,8 @@ impl ControlPlaneComposition {
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),
             projections.agents(),
+            stores.sandbox_model.clone(),
+            agent_page_origin.clone(),
             stores.sandbox_profiles.clone(),
             image_resolver.clone(),
             authoring_bounds,
@@ -374,6 +376,7 @@ impl ControlPlaneComposition {
             &stores,
             command_service.clone(),
             projections.reads(),
+            agent_page_origin,
             &bindings,
             config.gateway.as_ref(),
         )?;
@@ -476,7 +479,6 @@ impl ControlPlaneComposition {
                 config.gateway.as_ref(),
             )?),
         );
-
         Ok(Self {
             router,
             auth,

@@ -45,6 +45,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "callback_url": "https://cma.example/agents/agt_contract",
           "id": "resp_agt_contract_3",
           "object": "response",
           "created_at": 1788566400,
