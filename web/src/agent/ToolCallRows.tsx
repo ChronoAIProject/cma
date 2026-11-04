@@ -76,9 +76,12 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   readonly group: ToolGroup;
   readonly activeRunId: string | undefined;
 }) {
-  // Until the reader chooses, a failure that joins the group opens it.
   const [chosen, setChosen] = useState<boolean>();
-  const open = chosen ?? group.failed;
+  const open =
+    chosen ??
+    (group.failed &&
+      activeRunId !== undefined &&
+      group.items.some((tool) => tool.runId === activeRunId));
   const rowsId = useId();
   // A settled group repeats no command line: only work still running or calls that
   // failed are worth a reader's glance before they choose to open it.

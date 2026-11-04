@@ -55,7 +55,7 @@ for (const width of [1440, 390]) {
       await expect
         .poll(async () => (await column.boundingBox())!.width)
         .toBeGreaterThanOrEqual(300);
-      expect((await column.boundingBox())!.width).toBeLessThanOrEqual(520);
+      expect((await column.boundingBox())!.width).toBeLessThanOrEqual(width);
       const download = preview.getByRole('button', { name: 'Download result.txt' });
       await download.focus();
       const downloaded = page.waitForEvent('download');

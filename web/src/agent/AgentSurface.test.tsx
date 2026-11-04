@@ -131,7 +131,7 @@ it.each([false, true])(
       />
     );
     const view = render(draw());
-    const link = screen.getByRole('link', { name: 'Current plan: 1/3 steps · Step 2' });
+    const link = screen.getByRole('link', { name: 'Current plan: Working · step 2 of 3' });
     expect(link.closest('header')).not.toBeNull();
     expect(link).toHaveAttribute('href', `#${screen.getByRole('region', { name: 'Plan' }).id}`);
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
@@ -297,7 +297,7 @@ it('preserves a draft and visible history while incomplete event activity retrie
     expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
     expect(
       screen
-        .getByText('Conversation activity is unavailable. Reconnecting.')
+        .getByText('Earlier activity could not be loaded. Retrying…')
         .closest('[role="status"]'),
     ).toBeInTheDocument();
     const draft = screen.getByRole('textbox', { name: 'Message' });
@@ -308,13 +308,13 @@ it('preserves a draft and visible history while incomplete event activity retrie
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(
       screen
-        .getByText('Conversation activity is unavailable. Reconnecting.')
+        .getByText('Earlier activity could not be loaded. Retrying…')
         .closest('[role="status"]'),
     ).toHaveAttribute('inert');
     expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
     await act(() => vi.advanceTimersByTimeAsync(200));
     expect(
-      screen.queryByText('Conversation activity is unavailable. Reconnecting.'),
+      screen.queryByText('Earlier activity could not be loaded. Retrying…'),
     ).not.toBeInTheDocument();
     expect(draft).toHaveValue('Retain this unsubmitted draft');
     expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
@@ -323,9 +323,7 @@ it('preserves a draft and visible history while incomplete event activity retrie
     fireEvent.click(screen.getByRole('button', { name: 'Reload conversation' }));
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
-    expect(
-      screen.getByText('Conversation activity is unavailable. Reconnecting.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Earlier activity could not be loaded. Retrying…')).toBeInTheDocument();
   } finally {
     view.unmount();
     vi.useRealTimers();
@@ -668,8 +666,9 @@ it('removes completed preparation while preserving active and failed preparation
 });
 import '../test/connectedAccounts';
 
-it('keeps the composer and history mounted beside the Machine and across viewer toggles', async () => {
+it('routes desktop access through the common computer panel while preserving the conversation', async () => {
   const client = agentClient();
+  const openComputer = vi.fn();
   const draw = (desktop = true, accessUncertain = false) => (
     <CmaClientProvider client={client}>
       <AgentSurface
@@ -682,6 +681,7 @@ it('keeps the composer and history mounted beside the Machine and across viewer 
           conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
         })}
         detailsOpen={false}
+        onFilesOpenChange={openComputer}
         onDetailsOpenChange={vi.fn()}
         onNavigate={vi.fn()}
       />
@@ -691,15 +691,9 @@ it('keeps the composer and history mounted beside the Machine and across viewer 
   const input = screen.getByRole('textbox', { name: 'Message' });
   const history = screen.getByText('The repository is ready.');
   fireEvent.change(input, { target: { value: 'Open a terminal on the desktop' } });
-  expect(screen.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Hide machine desktop' })).toHaveAttribute(
-    'aria-expanded',
-    'true',
-  );
-  fireEvent.click(screen.getByRole('button', { name: 'Close machine desktop' }));
   expect(screen.queryByRole('region', { name: 'Machine desktop' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Open machine desktop' }));
-  expect(screen.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Show Agent computer' }));
+  expect(openComputer).toHaveBeenCalledWith(true);
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
   expect(input).toHaveValue('Open a terminal on the desktop');
   expect(screen.getByText('The repository is ready.')).toBe(history);

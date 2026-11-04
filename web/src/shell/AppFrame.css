@@ -161,6 +161,10 @@
   grid-template-rows: 30dvh minmax(0, 1fr);
 }
 
+.frame[data-phone][data-details-overlay]:not([data-sidebar-overlay]) .frame__details {
+  width: 100%;
+}
+
 .frame[data-details-inline] .frame__sidebar {
   grid-row: 1 / -1;
 }

@@ -11,17 +11,15 @@ export function TurnCompletion({ conversation }: { readonly conversation: Conver
   const seconds = Math.floor(elapsed / 1000);
   const minutes = Math.floor(seconds / 60);
   const remaining = seconds % 60;
-  const part = (count: number, unit: string) => `${count} ${unit}${count === 1 ? '' : 's'}`;
   const duration =
     seconds === 0
-      ? 'less than 1 second'
-      : [
-          ...(minutes > 0 ? [part(minutes, 'minute')] : []),
-          ...(remaining > 0 ? [part(remaining, 'second')] : []),
-        ].join(' ');
+      ? '<1s'
+      : [...(minutes > 0 ? [`${minutes}m`] : []), ...(remaining > 0 ? [`${remaining}s`] : [])].join(
+          ' ',
+        );
   return (
     <span className="agent-toolbar__completion" role="status" aria-atomic="true">
-      Completed in {duration}
+      Done in {duration}
     </span>
   );
 }

@@ -59,28 +59,35 @@ test('native operations survive real public history, keyboard replay and authori
     });
     await page.goto('/agents/agt_contract');
     const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
-    await computer.getByRole('tab', { name: 'Operation output' }).click();
+    await computer.getByRole('tab', { name: 'Terminal' }).click();
     const replay = computer.getByRole('region', { name: 'Operation record replay' });
-    await expect(replay.locator('pre')).toHaveText('native-replay-4\n');
+    const revealOutput = async (text: string) => {
+      const output = replay.getByLabel('Recorded output', { exact: true });
+      await expect(output).toHaveText(text);
+      await expect(output).not.toBeVisible();
+      await replay.locator('summary').click();
+      await expect(output).toBeVisible();
+    };
+    await revealOutput('native-replay-4\n');
     await replay.getByRole('button', { name: 'Previous operation' }).click();
-    await expect(replay.locator('pre')).toHaveText('native-replay-3\n');
+    await revealOutput('native-replay-3\n');
     await replay.getByRole('button', { name: 'Previous operation' }).press('ArrowLeft');
-    await expect(replay.locator('pre')).toHaveText('native-replay-2\n');
+    await revealOutput('native-replay-2\n');
     const cursor = await replay.getByText(/^Cursor /).innerText();
     await page.screenshot({ path: info.outputPath('native-operation-2-desktop.png') });
     await page.reload();
-    await computer.getByRole('tab', { name: 'Operation output' }).click();
-    await expect(replay.locator('pre')).toHaveText('native-replay-2\n');
+    await computer.getByRole('tab', { name: 'Terminal' }).click();
+    await revealOutput('native-replay-2\n');
     await expect(replay.getByText(cursor, { exact: true })).toBeVisible();
     await expect(replay.getByText('Turn 3', { exact: true })).toBeVisible();
     await expect(
-      replay.locator('input, textarea, iframe, canvas, [contenteditable=true]'),
+      replay.locator('input:not([type=range]), textarea, iframe, canvas, [contenteditable=true]'),
     ).toHaveCount(0);
     await replay.getByRole('button', { name: 'Return Live' }).press('End');
-    await expect(replay.locator('pre')).toHaveText('native-replay-4\n');
+    await revealOutput('native-replay-4\n');
     await page.setViewportSize({ width: 390, height: 844 });
     await replay.getByRole('button', { name: 'Previous operation' }).click();
-    await expect(replay.locator('pre')).toHaveText('native-replay-3\n');
+    await revealOutput('native-replay-3\n');
     expect(await replay.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true,
     );
