@@ -9,6 +9,7 @@ import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { DesktopOption } from './DesktopOption';
+import { MachineOption } from './MachineOption';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { useTaskExperience } from '../taskExperience';
 import { useTaskDraft } from './taskDraft';
@@ -101,6 +102,9 @@ function TaskComposer({
     return () => abort.abort();
   }, [client]);
   const canCreate = Boolean(viewerId && (workspaceId || sandboxId || canCreateSandbox));
+  const machineIncludedAvailable = Boolean(
+    viewerId && !workspaceId && !sandboxId && canCreateSandbox,
+  );
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const connections = useConnectionGate(Boolean(viewerId), client);
   const { intent, operation } = lifecycle;
@@ -112,7 +116,13 @@ function TaskComposer({
     workspaceId,
     sandboxId,
   );
-  const handoff = useLifecycleTransport(client, operation, intent?.receipt?.id, viewerId);
+  const handoff = useLifecycleTransport(
+    client,
+    operation,
+    intent?.receipt?.id,
+    viewerId,
+    intent?.body.machine_included === true,
+  );
   const opened = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!agent || !operation || opened.current === operation.id) return;
@@ -160,20 +170,22 @@ function TaskComposer({
           )
             return;
           const invalid =
-            draft.desktop && (!desktopAvailable || !policy.desktop_enable)
-              ? 'Desktop is unavailable. Keep the task and clear the desktop option, or try again later.'
-              : !draft.text.trim()
-                ? 'Describe a task before starting.'
-                : new TextEncoder().encode(draft.text).length > 262144
-                  ? 'Your task exceeds the 262144-byte limit.'
-                  : draft.repositoryUrl && !repositorySupported
-                    ? 'Repository tasks are unavailable on this service. Clear the repository to start an empty workspace.'
-                    : !validRepository(draft.repositoryUrl)
-                      ? 'Enter an HTTPS GitHub repository URL.'
-                      : draft.repositoryRef &&
-                          (!draft.repositoryUrl || !validRepositoryRef(draft.repositoryRef))
-                        ? 'Enter a valid repository ref with a repository URL.'
-                        : undefined;
+            draft.machineIncluded && !machineIncludedAvailable
+              ? 'A shared desktop requires a new Sandbox. Keep the task and clear the shared desktop option.'
+              : draft.desktop && (!desktopAvailable || !policy.desktop_enable)
+                ? 'Desktop is unavailable. Keep the task and clear the desktop option, or try again later.'
+                : !draft.text.trim()
+                  ? 'Describe a task before starting.'
+                  : new TextEncoder().encode(draft.text).length > 262144
+                    ? 'Your task exceeds the 262144-byte limit.'
+                    : draft.repositoryUrl && !repositorySupported
+                      ? 'Repository tasks are unavailable on this service. Clear the repository to start an empty workspace.'
+                      : !validRepository(draft.repositoryUrl)
+                        ? 'Enter an HTTPS GitHub repository URL.'
+                        : draft.repositoryRef &&
+                            (!draft.repositoryUrl || !validRepositoryRef(draft.repositoryRef))
+                          ? 'Enter a valid repository ref with a repository URL.'
+                          : undefined;
           setValidation(invalid);
           if (invalid) return;
           if (!draft.persist()) return;
@@ -181,6 +193,7 @@ function TaskComposer({
             name: 'New task',
             initial_message: draft.text,
             ...(draft.desktop ? { desktop: true } : {}),
+            ...(draft.machineIncluded ? { machine_included: true } : {}),
             ...(!workspaceId && !sandboxId && draft.repositoryUrl
               ? {
                   repository: {
@@ -246,6 +259,12 @@ function TaskComposer({
               : 'Repository tasks are unavailable on this service.'}
           </p>
         )}
+        <MachineOption
+          available={machineIncludedAvailable}
+          enabled={intent ? intent.body.machine_included === true : draft.machineIncluded}
+          frozen={Boolean(intent)}
+          onChange={draft.changeMachineIncluded}
+        />
         <DesktopOption
           policyAllowed={policy.desktop_enable}
           client={client}
