@@ -1,5 +1,6 @@
 import { LandingCharacter } from './landing/LandingCharacter';
 import { Button } from './ui/Button';
+import { Presence } from './ui/Presence';
 import { IconNewChatOutline16 } from './ui/icons';
 
 /**
@@ -7,6 +8,18 @@ import { IconNewChatOutline16 } from './ui/icons';
  * caller, an address that matches nothing, and Agent Manager home. Kept out
  * of the console's routing so the routing reads as routing.
  */
+
+export function ConsoleActionError({ error }: { readonly error?: string }) {
+  return (
+    <Presence>
+      {error === undefined ? null : (
+        <p className="console__action-error" role="alert">
+          {error}
+        </p>
+      )}
+    </Presence>
+  );
+}
 
 export function UnavailableView({
   title,

@@ -35,7 +35,7 @@ describe('PlanCard', () => {
       'Draft bound for 4.2In progress',
       'Run lean checkWaiting',
     ]);
-    expect(steps[1]?.querySelector('.badge[data-tone="active"]')).not.toBeNull();
+    expect(steps[1]?.querySelector('.plan-card__icon[data-tone="active"]')).not.toBeNull();
     expect(steps[2]?.querySelector('.statedot')).toBeNull();
   });
 });
