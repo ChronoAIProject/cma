@@ -419,6 +419,37 @@ impl AgentLogStore for MongoSandboxStore {
         Ok(page)
     }
 
+    async fn agent_log_range(
+        &self,
+        agent_id: &AgentId,
+        after: u64,
+        through: u64,
+        limit: u16,
+    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        if limit == 0 || limit > MAX_PAGE_SIZE || after > through {
+            return Err(SandboxStoreError::InvalidPage);
+        }
+        let expected = (through - after).min(u64::from(limit)) as usize;
+        if expected == 0 {
+            // Empty pages still validate the captured snapshot so a cursor at
+            // the high-water mark cannot hide a gap elsewhere in the log.
+            scan_read_log(self, agent_id, |_| Ok(())).await?;
+            return Ok(Vec::new());
+        }
+        let mut page = Vec::with_capacity(expected);
+        scan_read_log(self, agent_id, |entry| {
+            if entry.seq > after && entry.seq <= through && page.len() < expected {
+                page.push(entry);
+            }
+            Ok(())
+        })
+        .await?;
+        if page.len() != expected {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+        Ok(page)
+    }
+
     async fn agent_log_entry(
         &self,
         agent_id: &AgentId,
