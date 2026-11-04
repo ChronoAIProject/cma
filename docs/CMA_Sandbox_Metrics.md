@@ -243,10 +243,10 @@ shared Apple Silicon development machine it measured:
 
 | Measurement | Result |
 | --- | --- |
-| Report generation | 11,414 ms (60,000 ms deadline) |
-| Process RSS before / after generation | 43,456 / 56,480 KiB |
-| Full-cohort current-owner reauthorization | 171 ms |
-| Chart and owner-search verification | 1,036 ms |
+| Report generation | 13,194 ms (60,000 ms deadline) |
+| Process RSS before / after generation | 44,672 / 51,232 KiB |
+| Full-cohort current-owner reauthorization | 97 ms |
+| Chart and owner-search verification | 1,108 ms |
 | Serialized row/chart cache | 95,944,788 bytes (256 MiB default limit) |
 
 The source-query explain used an index and examined one document for one
