@@ -35,7 +35,7 @@ const marker = (item: AnswerDeliverable) =>
 afterEach(() => vi.restoreAllMocks());
 
 it.each([1440, 390, 320])(
-  'previews two answer resources at %ipx without disabling the composer or losing draft and history position',
+  'previews two answer resources at %ipx with draft and history preserved across the mobile panel switch',
   async (width) => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
       new DOMRect(0, 0, width, 844),
@@ -114,9 +114,11 @@ it.each([1440, 390, 320])(
     expect(
       await within(preview).findByRole('textbox', { name: 'Contents of first.txt' }),
     ).toHaveValue('abc');
-    expect(document.querySelector('.frame__center')).not.toHaveAttribute('inert');
+    expect(document.querySelector('.frame__center')?.hasAttribute('inert')).toBe(width < 720);
     expect(composer).toBeEnabled();
     expect(firstCard).toHaveAttribute('aria-pressed', 'true');
+    if (width < 720)
+      fireEvent.click(within(preview).getByRole('button', { name: 'Close preview' }));
     const secondCard = screen.getByRole('button', { name: 'Preview second.md' });
     fireEvent.click(secondCard);
     preview = screen.getByRole('complementary', { name: 'Deliverable preview' });

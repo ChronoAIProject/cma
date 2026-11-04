@@ -10,6 +10,7 @@ import {
   DETAILS_MIN,
   clampWidth,
   computeColumns,
+  computeWorkspaceColumns,
 } from './columns';
 import { IconPanelLeftOutline16 } from '../ui/icons';
 import './AppFrame.css';
@@ -46,6 +47,8 @@ interface AppFrameProps {
   readonly details?: ReactNode;
   /** Whether the details column is asked for. */
   readonly detailsOpen: boolean;
+  readonly workspaceDetails?: boolean;
+  readonly taskLayout?: boolean;
   readonly compactDetailsOverlay?: boolean;
   readonly compactDetailsInline?: boolean;
   readonly onDetailsClose?: () => void;
@@ -72,6 +75,8 @@ export function AppFrame({
   center,
   details,
   detailsOpen,
+  workspaceDetails = false,
+  taskLayout = false,
   compactDetailsOverlay = false,
   compactDetailsInline = false,
   onDetailsClose,
@@ -84,8 +89,9 @@ export function AppFrame({
   const frameRef = useRef<HTMLDivElement>(null);
   const detailsRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  const [sidebarWidth, setSidebarWidth] = useState(taskLayout ? SIDEBAR_MIN : SIDEBAR_DEFAULT);
   const [detailsWidth, setDetailsWidth] = useState(DETAILS_MIN);
+  const [workspaceWidth, setWorkspaceWidth] = useState<number>();
   const [dragging, setDragging] = useState(false);
   /*
    * A handle reports displacement from pointer-down, so its width must be
@@ -175,7 +181,10 @@ export function AppFrame({
    * a sheet over the page, and a top bar holds the way back to it.
    */
   const phone = viewport > 0 && viewport < CENTER_MIN;
-  const solved = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
+  const solved =
+    workspaceDetails && detailsOpen
+      ? computeWorkspaceColumns(viewport, sidebarPreference, workspaceWidth)
+      : computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
   const columns = phone
     ? { sidebar: effectiveSidebarCollapsed ? 0 : solved.sidebar, center: viewport, details: 0 }
     : solved;
@@ -219,9 +228,13 @@ export function AppFrame({
   const onSidebarDrag = useCallback((to: number) => {
     setSidebarWidth(clampWidth(to, SIDEBAR_MIN, SIDEBAR_MAX));
   }, []);
-  const onDetailsDrag = useCallback((to: number) => {
-    setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
-  }, []);
+  const onDetailsDrag = useCallback(
+    (to: number) => {
+      if (workspaceDetails) setWorkspaceWidth(clampWidth(to, 360, viewport - solved.sidebar - 360));
+      else setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
+    },
+    [workspaceDetails, viewport, solved.sidebar],
+  );
   const detailsInline = detailsOpen && columns.details === 0 && compactDetailsInline;
   const detailsOverlay =
     detailsOpen && columns.details === 0 && compactDetailsOverlay && !detailsInline;
@@ -322,8 +335,12 @@ export function AppFrame({
           at={columns.sidebar + columns.center}
           label="Resize the details column"
           value={columns.details}
-          min={DETAILS_MIN}
-          max={Math.min(DETAILS_MAX, viewport - columns.sidebar - CENTER_MIN)}
+          min={workspaceDetails ? 360 : DETAILS_MIN}
+          max={
+            workspaceDetails
+              ? viewport - columns.sidebar - 360
+              : Math.min(DETAILS_MAX, viewport - columns.sidebar - CENTER_MIN)
+          }
           onResize={onDetailsDrag}
           onDrag={(dx) => {
             // Dragging left widens: the column grows from its leading edge.

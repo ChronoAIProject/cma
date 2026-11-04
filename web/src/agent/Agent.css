@@ -40,6 +40,13 @@
   background: var(--dsw-alias-bg-base);
 }
 
+.agent-surface__history-notice {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .agent-quick-messages {
   position: relative;
   display: flex;

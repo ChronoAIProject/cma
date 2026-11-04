@@ -14,7 +14,9 @@ export const PlanProgress = memo(function PlanProgress({
   if (plan === undefined || (plan.entries.length === 0 && !plan.incomplete)) return null;
   const progress = reportedPlanProgress(plan);
   const label = progress.known
-    ? `${progress.completed}/${plan.entries.length} steps${progress.currentIndex < 0 ? '' : ` · Step ${progress.currentIndex + 1}`}`
+    ? progress.currentIndex < 0
+      ? `Working · ${progress.completed} of ${plan.entries.length} done`
+      : `Working · step ${progress.currentIndex + 1} of ${plan.entries.length}`
     : 'Progress unknown';
   return (
     <a

@@ -5040,3 +5040,84 @@ recovery and connection cancellation. A definite pre-admission rejection keeps
 the draft editable; another explicit submission starts a new intent.
 
 | 2026-11-04 | Preserve independent shared Linux desktop and Agent-browser choices in the task journey with frozen request recovery. |
+
+### 2026-11-04 — Restore the task design hierarchy
+
+The task journey follows the original CMA interface proposal, figures 3, 5 and 7.
+Home has one compact task composer, optional repository and desktop disclosures,
+an inline submit control and task suggestion chips. Repository/ref inputs and the
+two independently authorized desktop choices expand only when requested. Existing
+draft, admission and recovery semantics remain authoritative.
+
+Tasks have one conversation column and one computer or deliverable column. The
+computer and preview receive approximately half the available content width, with
+a 360px floor per pane; narrower screens show the selected panel with a clear
+return to conversation. Settings retain their narrow details column. The task
+sidebar starts at 264px. Panel changes preserve the conversation and composer.
+
+The computer has Browser, Terminal and Files tabs. The shared machine desktop is
+rendered inside this same computer region, identified as Shared desktop; when an
+Agent browser is also available an explicit source selector distinguishes them.
+Switching away releases desktop input/connection. Existing owner, readiness and
+running-task control restrictions remain in force. Terminal is read-only recorded
+command output, with historical navigation secondary to live work.
+
+Running plans show a compact Plan/count header, a thin lime progress bar, leading
+step status icons and muted pending steps. Completed plans collapse to a summary.
+No estimated time or activity is invented. Deliverables use compact responsive
+file cards with a selected outline, beside a wide document preview. Recoverable
+history-read failures use a concise local status; uncertain message admission
+continues to receive an explicit recovery notice.
+
+Confirmed completion uses a compact elapsed label, such as **Done in 4m**, in the
+header. That latest answer does not repeat its duration below its files. Completed
+operation groups collapse even if an individual operation failed; the failed count
+remains visible, and the reader can expand the details. Current-turn failures still
+open their group until the reader chooses otherwise.
+
+| 2026-11-04 | Restore compact task entry, one wide computer/preview pane, leading plan status icons and compact deliverable cards from the original design. |
+
+### 2026-11-04 — Finish task entry and recorded-operation disclosure
+
+Home uses the original subtitle: **It gets its own computer, works through the task
+step by step, and asks you when it needs a decision.** Task chips describe the task
+in words rather than naming a document type. They only prepare the draft.
+
+Terminal presents recorded commands as collapsed native disclosures. A summary
+identifies the command number and its reported outcome; the exact command and
+output remain intact inside. Record timestamps, cursors and turn metadata belong
+inside the same disclosure. Plan snapshots remain readable outside it. Disclosures
+reset when a different historical operation is selected. The computer's Browser
+and Files views offer **View operation history** when history access and replay
+capabilities are verified. The entry opens Terminal; it never admits a task.
+
+Operation replay has compact Previous/Next/Return Live controls and a labelled
+range input for the records in the loaded window. Its count is explicitly scoped
+to that window, never represented as all task actions or video duration. Selecting
+a record uses its exact cursor and preserves the existing read-only history rules.
+Unavailable, empty and loading history has no enabled scrubber. Record controls
+use existing 8px gaps, 12px padding, 8px radii, 13px/20px text and 44px mobile
+targets; borders, text and the range accent use existing semantic tokens.
+
+| 2026-11-04 | Restore Home copy, collapse raw operation details and keep recorded-history access and bounded navigation inside the computer. |
+
+### 2026-11-04 — Keep active-turn diagnostics behind disclosure
+
+The collapsed Thinking control shows the observed elapsed time and the count of
+currently pending operations, or **View activity details** when none are reported.
+Token counts, visible-token estimates, raw tool summaries and reasoning appear
+only after expanding it. The Plan remains the primary progress explanation.
+No current operation is attributed to a plan step without a reported association.
+
+| 2026-11-04 | Move technical turn diagnostics into the existing Thinking disclosure so live task progress stays readable. |
+
+### 2026-11-04 — Make running-task controls explicit
+
+When queued follow-ups are supported, the running composer says **Add a follow-up
+while the Agent works.** It does not promise delivery before the next tool step;
+the chosen queue/interrupt mode continues to determine admission. The existing
+Stop action gains a visible **Stop** label beside its icon, using the outline
+button, 32px desktop height, 44px mobile height, 12px horizontal padding and an 8px
+radius. Existing control availability and pending-request guards are unchanged.
+
+| 2026-11-04 | Clarify supported running follow-ups and label Stop without changing queue or interruption semantics. |

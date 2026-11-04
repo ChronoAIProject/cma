@@ -72,8 +72,13 @@ describe('conversation geometry with readable labels', () => {
     const media = Array.from(rules).find(
       (rule) => rule instanceof CSSMediaRule && rule.conditionText === '(max-width: 30rem)',
     ) as CSSMediaRule;
-    const narrow = declaration(media.cssRules, '.agent-composer .agent-composer__submit');
+    const narrow = declaration(
+      media.cssRules,
+      '.agent-composer .agent-composer__submit:not(.agent-composer__submit--stop)',
+    );
     expect(narrow.getPropertyValue('width')).toBe('44px');
+    const stop = declaration(rules, '.agent-composer .agent-composer__submit--stop');
+    expect(stop.getPropertyValue('width')).toBe('auto');
   });
 
   it('retains the original 12px gap and track in the resource metrics row', () => {

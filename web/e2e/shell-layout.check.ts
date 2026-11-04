@@ -178,7 +178,9 @@ for (const authenticated of [false, true]) {
       );
     await page.goto('/');
     if (authenticated) {
-      await expect(page.getByRole('heading', { name: 'What would you like to do?' })).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'What should your Agent work on?' }),
+      ).toBeVisible();
       await page.getByLabel('Your task').fill('Retain this Home draft across screen sizes.');
       await page.getByRole('button', { name: 'Hide navigation', exact: true }).click();
     } else await expect(page.getByRole('button', { name: 'Get Started' })).toBeVisible();
@@ -206,7 +208,9 @@ for (const authenticated of [false, true]) {
         page.getByRole('button', { name: 'Hide navigation', exact: true }),
       ).toBeVisible();
       await page.getByRole('link', { name: 'CMA home' }).click();
-      await expect(page.getByRole('heading', { name: 'What would you like to do?' })).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'What should your Agent work on?' }),
+      ).toBeVisible();
       await expect(page.getByLabel('Your task')).toHaveValue(
         'Retain this Home draft across screen sizes.',
       );

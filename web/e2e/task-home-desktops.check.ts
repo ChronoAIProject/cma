@@ -63,6 +63,7 @@ for (const width of [1440, 320]) {
     });
     await page.setViewportSize({ width, height: 1000 });
     await page.goto('/');
+    await page.getByText('Desktop options', { exact: true }).click();
     const machine = page.getByRole('checkbox', { name: 'Include a shared desktop' });
     const browser = page.getByRole('checkbox', { name: 'Enable desktop' });
     await expect(machine).toBeEnabled();
@@ -83,6 +84,7 @@ for (const width of [1440, 320]) {
     }
     await page.screenshot({ path: info.outputPath('home-desktop-options.png'), fullPage: true });
     await page.reload();
+    await page.getByText('Desktop selected', { exact: true }).click();
     await expect(machine).toBeChecked();
     await expect(browser).toBeChecked();
     await expect(page.getByLabel('Your task')).toHaveValue(task);
@@ -90,6 +92,7 @@ for (const width of [1440, 320]) {
     await page.getByRole('button', { name: 'Start task', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Recover original task' })).toBeEnabled();
     await page.reload();
+    await page.getByText('Desktop selected', { exact: true }).click();
     await expect(machine).toBeChecked();
     await expect(machine).toBeDisabled();
     await expect(browser).toBeChecked();
