@@ -19,6 +19,7 @@ pub(crate) struct SuggestionWorker {
     credentials: Arc<dyn SandboxCredentialController>,
     runtime: Arc<dyn TitleRuntimeEndpoint>,
     model: String,
+    writer_policy: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
 }
 
 impl SuggestionWorker {
@@ -31,6 +32,7 @@ impl SuggestionWorker {
         Arc::new(Self {
             service: SuggestionGenerationService::new(store.clone()),
             suggestions: store.clone(),
+            writer_policy: store.writer_policy.clone(),
             store,
             credentials,
             runtime,
@@ -39,6 +41,12 @@ impl SuggestionWorker {
     }
 
     async fn authority(&self, work: &SuggestionWork) -> Option<(Agent, Sandbox)> {
+        if !self.writer_policy.allows_writer(
+            &work.owner,
+            layer2_core::sandbox::task_experience::TaskExperienceWriter::Suggestions,
+        ) {
+            return None;
+        }
         let agent = self.store.get_agent(&work.agent_id).await.ok()??;
         let sandbox = self.store.get_sandbox(&agent.sandbox_id).await.ok()??;
         if agent.owner != work.owner

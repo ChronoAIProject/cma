@@ -11,7 +11,7 @@ async fn contextual_suggestions_real_samples_are_saved_and_read_through_the_publ
     let output =
         std::env::var("CMA_SUGGESTION_SAMPLE_OUTPUT").expect("external evidence path required");
     let (client, name) = database("ticket13_real_samples").await;
-    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let store = Arc::new(enabled_store(&client, &name).await);
     let generator = HttpSuggestionGenerator::new(
         &proxy,
         &model,
@@ -36,7 +36,7 @@ async fn contextual_suggestions_real_samples_are_saved_and_read_through_the_publ
         let routes = router(store.clone());
         let (status, saved) = read(&routes, &agent, "owner").await;
         assert_eq!(status, StatusCode::OK);
-        let replica = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+        let replica = Arc::new(enabled_store(&client, &name).await);
         assert_eq!(read(&router(replica), &agent, "owner").await.1, saved);
         evidence.push(serde_json::json!({"case":case,"goal":goal,"answer":answer,"confirmed_resources":[],"saved_public_read":saved}));
         std::fs::write(&output, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
