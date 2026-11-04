@@ -5020,3 +5020,23 @@ previews and Agent computer activity remain available in that same conversation.
 Opening or closing either environment view preserves the current composer draft.
 
 | 2026-11-04 | Combine task navigation and conversation features with the current Agent characters and machine desktop layout, preserving visible task facts and composer continuity. |
+
+### 2026-11-04 — Independent desktop choices in Home
+
+Home also exposes **Include a shared desktop**, using the existing native checkbox
+and 44px labelled row. It starts unchecked and retains the existing creation
+description: a Linux desktop with Chromium that the owner and Agent can both see
+and control. It requires permission to create a new Sandbox; contextual creation
+retains the parent's original setup. An unavailable retained draft may clear this
+choice without losing its task text.
+
+This choice is independent of **Enable desktop**, which prepares the Agent-bound
+browser. Either or both may be selected. The server checks the selected image's
+capabilities and reports unsupported combinations without changing either choice
+or substituting an image. Neither selecting a checkbox nor refreshing admits work.
+Both choices and the exact task survive draft refresh. After an uncertain or
+accepted submission they remain frozen with the original body and key through
+recovery and connection cancellation. A definite pre-admission rejection keeps
+the draft editable; another explicit submission starts a new intent.
+
+| 2026-11-04 | Preserve independent shared Linux desktop and Agent-browser choices in the task journey with frozen request recovery. |

@@ -15,13 +15,15 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
         repositoryUrl?: unknown;
         repositoryRef?: unknown;
         desktop?: unknown;
+        machineIncluded?: unknown;
       };
       if (
         value.version !== 1 ||
         typeof value.text !== 'string' ||
         (value.repositoryUrl !== undefined && typeof value.repositoryUrl !== 'string') ||
         (value.repositoryRef !== undefined && typeof value.repositoryRef !== 'string') ||
-        (value.desktop !== undefined && typeof value.desktop !== 'boolean')
+        (value.desktop !== undefined && typeof value.desktop !== 'boolean') ||
+        (value.machineIncluded !== undefined && typeof value.machineIncluded !== 'boolean')
       )
         throw new Error();
       return {
@@ -29,6 +31,7 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
         repositoryUrl: value.repositoryUrl,
         repositoryRef: value.repositoryRef,
         desktop: value.desktop,
+        machineIncluded: value.machineIncluded,
       };
     } catch {
       return {
@@ -43,11 +46,13 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
   const [repositoryRef, setRepositoryRef] = useState(initial.repositoryRef ?? '');
   const [error, setError] = useState(initial.error);
   const [desktop, setDesktop] = useState(initial.desktop ?? false);
+  const [machineIncluded, setMachineIncluded] = useState(initial.machineIncluded ?? false);
   const persist = (
     value: string,
     url = repositoryUrl,
     reference = repositoryRef,
     enabled = desktop,
+    machine = machineIncluded,
   ) => {
     try {
       requireTaskStorage();
@@ -60,6 +65,7 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
           repositoryUrl: url,
           repositoryRef: reference,
           desktop: enabled,
+          machineIncluded: machine,
         }),
       );
       setError(undefined);
@@ -76,6 +82,11 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
     repositoryUrl,
     repositoryRef,
     desktop,
+    machineIncluded,
+    changeMachineIncluded: (enabled: boolean) => {
+      setMachineIncluded(enabled);
+      persist(text, repositoryUrl, repositoryRef, desktop, enabled);
+    },
     changeDesktop: (enabled: boolean) => {
       setDesktop(enabled);
       persist(text, repositoryUrl, repositoryRef, enabled);

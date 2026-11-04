@@ -39,6 +39,8 @@ function load(
       (intent.body.initial_message !== undefined &&
         typeof intent.body.initial_message !== 'string') ||
       (intent.body.desktop !== undefined && typeof intent.body.desktop !== 'boolean') ||
+      (intent.body.machine_included !== undefined &&
+        typeof intent.body.machine_included !== 'boolean') ||
       (intent.body.repository !== undefined &&
         (!intent.body.repository ||
           typeof intent.body.repository.url !== 'string' ||
