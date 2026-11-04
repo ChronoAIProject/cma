@@ -53,34 +53,21 @@ impl NyxIdFundingProvider {
             FundingError::Retryable("producer request timed out or transport failed".into())
         })?;
         let status = response.status();
-        // Never persist/log arbitrary upstream text (which could echo credentials).
-        if !status.is_success() {
-            let detail = format!("producer HTTP {}", status.as_u16());
-            return Err(match status.as_u16() {
-                404 => FundingError::NotFound,
-                429 => {
-                    let delay = response
-                        .headers()
-                        .get(reqwest::header::RETRY_AFTER)
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(|v| {
-                            v.parse::<u64>().ok().or_else(|| {
-                                httpdate::parse_http_date(v).ok().map(|at| {
-                                    at.duration_since(SystemTime::now())
-                                        .unwrap_or_default()
-                                        .as_secs()
-                                })
-                            })
-                        })
-                        .unwrap_or(30)
-                        .max(1);
-                    FundingError::RateLimited(delay)
-                }
-                402 | 409 => FundingError::Unfunded(detail),
-                400 | 401 | 403 | 413 | 415 | 422 => FundingError::Invalid(detail),
-                _ => FundingError::Retryable(detail),
-            });
-        }
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| {
+                v.parse::<u64>().ok().or_else(|| {
+                    httpdate::parse_http_date(v).ok().map(|at| {
+                        at.duration_since(SystemTime::now())
+                            .unwrap_or_default()
+                            .as_secs()
+                    })
+                })
+            })
+            .unwrap_or(30)
+            .max(1);
         let mut stream = response.bytes_stream();
         let mut bytes = Vec::new();
         while let Some(chunk) = stream.next().await {
@@ -93,8 +80,28 @@ impl NyxIdFundingProvider {
             }
             bytes.extend_from_slice(&chunk);
         }
-        serde_json::from_slice(&bytes)
-            .map_err(|_| FundingError::Invalid("producer response is not valid JSON".into()))
+        let value = serde_json::from_slice::<serde_json::Value>(&bytes);
+        // Match only the documented machine error code. Arbitrary upstream text,
+        // including plain-text body rejections, must never reach durable status/logs.
+        if !status.is_success() {
+            let detail = format!("producer HTTP {}", status.as_u16());
+            let code = value.as_ref().ok().and_then(|v| v["error"].as_str());
+            return Err(match status.as_u16() {
+                404 => FundingError::NotFound,
+                429 => FundingError::RateLimited(retry_after),
+                402 if matches!(
+                    code,
+                    Some("billing_provider_unavailable" | "billing_not_configured")
+                ) =>
+                {
+                    FundingError::Retryable("producer funding dependency unavailable".into())
+                }
+                402 | 409 => FundingError::Unfunded(detail),
+                400 | 401 | 403 | 413 | 415 | 422 => FundingError::Invalid(detail),
+                _ => FundingError::Retryable(detail),
+            });
+        }
+        value.map_err(|_| FundingError::Invalid("producer response is not valid JSON".into()))
     }
 }
 

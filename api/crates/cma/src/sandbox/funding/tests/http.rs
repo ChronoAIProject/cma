@@ -386,3 +386,31 @@ async fn adapter_recovers_a_committed_http_timeout_from_durable_request_after_re
         .1
         .ends_with(&persisted.pending.unwrap().request_id));
 }
+
+#[tokio::test]
+async fn provider_outage_402_is_retryable_but_insufficient_credit_remains_unfunded() {
+    let server = Server::new(vec![
+        reply(
+            402,
+            json!({"error":"billing_provider_unavailable","message":"SECRET"}),
+        ),
+        reply(
+            402,
+            json!({"error":"billing_not_configured","message":"SECRET"}),
+        ),
+        reply(
+            402,
+            json!({"error":"insufficient_credits","message":"SECRET"}),
+        ),
+    ])
+    .await;
+    for _ in 0..2 {
+        let error = server.provider.recover("r").await.unwrap_err();
+        assert!(matches!(error, FundingError::Retryable(_)));
+        assert!(!error.to_string().contains("SECRET"));
+    }
+    assert!(matches!(
+        server.provider.recover("r").await,
+        Err(FundingError::Unfunded(_))
+    ));
+}
