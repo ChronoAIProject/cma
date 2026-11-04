@@ -236,3 +236,6 @@ pending request. Repair the underlying funding/authority/evidence problem and
 allow replay, retaining the original ledger and accepted quote. Local fake-provider,
 fake-HTTP, native Kubernetes HTTP, and isolated Mongo tests verify adapter recovery;
 they do not certify live NyxID/Lago invoices or physical partition behavior.
+
+The [adapter verification record](CMA_NyxID_Billing_Verification.md) documents
+the exercised failure cases, measured coverage and local environment limits.
