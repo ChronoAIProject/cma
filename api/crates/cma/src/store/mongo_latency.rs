@@ -1,6 +1,8 @@
 //! Bounded connection-pool latency summaries. Never retain or log commands, replies,
 //! addresses, identifiers, credentials, database names, or driver errors.
 use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::{Hash, Hasher},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -11,7 +13,13 @@ use mongodb::{
 };
 
 const WINDOW: Duration = Duration::from_secs(10);
-const LABELS: [&str; 3] = ["checkout", "connection_ready", "pool_cleared"];
+const LABELS: [&str; 4] = [
+    "checkout",
+    "connection_ready",
+    "pool_cleared",
+    "connection_in_use",
+];
+const MAX_TRACKED_CONNECTIONS: usize = 4096;
 const LIMITS_US: [u64; 6] = [1_000, 5_000, 25_000, 100_000, 250_000, 1_000_000];
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -26,6 +34,9 @@ struct Sample {
 struct Window {
     started: Instant,
     samples: [Sample; LABELS.len()],
+    checked_out: HashMap<u64, Instant>,
+    in_use_peak: usize,
+    untracked: u64,
 }
 
 impl Window {
@@ -33,6 +44,9 @@ impl Window {
         Self {
             started,
             samples: [Sample::default(); LABELS.len()],
+            checked_out: HashMap::new(),
+            in_use_peak: 0,
+            untracked: 0,
         }
     }
 
@@ -52,15 +66,45 @@ impl Window {
 struct Observer(Arc<Mutex<Window>>);
 
 impl Observer {
+    fn checked_out(&self, key: u64, duration: Duration) {
+        {
+            let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
+            if window.checked_out.len() < MAX_TRACKED_CONNECTIONS {
+                window.checked_out.insert(key, Instant::now());
+                window.in_use_peak = window.in_use_peak.max(window.checked_out.len());
+            } else {
+                window.untracked = window.untracked.saturating_add(1);
+            }
+        }
+        self.record(0, duration, false);
+    }
+
+    fn returned(&self, key: u64, closed: bool) {
+        let started = self
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .checked_out
+            .remove(&key);
+        if let Some(started) = started {
+            self.record(3, started.elapsed(), closed);
+        }
+    }
+
     fn record(&self, index: usize, duration: Duration, failed: bool) {
         let now = Instant::now();
         let completed = {
             let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
             window.record(index, duration, failed);
-            (now.duration_since(window.started) >= WINDOW)
-                .then(|| std::mem::replace(&mut *window, Window::new(now)))
+            (now.duration_since(window.started) >= WINDOW).then(|| {
+                let mut next = Window::new(now);
+                std::mem::swap(&mut next.checked_out, &mut window.checked_out);
+                next.in_use_peak = next.checked_out.len();
+                let in_use = next.checked_out.len();
+                (std::mem::replace(&mut *window, next), in_use)
+            })
         };
-        if let Some(window) = completed {
+        if let Some((window, in_use)) = completed {
             // Release the lock before formatting or writing to the log sink.
             for (operation, sample) in LABELS.iter().zip(window.samples) {
                 if sample.count == 0 {
@@ -75,6 +119,9 @@ impl Observer {
                     total_us = sample.total_us,
                     max_us = sample.max_us,
                     buckets = ?sample.buckets,
+                    in_use,
+                    in_use_peak = window.in_use_peak,
+                    untracked = window.untracked,
                     "MongoDB client latency summary"
                 );
             }
@@ -92,12 +139,29 @@ fn attach(options: &mut ClientOptions, observer: Observer) {
     // before invoking the callback, even when it only reads duration. Keep it
     // disabled so diagnostics do not add BSON decoding to every database call.
     options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
-        CmapEvent::ConnectionCheckedOut(event) => observer.record(0, event.duration, false),
+        CmapEvent::ConnectionCheckedOut(event) => observer.checked_out(
+            connection_key(&event.address, event.connection_id),
+            event.duration,
+        ),
+        CmapEvent::ConnectionCheckedIn(event) => {
+            observer.returned(connection_key(&event.address, event.connection_id), false)
+        }
+        CmapEvent::ConnectionClosed(event) => {
+            observer.returned(connection_key(&event.address, event.connection_id), true)
+        }
         CmapEvent::ConnectionCheckoutFailed(event) => observer.record(0, event.duration, true),
         CmapEvent::ConnectionReady(event) => observer.record(1, event.duration, false),
         CmapEvent::PoolCleared(_) => observer.record(2, Duration::ZERO, false),
         _ => {}
     }));
+}
+
+// Driver IDs are only unique within a server's pool. Keep a bounded, ephemeral
+// fingerprint for pairing; neither the address nor the fingerprint is logged.
+fn connection_key(address: &mongodb::options::ServerAddress, id: u32) -> u64 {
+    let mut hash = DefaultHasher::new();
+    (address, id).hash(&mut hash);
+    hash.finish()
 }
 
 #[cfg(test)]
