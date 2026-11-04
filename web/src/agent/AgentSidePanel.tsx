@@ -22,6 +22,8 @@ import {
 import { BrowserPanel, EnableBrowser } from './environment/BrowserPanel';
 import { useTaskExperience } from '../taskExperience';
 import { agentInitialized } from './modelReadiness';
+import { DesktopPanel } from './DesktopPanel';
+import { desktopRuntimeReady } from './DesktopWorkspace';
 
 export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
 
@@ -61,6 +63,8 @@ export function AgentSidePanel({
   const policy = useTaskExperience(client, viewerId ?? observation?.scope.subject);
   const filesOpen = panel === 'files';
   const computerOpen = panel !== undefined && panel !== 'details';
+  const machineAvailable = !shared && detail?.desktop === true;
+  const [browserSource, setBrowserSource] = useState<'machine' | 'agent'>('machine');
   const [visitedScope, setVisitedScope] = useState<{
     client: typeof client;
     agentId: string;
@@ -86,7 +90,8 @@ export function AgentSidePanel({
   }, [readiness, reloadEnvironment]);
   const replaySelection = useReplaySelection(observation);
   const [selection, setSelection] = useState<
-    { client: typeof client; agentId: string; tab: AgentPanel; open: boolean } | undefined
+    | { client: typeof client; agentId: string; tab: AgentPanel; open: boolean; explicit: boolean }
+    | undefined
   >(undefined);
   const announcedSelection = useRef<typeof selection>(undefined);
   const chosen =
@@ -98,12 +103,21 @@ export function AgentSidePanel({
     panel === 'activity' &&
     (!chosen?.open || chosen.tab !== 'activity')
   )
-    setSelection({ client, agentId, tab: 'activity', open: true });
-  else if (computerOpen && features && !chosen?.open) {
+    setSelection({ client, agentId, tab: 'activity', open: true, explicit: true });
+  else if (
+    computerOpen &&
+    (features || machineAvailable) &&
+    (!chosen?.open ||
+      (!chosen.explicit &&
+        chosen.tab === 'files' &&
+        (machineAvailable || features?.browser.state === 'available')))
+  ) {
     const tab =
-      chosen?.tab ??
-      (panel === 'files' && features.browser.state === 'available' ? 'browser' : panel);
-    setSelection({ client, agentId, tab, open: true });
+      (chosen?.explicit ? chosen.tab : undefined) ??
+      (panel === 'files' && (machineAvailable || features?.browser.state === 'available')
+        ? 'browser'
+        : panel);
+    setSelection({ client, agentId, tab, open: true, explicit: chosen?.explicit ?? false });
   }
   useEffect(() => {
     if (
@@ -119,7 +133,7 @@ export function AgentSidePanel({
     }
   }, [computerOpen, chosen, panel, onSelect]);
   const select = (tab: AgentPanel) => {
-    const next = { client, agentId, tab, open: computerOpen };
+    const next = { client, agentId, tab, open: computerOpen, explicit: true };
     announcedSelection.current = next;
     setSelection(next);
     onSelect?.(tab);
@@ -154,7 +168,7 @@ export function AgentSidePanel({
   const choosingBrowser = Boolean(
     onSelect &&
     filesOpen &&
-    features?.browser.state === 'available' &&
+    (machineAvailable || features?.browser.state === 'available') &&
     !(selection?.client === client && selection.agentId === agentId && selection.tab === 'files'),
   );
   if (filesOpen && mayRead && !choosingBrowser && !visited)
@@ -204,7 +218,7 @@ export function AgentSidePanel({
           </Button>
         </header>
         <div className="agent-computer__tabs" role="tablist" aria-label="Agent computer views">
-          {(['files', 'activity', 'browser'] as const).map((tab, index, tabs) => (
+          {(['browser', 'activity', 'files'] as const).map((tab, index, tabs) => (
             <button
               key={tab}
               type="button"
@@ -227,7 +241,7 @@ export function AgentSidePanel({
                 document.getElementById(`computer-tab-${tabs[next]}`)?.focus();
               }}
             >
-              {tab === 'files' ? 'Files' : tab === 'activity' ? 'Operation output' : 'Browser'}
+              {tab === 'files' ? 'Files' : tab === 'activity' ? 'Terminal' : 'Browser'}
             </button>
           ))}
         </div>
@@ -349,10 +363,45 @@ export function AgentSidePanel({
           className="agent-computer__page agent-computer__output"
           hidden={panel !== 'browser'}
         >
-          {features?.browser.state === 'available' &&
-          features.runtime_incarnation &&
-          client.browser &&
-          (!shared || authorized?.capabilities.includes('view_history') === true) ? (
+          {machineAvailable && features?.browser.state === 'available' ? (
+            <div className="agent-computer__sources" role="group" aria-label="Computer source">
+              <Button
+                size="sm"
+                aria-pressed={browserSource === 'machine'}
+                onClick={() => setBrowserSource('machine')}
+              >
+                Shared desktop
+              </Button>
+              <Button
+                size="sm"
+                aria-pressed={browserSource === 'agent'}
+                onClick={() => setBrowserSource('agent')}
+              >
+                Agent browser
+              </Button>
+            </div>
+          ) : null}
+          {machineAvailable &&
+          (browserSource === 'machine' || features?.browser.state !== 'available') ? (
+            panel === 'browser' ? (
+              <DesktopPanel
+                agentId={agentId}
+                runtimeReady={desktopRuntimeReady(detail)}
+                running={
+                  conversation?.activeRunId !== undefined ||
+                  pending === 'send' ||
+                  detail.status === 'working' ||
+                  detail.status === 'starting'
+                }
+                preparation={{ context: client, owner: subject }}
+                onClose={onClose}
+                embedded
+              />
+            ) : null
+          ) : features?.browser.state === 'available' &&
+            features.runtime_incarnation &&
+            client.browser &&
+            (!shared || authorized?.capabilities.includes('view_history') === true) ? (
             <BrowserPanel
               key={`${agentId}:${features.runtime_incarnation}:${features.policy_revision}:${observation?.scope.subject}`}
               client={client.browser}
@@ -400,6 +449,25 @@ export function AgentSidePanel({
             </Button>
           ) : null}
         </div>
+        {panel !== 'activity' &&
+        policy.replay_presentation &&
+        client.operationReplay &&
+        features?.replay.state === 'available' &&
+        features.operation_output.state === 'available' &&
+        (!shared || authorized?.capabilities.includes('view_history') === true) ? (
+          <footer className="agent-computer__history">
+            <Button
+              size="sm"
+              onClick={() => {
+                select('activity');
+                document.getElementById('computer-tab-activity')?.focus();
+              }}
+            >
+              View operation history
+            </Button>
+            <span>Recorded actions · Read only</span>
+          </footer>
+        ) : null}
       </aside>
     </>
   );

@@ -362,7 +362,13 @@ export function Composer({
             aria-expanded={commands.open}
             aria-controls={commands.open ? commands.id : undefined}
             aria-activedescendant={commands.activeId}
-            placeholder={preparing ? 'Message Agent' : placeholder(status)}
+            placeholder={
+              preparing
+                ? 'Message Agent'
+                : running && queueWhileRunning
+                  ? 'Add a follow-up while the Agent works.'
+                  : placeholder(status)
+            }
             onChange={(event) => {
               editorRef?.current?.discardUndo();
               editVersion.current += 1;
@@ -458,7 +464,7 @@ export function Composer({
               {running ? (
                 <Button
                   placement="agent-composer__submit agent-composer__submit--stop"
-                  variant="primary"
+                  variant="outline"
                   icon={<IconStopFill16 />}
                   aria-label="Stop response"
                   title={
@@ -468,7 +474,9 @@ export function Composer({
                   }
                   disabled={busy || controlsUnavailable}
                   onClick={() => void onStop()}
-                />
+                >
+                  Stop
+                </Button>
               ) : null}
             </div>
           </div>

@@ -129,6 +129,7 @@ it('keeps ordinary tasks available when the service does not support repository 
       onCreated={() => {}}
     />,
   );
+  fireEvent.click(screen.getByText('Add a GitHub repo'));
   expect(
     await screen.findByText('Repository tasks are unavailable on this service.'),
   ).toBeVisible();
@@ -414,7 +415,7 @@ it('opens ordinary contextual creation as editable task templates without admitt
   );
   expect(screen.getByLabelText('Your task')).toHaveValue('');
   expect(screen.getByText('Creating in Workspace workspace-owned')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Research' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
   expect(screen.getByLabelText('Your task')).toHaveValue(
     'Compare three tools and summarize their strengths, limitations, and sources.',
   );

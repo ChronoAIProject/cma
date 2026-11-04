@@ -33,16 +33,6 @@ interface ThinkingProps {
   readonly pose?: CharacterPose;
 }
 
-export function summaryOf(text: string): string {
-  return (
-    text
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .at(-1) ?? ''
-  );
-}
-
 export function activityDuration(activity: ThinkingActivity): string {
   const duration = activity.durationMs;
   if (duration === undefined || duration === null) {
@@ -94,8 +84,6 @@ export function Thinking({
     if (body !== null && open) body.scrollTop = body.scrollHeight;
   }, [activities, text, open]);
 
-  const activity = activities.at(-1);
-  const summary = activity === undefined ? summaryOf(text) : activitySummary(activity);
   return (
     <section className="thinking" aria-label="What the agent is working through">
       <button
@@ -108,13 +96,17 @@ export function Thinking({
         <CharacterAvatar pose={pose} size={32} className="thinking__character" />
         <span className="thinking__title">Thinking</span>
         {seconds === undefined ? null : <span className="thinking__elapsed">for {seconds}s</span>}
-        <TurnUsage usage={usage} visibleText={visibleText} visibleAnchor={visibleAnchor} />
         <span className="thinking__dot" aria-hidden="true" />
-        <span className="thinking__summary">{summary || 'Waiting for the next update'}</span>
+        <span className="thinking__summary">
+          {activities.length > 0
+            ? `${activities.length} ${activities.length === 1 ? 'operation' : 'operations'} in progress`
+            : 'View activity details'}
+        </span>
         <span className="sr-only">, reasoning not kept after this turn</span>
       </button>
       {open ? (
         <div className="thinking__body" id={bodyId} ref={bodyRef}>
+          <TurnUsage usage={usage} visibleText={visibleText} visibleAnchor={visibleAnchor} />
           {text === '' ? null : <div className="thinking__reasoning">{text}</div>}
           {text === '' && activities.length === 0 ? 'Waiting for the next update.' : null}
           {activities.length === 0 ? null : (

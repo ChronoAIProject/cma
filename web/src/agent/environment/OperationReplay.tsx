@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { replayError } from './replayError';
 import { Button } from '../../ui/Button';
+import { OperationDetails } from './OperationDetails';
 import type { ToolCall } from '../model';
 import {
   readReplayWindow,
@@ -137,12 +138,14 @@ export const OperationReplay = memo(function OperationReplay({
     void load({}, 'live');
   };
   return (
-    <section aria-label="Operation record replay">
+    <section className="operation-replay" aria-label="Operation record replay">
       <h3>Operation record replay</h3>
       <p>{historical ? 'History · Read only' : 'Live · Recorded operations'}</p>
       <nav
+        className="operation-replay__navigation"
         aria-label="Replay navigation"
         onKeyDown={(event) => {
+          if (loading || event.target instanceof HTMLInputElement) return;
           if (event.key === 'ArrowLeft') {
             event.preventDefault();
             previous();
@@ -167,6 +170,28 @@ export const OperationReplay = memo(function OperationReplay({
           Return Live
         </Button>
       </nav>
+      {page && record ? (
+        <label className="operation-replay__position">
+          <span>
+            Recorded operation {position + 1} of {page.records.length} in this window
+          </span>
+          <input
+            type="range"
+            aria-label="Recorded operation in this window"
+            min={1}
+            max={page.records.length}
+            value={position + 1}
+            disabled={loading || page.records.length < 2}
+            aria-valuetext={`Operation ${position + 1} of ${page.records.length} in this window`}
+            onChange={(event) => {
+              const selectedRecord = page.records[Number(event.target.value) - 1];
+              if (!selectedRecord) return;
+              setHistory(page);
+              choose(selectedRecord.cursor);
+            }}
+          />
+        </label>
+      ) : null}
       {loading ? <p role="status">Reading authorized operation history…</p> : null}
       {error ? (
         <>
@@ -181,7 +206,6 @@ export const OperationReplay = memo(function OperationReplay({
         </>
       ) : null}
       {notice ? <p role="status">{notice}</p> : null}
-      {!historical && page ? <p>Live cursor {page.through}</p> : null}
       {page?.gap ? (
         <p role="status">History gap: some operations and plan snapshots were not recorded.</p>
       ) : null}
@@ -190,21 +214,19 @@ export const OperationReplay = memo(function OperationReplay({
           <p role="status">
             Record {position + 1} of {page!.records.length} in this window
           </p>
-          <h4>{record.title}</h4>
-          <p>Turn {record.turn}</p>
-          <p>Cursor {record.cursor}</p>
-          <p>Status: {record.status}</p>
-          <p>
-            Recorded time: <time dateTime={record.at}>{record.at}</time>
-          </p>
-          {record.output ? (
-            <>
-              <pre>{record.output.text}</pre>
-              {record.output.truncated ? <p>Output truncated</p> : null}
-            </>
-          ) : (
-            <p>Output not recorded</p>
-          )}
+          <OperationDetails
+            key={record.cursor}
+            number={position + 1}
+            title={record.title}
+            status={record.status}
+            output={record.output}
+          >
+            <p>Turn {record.turn}</p>
+            <p>Cursor {record.cursor}</p>
+            <p>
+              Recorded time: <time dateTime={record.at}>{record.at}</time>
+            </p>
+          </OperationDetails>
           {record.plan ? (
             <section aria-label="Plan at this operation">
               <h4>Plan at this operation</h4>
