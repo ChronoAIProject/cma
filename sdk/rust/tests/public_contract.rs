@@ -1,11 +1,17 @@
+#[path = "public_contract/agent_browser.rs"]
+mod agent_browser;
 #[path = "public_contract/agent_events_v2.rs"]
 mod agent_events_v2;
 #[path = "public_contract/bindings.rs"]
 mod bindings;
 #[path = "public_contract/bots.rs"]
 mod bots;
+#[path = "public_contract/browser_control.rs"]
+mod browser_control;
 #[path = "public_contract/context.rs"]
 mod context;
+#[path = "public_contract/deliverables.rs"]
+mod deliverables;
 #[path = "public_contract/documents.rs"]
 mod documents;
 #[path = "public_contract/event_workers.rs"]
@@ -28,9 +34,15 @@ mod wire;
 use cma_sdk::{Error, Result};
 use context::{Case, Context};
 
-async fn dispatch(c: &Context<'_>) -> Result<()> {
+async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.contains("/api/v1/usage") || op.contains("/api/v1/admin/usage") {
+    if op.ends_with("/browser/control") && op.contains("/api/v1/agents/") {
+        browser_control::dispatch(c).await
+    } else if op.ends_with("/browser") && op.contains("/api/v1/agents/") {
+        agent_browser::dispatch(c).await
+    } else if op.contains("/deliverable-references") || op.contains("/deliverables") {
+        deliverables::dispatch(c, corpus).await
+    } else if op.contains("/api/v1/usage") || op.contains("/api/v1/admin/usage") {
         usage::dispatch(c).await
     } else if op.contains("/api/v1/documents") {
         documents::dispatch(c).await
@@ -47,6 +59,7 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
     {
         bindings::dispatch(c).await
     } else if op == "GET /api/v2/ui/transport"
+        || op == "GET /api/v2/ui/task-experience"
         || op == "GET /api/v2/agents/{agent_id}/events"
         || op == "GET /api/v2/agents/{agent_id}/events/snapshot"
         || op == "GET /api/v2/agents/{agent_id}/events/head"
@@ -150,10 +163,10 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
             );
         }
     }
-    for case in corpus {
+    for case in &corpus {
         let server = wire::WireServer::new().await;
-        let c = Context::new(&server.anonymous, &case);
-        if browser::owns(&case) {
+        let c = Context::new(&server.anonymous, case);
+        if browser::owns(case) {
             browser::verify(&c);
             assert_eq!(
                 server.request_count(),
@@ -164,12 +177,12 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
             browser_owned += 1;
             continue;
         }
-        if let Some(class) = classification::classify(&case) {
+        if let Some(class) = classification::classify(case) {
             if matches!(
                 class,
                 classification::Classification::Local | classification::Classification::TypedShape
             ) {
-                let Err(Error::Validation { message }) = dispatch(&c).await else {
+                let Err(Error::Validation { message }) = dispatch(&c, &corpus).await else {
                     panic!("{} must reject before HTTP", case.id)
                 };
                 let fixture_shape = message.starts_with("fixture shape: ");
@@ -185,7 +198,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
                     preflight += 1;
                 }
             } else {
-                classification::assert_unrepresentable(&case, class);
+                classification::assert_unrepresentable(case, class);
                 wire_shape += 1;
             }
             assert_eq!(
@@ -195,7 +208,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
                 case.id
             );
             check_error(
-                &case,
+                case,
                 Error::from_http_problem(
                     case.response.status,
                     case.response.headers.get("x-request-id").cloned(),
@@ -205,8 +218,11 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
             );
             continue;
         }
-        server.expect(context::wire(&case));
-        let result = dispatch(&c).await;
+        let exchange = deliverables::exchange(case, &corpus);
+        for step in &exchange {
+            server.expect(context::wire(step));
+        }
+        let result = dispatch(&c, &corpus).await;
         if case.response.status >= 400 && case.response.body_kind == "empty" {
             let error = result.expect_err(&case.id);
             assert!(
@@ -224,15 +240,15 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
         } else if case.response.status >= 400
             && !(case.operation == "GET /auth/session" && case.response.status == 401)
         {
-            check_error(&case, result.expect_err(&case.id));
+            check_error(case, result.expect_err(&case.id));
         } else {
             result.unwrap_or_else(|error| panic!("{}: {error:?}", case.id));
         }
         server.assert_drained();
         assert_eq!(
             server.request_count(),
-            1,
-            "{} must use exactly one typed HTTP request",
+            exchange.len(),
+            "{} must use the complete typed HTTP exchange",
             case.id
         );
         let _ = (&server.client, &server.base_url);

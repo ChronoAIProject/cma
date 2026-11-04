@@ -69,7 +69,11 @@ pub(in crate::store) async fn read_snapshot(
         Some(stored) => stored.state,
         None => AgentChannelUsageState::empty(provenance.creation_provenance(id)?),
     };
-    let snapshot = AgentChannelUsageSnapshot { provenance, state };
+    let snapshot = AgentChannelUsageSnapshot {
+        provenance,
+        state,
+        task_status: Default::default(),
+    };
     snapshot.validate(id)?;
     Ok(snapshot)
 }

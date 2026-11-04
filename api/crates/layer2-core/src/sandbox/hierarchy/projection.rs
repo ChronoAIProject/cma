@@ -21,6 +21,7 @@ impl From<&Worktree> for WorktreeHierarchySummary {
 impl From<&Agent> for AgentHierarchySummary {
     fn from(value: &Agent) -> Self {
         Self {
+            task_status: super::super::AgentTaskStatus::Unknown,
             runtime_metadata: (!value.conversation.observations.is_empty())
                 .then(|| value.conversation.observations.metadata.clone()),
             id: value.id.clone(),
@@ -128,7 +129,15 @@ pub(super) fn workspace_view(
     let mut agents: Vec<_> = record
         .agents
         .iter()
-        .map(AgentHierarchySummary::from)
+        .map(|agent| {
+            let mut summary = AgentHierarchySummary::from(agent);
+            summary.task_status = record
+                .task_statuses
+                .get(&agent.id)
+                .copied()
+                .unwrap_or_default();
+            summary
+        })
         .collect();
     agents.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
     Ok(WorkspaceHierarchyView {

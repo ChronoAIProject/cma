@@ -4,6 +4,12 @@
 
 `createClient(config)` returns a `Cma` with the following public resources:
 
+Answer delivery methods on `agents` are `describeDeliverable`,
+`answerDeliverables`, `readAnswerDeliverable` and `downloadAnswerDeliverable`.
+They use explicit resource/version evidence and independent authorization;
+`downloadAnswerDeliverable` returns bounded, digest-verified bytes after a fresh
+metadata read. See [Answer deliverables](agents.md#answer-deliverables).
+
 | Resource                                                | Methods                                                                                                                                                                                                                                                                                                                       |
 | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agentProfiles`, `workspaceProfiles`, `sandboxProfiles` | `list`, `read`, `create`, `save`, `publish`, `listRevisions`, `readRevision`, `setVisibility`, `retire`                                                                                                                                                                                                                       |

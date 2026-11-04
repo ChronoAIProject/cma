@@ -45,25 +45,9 @@ pub struct BindingService {
     pub(super) policy: BindingPolicy,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum BindingError {
-    #[error("forbidden")]
-    Forbidden,
-    #[error("binding not found")]
-    NotFound,
-    #[error("invalid binding request: {0}")]
-    InvalidRequest(String),
-    #[error("binding changed or is not ready")]
-    Conflict,
-    #[error("This binding's sandbox or workspace is missing or removed. Reconnect the channel to an available agent.")]
-    ResourcesUnavailable,
-    #[error("This binding update cannot preserve the existing Agent conversation and home. Service scope, skills, prompt, model, environment and conversation affinity remain pinned; update the existing resources through their supported controls. The binding and its retained work have not been changed. Rotate a credential with the current profile before changing metadata.")]
-    ReconfigurationUnsupported,
-    #[error("binding dependency unavailable: {0}")]
-    Unavailable(String),
-    #[error("binding data is not usable: {0}")]
-    Corrupt(String),
-}
+#[path = "error.rs"]
+mod error;
+pub use error::BindingError;
 
 impl BindingService {
     pub fn new<S>(
@@ -234,6 +218,16 @@ impl BindingService {
                         .map_err(credential_error);
                 }
                 Some(value) => {
+                    if value.key_sha256 == credential.sha256() {
+                        if let Some((id, installed, requested)) = value.skill_version_update(&plan)
+                        {
+                            return Err(BindingError::SkillVersionUpdateUnsupported {
+                                id,
+                                installed,
+                                requested,
+                            });
+                        }
+                    }
                     if !value.retains_runtime_configuration(&plan)
                         || value.key_sha256 != credential.sha256()
                     {
@@ -468,16 +462,5 @@ pub(super) fn credential_error(error: crate::CoreError) -> BindingError {
         crate::CoreError::InvalidRequest(detail) => BindingError::InvalidRequest(detail),
         crate::CoreError::InvalidState(_) => BindingError::Conflict,
         other => unavailable(other),
-    }
-}
-
-impl From<SandboxStoreError> for BindingError {
-    fn from(error: SandboxStoreError) -> Self {
-        match error {
-            SandboxStoreError::NotFound => Self::NotFound,
-            SandboxStoreError::Conflict | SandboxStoreError::Duplicate => Self::Conflict,
-            SandboxStoreError::Corrupt(detail) => Self::Corrupt(detail),
-            other => unavailable(other),
-        }
     }
 }

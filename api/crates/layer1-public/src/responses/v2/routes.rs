@@ -28,6 +28,7 @@ pub(super) struct CreateV2ResponseRequest {
     model: Option<String>,
     metadata: Option<BTreeMap<String, String>>,
     event_context: Option<super::event_context::EventContext>,
+    answer_context: Option<crate::conversation::AnswerContextRequest>,
     /// Exact provider binding generation; valid only with a binding credential.
     #[schema(minimum = 1)]
     binding_generation: Option<u64>,

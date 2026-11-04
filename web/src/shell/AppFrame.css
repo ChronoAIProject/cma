@@ -157,6 +157,26 @@
   box-shadow: var(--dsw-shadow-lv3);
 }
 
+.frame[data-details-inline] {
+  grid-template-rows: 30dvh minmax(0, 1fr);
+}
+
+.frame[data-details-inline] .frame__sidebar {
+  grid-row: 1 / -1;
+}
+
+.frame[data-details-inline] .frame__center {
+  grid-row: 2;
+}
+
+.frame[data-details-inline] .frame__details {
+  grid-row: 1;
+  grid-column: 2;
+  min-height: 0;
+  visibility: visible;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
 .frame__handle {
   position: absolute;
   top: 0;

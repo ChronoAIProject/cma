@@ -17,12 +17,16 @@
 #[macro_use]
 mod macros;
 pub mod admin;
+pub mod agent_browser;
+pub mod agent_browser_control;
 pub mod agent_card;
 pub mod agent_delegations;
+pub mod agent_environment;
 pub mod agent_events_v2;
 pub mod agent_files;
 pub mod agents;
 pub mod agui;
+pub mod answer_context;
 pub mod assets;
 pub mod auth;
 pub mod bot_setups;
@@ -48,6 +52,7 @@ mod resources;
 pub mod responses;
 pub mod responses_v2;
 pub mod stream;
+pub mod task_experience;
 pub mod triggers;
 pub mod usage;
 

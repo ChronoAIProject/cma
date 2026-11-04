@@ -109,6 +109,26 @@ describe('durable Agent conversation folding', () => {
     ]);
     expect(completed.recovery).toEqual(active.recovery);
     expect(completed.cursor).toBe(8);
+    expect(completed.turnOutcomes?.['5']).toBe('failed');
+  });
+
+  it('keeps recorded loss failed when AG-UI finishes and allows the next intact turn to complete', () => {
+    const incomplete = [
+      durable(5, 'turn_started', { turn_sequence: 5 }),
+      durable(6, 'conversation_gap', { frames: 1 }),
+      durable(7, 'agent_message', { content: 'Retained output' }),
+    ].reduce(foldAgentEvent, conversationFromTranscript(TRANSCRIPT));
+    const complete = (state: typeof incomplete, runId: string) =>
+      foldLiveEvent(
+        state,
+        { type: 'RUN_FINISHED', threadId: 'agt_1', runId, outcome: { type: 'complete' } },
+        'agt_1',
+      );
+    const finished = complete(incomplete, '5');
+    expect(finished.turnOutcomes?.['5']).toBe('failed');
+    expect(finished.recovery).toEqual(incomplete.recovery);
+    const later = foldAgentEvent(finished, durable(8, 'turn_started', { turn_sequence: 8 }));
+    expect(complete(later, '8').turnOutcomes?.['8']).toBe('completed');
   });
 
   it('hydrates chronological steering messages and continues the same active turn after reload', () => {

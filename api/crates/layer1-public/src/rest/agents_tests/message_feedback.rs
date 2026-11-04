@@ -1,62 +1,60 @@
-use std::collections::BTreeMap;
-
-use layer2_core::sandbox::message_feedback::{MessageFeedback, MessageFeedbackStore, MessageVote};
-use layer2_core::sandbox::AgentReadError;
-
 use super::*;
 
-type FeedbackKey = (SubjectId, AgentId, u64);
-#[derive(Default)]
-pub(in crate::rest) struct FeedbackMemory(Mutex<BTreeMap<FeedbackKey, MessageVote>>);
-#[async_trait]
-impl MessageFeedbackStore for FeedbackMemory {
-    async fn list(
-        &self,
-        owner: &SubjectId,
-        agent: &AgentId,
-        after: u64,
-        through: u64,
-        limit: u16,
-    ) -> Result<Vec<MessageFeedback>, AgentReadError> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|((o, a, seq), _)| o == owner && a == agent && *seq > after && *seq <= through)
-            .take(usize::from(limit))
-            .map(|((_, _, seq), vote)| MessageFeedback {
-                sequence: *seq,
-                vote: *vote,
-            })
-            .collect())
+#[path = "message_feedback_fixture.rs"]
+mod fixture;
+pub(in crate::rest) use fixture::{feedback_fixture, FeedbackMemory};
+
+const LIST: &str = "/api/v1/agents/agt_feedback/message-feedback";
+const EARLIER_ANSWER: &str = "/api/v1/agents/agt_feedback/messages/event:5/feedback";
+const AGENT_MESSAGE: &str = "/api/v1/agents/agt_feedback/messages/event:9/feedback";
+
+#[path = "message_feedback_reasons.rs"]
+mod reasons;
+
+#[tokio::test]
+async fn message_feedback_delayed_reasons_after_up_never_restore_down_or_reasons() {
+    let (fixture, feedback, _) = feedback_fixture().await;
+    for vote in ["down", "up"] {
+        let (status, _) = json_response(
+            &fixture.router,
+            request(
+                Method::PUT,
+                AGENT_MESSAGE,
+                OWNER,
+                None,
+                Some(json!({"vote": vote})),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
     }
-    async fn set(
-        &self,
-        owner: &SubjectId,
-        agent: &AgentId,
-        sequence: u64,
-        vote: Option<MessageVote>,
-    ) -> Result<(), AgentReadError> {
-        let mut rows = self.0.lock().unwrap();
-        let key = (owner.clone(), agent.clone(), sequence);
-        if let Some(vote) = vote {
-            rows.insert(key, vote);
-        } else {
-            rows.remove(&key);
-        }
-        Ok(())
-    }
+    let (status, body) = json_response(
+        &fixture.router,
+        request(Method::PUT, &format!("{AGENT_MESSAGE}/reasons"), OWNER, None,
+            Some(json!({"expected_version": 1, "request_id": "delayed-reasons", "reasons": ["inaccurate"], "comment": "Old draft"}))),
+    ).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let reopened = agent_router(fixture.state.clone().with_message_feedback(feedback));
+    let (status, body) = json_response(
+        &reopened,
+        request(Method::GET, AGENT_MESSAGE, OWNER, None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["vote"], "up");
+    assert_eq!(body["reasons"], json!([]));
+    assert_eq!(body["comment"], "");
 }
 
-pub(in crate::rest) async fn feedback_fixture() -> (Fixture, Arc<FeedbackMemory>, Agent) {
+#[tokio::test]
+async fn message_feedback_accepts_only_the_completed_final_answer_and_reopens_without_new_turns() {
     let mut fixture = fixture().await;
     let feedback = Arc::new(FeedbackMemory::default());
     fixture.state = fixture.state.with_message_feedback(feedback.clone());
     fixture.router = agent_router(fixture.state.clone());
-    let agent = insert_agent(
+    insert_agent(
         &fixture.store,
-        seeded_agent("agt_feedback", AgentStatus::Working, 5, Some(3)),
+        seeded_agent("agt_feedback", AgentStatus::Ready, 7, None),
         vec![
             AgentLogKind::TurnStarted {
                 model: None,
@@ -67,24 +65,68 @@ pub(in crate::rest) async fn feedback_fixture() -> (Fixture, Arc<FeedbackMemory>
                 content: "Question".into(),
             },
             AgentLogKind::AgentMessage {
-                content: "Answer".into(),
+                content: "Checking the evidence".into(),
             },
+            AgentLogKind::AgentMessage {
+                content: "The final answer".into(),
+            },
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
         ],
     )
     .await;
-    (fixture, feedback, agent)
+    let transcript_path = "/api/v1/agents/agt_feedback/transcript";
+    let (status, before) = json_response(
+        &fixture.router,
+        request(Method::GET, transcript_path, OWNER, None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    for (message, expected) in [
+        (4, StatusCode::NOT_FOUND),
+        (5, StatusCode::NOT_FOUND),
+        (6, StatusCode::OK),
+    ] {
+        let (status, body) = json_response(
+            &fixture.router,
+            request(
+                Method::PUT,
+                &format!("/api/v1/agents/agt_feedback/messages/event:{message}/feedback"),
+                OWNER,
+                None,
+                Some(json!({"vote":"up"})),
+            ),
+        )
+        .await;
+        assert_eq!(status, expected, "{body}");
+    }
+    let reopened = agent_router(fixture.state.clone().with_message_feedback(feedback));
+    let (status, votes) =
+        json_response(&reopened, request(Method::GET, LIST, OWNER, None, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        votes,
+        json!({"items":[{"message_id":"event:6","vote":"up"}],"next":null})
+    );
+    let (status, after) = json_response(
+        &reopened,
+        request(Method::GET, transcript_path, OWNER, None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after, before);
 }
-
-const LIST: &str = "/api/v1/agents/agt_feedback/message-feedback";
-const OWNER_MESSAGE: &str = "/api/v1/agents/agt_feedback/messages/event:4/feedback";
-const AGENT_MESSAGE: &str = "/api/v1/agents/agt_feedback/messages/event:5/feedback";
 
 #[tokio::test]
 async fn message_feedback_is_persisted_metadata_that_never_creates_turns_or_runtime_input() {
     let (fixture, feedback, agent) = feedback_fixture().await;
-    let before = fixture.store.agent_log(&agent.id, 0, 100).await.unwrap();
+    let transcript_path = format!("/api/v1/agents/{}/transcript", agent.id);
+    let before = json_response(
+        &fixture.router,
+        request(Method::GET, &transcript_path, OWNER, None, None),
+    )
+    .await;
     for (path, vote) in [
-        (OWNER_MESSAGE, "up"),
+        (EARLIER_ANSWER, "up"),
         (AGENT_MESSAGE, "down"),
         (AGENT_MESSAGE, "down"),
     ] {
@@ -106,13 +148,13 @@ async fn message_feedback_is_persisted_metadata_that_never_creates_turns_or_runt
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         page,
-        json!({"items":[{"message_id":"event:4","vote":"up"}],"next":4})
+        json!({"items":[{"message_id":"event:5","vote":"up"}],"next":5})
     );
     let (_, page) = json_response(
         &reconnected,
         request(
             Method::GET,
-            &format!("{LIST}?after=4&limit=1"),
+            &format!("{LIST}?after=5&limit=1"),
             OWNER,
             None,
             None,
@@ -121,7 +163,7 @@ async fn message_feedback_is_persisted_metadata_that_never_creates_turns_or_runt
     .await;
     assert_eq!(
         page,
-        json!({"items":[{"message_id":"event:5","vote":"down"}],"next":null})
+        json!({"items":[{"message_id":"event:9","vote":"down"}],"next":null})
     );
     for vote in [json!("up"), Value::Null, Value::Null] {
         let (status, body) = json_response(
@@ -136,20 +178,20 @@ async fn message_feedback_is_persisted_metadata_that_never_creates_turns_or_runt
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body, json!({"message_id":"event:5","vote":vote}));
+        assert_eq!(body, json!({"message_id":"event:9","vote":vote}));
     }
     let (_, page) =
         json_response(&reconnected, request(Method::GET, LIST, OWNER, None, None)).await;
     assert_eq!(
         page,
-        json!({"items":[{"message_id":"event:4","vote":"up"}],"next":null})
+        json!({"items":[{"message_id":"event:5","vote":"up"}],"next":null})
     );
     assert_eq!(
-        fixture.store.get_agent(&agent.id).await.unwrap(),
-        Some(agent.clone())
-    );
-    assert_eq!(
-        fixture.store.agent_log(&agent.id, 0, 100).await.unwrap(),
+        json_response(
+            &reconnected,
+            request(Method::GET, &transcript_path, OWNER, None, None)
+        )
+        .await,
         before
     );
     // TestRegistry.resolve always refuses; all successful feedback writes therefore
@@ -158,7 +200,7 @@ async fn message_feedback_is_persisted_metadata_that_never_creates_turns_or_runt
 
 #[tokio::test]
 async fn message_feedback_rejects_foreign_unauthenticated_ungranted_and_nonmessage_targets() {
-    let (fixture, feedback, _) = feedback_fixture().await;
+    let (fixture, _, _) = feedback_fixture().await;
     let body = Some(json!({"vote":"up"}));
     for (method, path, payload) in [
         (Method::GET, LIST, None),
@@ -183,7 +225,17 @@ async fn message_feedback_rejects_foreign_unauthenticated_ungranted_and_nonmessa
             StatusCode::UNAUTHORIZED
         );
     }
-    for message in ["event:1", "event:2", "event:3", "event:6", "event:999"] {
+    for message in [
+        "event:1",
+        "event:2",
+        "event:3",
+        "event:4",
+        "event:6",
+        "event:7",
+        "event:8",
+        "event:10",
+        "event:999",
+    ] {
         let (status, _) = json_response(
             &fixture.router,
             request(
@@ -234,7 +286,13 @@ async fn message_feedback_rejects_foreign_unauthenticated_ungranted_and_nonmessa
         ));
         assert_eq!(problem["code"], "invalid_json");
     }
-    assert!(feedback.0.lock().unwrap().is_empty());
+    let (status, page) = json_response(
+        &fixture.router,
+        request(Method::GET, LIST, OWNER, None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page, json!({"items": [], "next": null}));
 }
 
 #[tokio::test]
@@ -266,6 +324,32 @@ async fn message_feedback_page_is_bounded_and_hidden_for_missing_agents() {
 async fn message_feedback_preserves_real_share_policy_and_revoked_owner_capability() {
     use crate::rest::{resource_access_tests::context, shared_agent_tests};
     let (fixture, _, _, _) = shared_agent_tests::fixture(shared_agent_tests::Reply::Member).await;
+    let agent_id = AgentId("agt_shared_read".into());
+    let mut agent = fixture.store.get_agent(&agent_id).await.unwrap().unwrap();
+    for kind in [
+        AgentLogKind::TurnStarted {
+            model: None,
+            turn_sequence: 10,
+            origin_key: None,
+        },
+        AgentLogKind::OwnerMessage {
+            content: "Retry the review".into(),
+        },
+        AgentLogKind::AgentMessage {
+            content: "Review complete".into(),
+        },
+        AgentLogKind::TurnCompleted { turn_sequence: 10 },
+    ] {
+        fixture
+            .store
+            .append_agent_log(&agent_id, NOW.into(), kind)
+            .await
+            .unwrap();
+    }
+    let revision = agent.revision;
+    agent.revision += 1;
+    agent.conversation.last_seq = 13;
+    fixture.store.save_agent(revision, agent).await.unwrap();
     let feedback = Arc::new(FeedbackMemory::default());
     let router = agent_router(fixture.state.with_message_feedback(feedback.clone()));
     let make = |method: Method, path: &str, who: &str, body: Option<Value>| {
@@ -295,7 +379,7 @@ async fn message_feedback_preserves_real_share_policy_and_revoked_owner_capabili
         (Method::GET, "/message-feedback", None),
         (
             Method::PUT,
-            "/messages/event:6/feedback",
+            "/messages/event:12/feedback",
             Some(json!({"vote":"up"})),
         ),
     ] {
@@ -309,7 +393,7 @@ async fn message_feedback_preserves_real_share_policy_and_revoked_owner_capabili
             StatusCode::NOT_FOUND
         );
     }
-    let path = format!("{base}/messages/event:6/feedback");
+    let path = format!("{base}/messages/event:12/feedback");
     assert_eq!(
         response(
             &router,
@@ -319,7 +403,16 @@ async fn message_feedback_preserves_real_share_policy_and_revoked_owner_capabili
         .0,
         StatusCode::OK
     );
-    let before = feedback.0.lock().unwrap().clone();
+    let before = json_response(
+        &router,
+        make(
+            Method::GET,
+            &format!("{base}/message-feedback"),
+            OWNER,
+            None,
+        ),
+    )
+    .await;
     let mut revoked = request(
         Method::PUT,
         &path,
@@ -329,5 +422,17 @@ async fn message_feedback_preserves_real_share_policy_and_revoked_owner_capabili
     );
     revoked.extensions_mut().insert(Authorization::none());
     assert_eq!(response(&router, revoked).await.0, StatusCode::FORBIDDEN);
-    assert_eq!(*feedback.0.lock().unwrap(), before);
+    assert_eq!(
+        json_response(
+            &router,
+            make(
+                Method::GET,
+                &format!("{base}/message-feedback"),
+                OWNER,
+                None
+            )
+        )
+        .await,
+        before
+    );
 }

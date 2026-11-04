@@ -3,6 +3,7 @@ import {
   failure,
   sandboxStatus,
   workspaceStatus,
+  workspaceSource,
   worktreeStatus,
 } from '../instances/types.js';
 import { triggerQuickMessage } from '../trigger-authoring/types.js';
@@ -73,6 +74,7 @@ export const agentWorkspace = object({
   status: workspaceStatus,
   profile: instanceProfileReference,
   resolved_commit: optional(text),
+  source: optional(workspaceSource),
 });
 export type AgentWorkspace = Output<typeof agentWorkspace>;
 export const agentSandbox = object({

@@ -1,4 +1,5 @@
 import type { OperationOptions } from '../http.js';
+import type { AnswerContext } from '../answer-context.js';
 
 export interface AgentConversationEvent {
   readonly type: string;
@@ -10,6 +11,7 @@ export interface AgentConversationEvent {
 }
 
 export interface AgentRunRequest {
+  readonly forwardedProps?: { readonly answerContext: AnswerContext };
   readonly threadId: string;
   readonly runId?: string;
   readonly messages?: readonly { readonly role: 'user'; readonly content: string }[];

@@ -22,6 +22,23 @@ pub(super) fn validate_request(
             "name must contain 1-80 non-control bytes".into(),
         ));
     }
+    if let Some(message) = &request.initial_message {
+        if message.trim().is_empty()
+            || message.len() > layer2_core::sandbox::MAX_FIRST_MESSAGE_BYTES
+        {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "initial_message must contain non-whitespace text and at most 262144 UTF-8 bytes"
+                    .into(),
+            ));
+        }
+        if request.repository.is_some()
+            && (request.workspace_id.is_some() || request.sandbox_id.is_some())
+        {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "repository tasks require a new Sandbox; existing Workspace and Sandbox context cannot be replaced".into(),
+            ));
+        }
+    }
     if request.workspace_id.is_some() && request.sandbox_id.is_some() {
         return Err(AgentLifecycleProvisioningError::Invalid(
             "choose either sandbox_id or workspace_id".into(),
@@ -62,13 +79,30 @@ pub(super) fn validate_request(
             || parsed.query().is_some()
             || parsed.fragment().is_some()
             || parsed.path().trim_matches('/').split('/').count() != 2
+            || (request.initial_message.is_some()
+                && parsed.path().trim_matches('/').split('/').any(|part| {
+                    part.is_empty()
+                        || matches!(part, "." | ".." | ".git")
+                        || !part.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
+                        })
+                }))
         {
             return Err(AgentLifecycleProvisioningError::Invalid(
                 "repository must be an HTTPS GitHub URL".into(),
             ));
         }
         if repository.reference.as_ref().is_some_and(|reference| {
-            reference.is_empty() || reference.len() > 255 || reference.chars().any(char::is_control)
+            reference.is_empty()
+                || reference.len() > 255
+                || reference.chars().any(char::is_control)
+                || (request.initial_message.is_some()
+                    && (reference.starts_with('-')
+                        || reference.chars().any(|character| {
+                            character.is_whitespace() || "~^:?*[\\".contains(character)
+                        })
+                        || reference.contains("..")
+                        || reference.contains("@{")))
         }) {
             return Err(AgentLifecycleProvisioningError::Invalid(
                 "repository ref is invalid".into(),
@@ -192,6 +226,14 @@ pub(super) fn repository_location(
     request: &AgentLifecycleCreateRequest,
     behavior: LifecycleBehavior,
 ) -> Result<WorkspaceLocation, AgentLifecycleProvisioningError> {
+    if request.initial_message.is_some() {
+        if let Some(repository) = &request.repository {
+            return Ok(WorkspaceLocation::RepositorySnapshot {
+                url: repository.url.clone(),
+                reference: repository.reference.clone(),
+            });
+        }
+    }
     if behavior == LifecycleBehavior::Legacy {
         if let Some(repository) = &request.repository {
             return Ok(WorkspaceLocation::GitRepository {
@@ -218,12 +260,25 @@ pub(super) fn setup_message(request: &AgentLifecycleCreateRequest) -> String {
 }
 
 pub(super) fn admitted_first_message(input: &crate::store::LifecycleInput) -> Option<String> {
+    if let Some(message) = &input.request.initial_message {
+        return Some(message.clone());
+    }
     (input.behavior == LifecycleBehavior::PromptRepository).then(|| {
         input
             .setup_message
             .clone()
             .unwrap_or_else(|| first_message(&input.request))
     })
+}
+
+pub(super) fn first_message_purpose(
+    request: &AgentLifecycleCreateRequest,
+) -> layer2_core::sandbox::FirstMessagePurpose {
+    if request.initial_message.is_some() {
+        layer2_core::sandbox::FirstMessagePurpose::Task
+    } else {
+        layer2_core::sandbox::FirstMessagePurpose::Setup
+    }
 }
 
 // Freeze these bytes for operations admitted before setup messages were captured.

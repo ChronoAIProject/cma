@@ -11,6 +11,7 @@ impl AgentProjectionServices {
         };
         layer1_public::agent_v2::router(
             layer1_public::agent_v2::AgentV2State::new(self.reads(), commands.clone())
+                .with_task_experience(commands.task_experience_policy())
                 .with_updates(updates)
                 .with_ui_transport(
                     flags.v2_ui_transport,

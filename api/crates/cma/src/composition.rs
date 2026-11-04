@@ -12,19 +12,17 @@ mod media;
 mod profiles;
 mod routes;
 mod runtime;
-use crate::auth::service_portal;
 use crate::{
     activity::ActivityRecorder,
-    auth::{AuthMode, AuthState},
+    auth::{service_portal, AuthState},
     config::Config,
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
     rate_limit::RateLimiters,
     sandbox::{
-        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, OrnnAgentSkillResolver,
-        ProviderTitleEndpoint, SandboxLifecycleComposition, SandboxLifecycleConfig,
-        SandboxLifecycleDependencies,
+        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, ProviderTitleEndpoint,
+        SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
@@ -89,7 +87,6 @@ impl ControlPlaneComposition {
         };
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
-
         let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
         let sandbox_operators = Arc::new(SandboxOperatorService::new(
             stores.sandbox_model.clone(),
@@ -162,6 +159,7 @@ impl ControlPlaneComposition {
         )
         .with_connections(connection_prerequisite.clone())
         .with_message_feedback(stores.message_feedback.clone())
+        .with_suggestions(stores.sandbox_model.clone())
         .with_skill_support(Arc::new(crate::projections::AdapterAgentSkillSupport(
             adapter.clone(),
         )))
@@ -185,7 +183,9 @@ impl ControlPlaneComposition {
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
-        );
+            Some(adapter::desktop_creation(config, adapter.clone())?),
+        )
+        .with_task_experience(config.task_experience.clone());
         inline_lifecycle.resume_pending();
         let projections = projections
             .with_lifecycle(inline_lifecycle.clone())
@@ -244,20 +244,7 @@ impl ControlPlaneComposition {
             sandbox_credentials.clone(),
             adapter.clone(),
         )?;
-        if !auth.requires_credential() {
-            tracing::warn!(
-                "running with a trusted fixed subject; this mode is for local development only"
-            );
-        }
-        let agent_skills = match &config.auth_mode {
-            AuthMode::Provider { .. } => OrnnAgentSkillResolver::scoped(
-                &config.runtime.platform_base_url,
-                Arc::clone(&sandbox_credentials),
-            )?,
-            AuthMode::Trusted { .. } => {
-                OrnnAgentSkillResolver::anonymous(&config.runtime.platform_base_url)?
-            }
-        };
+        let agent_skills = credentials::agent_skills(config, sandbox_credentials.clone())?;
 
         let limits = RateLimiters::from_config(
             config.rate_limits,
@@ -359,6 +346,13 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
         );
+        let deliverables = access::deliverables(
+            &stores,
+            projections.reads(),
+            resource_access.clone(),
+            documents.clone(),
+            adapter.clone(),
+        );
         let agent_access = access::compose(
             &stores,
             auth.clone(),
@@ -369,7 +363,9 @@ impl ControlPlaneComposition {
             access::ToolServices {
                 source: access_tools,
                 documents: config.document_storage.as_ref().map(|_| documents.clone()),
+                deliverables: deliverables.clone(),
                 public_origin: config.public_url.clone(),
+                task_experience: config.task_experience.clone(),
             },
         );
         let command_service = agent_access.commands;
@@ -391,6 +387,7 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
+            .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))
             .merge(rest::documents_router(documents.clone()))
             .merge(model_routes)
@@ -400,6 +397,7 @@ impl ControlPlaneComposition {
                 stores.sandbox_model.clone(),
                 resource_access.clone(),
                 adapter.clone(),
+                config.task_experience.clone(),
             ))
             .merge(layer1_public::rest::sandbox_commands_router(
                 sandbox_control_service,
@@ -434,8 +432,7 @@ impl ControlPlaneComposition {
             profile_bounds: authoring_bounds,
             profile_scanner,
         })?;
-        let resource_routes = resource_routes.merge(bot_routes);
-        let mut actor_continuations = None;
+        let (resource_routes, mut actor_continuations) = (resource_routes.merge(bot_routes), None);
         let resource_routes = if config.bot_father.is_some() {
             let bot_service = bots
                 .as_ref()

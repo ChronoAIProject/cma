@@ -2,7 +2,7 @@ use super::attachments::runtime;
 use super::*;
 use crate::sandbox::agent_filesystem::*;
 use crate::{resource_access::*, Authorization, Caller, Capability};
-struct NoOrganizations;
+pub(super) struct NoOrganizations;
 #[async_trait::async_trait]
 impl OrganizationAuthority for NoOrganizations {
     async fn organization_context(
@@ -21,7 +21,7 @@ impl OrganizationAuthority for NoOrganizations {
         Ok(vec![])
     }
 }
-fn context(subject: &str) -> CallerContext {
+pub(super) fn context(subject: &str) -> CallerContext {
     CallerContext {
         credential_source: CredentialSource::Retained,
         caller: Caller::new(
@@ -71,14 +71,48 @@ async fn fixture_with_authority(
     (
         AgentFileService::new(
             access.clone(),
-            Arc::new(runtime::UnusedRuntime { status: None }),
+            Arc::new(runtime::UnusedRuntime {
+                status: None,
+                file_root: None,
+            }),
         ),
         access,
         context("owner"),
     )
 }
 
-struct OrganizationAdmin;
+pub(super) struct OrganizationAdmin;
+
+#[tokio::test]
+async fn computer_environment_reports_authorized_scope_without_runtime_addresses() {
+    let (files, _, owner) = fixture().await;
+    let environment = files
+        .environment(&owner.caller, Some(&owner), None, &agent().id)
+        .await
+        .unwrap();
+    let value = serde_json::to_value(environment).unwrap();
+    assert_eq!(value["agent_id"], agent().id.as_str());
+    assert_eq!(value["files"]["scope"], "mounted_home");
+    assert_eq!(value["files"]["state"], "available");
+    assert_eq!(value["files"]["writable"], true);
+    assert_eq!(value["operation_output"]["scope"], "agent_turn_history");
+    assert_eq!(value["operation_output"]["state"], "available");
+    assert_eq!(value["replay"]["state"], "available");
+    assert_eq!(value["replay"]["scope"], "agent_turn_history");
+    assert_eq!(value["replay"]["reason"], "operation_records_only");
+    assert_eq!(value["replay"]["writable"], false);
+    for feature in ["browser", "control"] {
+        assert_eq!(value[feature]["state"], "unsupported");
+    }
+    for secret in ["runtime-test", &"b".repeat(32)] {
+        assert!(!value.to_string().contains(secret));
+    }
+    let outsider = context("outsider");
+    assert!(files
+        .environment(&outsider.caller, Some(&outsider), None, &agent().id)
+        .await
+        .is_err());
+}
 #[async_trait::async_trait]
 impl OrganizationAuthority for OrganizationAdmin {
     async fn organization_context(

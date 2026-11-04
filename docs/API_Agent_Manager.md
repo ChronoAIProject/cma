@@ -44,6 +44,15 @@ CMA OAuth login. A bearer alone does not establish this delegation. See
    endpoint. Omit both for a new Sandbox. Read the request schema for supported
    repository and inline settings options.
 
+   The creation flags have separate meanings. `desktop:true` prepares the
+   task's browser before its exact `initial_message` is delivered; that message
+   is required, and browser observation/control use their own capability routes.
+   `machine_included:true` selects the deployment's desktop Sandbox image, so
+   omit `image`, `workspace_id` and `sandbox_id`; it does not require an initial
+   task. Agent detail's `desktop` field reflects this immutable machine marker
+   for non-isolated Agents and enables desktop WebSocket discovery. Neither
+   request flag substitutes for the other. Preserve both in exact retries.
+
 2. Read `GET /api/v1/agent-lifecycle/<lifecycle-operation-id>`. Keep the returned
    `agent_id`; inspect `status`, `phase`, `events`, and any connection requirement.
    A readiness phase event alone is not operation completion. A lost response
@@ -75,7 +84,7 @@ CMA OAuth login. A bearer alone does not establish this delegation. See
 
 ## Included operations
 
-The focused contract contains 37 paths and 43 operations. It retains only
+The focused contract contains 76 paths and 91 operations. It retains only
 transitively referenced components, used tags and required security schemes.
 The generated document is authoritative for exact bodies and error responses.
 
@@ -140,6 +149,32 @@ subset accepts text and `input_text` parts, not OpenAI file/image content parts.
 Each uploaded file is limited to 20 MiB. Published output artifacts have separate
 list/read/download routes; uploads do not automatically publish private files.
 
+Answer deliverables use the final recorded answer's `event:<sequence>` identity,
+its turn sequence and an explicit resource reference. Read
+`GET /api/v1/agents/{id}/answers/{answer_id}/deliverables` only for visible final
+answers containing a `cma-deliverable:v1` marker. The list contains up to 32
+deduplicated items and reads authorized metadata without downloading their bodies.
+`agent_artifact`, `document` plus source revision, and `live_file` plus exact
+home-relative path/hash are distinct identities. This API never publishes files.
+
+Read one item at `.../deliverables/{delivery_id}`. Set `verify=true` for an explicit
+single-item retry that checks actual bytes. A live file initially reports
+`unchecked` (Verify on download); it retains its answer-time size and digest.
+Download at `.../{delivery_id}/download`, verify size and SHA-256, and re-read that
+item's current authorization before saving. A changed live file returns 409;
+a revised document keeps the referenced immutable source revision. Conversation
+visibility does not grant file or document access. Document token links use the
+existing `X-CMA-Document-Share-Token` header in addition to authentication.
+
+The verification endpoint `POST /api/v1/agents/{id}/deliverable-references` accepts
+an explicit resource selector and returns `{reference, marker}`. The runtime
+descriptor tool and document publication receipts supply the same marker. Only
+an unchanged standalone marker in a successful turn's final nonempty Assistant
+message establishes association. File names, code spans and directories do not.
+The answer projection reads at most 128 records after the requested message and
+512 records in its turn, within 4 MiB/15 seconds; it fails closed beyond these
+bounds instead of rebuilding the full conversation.
+
 Read the Agent's model catalogue before updating model, reasoning effort or
 permission mode. Use the settings endpoint and observe `pending` until runtime
 confirmation. For service access, list access requests and approve or deny the
@@ -178,13 +213,61 @@ order. Clients should serialize changes to a particular message. Retrying an
 uncertain old request after a newer selection can replace that selection.
 
 Use `event:<sequence>` from `GET /api/v1/agents/{id}/transcript` message records
-or durable Agent event sequences. Only committed owner/assistant message events
-accept votes; lifecycle, tool, turn, draft and optimistic IDs are rejected. Votes
+or durable Agent event sequences. New writes require a nonempty Assistant answer
+with the greatest message sequence in a successfully completed turn. Message
+array order and equal content do not establish identity. Active, interrupted,
+failed and output-gap turns, intermediate replies, owner messages, lifecycle,
+tool, draft and optimistic IDs are rejected with 404. Regenerated answers retain
+their separate message/turn identities. Reads retain all historical saved votes,
+including votes on formerly eligible messages; tightening write eligibility does
+not delete those records. The up/down/null request and response shapes are unchanged.
+Clients keep the last confirmed choice while a save is pending, serialize writes,
+and verify or retry an uncertain original value before allowing a different choice.
+Votes
 persist across refreshes and API restarts in Agent Manager's independent
 `agent_message_feedback` collection. Its schema and unique owner/Agent/sequence
 index initialize additively at startup. Isolated database deployments must add
 this collection to the generated Agent Manager role before upgrading; explicit
 shared-schema deployments require no new database credential.
+
+Negative reasons are a separate conditional metadata operation. After confirming
+`down`, read `GET /api/v1/agents/{id}/messages/{message_id}/feedback` to obtain
+`{ viewer_id, agent_id, message_id, vote, version, reasons, comment, updated_at,
+request_id }`. This owner-only read uses the same canonical completed final
+answer eligibility as vote writes. The list and vote PUT shapes stay unchanged.
+
+`PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons` accepts
+`{ expected_version, request_id, reasons, comment }`. `reasons` contains zero to
+six distinct values: `inaccurate`, `unanswered`, `unusable_steps`, `incomplete`,
+`unclear`, `other`. `comment` defaults to an empty string and permits at most 500
+Unicode code points, with no trimming or normalization. `request_id` is 1–128
+ASCII letters, digits, `_`, `.`, `:`, or `-`. Invalid selections, identities and
+overlong comments are refused with 422. Unknown fields/enums are invalid JSON.
+
+Only the current `down` version can accept reasons. A successful write advances
+the version and returns the full saved view, including the authenticated owner
+and update timestamp. Retry an uncertain request with its identical body and
+request ID; an exact retry returns the same durable version and timestamp.
+Reusing the most recent request ID for different content or presenting a stale
+version returns 409 `feedback_version_conflict`. Reread before deciding whether
+to retry or author a new version; a delayed reason write never sets a vote.
+
+Every vote transition advances the durable version and atomically clears reasons,
+comment and the reason receipt, including old clients' up/null PUTs. Repeating
+the same vote preserves the version and any saved down reasons. Removing a vote
+retains a tombstone, excluded from the legacy non-null list, so down→up/null→down
+cannot reuse an old version. Concurrent writers use a version-and-vote compare
+and swap in one majority-durable record; no runtime, send or training operation
+is involved.
+
+Existing schema-v1 vote-only records read with version 0, empty reasons/comment,
+and null update/request metadata. They migrate lazily on their next transition
+or reason save; no collection, bulk rewrite or additional index is needed.
+Deploy compatible readers and writers together: pre-reason binaries with strict
+record decoding cannot read extended rows/tombstones and must not share writes
+or be restored against upgraded records. Public old clients remain supported;
+an application rollback must retain this storage reader and clearing/version
+semantics. Do not delete tombstones or reset versions during rollback.
 
 ### Sandbox colours
 

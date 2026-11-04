@@ -14,13 +14,19 @@ import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdent
 import { MessageFooter } from './MessageFooter';
 import type { MessageFeedbackControls } from './useMessageFeedback';
 import type { Entry } from './timeline';
+import { AnswerDeliverables } from './AnswerDeliverables';
+import { answerProse } from './answerDeliveries';
+import type { ConversationState } from './model';
+import { Button } from '../ui/Button';
 
 function StreamEntryView({
+  onReplay,
   entry,
   approvalBusy,
   approvalReadOnly = false,
   onApproval,
   activeRunId,
+  planOutcome,
   showUsage = false,
   usage,
   duration,
@@ -29,12 +35,14 @@ function StreamEntryView({
   feedback,
   continued = false,
 }: {
+  readonly onReplay?: (turn: string) => void;
   readonly entry: Entry;
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
   /** Only the active turn can still be running a call. */
   readonly activeRunId?: string;
+  readonly planOutcome?: NonNullable<ConversationState['turnOutcomes']>[string];
   readonly showUsage?: boolean;
   readonly usage?: AgentUsage['currentTurn'];
   readonly duration?: string;
@@ -46,7 +54,16 @@ function StreamEntryView({
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
-    const content = message.role === 'user' ? visibleUserMessage(message.content) : message.content;
+    const canDeliver =
+      message.role === 'assistant' &&
+      message.finalAnswer === true &&
+      !message.liveOnly &&
+      message.status !== 'streaming' &&
+      /^event:[1-9]\d*$/.test(message.id);
+    const delivery =
+      message.role === 'assistant'
+        ? answerProse(message.content, message.status === 'streaming')
+        : { content: visibleUserMessage(message.content), references: 0 };
     const identity = messageIdentity(message.role, user, unknownUserName);
     return (
       <article
@@ -59,10 +76,13 @@ function StreamEntryView({
         <div className="message__body">
           {continued ? null : <span className="message__role">{identity.name}</span>}
           {message.role === 'user' ? (
-            <UserMessage content={content} />
+            <UserMessage content={delivery.content} />
           ) : (
-            <MessageContent content={message.content} streaming={message.status === 'streaming'} />
+            <MessageContent content={delivery.content} streaming={message.status === 'streaming'} />
           )}
+          {canDeliver && delivery.references ? (
+            <AnswerDeliverables answerId={message.id} references={delivery.references} />
+          ) : null}
           {/* A turn that reported nothing draws no line; absence is never shown as zero. */}
           {duration === undefined ? null : (
             <div className="message__duration" aria-label="Turn duration">
@@ -76,9 +96,9 @@ function StreamEntryView({
           ) : null}
           <MessageFooter
             id={message.id}
-            canVote={message.role === 'assistant'}
+            canVote={message.role === 'assistant' && message.finalAnswer === true}
             at={message.at}
-            content={content}
+            content={delivery.content}
             committed={
               !message.liveOnly &&
               message.status !== 'streaming' &&
@@ -86,6 +106,11 @@ function StreamEntryView({
             }
             feedback={feedback}
           />
+          {onReplay && message.finalAnswer && message.runId ? (
+            <Button size="sm" onClick={() => onReplay(message.runId!)}>
+              View plan and replay
+            </Button>
+          ) : null}
         </div>
       </article>
     );
@@ -103,7 +128,15 @@ function StreamEntryView({
     );
   }
   if (entry.kind === 'tool') return <ToolCallRow tool={entry.item} activeRunId={activeRunId} />;
-  if (entry.kind === 'plan') return <PlanCard plan={entry.item} />;
+  if (entry.kind === 'plan')
+    return (
+      <PlanCard
+        onReplay={onReplay}
+        plan={entry.item}
+        active={entry.item.runId !== undefined && entry.item.runId === activeRunId}
+        outcome={planOutcome}
+      />
+    );
   if (entry.kind === 'recovery') {
     const notice = entry.item;
     if (notice.clearsOn !== undefined)
@@ -143,6 +176,7 @@ function StreamEntryView({
 }
 
 export const StreamEntry = memo(StreamEntryView, (previous, next) => {
+  if (previous.onReplay !== next.onReplay) return false;
   if (previous.entry.kind !== next.entry.kind || previous.entry.item !== next.entry.item)
     return false;
   if (next.entry.kind === 'message')
@@ -156,6 +190,8 @@ export const StreamEntry = memo(StreamEntryView, (previous, next) => {
       previous.continued === next.continued
     );
   if (next.entry.kind === 'tool') return previous.activeRunId === next.activeRunId;
+  if (next.entry.kind === 'plan')
+    return previous.activeRunId === next.activeRunId && previous.planOutcome === next.planOutcome;
   if (next.entry.kind === 'approval')
     return (
       previous.approvalBusy === next.approvalBusy &&

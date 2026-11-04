@@ -23,9 +23,84 @@ not an id or a concurrency fence.
 optional GitHub repository, and inline Agent settings. The browser's Agent
 Manager proxy exposes this at `/api/agent-manager/v1/agents`. `Idempotency-Key`
 is required. A `202` receipt contains an **operation** ID; read
-`GET /api/v1/agent-lifecycle/{id}` until `status` is `succeeded` and then use its
-`agent_id` to open the Agent. A phase event marked `ready` does not complete the
-operation. Workspace/runtime readiness is reported only after Agent preparation.
+`GET /api/v1/agent-lifecycle/{id}` for its exact `agent_id`. Once that Agent and
+its owned parent hierarchy are readable, the client can open the preparing
+conversation. Continue observing provisioning there. A phase event marked
+`ready` does not complete the operation; operation success means preparation
+is ready, and does not mean the user's task completed.
+
+Optional `initial_message` admits the user's first task in the same durable
+request. Its exact text, including leading/trailing whitespace and newlines,
+participates in idempotency comparison and reaches the durable first-message
+queue with `purpose: task`. Input must contain non-whitespace text and at most
+262144 UTF-8 bytes. It replaces the automatic readiness turn after environment
+preparation; omission preserves the captured `purpose: setup` behavior for old
+clients and stored operations. An initial task may include `repository` only
+when creating a new Sandbox. Invalid input is rejected before admission.
+Check the served `AgentLifecycleCreateRequest` schema for `initial_message`
+before offering this capability against an older service. Task delivery and
+results remain observable through Agent detail and transcript; the client must
+never send a second, unrecorded message after receiving the Agent identity.
+
+Optional `desktop: true` on that same initial-task request prepares the Agent's
+browser before dispatching its original task. It requires `initial_message`.
+Omitted or false preserves the previous serialized request and admission identity.
+The immutable body and idempotency key retain the desktop choice through lost
+responses, reloads, connection recovery and server restart. Changing an accepted
+choice requires an explicit new intent. Replaying an admitted request returns its
+original operation even when current deployment capability has changed.
+
+`GET /api/v1/desktop-capability` is an authenticated, read-only capability check.
+Optional `workspace_id` or `sandbox_id` selects an existing owned context; they
+are mutually exclusive. The typed result reports `state` (`available`,
+`unsupported`, or `temporarily_unavailable`), a safe `reason`, `runtime_contract`,
+`min_memory_mib`, `min_cpu_millis`, and the available immutable `runtime_image`.
+Unknown query fields return `invalid_instance_query`; invalid context returns
+`invalid_request`, unauthorized access `permission_denied`, and an unavailable
+service `temporarily_unavailable`. No capability read creates resources.
+
+Creation rechecks support before retaining a new operation or private profiles.
+Unsupported desktop returns 422 `desktop_unsupported`; transient verification
+failure returns 503 `temporarily_unavailable`. Existing contexts must already be
+active, use the verified image and supply sufficient configured capacity. Desktop
+creation never restarts or replaces an incompatible Sandbox. After admission,
+transient preparation retries retain the original Agent, task and browser context.
+The `desktop_preparation` milestone describes preparation only; `ready` does not
+assert a live frame or task completion. Live requires an actual fresh browser frame.
+
+Deployments default desktop creation off. `CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE`
+must name the exact immutable `name@sha256:digest` proved with that deployment's
+runtime, isolation policy and host. The adapter must support browsers and durable
+homes. Configured capacity must be at least 1000 millicores and 2048 MiB. This
+configuration is an operator attestation, not automatic evidence that a different
+host or permission mode supports desktop creation. An unverified image remains
+unavailable. Persisted desktop requests and first-message intent require a
+ticket16-aware reader; disabling the UI does not make older strict readers safe.
+
+The served OpenAPI extension `x-cma-task-repository: true` advertises repository
+tasks. Their optional `{url, ref}` context is frozen with the task and request
+key. GitHub access uses the existing `api-github` connection and scoped runtime
+proxy. A connection wait resumes only on the caller's explicit replay of that
+request. Existing `workspace_id` or `sandbox_id` cannot be combined with a task
+repository; their source and runtime remain inherited.
+
+Preparation resolves the requested ref (or default branch) once, fetches that
+immutable commit's archive through the existing GitHub proxy, and commits the
+source snapshot locally before binding the Agent worktree. Agent detail exposes
+`workspace.source` with type `repository_snapshot`, URL, requested `reference`,
+and upstream `source_commit`; `workspace.resolved_commit` and
+`worktree.base_commit` identify the actual local checkout. The source archive
+does not import Git history, so its upstream and local commit IDs are distinct.
+Requests without repository context retain their existing response shape.
+
+Completed preparation replays its durable receipt after restart even if a ref
+moves. Interrupted preparation without complete checkout evidence fails closed;
+it never checks out a new ref under the old creation identity. Preparation
+rejects unsafe paths, metadata replacement, escaping links, submodules and LFS
+pointers, archives above 64 MiB, expanded sources above 256 MiB or 20,000 entries.
+Repository access, missing ref and unsafe preparation errors are separate from
+task execution outcomes. A terminal preparation failure retains the original
+operation and draft; correcting its source requires an explicit new task.
 
 For a new Sandbox, `machine_included: true` selects the deployment's immutable
 Linux desktop image. The Machine contains an XFCE desktop with an applications
@@ -782,6 +857,18 @@ to a setup preview. This is title provenance, not a semantic title generator.
 `runtime_metadata_changed` replay events carry the same atomic metadata snapshot.
 Shared conversation reads retain their existing metadata redaction.
 
+Admission of the first owner task persists a bounded 48-character preview in
+these existing metadata fields, with `description_source: prompt_preview` and
+`description_is_setup_preview: false`. An initial message contributes only with
+explicit `purpose: task`; automatic setup does not supply a task name. The preview
+does not wait for provider output or require another turn. Reconnect previews
+and unknown-source observations cannot replace it; a valid provider title can.
+Owner `owner_title` from revisioned preferences remains the display priority and
+supports repeated renames even when an automatic title was already saved. The
+separate legacy title setter retains its write-once compatibility behavior.
+Automatic title generation excludes a recorded setup/unknown first turn and
+uses the first subsequent task; names and sources remain durable across reads.
+
 
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
 Agent preserves readable history; deleting it records cleanup of its Worktree
@@ -942,14 +1029,33 @@ Explicit channel binding and accepted-command history is available through the
 separate channel-usage routes below.
 The web provides authorized organization hierarchy navigation and owner share management.
 
+Task navigation adds `task_status` to personal Workspace Agent summaries and the
+authorized provenance inventory. It is separate from lifecycle `status` and is
+one of `not_started`, `completed`, `working`, `waiting_approval`, `starting`,
+`paused`, `stopped`, `failed`, or `unknown`. The projection reads the most recent
+durable turn boundary (or original creation), including failure, interruption
+and recorded gaps. Only explicit success with no pending work yields completed.
+When that completed turn is the recorded first message, `purpose=setup` yields
+`not_started`, `purpose=task` yields `completed`, and absent legacy purpose yields
+`unknown`. Matching uses the recorded turn sequence, never text or title. A later
+successful turn after setup yields `completed`; pending work still takes priority.
+The existing owner/share checks and disclosure fences apply to this field;
+clients never need to open each Agent's conversation to populate navigation.
+Older servers may omit it; clients must show unavailable task evidence rather
+than infer completion from ready. This is a read projection over existing
+records, with no new stored schema or backfill and no runtime side effects.
+The provenance inventory accepts `task_status` independently of lifecycle
+`status`; filtering follows authorization and preserves the bounded scan cursor,
+including continuation after an empty filtered page.
+
 `GET /api/v1/agents/provenance` lists safe creation summaries in stable Agent-ID
 order. Omit `organization` and `shared` for personal ownership; explicit organization scope
 requires current membership and selects organization-owned or shared Agents.
-Rows contain only `agent_id`, optional `title`, `status`, `created_at`,
-`updated_at`, and `creation_origin`. Private source/creator details and hierarchy
+Rows contain only `agent_id`, optional `title`, `status`, `task_status`, `created_at`,
+`updated_at`, `creation_origin`, and `channel_usage`. Private source/creator details and hierarchy
 IDs are omitted even for managers. The inventory includes retained Agents in
 all lifecycle states, including deleted Agents, unless `status` is supplied.
-Additional filters are `sandbox`, `workspace`, and `creation_origin`; parent
+Additional filters are `sandbox`, `workspace`, `creation_origin`, and `task_status`; parent
 filters require independent visibility of that parent. A narrow Agent grant
 cannot reveal the result of a parent filter.
 
@@ -965,7 +1071,7 @@ successful page. Original membership deadlines remain binding through final chec
 
 `limit` defaults to 50 and accepts 1–200; `cursor` resumes after a consumed Agent
 ID. Without a category filter the server reads at most `limit + 1` candidates.
-With `creation_origin` it examines at most 201 candidates per request, so a
+With `creation_origin` or `task_status` it examines at most 201 candidates per request, so a
 successful page can be partial or empty and still have `next`. **Continue until
 `next` is absent, even when `items` is empty.** This cursor may identify a consumed
 authorized Agent excluded by the category filter. All candidates, filtered rows
@@ -1193,12 +1299,46 @@ and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
 advancing cursors and combine transcript fallback without duplicating messages.
 
+`GET /api/v1/agents/{id}/suggestions?turn_sequence=3&answer_sequence=5`
+reads owner-scoped contextual suggestions for a canonical final answer. It never
+starts generation, admits input or creates an Agent turn. A confirmed successful
+turn atomically records bounded background work; only the existing authorized
+sandbox model proxy is used. The result has `status` (`pending`, `running`,
+`ready`, `empty`, `failed`, `expired`, `unavailable`), nullable `set`, and nullable
+`observation`. A ready set uses the shared `SuggestedReplySet` identity and exact
+text/rank/source version. Send selected text through normal conditional input
+with the same `answer_context`; edited text uses the existing normal admission
+contract. No new suggestion-send protocol exists.
+
+Generation uses at most 128 events from the completed turn, 4 KiB goal / 8 KiB
+answer, three candidates, 1,024 output tokens, a 60-second generation deadline,
+and two concurrent workers per process. Generation attempts are claimed durably
+once per owner/Agent/answer/strategy. Interrupted or uncertain attempts become
+failed, without automatic billing retries; old unclaimed work expires after two
+minutes. Current authority and newer admissions fence reads and late completion.
+Usage and elapsed milliseconds are saved separately from the Agent conversation;
+`usage.cost` contains an explicit provider-reported decimal amount and currency
+only when supplied, otherwise null (unknown). A GET never repairs or regenerates
+missing results. Browser pending reads stop after 50 attempts / 75 seconds.
+
 Message feedback is private, durable metadata for the Agent owner.
+`GET /api/v1/agents/{id}/messages/{message_id}/feedback` reads the current vote,
+version, six-choice negative reasons, optional comment, update time and request
+receipt with authenticated viewer/Agent/answer identities. The independent
+`PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons` requires the
+confirmed down vote's `expected_version` and a stable `request_id`; identical
+retries recover the same result, while stale versions return 409
+`feedback_version_conflict`. The optional comment is limited to 500 Unicode
+code points. Old clients' up/null writes atomically clear reasons and preserve
+the version fence. See the Agent Manager contract for migration and rollback.
 `GET /api/v1/agents/{id}/message-feedback` pages non-null votes using `after`
 and `limit` (1–200, default 200). `PUT
 /api/v1/agents/{id}/messages/{message_id}/feedback` sets or clears a vote with
 `{"vote":"up"}`, `{"vote":"down"}`, or `{"vote":null}`. The message ID must be
-`event:<sequence>` for a committed owner or assistant message. This idempotent
+`event:<sequence>` for the nonempty Assistant message with the greatest message
+sequence in a successfully completed turn. Intermediate replies, user messages
+and unfinished/failed/interrupted turns reject new writes; historical saved votes
+remain readable. This idempotent
 metadata update requires no `Idempotency-Key` and never starts or interrupts
 Agent work. See [Agent Manager feedback](API_Agent_Manager.md#message-feedback)
 for ownership, pagination, persistence and concurrent-update behavior.
@@ -1445,15 +1585,19 @@ pools and retained homes keep their admitted templates.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `GET /api/v1/desktop-capability` | - | workspace_id, sandbox_id | 200 DesktopCapabilityView |
 | `POST /api/v1/agents` | AgentLifecycleCreateRequest; key | - | 202 AgentLifecycleCreateReceipt |
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
+| `GET /api/v1/agents/{id}/suggestions` | - | turn_sequence, answer_sequence | 200 SuggestionReadingView |
 | `GET /api/v1/agents/{id}/message-feedback` | - | after, limit | 200 MessageFeedbackPageView |
+| `GET /api/v1/agents/{id}/messages/{message_id}/feedback` | - | - | 200 FeedbackDetailsView |
+| `PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons` | SetFeedbackReasonsRequest | - | 200 FeedbackDetailsView; 409 stale version; 422 invalid reasons |
 | `PUT /api/v1/agents/{id}/messages/{message_id}/feedback` | SetMessageFeedbackRequest | - | 200 MessageFeedbackView |
-| `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
+| `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `task_status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
 | `PUT /api/v1/agents/{id}/service-access` | ReplaceAgentServiceAccess; key | - | 202 AgentAccessRequestView |
 | `POST /api/v1/agents/{id}/attachments` | Raw binary bytes; key | name* | 201 AgentAttachmentView |
@@ -1488,6 +1632,23 @@ Paths are relative to the runtime's persistent `/home/` directory. Reading
 requires current file-view authority; creating, editing and deleting require
 owner authority or an accepted, active typed `view_write` sharing link. Each
 operation rechecks access, and protected credential paths remain unavailable.
+The mounted home intentionally includes shared Workspace source and Worktree
+files; the Agent route is not a per-Agent filesystem grant. Public file operations
+exclude supervisor control roots `.cma` and `cma/.cma`, including every private
+Agent home and its instructions, credentials, sessions and retained state.
+Those roots are omitted from listings and refused for direct reads, downloads,
+writes, directory creation and deletion, including deletion of their ancestors.
+The runtime also protects its configured state and checkpoint roots if they lie
+within the mounted home. Descriptor-relative no-follow and single-link checks
+continue to reject symlink/hardlink aliases.
+
+Uploads live at `/home/attachments/{agent_id}/...`. A file route exposes only its
+authorized Agent's upload namespace, including to the Sandbox owner; listing
+`attachments` filters other Agents, and deleting that common root is refused.
+Authorized ordinary Sandbox files, hidden workspace files, versioned edits,
+downloads and typed shared writers retain their existing behavior. Trusted
+runtime settings/recovery operations still access the selected Agent's managed
+home through their separate internal contract; public file routes cannot do so.
 Reads, downloads and writes are bounded to 32 MiB. A write's `expected_sha256`
 protects an edit against intervening changes; omit it when creating a new file.
 Directory creation uses `directory: true`. File operations do not require an
@@ -1495,11 +1656,139 @@ Directory creation uses `directory: true`. File operations do not require an
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `GET /api/v1/agents/{id}/environment` | - | - | 200 EnvironmentView |
+| `GET /api/v1/agents/{id}/browser` | - | runtime_incarnation*, observer, context_id | 200 BrowserView |
+| `PUT /api/v1/agents/{id}/browser` | BrowserEnablement | - | 200 BrowserView |
+| `DELETE /api/v1/agents/{id}/browser` | - | runtime_incarnation*, observer* | 200 BrowserView |
+| `GET /api/v1/agents/{id}/browser/control` | - | runtime_incarnation*, context_id*, client_id*, operation_id | 200 ControlView |
+| `POST /api/v1/agents/{id}/browser/control` | ControlChange | - | 200 ControlView |
 | `GET /api/v1/agents/{id}/files/tree` | - | path | 200 FileListView |
 | `GET /api/v1/agents/{id}/files/content` | - | path*, max_bytes | 200 FileReadView |
 | `GET /api/v1/agents/{id}/files/download` | - | path* | 200 application/octet-stream |
 | `POST /api/v1/agents/{id}/files` | WriteFileRequest | - | 200 FileMutationView |
 | `DELETE /api/v1/agents/{id}/files` | - | path*, recursive | 200 FileMutationView |
+
+`GET /api/v1/agents/{id}/environment` returns a read-only capability observation
+under current `view_details` authority. It contains `agent_id`, `policy_revision`,
+an opaque nullable `runtime_incarnation`, nullable `revalidate_at`, and the
+`files`, `operation_output`, `browser`, `replay`, and `control` features. Each
+feature has `state`, `reason`, `scope`, and `writable`. States are `available`,
+`unsupported`, `not_enabled`, `forbidden`, and `temporarily_unavailable`.
+The observation is not a retained grant; every operation still authorizes its
+caller. Responses use the existing private/no-store file-route policy.
+
+Files retain the existing `mounted_home` scope, including `/home/`; this is not
+an Agent-private directory. `writable` requires owner authority or an accepted
+current typed write link. Recorded output has `agent_turn_history` scope and
+requires `view_history`. Browser observations use `agent_browser` scope and
+require `view_history`; `writable` remains false. Older runtimes without the
+browser protocol report unsupported. Operation record replay uses `view_history`
+and `agent_turn_history` scope, with `available`, `operation_records_only` and
+`writable: false`; missing authority reports `forbidden`. Replay reuses bounded
+Agent events v2 snapshots with `Prefer: cma-tool-output`, durable turn sequences
+and opaque cursors. It is a pure history query without execution or recovery;
+it contains no historical browser frames. Control reports `available`,
+`exclusive_browser_control`, `agent_browser` and `writable: true` only for a
+current owner with an enabled browser and verified runtime arbitration.
+Unsupported, not enabled, forbidden and unknown states remain explicit. No
+runtime address, boot identifier or PTY is exposed.
+
+Browser control uses `GET /api/v1/agents/{id}/browser/control` for current
+status/audit or a selected receipt and `POST` on the same route for mutations.
+Both pin `runtime_incarnation`, `context_id` and `client_id`. GET optionally
+selects an original `operation_id`. POST adds `command` (`acquire`, `input`,
+`renew`, `return`), UUID `operation_id`, `expected_revision`, and `lease_token`
+except for acquisition. Input additionally contains `{kind:"click",x,y}` within
+1280×720, `{kind:"text",text}` up to 1024 UTF-16 units, or a supported editing
+key without modifiers. Arbitrary scripts, shortcuts and desktop commands are
+not part of this vocabulary. POST bodies are bounded to 16 KiB.
+
+Mutations and selected receipt reads require current owner `manage_sharing`
+authority and an independent private UUID in `X-CMA-Browser-Client`; Core binds
+that key to the current account/credential. Public client/operation identifiers
+do not grant lease recovery. Plain status/audit reads require `view_history` and
+never return a token. Successful receipts include `state` (`agent`, `user`,
+`unknown`), current `revision`, optional holder/expiry/token, original
+`operation_id` and `operation_revision`, fixed `lease_duration_ms:15000`, and at
+most 128 metadata-only audit entries with an explicit truncation boundary.
+Neither audit nor URLs contain entered text, client keys or lease tokens.
+
+User and native Agent operations share one runtime queue. A successful acquire
+fences native input/navigation; return preserves the page and context and admits
+native input again. Only explicit renewal extends the monotonic 15-second lease.
+Lost responses require querying the original operation or retrying the identical
+request, including revision, key and token. Reusing an operation for different
+content, expired tokens, competing clients and old incarnations fail closed.
+Revoked/offline clients cannot renew; Agent resumption occurs after the last
+lease expires and in-flight input settles. Browser restart replaces the context.
+
+Typed errors include `invalid_browser_control` (400), owner/access errors
+(401/403/404), `browser_control_unsupported`, `browser_control_not_ready` and
+`browser_control_conflict` (409), and `browser_control_unknown` (503). An unknown
+outcome authorizes no further input. Audit and receipts are volatile per browser
+context, not archival replay. Reader floors and rollback constraints are in
+`docs/plans/cma-ui-optimization/17-CONTROL-CONTRACT.md`.
+
+Browser enablement is explicit and owner-only (`manage_sharing` authority):
+`PUT /api/v1/agents/{id}/browser` accepts
+`{"runtime_incarnation":"<environment observation>","enabled":true}`. False
+closes this browser. No browser starts at Sandbox startup, Agent startup or
+environment read. The running Agent must already exist; at most one Agent
+browser is enabled per Sandbox. Enablement belongs to this runtime incarnation
+and is not persisted or automatically replayed after restart. It does not
+restart the Agent, create a task, or enable user control. Ticket 16 owns any
+Home creation integration. The runtime's private `cma-browser navigate URL`
+command operates this same Agent context via its injected Unix socket; the
+public API accepts no navigation, script, pointer or keyboard operation.
+
+GET without `observer` reads status without capturing. GET with an observer
+identifier (1–64 ASCII letters, digits or hyphens) requests a bounded real frame.
+The service scopes that identifier to the caller and credential identity,
+authorizes before reading, and revalidates policy and runtime after reading.
+`runtime_incarnation` is mandatory; stale runtime identity returns 409. After
+the first frame, clients send its opaque UUID `context_id` to fence later reads.
+An empty paused, disabled or unsupported observation may withdraw that context;
+a different live context cannot replace it. Current unauthorized reads return
+403 or undisclosing 404. These fields are correlation values, never access grants.
+
+`BrowserView` contains Agent/incarnation/context, `state`, a sanitized `location`
+(`Blank page`, `Local page` or `Web page`), nullable `frame`, and bounded counters.
+It exposes no CDP address, Unix socket, profile path, URL query or credentials.
+Frame content is the authorized page image, not a recording or historical replay.
+States distinguish `not_enabled`, `unsupported`, `loading`, `ready` (enabled,
+without a delivered frame), `live`, `paused`, and `disconnected`. A sandbox
+startup failure reports unsupported; it never substitutes a fixture image.
+The existing production namespace/security policy must permit Chromium's own
+sandbox. The ticket 15 evidence records the current Linux policy blocker.
+
+Each JPEG is 1280×720, at most 262144 decoded bytes, with a strictly increasing
+sequence and actual `captured_at`. Captures are at least 1000 ms apart, including
+across navigation; no more than 16 image deliveries occur in a rolling second.
+There is one cached frame, 16 observer leases of 4000 ms, 32 queued mediator
+operations, and a 360000-byte SDK response limit. Existing public file-route
+capacity limits apply. `captures` counts real capture attempts returning image
+data; `bytes` counts accepted decoded capture bytes, not wire bandwidth. There
+is no capture timer when nobody requests observation. Page activity can continue
+while observation is hidden or closed; browser CPU/memory do not necessarily
+fall to zero. Disablement explicitly ends that page.
+
+DELETE releases only the caller's observer lease; it preserves the page and
+context. Web polls at one second while visible, aborts after four seconds, backs
+off failures at 2/4/8 seconds, and releases on hiding, closing or scope changes.
+Only a decoded frame less than 3000 ms old can display Live. Duplicate, delayed
+or older-sequence frames cannot renew freshness or roll the image backward.
+Transient failure retains a labeled last frame; permission/runtime loss removes
+it. The TypeScript `agentBrowser` and Rust `agent_browser()` APIs implement the
+same bounded read/configure/release contract. No request is automatically retried
+as an enablement mutation.
+
+Agent event reads opt into recorded output with `tool_output=true`. A tool update
+may include `output: {text, truncated}`; `tool_output_reported` contains `call_id`
+and `output` without a status. Text is bounded to 16 KiB of valid UTF-8 per
+record, with explicit truncation. Absence means output was not reported. Legacy
+requests omit output and retain the event cursor through redacted output-only
+entries. See [Agent events v2](API_Agent_Events_V2.md) for negotiated snapshots
+and tails, and [AG-UI](API_AGUI.md) for the stream projection.
 
 ### Agent sharing links
 
@@ -1592,6 +1881,7 @@ billing integration and TypeScript examples. Responses are private and no-store.
 | `GET /api/v1/conversations/{id}` | - | - | 200 Conversation |
 | `GET /api/v1/conversations/{id}/items` | - | after, limit | 200 ConversationItemList |
 | `GET /api/v2/ui/transport` | - | - | 200 UiTransportView |
+| `GET /api/v2/ui/task-experience` | - | - | 200 TaskExperienceView |
 | `GET /api/v2/agents/{agent_id}/events/head` | - | - | 200 EventHead |
 | `GET /api/v2/agents/{agent_id}/events/snapshot` | - | limit, page_cursor | 200 EventPage |
 | `GET /api/v2/agents/{agent_id}/events` | - | after_cursor, follow / Last-Event-ID | 200 Agent event SSE |
@@ -1717,6 +2007,61 @@ in HTTP headers are generated from the content hash, with `nosniff` and
 current permission before creating its local file. Previously downloaded copies
 cannot be recalled. Sandbox state is persisted by the attached Agent Sandbox
 volume; CMA does not expose a Sandbox snapshot archive endpoint.
+
+### Answer deliverables
+
+| Operation | Body | Query | Response |
+|---|---|---|---|
+| `POST /api/v1/agents/{id}/deliverable-references` | Explicit resource selector | - | 200 DeliverableDescriptionView |
+| `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables` | - | - | 200 AnswerDeliverablesView |
+| `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}` | - | `verify` (default false) | 200 AnswerDeliverableReadingView |
+| `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download` | - | - | 200 opaque attachment; 409 changed bytes |
+
+Selectors are `{kind:"agent_artifact",id}`, `{kind:"document",id,revision}` or
+`{kind:"live_file",path}`. The descriptor validates the resource's own access and
+actual version, returning its Agent, selector, safe name, media type, exact byte
+count and lowercase SHA-256. It does not mutate, publish or grant sharing.
+Published artifacts and document sources retain their existing 1 MiB limits;
+live files retain the filesystem's 32 MiB limit and home-relative path rules.
+
+The marker is `<!--cma-deliverable:v1:<base64url-without-padding JSON reference>-->`.
+Only a standalone unindented marker outside code fences in the final recorded
+nonempty Assistant message of a completed turn is eligible. The server derives
+Agent, turn and `event:<sequence>` answer identity from that immutable log, rather
+than trusting an answer identity supplied in a marker. At most 32 distinct
+references survive stable deduplication; the same resource may be explicitly
+referenced in another answer but is never implicitly inherited. Marker payloads
+are at most 4096 encoded bytes. Ordinary file names and code spans are not parsed.
+
+Lists return `{agent_id,answer_id,turn_sequence,items}`. Single-item reads return
+the same identity fields with `item`. Each item has `{id,reference,status}`.
+Status is `ready`, `unchecked`, `changed`, `version_changed`, `missing`, `denied`,
+`not_ready`, `too_large` or `unavailable`. Lists use immutable metadata and current
+resource authorization. A live file is `unchecked` until download or explicit
+`verify=true` checks that selected file's bytes. The stored reference remains the
+answer-time evidence even after a file changes. A newer document source reports
+`version_changed` and downloads the original source revision when authorized.
+Live-file verification and download request at most the reference's byte count
+from the runtime (one byte for an empty reference, which must still return zero
+bytes). Growth beyond that bound, a smaller file, or changed content returns
+`changed` without expanding that read budget. Initial live-path description
+retains the 32 MiB cap and its `too_large` refusal.
+
+Each request requires current answer visibility and independent resource access.
+Document token links retain `X-CMA-Document-Share-Token` plus authentication.
+Reads/downloads use private,no-store, nosniff and no-referrer; downloads are always
+opaque attachment bytes with a percent-encoded safe filename and SHA-256 ETag.
+Clients must bound buffers, verify size/digest and recheck current authorization
+before saving. A narrow conversation share never publishes a private file or
+adds file/document permission. Previously downloaded bytes cannot be recalled.
+
+Answer verification targets one committed turn, scanning at most 128 events
+after the requested message and 512 events in that turn, with a 4 MiB/15 second
+projection bound. Exceeded budgets return 503 without treating the Agent as
+missing. Gaps or inconsistent boundaries fail closed. HTTP requests
+have a 30 second deadline. No list or per-card authorization rebuilds the full
+conversation, and listing does not download file bodies. See
+[Agent Manager](API_Agent_Manager.md#files-settings-and-access) for client usage.
 
 ### Sandboxes
 

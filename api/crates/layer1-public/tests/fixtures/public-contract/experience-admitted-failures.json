@@ -87,7 +87,28 @@
             }
           },
           {
-            "id": "18",
+            "id": "15",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Continue",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "19",
             "data": {
               "type": "RUN_ERROR",
               "threadId": "agt_contract",
@@ -106,7 +127,8 @@
         "event_time_2": "/2/data/timestamp",
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
-        "event_time_5": "/5/data/timestamp"
+        "event_time_5": "/6/data/timestamp",
+        "agui_run_stopped_owner_metadata_time": "/5/data/timestamp"
       },
       "headerCaptures": {
         "agui_run_stopped_owner_command": "x-cma-command-id",
@@ -199,7 +221,28 @@
             }
           },
           {
-            "id": "18",
+            "id": "15",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Continue",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "19",
             "data": {
               "type": "RUN_ERROR",
               "threadId": "agt_contract",
@@ -218,7 +261,8 @@
         "event_time_2": "/2/data/timestamp",
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
-        "event_time_5": "/5/data/timestamp"
+        "event_time_5": "/6/data/timestamp",
+        "agui_run_stopped_operator_metadata_time": "/5/data/timestamp"
       },
       "headerCaptures": {
         "agui_run_stopped_operator_command": "x-cma-command-id",
@@ -311,7 +355,28 @@
             }
           },
           {
-            "id": "18",
+            "id": "15",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Continue",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "19",
             "data": {
               "type": "RUN_ERROR",
               "threadId": "agt_contract",
@@ -330,7 +395,8 @@
         "event_time_2": "/2/data/timestamp",
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
-        "event_time_5": "/5/data/timestamp"
+        "event_time_5": "/6/data/timestamp",
+        "agui_run_stopped_runtime_lost_metadata_time": "/5/data/timestamp"
       },
       "headerCaptures": {
         "agui_run_stopped_runtime_lost_command": "x-cma-command-id",
@@ -423,7 +489,28 @@
             }
           },
           {
-            "id": "18",
+            "id": "15",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Continue",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "19",
             "data": {
               "type": "RUN_ERROR",
               "threadId": "agt_contract",
@@ -442,7 +529,8 @@
         "event_time_2": "/2/data/timestamp",
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
-        "event_time_5": "/5/data/timestamp"
+        "event_time_5": "/6/data/timestamp",
+        "agui_run_stopped_sandbox_retired_metadata_time": "/5/data/timestamp"
       },
       "headerCaptures": {
         "agui_run_stopped_sandbox_retired_command": "x-cma-command-id",
@@ -535,7 +623,28 @@
             }
           },
           {
-            "id": "18",
+            "id": "15",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Continue",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "19",
             "data": {
               "type": "RUN_ERROR",
               "threadId": "agt_contract",
@@ -554,7 +663,8 @@
         "event_time_2": "/2/data/timestamp",
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
-        "event_time_5": "/5/data/timestamp"
+        "event_time_5": "/6/data/timestamp",
+        "agui_run_stopped_failed_metadata_time": "/5/data/timestamp"
       },
       "headerCaptures": {
         "agui_run_stopped_failed_command": "x-cma-command-id",
@@ -647,7 +757,28 @@
             }
           },
           {
-            "id": "16",
+            "id": "15",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Continue",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "17",
             "data": {
               "type": "RUN_ERROR",
               "threadId": "agt_contract",
@@ -666,7 +797,8 @@
         "event_time_2": "/2/data/timestamp",
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
-        "event_time_5": "/5/data/timestamp"
+        "event_time_5": "/6/data/timestamp",
+        "agui_run_runtime_turn_failed_metadata_time": "/5/data/timestamp"
       },
       "headerCaptures": {
         "agui_run_runtime_turn_failed_command": "x-cma-command-id",
@@ -922,7 +1054,28 @@
             }
           },
           {
-            "id": "16",
+            "id": "15",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Continue",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "17",
             "data": {
               "type": "RUN_ERROR",
               "threadId": "agt_contract",
@@ -941,7 +1094,8 @@
         "agui_run_input_not_written_time_2": "/2/data/timestamp",
         "agui_run_input_not_written_time_3": "/3/data/timestamp",
         "agui_run_input_not_written_time_4": "/4/data/timestamp",
-        "agui_run_input_not_written_time_5": "/5/data/timestamp"
+        "agui_run_input_not_written_time_5": "/6/data/timestamp",
+        "agui_run_input_not_written_metadata_time": "/5/data/timestamp"
       },
       "headerCaptures": {
         "agui_run_input_not_written_command": "x-cma-command-id",
@@ -1021,7 +1175,28 @@
             }
           },
           {
-            "id": "16",
+            "id": "15",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Continue",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "17",
             "data": {
               "type": "RUN_ERROR",
               "threadId": "agt_contract",
@@ -1032,7 +1207,7 @@
             }
           },
           {
-            "id": "17",
+            "id": "18",
             "data": {
               "type": "STATE_DELTA",
               "threadId": "agt_contract",
@@ -1056,8 +1231,9 @@
         "event_time_2": "/2/data/timestamp",
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
-        "event_time_5": "/5/data/timestamp",
-        "event_time_6": "/6/data/timestamp"
+        "event_time_5": "/6/data/timestamp",
+        "event_time_6": "/7/data/timestamp",
+        "agui_replay_input_not_written_metadata_time": "/5/data/timestamp"
       }
     },
     {

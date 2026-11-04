@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::RuntimeConfig;
-use layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE;
+use layer3_adapter::wire::{AGENT_COMPUTER_STATUS_MEDIA_TYPE, AGENT_RESOURCES_STATUS_MEDIA_TYPE};
 use layer3_adapter::RuntimeStatusRequest;
 
 #[tokio::test]
@@ -23,11 +23,16 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
     let (address, server) = serve(supervisor).await;
     let client = reqwest::Client::new();
     let mut original = None;
-    for accept in [
-        None,
-        Some(AGENT_RESOURCES_STATUS_MEDIA_TYPE),
-        Some("application/json"),
-        None,
+    let combined =
+        format!("{AGENT_RESOURCES_STATUS_MEDIA_TYPE}, {AGENT_COMPUTER_STATUS_MEDIA_TYPE}");
+    let files_supported = crate::agent_attachment::supported(&config);
+    for (accept, resources, computer) in [
+        (None, false, false),
+        (Some(AGENT_RESOURCES_STATUS_MEDIA_TYPE), true, false),
+        (Some(AGENT_COMPUTER_STATUS_MEDIA_TYPE), false, true),
+        (Some(combined.as_str()), true, true),
+        (Some("application/json"), false, false),
+        (None, false, false),
     ] {
         let mut http = client
             .post(format!("http://{address}/runtime/control"))
@@ -37,17 +42,29 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
         }
         let mut value: serde_json::Value = http.send().await.unwrap().json().await.unwrap();
         assert_eq!(value["t"], "runtime_status");
-        let opted_in = accept == Some(AGENT_RESOURCES_STATUS_MEDIA_TYPE);
-        assert_eq!(value.get("agent_resource_preparation").is_some(), opted_in);
+        for (capability, supported) in [
+            ("agent_browser", computer),
+            ("agent_filesystem", files_supported),
+            ("agent_attachment_upload", files_supported),
+        ] {
+            assert_eq!(
+                value.get(capability),
+                supported.then_some(&serde_json::Value::Bool(true)),
+                "unexpected {capability} for {accept:?}"
+            );
+        }
+        assert_eq!(value.get("agent_resource_preparation").is_some(), resources);
         let decoded: ResponseFrame = serde_json::from_value(value.clone()).unwrap();
         let ResponseFrame::RuntimeStatus(status) = decoded else {
             panic!("expected status")
         };
-        assert_eq!(status.agent_resource_preparation, opted_in);
-        value
-            .as_object_mut()
-            .unwrap()
-            .remove("agent_resource_preparation");
+        assert_eq!(status.agent_resource_preparation, resources);
+        assert_eq!(status.agent_browser, computer);
+        assert_eq!(status.agent_filesystem, files_supported);
+        assert_eq!(status.agent_attachment_upload, files_supported);
+        for capability in ["agent_resource_preparation", "agent_browser"] {
+            value.as_object_mut().unwrap().remove(capability);
+        }
         if let Some(original) = &original {
             assert_eq!(&value, original);
         } else {
@@ -55,7 +72,12 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
         }
     }
     // Other contract-3 frames embed status and must stay readable by old APIs.
-    for accept in ["application/json", AGENT_RESOURCES_STATUS_MEDIA_TYPE] {
+    for accept in [
+        "application/json",
+        AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+        AGENT_COMPUTER_STATUS_MEDIA_TYPE,
+        combined.as_str(),
+    ] {
         let RequestFrame::RuntimeStatus(identity) = &request else {
             unreachable!()
         };
@@ -70,6 +92,13 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
             .await
             .unwrap();
         assert_eq!(response["t"], "workspace_removal_support");
+        assert!(response["runtime"].get("agent_browser").is_none());
+        for capability in ["agent_filesystem", "agent_attachment_upload"] {
+            assert_eq!(
+                response["runtime"].get(capability),
+                files_supported.then_some(&serde_json::Value::Bool(true))
+            );
+        }
         assert!(response["runtime"]
             .get("agent_resource_preparation")
             .is_none());
