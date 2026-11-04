@@ -4,7 +4,10 @@ use crate::sandbox::store::{AgentReadQueryStore, Page, SandboxStoreError};
 struct Probe {
     inner: Arc<InMemorySandboxStore>,
     calls: Mutex<Vec<(u64, u16)>>,
+    range_calls: AtomicUsize,
+    scan_visits: AtomicUsize,
     gate: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+    fail_after_gate: bool,
 }
 
 macro_rules! delegate_entity {
@@ -98,16 +101,46 @@ impl AgentLogStore for Probe {
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
         self.calls.lock().unwrap().push((after, limit));
+        if let Some(agent) = self.inner.get_agent(id).await? {
+            // Model MongoSandboxStore's complete-log validation cost for the
+            // reproduction: every legacy point read visits the full history.
+            self.scan_visits
+                .fetch_add(agent.conversation.last_seq as usize, Ordering::SeqCst);
+        }
+        self.inner.agent_log(id, after, limit).await
+    }
+    async fn agent_log_range(
+        &self,
+        id: &AgentId,
+        after: u64,
+        through: u64,
+        limit: u16,
+    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        self.range_calls.fetch_add(1, Ordering::SeqCst);
         if after == 0 {
             if let Some((entered, resume)) = &self.gate {
                 entered.notify_one();
                 resume.notified().await;
-                return Err(SandboxStoreError::Unavailable(
-                    "private dependency failure".into(),
-                ));
+                if self.fail_after_gate {
+                    return Err(SandboxStoreError::Unavailable(
+                        "private dependency failure".into(),
+                    ));
+                }
             }
         }
-        self.inner.agent_log(id, after, limit).await
+        if let Some(agent) = self.inner.get_agent(id).await? {
+            // A range page performs exactly one complete snapshot validation.
+            self.scan_visits
+                .fetch_add(agent.conversation.last_seq as usize, Ordering::SeqCst);
+        }
+        self.inner.agent_log_range(id, after, through, limit).await
+    }
+    async fn agent_log_entry(
+        &self,
+        id: &AgentId,
+        sequence: u64,
+    ) -> Result<Option<AgentLogEntry>, SandboxStoreError> {
+        self.inner.agent_log_entry(id, sequence).await
     }
     async fn agent_log_prefix(
         &self,
@@ -133,7 +166,10 @@ async fn bounded_event_windows_never_read_the_preceding_prefix_or_an_unbounded_b
     let probe = Arc::new(Probe {
         inner: store,
         calls: Mutex::new(vec![]),
+        range_calls: AtomicUsize::new(0),
+        scan_visits: AtomicUsize::new(0),
         gate: None,
+        fail_after_gate: false,
     });
     let reads = reads(probe.clone(), access);
     let held = reads
@@ -142,20 +178,146 @@ async fn bounded_event_windows_never_read_the_preceding_prefix_or_an_unbounded_b
         .unwrap();
     let page = reads.event_stream_window(&held, 3, None, 2).await.unwrap();
     assert_eq!(page.entries.len(), 2);
-    assert_eq!(
-        *probe.calls.lock().unwrap(),
-        vec![(3, 1), (4, 1), (agent.conversation.last_seq, 1)]
-    );
+    assert_eq!(*probe.calls.lock().unwrap(), Vec::<(u64, u16)>::new());
+    assert_eq!(probe.range_calls.load(Ordering::SeqCst), 1);
     probe.calls.lock().unwrap().clear();
     let page = reads
         .event_stream_window(&held, agent.conversation.last_seq, None, 200)
         .await
         .unwrap();
     assert!(page.entries.is_empty());
+    assert_eq!(*probe.calls.lock().unwrap(), Vec::<(u64, u16)>::new());
+    assert_eq!(probe.range_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn production_shaped_history_validates_once_per_page_at_100_and_200_rows() {
+    let (store, _, access, _) = setup(Reply::Role(OrganizationRole::Viewer)).await;
+    let initial = store
+        .get_agent(&AgentId("agent".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let kinds = (0..1_285)
+        .map(|index| AgentLogKind::AgentMessage {
+            content: if index % 127 == 0 {
+                "large-event-".to_owned() + &"x".repeat(4 * 1024)
+            } else {
+                format!("event-{index}")
+            },
+        })
+        .collect();
+    let agent = replace_history(
+        &store,
+        initial,
+        kinds,
+        Some("production-shaped"),
+        Some(7),
+        None,
+    )
+    .await;
+    assert_eq!(agent.conversation.last_seq, 1_286);
+    let probe = Arc::new(Probe {
+        inner: store,
+        calls: Mutex::new(vec![]),
+        range_calls: AtomicUsize::new(0),
+        scan_visits: AtomicUsize::new(0),
+        gate: None,
+        fail_after_gate: false,
+    });
+    let reads = reads(probe.clone(), access);
+    let held = reads
+        .authorize_event_stream(&context("owner"), None, &agent.id)
+        .await
+        .unwrap();
+    for offset in 0..100 {
+        probe.agent_log(&agent.id, offset, 1).await.unwrap();
+    }
+    assert_eq!(probe.calls.lock().unwrap().len(), 100);
+    assert_eq!(probe.scan_visits.load(Ordering::SeqCst), 100 * 1_286);
+    probe.calls.lock().unwrap().clear();
+    probe.scan_visits.store(0, Ordering::SeqCst);
     assert_eq!(
-        *probe.calls.lock().unwrap(),
-        vec![(agent.conversation.last_seq, 1)]
+        reads
+            .event_stream_window(&held, 0, None, 100)
+            .await
+            .unwrap()
+            .entries
+            .len(),
+        100
     );
+    assert_eq!(
+        reads
+            .event_stream_window(&held, 0, None, 200)
+            .await
+            .unwrap()
+            .entries
+            .len(),
+        200
+    );
+    assert_eq!(
+        reads
+            .event_stream_window(&held, 1_186, Some(1_286), 200)
+            .await
+            .unwrap()
+            .entries
+            .len(),
+        100
+    );
+    assert!(reads
+        .event_stream_window(&held, 1_286, Some(1_286), 200)
+        .await
+        .unwrap()
+        .entries
+        .is_empty());
+    assert_eq!(probe.range_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(probe.scan_visits.load(Ordering::SeqCst), 4 * 1_286);
+    assert!(probe.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn bounded_event_windows_keep_the_captured_head_when_append_races_range_read() {
+    let (store, _, access, _) = setup(Reply::Role(OrganizationRole::Viewer)).await;
+    let agent = history(&store).await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let resume = Arc::new(tokio::sync::Notify::new());
+    let probe = Arc::new(Probe {
+        inner: store.clone(),
+        calls: Mutex::new(vec![]),
+        range_calls: AtomicUsize::new(0),
+        scan_visits: AtomicUsize::new(0),
+        gate: Some((entered.clone(), resume.clone())),
+        fail_after_gate: false,
+    });
+    let reads = reads(probe.clone(), access);
+    let held = reads
+        .authorize_event_stream(&context("owner"), None, &agent.id)
+        .await
+        .unwrap();
+    let pending = tokio::spawn(async move { reads.event_stream_window(&held, 0, None, 2).await });
+    entered.notified().await;
+
+    store
+        .append_agent_log(
+            &agent.id,
+            NOW.into(),
+            AgentLogKind::TitleSet {
+                title: "concurrent append".into(),
+                source: "owner".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let mut current = agent.clone();
+    current.conversation.last_seq += 1;
+    current.revision += 1;
+    store.save_agent(agent.revision, current).await.unwrap();
+    resume.notify_one();
+
+    let page = pending.await.unwrap().unwrap();
+    assert_eq!(page.through, agent.conversation.last_seq);
+    assert_eq!(page.entries.len(), 2);
+    assert_eq!(probe.range_calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -184,7 +346,10 @@ async fn bounded_event_windows_stop_fetching_before_large_rows_fill_the_requeste
     let probe = Arc::new(Probe {
         inner: store,
         calls: Mutex::new(vec![]),
+        range_calls: AtomicUsize::new(0),
+        scan_visits: AtomicUsize::new(0),
         gate: None,
+        fail_after_gate: false,
     });
     let reads = reads(probe.clone(), access);
     let held = reads
@@ -199,11 +364,10 @@ async fn bounded_event_windows_stop_fetching_before_large_rows_fill_the_requeste
     let calls = probe.calls.lock().unwrap();
     assert_eq!(
         calls.len(),
-        5,
-        "only three accepted rows, one deferred row, and the aggregate tail probe"
+        0,
+        "the range read and tail check avoid point scans"
     );
-    assert!(calls.iter().all(|(_, limit)| *limit == 1));
-    assert!(!calls.contains(&(agent.conversation.last_seq + 4, 1)));
+    assert_eq!(probe.range_calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -224,7 +388,10 @@ async fn bounded_event_windows_fence_dependency_failures_after_policy_changes_du
     let probe = Arc::new(Probe {
         inner: store,
         calls: Mutex::new(vec![]),
+        range_calls: AtomicUsize::new(0),
+        scan_visits: AtomicUsize::new(0),
         gate: Some((entered.clone(), resume.clone())),
+        fail_after_gate: true,
     });
     let reads = reads(probe, access.clone());
     let held = reads
@@ -252,7 +419,10 @@ async fn bounded_event_windows_share_one_fifteen_second_io_deadline() {
     let probe = Arc::new(Probe {
         inner: store,
         calls: Mutex::new(vec![]),
+        range_calls: AtomicUsize::new(0),
+        scan_visits: AtomicUsize::new(0),
         gate: Some((entered.clone(), Arc::new(tokio::sync::Notify::new()))),
+        fail_after_gate: false,
     });
     let reads = reads(probe, access);
     let held = reads
