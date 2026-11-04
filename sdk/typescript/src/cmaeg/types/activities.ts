@@ -207,6 +207,12 @@ export type ActivityKind = Output<typeof ActivityKindSchema>;
 
 export const SourceKindSchema = tagged(
   {
+    github: object({
+      type: enumeration('github'),
+      app_ref: text,
+      installation_id: integer,
+      repository_id: integer,
+    }),
     native_lark: object({
       type: enumeration('native_lark'),
       region: LarkRegionSchema,
