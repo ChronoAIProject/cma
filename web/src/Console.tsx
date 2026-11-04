@@ -1,4 +1,3 @@
-import { Presence } from './ui/Presence';
 import { SkeletonRows } from './ui/Skeleton';
 import { Documents, Operations, Settings, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
@@ -27,7 +26,7 @@ import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
 import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
-import { NotFoundView, UnavailableView } from './ConsoleViews';
+import { ConsoleActionError, NotFoundView, UnavailableView } from './ConsoleViews';
 import { ConsoleLanding } from './ConsoleLanding';
 import { consoleCreationAccess } from './ConsoleCreationAccess';
 import { useDocumentTitle } from './ui/useDocumentTitle';
@@ -488,13 +487,7 @@ function ConsoleContent({
             canOpenOperations={canOpenOperations(user.capabilities)}
           />
           {actions.notice}
-          <Presence>
-            {actions.error === undefined ? null : (
-              <p className="console__action-error" role="alert">
-                {actions.error}
-              </p>
-            )}
-          </Presence>
+          <ConsoleActionError error={actions.error} />
           {content}
         </main>
       }
