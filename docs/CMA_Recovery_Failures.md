@@ -104,6 +104,50 @@ plan, its digest, operation and database admission remain unchanged; the normal
 worker records its verified completion receipt. The implementation is embedded
 in the control-plane adapter and does not require a new retained runtime image.
 
+## Failed conversation startup
+
+Protected tool setup errors include only a fixed handshake phase, for example
+`channel tool session setup did not complete (phase: session_new)`. The phase
+distinguishes initialization, tool capability/confirmation, authentication,
+session creation/loading, permission configuration and completion rechecking.
+It contains no runtime error text, tool URL, descriptor or credential. The
+generic prefix alone does not establish that a channel tool caused the failure.
+
+An initialized bridge without the exact held conversation/tool confirmation is
+not evidence of an unsupported capability. When a held identity and a supported
+native completion contract exist, unavailable completion evidence remains
+`agent_runtime_unavailable` and recovery retries the same exact proof. Otherwise
+setup is `agent_runtime_rejected`: the current contract cannot discover a lost
+initial conversation ID or manufacture confirmation safely. This explicit
+terminal result avoids an endless startup retry. It sends no substitute session
+or prompt. A fresh capability declaration that lacks required HTTP tool support
+remains `agent_runtime_unsupported`.
+
+A terminal failure at `open_conversation` or `publish_ready` sets the Agent to
+`failed` and atomically settles its never-dispatched creation-time first message
+as `failed`, code `agent_startup_failed`, with no turn sequence or dispatch
+attempt. `retryable: false` means the failed Agent cannot dispatch this message by
+replaying creation or input. Inspect the Agent's retained failure, repair the
+dependency/configuration, and explicitly create a replacement when appropriate.
+Creation replay returns the original failed Agent. Accepted Responses commands
+keep their identities and settle through the command worker; unaccepted input
+receives `agent_command_not_admissible`, not an instruction to retry forever.
+
+Historical failed Agents may retain `first_message.state: queued`; this is not
+active work when Agent status is terminal. No historical records are rewritten
+by this fix. `recover-worktree` remains limited to its documented initial
+AddWorktree failure; it cannot reopen a failed conversation. Ambiguous dispatched
+input retains its separate recovery rules and is never relabelled undispatched.
+
+Rollout must keep compatible readers after `agent_startup_failed` is persisted:
+older first-message validators do not accept this undispatched failure shape.
+The first rollout must prevent an older reader from serving these new records;
+drain incompatible readers before the new worker publishes failures, or stage a
+reader-compatible deployment first. Ordinary mixed-version rolling overlap is
+not sufficient for that guarantee. Keep this reader when rolling back unrelated
+behavior. Never clear durable input or its evidence to make an old binary accept
+a record.
+
 ## Failed startup after a reserved runtime generation
 
 A stalled RuntimeLost revival can retain its bound source at generation 1

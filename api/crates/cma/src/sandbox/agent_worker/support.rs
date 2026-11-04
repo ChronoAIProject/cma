@@ -188,6 +188,16 @@ impl AgentWorker {
         let step = agent.work.step;
         let stamp = rfc3339_at(now);
         let typed = failure.typed();
+        if matches!(
+            step,
+            AgentWorkStep::OpenConversation | AgentWorkStep::PublishReady
+        ) {
+            if let Some(first) = agent.conversation.first_message.as_mut() {
+                first
+                    .fail_startup(stamp.clone())
+                    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+            }
+        }
         let mut worktree = self
             .dependencies
             .store
