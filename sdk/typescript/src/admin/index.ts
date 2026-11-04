@@ -25,7 +25,16 @@ import {
   type EventOptions,
   type PageOptions,
 } from '../resources.js';
-import { array, boolean, enumeration, integer, nullable, object, text, type Output } from '../schema.js';
+import {
+  array,
+  boolean,
+  enumeration,
+  integer,
+  nullable,
+  object,
+  text,
+  type Output,
+} from '../schema.js';
 import {
   patchSettingsRequest,
   replaceSettingsRequest,
@@ -271,17 +280,18 @@ export class Administration {
       body: input(pauseIdleNowRequest, { confirmed }),
     });
   }
-  setSandboxAlwaysOn(
-    id: string,
-    body: SetSandboxAlwaysOnRequest,
-    options: OperationOptions = {},
-  ) {
-    return read(this.config, `/api/v1/admin/sandboxes/${segment(id)}/always-on`, identity(sandbox, id), {
-      ...options,
-      method: 'POST',
-      body: input(setSandboxAlwaysOnRequest, body),
-      expectedStatus: 200,
-    });
+  setSandboxAlwaysOn(id: string, body: SetSandboxAlwaysOnRequest, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/admin/sandboxes/${segment(id)}/always-on`,
+      identity(sandbox, id),
+      {
+        ...options,
+        method: 'POST',
+        body: input(setSandboxAlwaysOnRequest, body),
+        expectedStatus: 200,
+      },
+    );
   }
   pauseTriggers(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/triggers/pause', storedPlatformSettings, {

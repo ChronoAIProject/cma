@@ -165,6 +165,7 @@ impl ControlPlaneComposition {
         .with_skill_support(Arc::new(crate::projections::AdapterAgentSkillSupport(
             adapter.clone(),
         )))
+        .with_sessions(stores.sandbox_model.clone())
         .with_resource_access(resource_access.clone())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(

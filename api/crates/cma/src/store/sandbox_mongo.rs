@@ -27,6 +27,7 @@ const MAX_PENDING_RECONCILIATIONS: usize = 16;
 static RECONCILIATION_SLOTS: Semaphore = Semaphore::const_new(MAX_PENDING_RECONCILIATIONS);
 
 pub(super) const SANDBOXES: &str = "sandboxes";
+pub(super) const SANDBOX_SESSIONS: &str = "sandbox_sessions";
 pub(super) const WORKSPACES: &str = "workspaces";
 pub(super) const WORKTREES: &str = "worktrees";
 pub(super) const AGENTS: &str = "agents";
@@ -54,6 +55,7 @@ pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 const SANDBOX_COLLECTIONS: &[&str] = &[
     "sandbox_retained_availability",
     SANDBOXES,
+    SANDBOX_SESSIONS,
     WORKSPACES,
     WORKTREES,
     AGENTS,
@@ -98,6 +100,7 @@ pub struct MongoSandboxStore {
     pub(super) client: Client,
     pub(super) checkpoint_objects: MongoCheckpointObjectStore,
     pub(super) sandboxes: Collection<Document>,
+    pub(super) sandbox_sessions: Collection<Document>,
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
@@ -177,6 +180,7 @@ impl MongoSandboxStore {
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
+            sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
@@ -232,6 +236,7 @@ impl MongoSandboxStore {
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
+        super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
         super::worktrees::ensure_indexes(&store.worktrees).await?;

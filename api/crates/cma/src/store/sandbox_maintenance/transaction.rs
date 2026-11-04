@@ -5,7 +5,7 @@ use layer2_core::sandbox::store::{
     SandboxStoreError,
 };
 use layer2_core::sandbox::{Sandbox, SandboxEvent};
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Bson};
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
@@ -112,10 +112,25 @@ pub(super) async fn apply(
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
         .and_then(|seq| unsigned(seq, "sandbox event sequence").map_err(SandboxStoreError::Corrupt))
         .map_err(ApplyError::Domain)?;
+    let desktop_activity_fence = match document.get("desktop_activity_fence") {
+        None => 0,
+        Some(Bson::Int64(value)) => unsigned(*value, "desktop activity fence")
+            .map_err(SandboxStoreError::Corrupt)
+            .map_err(ApplyError::Domain)?,
+        Some(Bson::Int32(value)) => unsigned(i64::from(*value), "desktop activity fence")
+            .map_err(SandboxStoreError::Corrupt)
+            .map_err(ApplyError::Domain)?,
+        Some(_) => {
+            return Err(ApplyError::Domain(SandboxStoreError::Corrupt(
+                "desktop activity fence is not an integer".into(),
+            )))
+        }
+    };
     let agents = load_sandbox_agents(store, &current.id, session).await?;
     let application = match request {
         MaintenanceRequest::Inactivity(request) => {
-            let activities = live_activities(store, &agents, session).await?;
+            let activities =
+                live_activities(store, &agents, session, request.requested_at.as_str()).await?;
             apply_inactivity_pause(&current, &activities, request)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
@@ -161,18 +176,34 @@ pub(super) async fn apply(
     } else {
         fence_live_agents(store, &agents, session).await?;
     }
+    let mut revision_filter = doc! {
+        "_id": current.id.as_str(),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "channel_reuse_cleanup_execution": { "$exists": false },
+        "revision": signed(expected_revision, "sandbox maintenance revision")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+        "last_seq": signed(last_seq, "sandbox maintenance event sequence")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?,
+    };
+    if desktop_activity_fence == 0 {
+        revision_filter.insert(
+            "$or",
+            vec![
+                Bson::Document(doc! { "desktop_activity_fence": 0_i64 }),
+                Bson::Document(doc! { "desktop_activity_fence": { "$exists": false } }),
+            ],
+        );
+    } else {
+        revision_filter.insert(
+            "desktop_activity_fence",
+            signed(desktop_activity_fence, "desktop activity fence")
+                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+        );
+    }
     let advanced = store
         .sandboxes
         .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "channel_reuse_cleanup_execution": { "$exists": false },
-                "revision": signed(expected_revision, "sandbox maintenance revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                "last_seq": signed(last_seq, "sandbox maintenance event sequence")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?,
-            },
+            revision_filter,
             doc! { "$set": sandbox_replacement_fields(&sandbox).map_err(ApplyError::Domain)? },
         )
         .session(&mut *session)

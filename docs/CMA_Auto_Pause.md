@@ -21,6 +21,12 @@ the durable pause lifecycle. Missing or unavailable evidence leaves a Sandbox
 running. The lifecycle preserves the retained home and resumes on the next
 admitted message or explicit resume.
 
+The proof includes nonterminal durable command receipts from UI, API, channel,
+and trigger sources, even when an Agent checkpoint has not caught up yet. An
+open desktop stream registers against its Sandbox for the lifetime of the
+connection and also blocks the proof; the marker is removed when the stream
+closes. These activity blockers are additive and content-free.
+
 `always_keep_alive` was historically a profile or binding availability setting,
 and lifecycle-created Sandboxes used it by default. While automatic pause is
 off, that behavior remains unchanged. When an administrator enables automatic

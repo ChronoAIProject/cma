@@ -123,6 +123,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_profile_revisions",
     "sandbox_profiles",
     "sandbox_retained_availability",
+    "sandbox_sessions",
     "sandboxes",
     "service_connection_handoffs",
     "trigger_definition_revisions",

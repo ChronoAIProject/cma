@@ -284,6 +284,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.sandboxes.revive(param('id'), command),
   'POST /api/v1/sandboxes/{id}/runtime-update': ({ client, param, body, command }) =>
     client.sandboxes.updateRuntime(param('id'), body, command),
+  'POST /api/v1/sandboxes/{id}/always-on': ({ client, param, body, command }) =>
+    client.sandboxes.setAlwaysOn(param('id'), body, command),
   'POST /api/v1/sandboxes/{id}/service-access': ({ client, param, body, command }) =>
     client.sandboxes.grantServiceAccess(param('id'), body, command),
   'GET /api/v1/sandboxes/{id}/events': ({ client, param, options }) =>
