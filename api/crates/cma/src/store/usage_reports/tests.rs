@@ -117,7 +117,7 @@ async fn metrics_admission_reserves_exact_bytes_across_budget_changes() {
     let at = now();
     let query = ReportInput::default().validate(at).unwrap();
     store
-        .submit(scope("owner", false), query.clone(), at)
+        .submit(scope("$owner", false), query.clone(), at)
         .await
         .unwrap();
     let mut larger_worker = store.clone();
@@ -138,14 +138,14 @@ async fn metrics_admission_reserves_exact_bytes_across_budget_changes() {
     changed.filters.search = "second".into();
     assert!(matches!(
         store
-            .submit(scope("owner", false), changed.clone(), at)
+            .submit(scope("$owner", false), changed.clone(), at)
             .await,
         Err(MetricsError::Busy)
     ));
     let mut reduced = store.clone();
     reduced.budgets.report_bytes = 100;
     reduced
-        .submit(scope("owner", false), changed, at)
+        .submit(scope("$owner", false), changed, at)
         .await
         .unwrap();
     reduced
