@@ -78,7 +78,11 @@ impl AgentTaskStatus {
         }
         if pending_work
             || agent.conversation.active_turn.is_some()
-            || !agent.conversation.queued_messages.is_empty()
+            || agent
+                .conversation
+                .queued_messages
+                .iter()
+                .any(|message| message.state != super::QueuedMessageState::Delivered)
             || agent
                 .conversation
                 .operation
