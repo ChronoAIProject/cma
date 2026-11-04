@@ -116,22 +116,21 @@ impl AgentReadService {
                     return Err(AgentReadError::InvalidPage);
                 }
                 let count = (through - after).min(u64::from(limit)) as u16;
+                let entries = self
+                    .store
+                    .agent_log_range(&agent.id, after, through, count.max(1))
+                    .await
+                    .map_err(log_store_error)?;
+                if entries.len() != usize::from(count) {
+                    return Err(corrupt("agent log ended before its high-water mark"));
+                }
                 let mut projected = Vec::with_capacity(usize::from(count));
                 let mut bytes = 2048;
-                for offset in 0..u64::from(count) {
-                    // Fetch one source row at a time: a row-count bound alone
-                    // would still accumulate hundreds of large messages before
-                    // the public page could enforce its serialized byte bound.
-                    let mut entries = self
-                        .store
-                        .agent_log(&agent.id, after + offset, 1)
-                        .await
-                        .map_err(log_store_error)?;
-                    if entries.len() != 1 {
-                        return Err(corrupt("agent log ended before its high-water mark"));
-                    }
-                    let entry = entries.remove(0);
-                    if entry.agent_id != agent.id || entry.seq != after + offset + 1 {
+                for (offset, entry) in entries.into_iter().enumerate() {
+                    // The store bounds the source page by row count; enforce the
+                    // public serialized-byte bound before retaining each projection.
+                    let sequence = after + offset as u64 + 1;
+                    if entry.agent_id != agent.id || entry.seq != sequence {
                         return Err(corrupt("agent log identity or sequence is invalid"));
                     }
                     let command_candidate = match &entry.kind {
