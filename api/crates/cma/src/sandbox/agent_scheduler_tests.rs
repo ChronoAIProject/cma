@@ -49,6 +49,7 @@ impl Probe {
 
     fn scheduler(self: &Arc<Self>, concurrency: usize) -> AgentScheduler {
         AgentScheduler {
+            budget: crate::background::BackgroundBudget::new(),
             worker: self.clone(),
             sweep_interval: Duration::from_secs(1),
             concurrency,
@@ -333,3 +334,43 @@ async fn already_signalled_shutdown_starts_no_work() {
 
 #[path = "agent_scheduler_wake_tests.rs"]
 mod wake_tests;
+
+#[tokio::test(start_paused = true)]
+async fn full_shared_background_budget_does_not_delay_admitted_agent_work() {
+    let probe = Arc::new(Probe::default());
+    let id = probe.put("agt_priority", Behavior::Complete);
+    let scheduler = probe.scheduler(1);
+    let release = Arc::new(Notify::new());
+    let mut holders = Vec::new();
+    for name in ["maintenance", "backfill"] {
+        let work = crate::background::BackgroundWork::new(
+            scheduler.budget.clone(),
+            name,
+            Duration::from_secs(60),
+            Duration::ZERO,
+        );
+        let release = release.clone();
+        holders.push(tokio::spawn(async move {
+            work.run(|| async {
+                release.notified().await;
+                Ok(())
+            })
+            .await
+        }));
+    }
+    settle().await;
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = scheduler.spawn(signal);
+    settle().await;
+    assert!(probe.completed.lock().unwrap().contains(&id));
+    assert_eq!(probe.reconciles.load(Ordering::SeqCst), 0);
+    release.notify_waiters();
+    for holder in holders {
+        holder.await.unwrap().unwrap();
+    }
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle().await;
+    assert!(probe.reconciles.load(Ordering::SeqCst) > 0);
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}
