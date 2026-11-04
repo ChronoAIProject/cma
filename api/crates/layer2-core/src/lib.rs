@@ -35,6 +35,7 @@ pub mod pressure_service;
 pub mod profiles;
 pub mod resource_access;
 pub mod sandbox;
+pub mod sandbox_metrics;
 pub mod sandbox_usage;
 pub mod sandbox_usage_service;
 pub mod sequence;
