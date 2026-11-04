@@ -9,6 +9,7 @@ use layer2_core::{rfc3339_at, seconds_from_rfc3339};
 use layer3_adapter::{AdapterError, RuntimeHandle};
 
 use crate::sandbox::credential::{CredentialError, CredentialMaterial};
+use crate::sandbox::funding::FundingError;
 
 use super::{
     SandboxDependencyError, SandboxWorker, CREDENTIAL_EXPIRY_MARGIN, CREDENTIAL_ROTATION_AGE,
@@ -393,6 +394,23 @@ pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure
         SandboxDependencyError::Security(_) => {
             WorkerFailure::terminal_security("lifecycle dependency refused its authority")
         }
+    }
+}
+
+pub(super) fn funding_failure(error: FundingError) -> WorkerFailure {
+    match error {
+        FundingError::Conflict | FundingError::NotFound | FundingError::RateLimited(_) => {
+            WorkerFailure::retryable("prepaid funding recovery is pending")
+        }
+        FundingError::Retryable(detail) => {
+            WorkerFailure::retryable(&format!("prepaid Sandbox funding unavailable: {detail}"))
+        }
+        FundingError::Unfunded(detail) => WorkerFailure::resource_quota(&format!(
+            "prepaid Sandbox window was not funded: {detail}"
+        )),
+        FundingError::Invalid(detail) => WorkerFailure::terminal_security(&format!(
+            "prepaid Sandbox funding contract invalid: {detail}"
+        )),
     }
 }
 
