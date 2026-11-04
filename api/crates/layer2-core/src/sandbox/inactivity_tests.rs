@@ -106,6 +106,24 @@ fn active_turn_lifecycle_work_and_queued_input_each_prevent_pause() {
     queued[0].queued_messages_present = true;
     assert!(!is_inactivity_pause_candidate(&sandbox, &queued, NOW, 900,));
 
+    let mut external_activity = quiet_pair();
+    external_activity[0].external_activity_present = true;
+    assert!(!is_inactivity_pause_candidate(
+        &sandbox,
+        &external_activity,
+        NOW,
+        900,
+    ));
+
+    let mut open_session = quiet_pair();
+    open_session[0].open_terminal_or_desktop_session = true;
+    assert!(!is_inactivity_pause_candidate(
+        &sandbox,
+        &open_session,
+        NOW,
+        900,
+    ));
+
     let mut stopping = quiet_pair();
     stopping[0].stop_requested = true;
     assert!(!is_inactivity_pause_candidate(

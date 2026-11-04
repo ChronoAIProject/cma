@@ -42,6 +42,7 @@ fn sandbox(origin: SandboxOrigin) -> Sandbox {
             id: SandboxProfileId("sbp_schema".into()),
             revision: 1,
             digest: content_digest(&content).unwrap(),
+            always_on: None,
             content,
         },
         status: SandboxStatus::Provisioning,

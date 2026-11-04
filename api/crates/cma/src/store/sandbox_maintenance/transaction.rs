@@ -93,7 +93,13 @@ pub(super) async fn apply(
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_sandbox(&document).map_err(ApplyError::Domain)?;
     if matches!(request, MaintenanceRequest::Inactivity(_))
-        && keep_alive_and_fence_policy(store, &current, session).await?
+        && keep_alive_and_fence_policy(
+            store,
+            &current,
+            matches!(request, MaintenanceRequest::Inactivity(request) if request.auto_pause_enabled),
+            session,
+        )
+        .await?
     {
         return Ok(MaintenanceReceipt {
             sandbox: current,
@@ -195,8 +201,19 @@ pub(super) async fn apply(
 async fn keep_alive_and_fence_policy(
     store: &MongoSandboxStore,
     sandbox: &Sandbox,
+    auto_pause_enabled: bool,
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
+    if sandbox.profile.always_on == Some(true) {
+        return Ok(true);
+    }
+    if auto_pause_enabled {
+        // On activation, historical profile availability is intentionally
+        // ignored. An explicit per-Sandbox preference is the compatibility
+        // boundary; this makes existing lifecycle Sandboxes eligible without
+        // mutating their pinned profile.
+        return fence_policy(store, sandbox, session).await;
+    }
     if store
         .bindings
         .keep_alive(sandbox, session)
@@ -220,6 +237,14 @@ async fn keep_alive_and_fence_policy(
     if profile.availability.always_keep_alive {
         return Ok(true);
     }
+    fence_policy(store, sandbox, session).await
+}
+
+async fn fence_policy(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
     // An actual write conflicts with any concurrent policy edit. Merely reading
     // the Profile under snapshot isolation permits an obsolete pause to commit.
     let fenced = store

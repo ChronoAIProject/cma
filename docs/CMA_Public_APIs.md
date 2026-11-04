@@ -89,7 +89,10 @@ of the public contract.
 | `GET /api/v1/admin/sandboxes` |
 | `GET /api/v1/admin/sandboxes/{id}` |
 | `GET /api/v1/admin/sandboxes/{id}/events` |
+| `POST /api/v1/admin/sandboxes/{id}/always-on` |
 | `POST /api/v1/admin/sandboxes/{id}/retire` |
+| `GET /api/v1/admin/auto-pause/preview` |
+| `POST /api/v1/admin/auto-pause/pause-idle-now` |
 | `GET /api/v1/admin/settings` |
 | `PATCH /api/v1/admin/settings` |
 | `PUT /api/v1/admin/settings` |
@@ -316,6 +319,7 @@ of the public contract.
 | `GET /api/v1/sandboxes/{id}/events` |
 | `POST /api/v1/sandboxes/{id}/pause` |
 | `POST /api/v1/sandboxes/{id}/revive` |
+| `POST /api/v1/sandboxes/{id}/always-on` |
 | `POST /api/v1/sandboxes/{id}/runtime-update` |
 | `POST /api/v1/sandboxes/{id}/service-access` |
 

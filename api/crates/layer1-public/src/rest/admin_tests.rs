@@ -317,6 +317,7 @@ pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
             id: layer2_core::SandboxProfileId("sbp_test".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

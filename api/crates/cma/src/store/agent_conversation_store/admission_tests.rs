@@ -76,6 +76,7 @@ async fn conversation_admission_rejects_a_parent_read_from_before_maintenance() 
             sandbox_id: parent.id.clone(),
             requested_at: NOW.into(),
             pause_after_seconds: 900,
+            auto_pause_enabled: false,
         })
         .await
         .unwrap();

@@ -165,6 +165,44 @@ async fn configuration_validates_and_preserves_revision_cas() {
 }
 
 #[tokio::test]
+async fn auto_pause_enablement_records_and_resets_grace_period() {
+    let operator = caller([Capability::ConfigurePlatform]);
+    let (service, _store, _activity) = service();
+    let mut enabled = PlatformSettings::default();
+    enabled.inactivity.auto_pause_enabled = true;
+
+    let first = service
+        .configure_platform(&operator, 0, &enabled)
+        .await
+        .unwrap();
+    let first_grace = first.settings.inactivity.grace_started_at.clone();
+    assert!(first_grace
+        .as_deref()
+        .is_some_and(|value| crate::seconds_from_rfc3339(value).is_some()));
+
+    let unchanged = service
+        .configure_platform(&operator, first.revision, &enabled)
+        .await
+        .unwrap();
+    assert_eq!(unchanged.settings.inactivity.grace_started_at, first_grace);
+
+    enabled.inactivity.pause_after_seconds += 60;
+    let changed = service
+        .configure_platform(&operator, unchanged.revision, &enabled)
+        .await
+        .unwrap();
+    assert!(changed.settings.inactivity.grace_started_at.is_some());
+
+    enabled.inactivity.auto_pause_enabled = false;
+    let disabled = service
+        .configure_platform(&operator, changed.revision, &enabled)
+        .await
+        .unwrap();
+    assert!(!disabled.settings.inactivity.auto_pause_enabled);
+    assert!(disabled.settings.inactivity.grace_started_at.is_none());
+}
+
+#[tokio::test]
 async fn invalid_configuration_never_reaches_the_store_or_activity_log() {
     let operator = caller([Capability::ConfigurePlatform]);
     let (service, store, activity) = service();
