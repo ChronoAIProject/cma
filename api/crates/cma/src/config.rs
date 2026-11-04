@@ -27,11 +27,13 @@ pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
 mod documents;
+mod sandbox_billing;
 mod usage_billing;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
+pub(crate) use sandbox_billing::SandboxBillingConfig;
 pub(crate) use usage_billing::UsageBillingConfig;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
@@ -175,6 +177,7 @@ pub struct Config {
     pub features: FeatureFlags,
     pub gateway: Option<GatewayConfig>,
     pub usage_billing: Option<UsageBillingConfig>,
+    pub sandbox_billing: Option<SandboxBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
 }
@@ -392,6 +395,7 @@ impl Config {
             features,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
+            sandbox_billing: SandboxBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage,
         })
