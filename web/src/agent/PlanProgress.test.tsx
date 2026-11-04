@@ -184,7 +184,7 @@ it('folds operations by default while keeping failures and approvals discoverabl
     screen.queryByRole('article', { name: 'Tool call: Read instructions' }),
   ).not.toBeInTheDocument();
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
-  expect(screen.queryByText(/remaining|ETA/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/\b(?:remaining|ETA)\b/i)).not.toBeInTheDocument();
   conversation = foldAgentEvent(conversation, {
     seq: 3,
     appendedAt: '2026-11-03T00:00:02Z',

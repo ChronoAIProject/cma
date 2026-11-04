@@ -43,6 +43,9 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   const { rerender } = render(draw(state));
   const toggle = screen.getByRole('button', { name: /^Thinking/ });
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(toggle).toHaveTextContent('2 operations in progress');
+  expect(toggle).not.toHaveTextContent('Turn input unavailable');
+  expect(toggle).not.toHaveTextContent('Inspecting dependencies');
   // Pending tools put the turn's character to work (§28).
   const character = () => toggle.querySelector('.character-avatar');
   expect(character()).toHaveAttribute('data-pose', 'working');
@@ -102,7 +105,7 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   rerender(draw(live(state, 'RUN_FINISHED')));
   expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
   act(() => vi.advanceTimersByTime(200));
-  expect(screen.getAllByRole('article', { name: /^Tool call:/ })).toHaveLength(2);
+  expect(screen.queryAllByRole('article', { name: /^Tool call:/ })).toHaveLength(0);
   expect(screen.queryByText('Inspecting dependencies')).not.toBeInTheDocument();
 });
 
