@@ -16,11 +16,14 @@ import type { MessageFeedbackControls } from './useMessageFeedback';
 import { Button } from '../ui/Button';
 import { workedFor } from './turnTiming';
 import { MessageMediaContext, type MessageMediaAccess } from './mediaSources';
+import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDeliveries';
 import { ConversationEmpty } from './ConversationEmpty';
 import type { ResourceStatus } from '../character/status';
 
 interface MessageStreamProps {
+  readonly onReplay?: (turn: string) => void;
   readonly conversation: ConversationState;
+  readonly hideLatestDuration?: boolean;
   readonly approvalBusy?: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
@@ -35,10 +38,13 @@ interface MessageStreamProps {
   readonly arrivalsEnabled?: boolean;
   readonly feedback?: MessageFeedbackControls;
   readonly media?: MessageMediaAccess;
+  readonly deliverables?: AnswerDeliveryAccess;
 }
 
 export function MessageStream({
+  onReplay,
   conversation,
+  hideLatestDuration = false,
   approvalBusy = false,
   approvalReadOnly = false,
   onApproval,
@@ -52,7 +58,21 @@ export function MessageStream({
   arrivalsEnabled = true,
   feedback,
   media,
+  deliverables,
 }: MessageStreamProps) {
+  const {
+    agentId: deliveryAgent,
+    viewerId,
+    client: deliveryClient,
+    authority,
+  } = deliverables ?? {};
+  const deliveryAccess = useMemo(
+    () =>
+      deliveryAgent && viewerId && deliveryClient
+        ? { agentId: deliveryAgent, viewerId, client: deliveryClient, authority }
+        : undefined,
+    [deliveryAgent, viewerId, deliveryClient, authority],
+  );
   const [projectTimeline] = useState(createStreamTimeline);
   const { items, finalReply, continued, previousRole } = projectTimeline(conversation);
   const { agentId, files, workingDirectory } = media ?? {};
@@ -111,7 +131,7 @@ export function MessageStream({
   }, [conversation, optimisticMessages]);
 
   return (
-    <MessageMediaContext.Provider value={mediaAccess}>
+    <MessageResources media={mediaAccess} deliverables={deliveryAccess}>
       <div className="message-stream" aria-live="polite" ref={streamRef}>
         {items.length === 0 &&
         !optimisticMessages?.length &&
@@ -123,18 +143,25 @@ export function MessageStream({
             <ToolCallGroup key={entry.id} group={entry} activeRunId={conversation.activeRunId} />
           ) : (
             <StreamEntry
+              onReplay={onReplay}
               key={`${entry.kind}:${entry.item.id}`}
               entry={entry}
               approvalBusy={approvalBusy}
               approvalReadOnly={approvalReadOnly}
               onApproval={onApproval}
               activeRunId={conversation.activeRunId}
+              planOutcome={
+                entry.kind === 'plan' && entry.item.runId !== undefined
+                  ? conversation.turnOutcomes?.[entry.item.runId]
+                  : undefined
+              }
               user={user}
               unknownUserName={unknownUserName}
               feedback={feedback}
               continued={entry.kind === 'message' && continued.has(entry.item.id)}
               duration={
                 entry.kind === 'message' &&
+                (!hideLatestDuration || entry.item.runId !== conversation.latestTurnId) &&
                 entry.item.runId !== undefined &&
                 entry.item.runId !== conversation.activeRunId &&
                 finalReply.get(entry.item.runId) === entry.item.id
@@ -204,6 +231,22 @@ export function MessageStream({
         ) : null}
         <div ref={endRef} />
       </div>
-    </MessageMediaContext.Provider>
+    </MessageResources>
+  );
+}
+
+function MessageResources({
+  children,
+  media,
+  deliverables,
+}: {
+  readonly children: ReactNode;
+  readonly media?: MessageMediaAccess;
+  readonly deliverables?: AnswerDeliveryAccess;
+}) {
+  return (
+    <AnswerDeliveryContext.Provider value={deliverables}>
+      <MessageMediaContext.Provider value={media}>{children}</MessageMediaContext.Provider>
+    </AnswerDeliveryContext.Provider>
   );
 }

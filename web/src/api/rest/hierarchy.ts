@@ -176,6 +176,7 @@ export function worktree(value: Wire.Worktree): Worktree {
 
 function agentSummary(value: Wire.HierarchyAgentSummary): AgentSummary {
   return {
+    taskStatus: value.task_status,
     id: value.id,
     workspaceId: value.workspace_id,
     worktreeId: value.worktree_id,
@@ -239,6 +240,7 @@ export function agentDetail(value: Wire.Agent): AgentDetail {
       status: value.workspace.status,
       profile: value.workspace.profile,
       resolvedCommit: value.workspace.resolved_commit,
+      source: value.workspace.source,
     },
     sandbox: value.sandbox,
     desktop: value.desktop,

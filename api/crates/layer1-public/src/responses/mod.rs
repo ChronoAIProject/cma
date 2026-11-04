@@ -15,6 +15,8 @@ mod conversations;
 mod create;
 mod items;
 mod model;
+#[cfg(test)]
+mod output_compat_tests;
 mod parse;
 mod retrieve;
 mod stream;

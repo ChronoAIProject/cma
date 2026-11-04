@@ -18,6 +18,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 const MAX_AGENT_FILE_BYTES: u64 = 32 * 1024 * 1024;
+#[path = "agent_browser.rs"]
+pub(crate) mod browser;
+#[path = "agent_browser_control.rs"]
+pub(crate) mod browser_control;
+#[path = "agent_environment.rs"]
+pub(crate) mod environment;
 use utoipa::ToSchema;
 
 #[derive(Deserialize)]
@@ -72,6 +78,20 @@ pub(crate) struct FileMutationView {
 
 pub fn agent_filesystem_router(service: Arc<AgentFileService>) -> Router {
     Router::new()
+        .route("/api/v1/agents/{id}/environment", get(environment::read))
+        .route(
+            "/api/v1/agents/{id}/browser/control",
+            get(browser_control::read)
+                .post(browser_control::change)
+                .layer(axum::extract::DefaultBodyLimit::max(16384)),
+        )
+        .route(
+            "/api/v1/agents/{id}/browser",
+            get(browser::read)
+                .put(browser::configure)
+                .delete(browser::release)
+                .layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
         .route(
             "/api/v1/agents/{id}/files",
             post(write)
@@ -302,7 +322,7 @@ async fn remove(
     }))
 }
 
-fn download_name(path: &str, sha256: &str) -> String {
+pub(super) fn download_name(path: &str, sha256: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or("download");
     let encoded: String = name
         .bytes()
@@ -328,7 +348,7 @@ fn credential(resource: &Option<AuthenticatedResourceCaller>) -> Option<&str> {
         .map(DelegatedCredential::value)
 }
 
-struct FileProblem(AgentFileError);
+pub(super) struct FileProblem(AgentFileError);
 impl From<AgentFileError> for FileProblem {
     fn from(error: AgentFileError) -> Self {
         Self(error)

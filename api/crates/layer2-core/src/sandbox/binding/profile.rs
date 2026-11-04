@@ -262,6 +262,7 @@ fn map_environment(
     let name = match &input.workspace {
         WorkspaceLocation::Directory { name } => name.clone(),
         WorkspaceLocation::GitRepository { .. } => String::new(),
+        WorkspaceLocation::RepositorySnapshot { .. } => "workspace".into(),
     };
     let workspace = WorkspaceProfileContent {
         name,

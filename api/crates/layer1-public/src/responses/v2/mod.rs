@@ -44,6 +44,7 @@ pub use projection::{ResponseConversation, V2ResponseObject, V2ResponseStatus};
 
 #[derive(Clone)]
 pub struct ResponsesV2State {
+    pub(crate) agent_page_origin: crate::agent_page::AgentPageOrigin,
     commands: Arc<AgentCommandService>,
     reads: Arc<AgentReadService>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
@@ -62,8 +63,13 @@ impl ResponsesV2State {
         self
     }
 
-    pub fn new(commands: Arc<AgentCommandService>, reads: Arc<AgentReadService>) -> Self {
+    pub fn new(
+        agent_page_origin: crate::agent_page::AgentPageOrigin,
+        commands: Arc<AgentCommandService>,
+        reads: Arc<AgentReadService>,
+    ) -> Self {
         Self {
+            agent_page_origin,
             commands,
             reads,
             bindings: None,

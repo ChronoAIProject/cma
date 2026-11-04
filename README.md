@@ -169,6 +169,14 @@ and [service isolation](./docs/CMA_Service_Isolation.md) before configuring back
 connections. Do not use production-backed configuration as an implicit local
 development default.
 
+To review a page without any backend, run `npm run dev:fixtures --prefix web`.
+The dev server then answers `/auth` and `/api` from local fixtures in
+`web/build/fixtures/`, which the LOCAL browser checks under `web/e2e/` share.
+Coverage grows page by page and currently includes Event Gateway
+(`/event-gateway`). A read without a fixture returns a typed `404` and is
+logged in the terminal; writes are refused with `501` and nothing is persisted.
+Fixture mode never reaches production and is absent from builds and tests.
+
 ### Local Checks
 
 After installing frontend dependencies, run the core frontend checks from the

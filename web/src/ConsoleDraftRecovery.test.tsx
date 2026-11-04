@@ -106,6 +106,33 @@ it.each(['unavailable', 'network', 'timeout'])(
   },
 );
 
+it('keeps New agent available while returning to an Agent whose access is being rechecked', async () => {
+  vi.useFakeTimers();
+  const test = fixture();
+  const view = (agentId: string) => (
+    <CmaClientProvider client={test.client}>
+      <Console
+        user={{ id: 'owner', handle: 'owner', visitor: false, capabilities: ['use_own_sandboxes'] }}
+        route={{ kind: 'agent', agentId }}
+        onNavigate={vi.fn()}
+        onSignOut={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    </CmaClientProvider>
+  );
+  const { rerender, unmount } = render(view('agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  rerender(view('agt_2'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  // Returning to a known Agent rechecks its access; that check never settles here.
+  test.readAccessible.mockImplementation(() => new Promise(() => {}));
+  rerender(view('agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByText(/Checking Agent access/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+  unmount();
+});
+
 it.each([401, 403, 404, 'identity'] as const)(
   'removes retained history on explicit %s refusal and does not resurrect it during a retry',
   async (refusal) => {

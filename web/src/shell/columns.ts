@@ -50,6 +50,19 @@ export const DETAILS_MIN = 300;
 export const DETAILS_MAX = 520;
 export const DETAILS_DEFAULT = 360;
 
+export function computeWorkspaceColumns(
+  viewport: number,
+  sidebar: number,
+  details?: number,
+): Columns {
+  const sidebarSize =
+    sidebar === 0 ? SIDEBAR_COLLAPSED : clampWidth(sidebar, SIDEBAR_MIN, SIDEBAR_MAX);
+  const available = Math.max(0, viewport - sidebarSize);
+  if (available < 720) return { sidebar: sidebarSize, center: available, details: 0 };
+  const panelSize = clampWidth(details ?? available / 2, 360, available - 360);
+  return { sidebar: sidebarSize, center: available - panelSize, details: panelSize };
+}
+
 /** Hold a dragged width inside its range. */
 export function clampWidth(px: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(px)));

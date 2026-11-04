@@ -11,6 +11,7 @@ type LifecycleCall = (String, String, String, Option<String>);
 #[derive(Default)]
 struct Provisioner {
     calls: Mutex<Vec<LifecycleCall>>,
+    requests: Mutex<Vec<AgentLifecycleCreateRequest>>,
 }
 #[async_trait]
 impl AgentLifecycleProvisioner for Provisioner {
@@ -22,6 +23,7 @@ impl AgentLifecycleProvisioner for Provisioner {
         request: AgentLifecycleCreateRequest,
         key: &str,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
+        self.requests.lock().unwrap().push(request.clone());
         self.calls.lock().unwrap().push((
             caller.subject.to_string(),
             key.into(),
@@ -111,4 +113,65 @@ async fn contextual_agent_creation_forwards_workspace_through_the_same_durable_r
             Some("wk_existing".into())
         )]
     );
+}
+
+#[tokio::test]
+async fn lifecycle_forwards_distinct_browser_and_machine_intents_without_aliasing() {
+    let fixture = fixture().await;
+    let port = Arc::new(Provisioner::default());
+    let router = agent_router(fixture.state.with_lifecycle(port.clone()));
+    for (body, desktop, machine_included) in [
+        (json!({"name":"Legacy"}), false, false),
+        (
+            json!({"name":"Machine","machine_included":true}),
+            false,
+            true,
+        ),
+        (
+            json!({"name":"Task","desktop":true,"initial_message":"  Keep this task\n"}),
+            true,
+            false,
+        ),
+        (
+            json!({"name":"Both","desktop":true,"machine_included":true,"initial_message":"  Keep this task\n"}),
+            true,
+            true,
+        ),
+    ] {
+        let mut call = request(
+            Method::POST,
+            "/api/v1/agents",
+            OWNER,
+            None,
+            Some(body.clone()),
+        );
+        call.headers_mut().insert(
+            "Idempotency-Key",
+            format!("intent-{desktop}-{machine_included}")
+                .parse()
+                .unwrap(),
+        );
+        let response = router.clone().oneshot(call).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let requests = port.requests.lock().unwrap();
+        let forwarded = requests.last().unwrap();
+        assert_eq!(forwarded.desktop, desktop);
+        assert_eq!(forwarded.machine_included, machine_included);
+        assert_eq!(
+            forwarded.initial_message.as_deref(),
+            body["initial_message"].as_str()
+        );
+    }
+    let mut call = request(
+        Method::POST,
+        "/api/v1/agents",
+        OWNER,
+        None,
+        Some(json!({"name":"Missing task","desktop":true})),
+    );
+    call.headers_mut()
+        .insert("Idempotency-Key", "missing-task".parse().unwrap());
+    let response = router.oneshot(call).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(port.requests.lock().unwrap().len(), 4);
 }

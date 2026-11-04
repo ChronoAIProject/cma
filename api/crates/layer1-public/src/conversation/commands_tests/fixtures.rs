@@ -98,6 +98,7 @@ pub(super) async fn fixture(working: bool) -> Fixture {
         .merge(crate::responses::router(state.clone()))
         .merge(crate::responses::v2::router(
             crate::responses::v2::ResponsesV2State::new(
+                crate::agent_page::AgentPageOrigin::test(),
                 state.commands.clone().unwrap(),
                 state.reads.clone(),
             ),

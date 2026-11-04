@@ -1,5 +1,6 @@
 //! Public request and response shapes for CMA Agents.
 
+pub(crate) use super::agent_list_shapes::{AgentListItemView, AgentPageView};
 use super::agent_observation_shapes::{AgentRuntimeMetadataView, AgentTurnUsageView};
 use layer2_core::profiles::{PermissionLevel, SkillSource, ThinkingEffort};
 use layer2_core::sandbox::{
@@ -141,6 +142,8 @@ pub(crate) struct WorkspaceContextView {
     profile: InstanceProfileReferenceView,
     #[serde(skip_serializing_if = "Option::is_none")]
     resolved_commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<super::instances_openapi_shapes::WorkspaceSourceView>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -176,50 +179,6 @@ pub(crate) struct FirstMessageStateView {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct AgentListItemView {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    runtime_metadata: Option<AgentRuntimeMetadataView>,
-    id: String,
-    sandbox_id: String,
-    workspace_id: String,
-    worktree_id: String,
-    #[schema(value_type = String)]
-    status: AgentStatus,
-    profile: AgentProfileSummaryView,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    owner_title: Option<String>,
-    created_at: String,
-    updated_at: String,
-}
-
-impl From<Agent> for AgentListItemView {
-    fn from(agent: Agent) -> Self {
-        Self {
-            id: agent.id.to_string(),
-            sandbox_id: agent.sandbox_id.to_string(),
-            workspace_id: agent.workspace_id.to_string(),
-            worktree_id: agent.worktree_id.to_string(),
-            status: agent.status,
-            profile: (&agent).into(),
-            runtime_metadata: AgentRuntimeMetadataView::from_agent(&agent),
-            owner_title: agent.conversation.preferences.title,
-            title: agent.title,
-            created_at: agent.created_at,
-            updated_at: agent.updated_at,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct AgentPageView {
-    pub(crate) items: Vec<AgentListItemView>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) next: Option<String>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentBootstrapView {
     operation_id: String,
     sandbox_id: String,
@@ -228,9 +187,12 @@ pub(crate) struct AgentBootstrapView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentView {
+    /// Browser page for this CMA Agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) callback_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     runtime_metadata: Option<AgentRuntimeMetadataView>,
-    id: String,
+    pub(super) id: String,
     #[schema(value_type = String)]
     status: AgentStatus,
     profile: AgentProfileSummaryView,
@@ -301,6 +263,7 @@ impl AgentView {
                     failed_at: message.failed_at.clone(),
                 });
         Self {
+            callback_url: None,
             id: agent.id.to_string(),
             desktop: !agent.profile.content.isolated_agent
                 && sandbox
@@ -334,6 +297,13 @@ impl AgentView {
                     digest: workspace.profile.digest,
                 },
                 resolved_commit: workspace.resolved_commit,
+                source: matches!(
+                    workspace.source,
+                    layer2_core::sandbox::WorkspaceSource::RepositorySnapshot { .. }
+                )
+                .then(|| {
+                    super::instances_openapi_shapes::WorkspaceSourceView::from(&workspace.source)
+                }),
             },
             sandbox: SandboxContextView {
                 id: sandbox.id.to_string(),

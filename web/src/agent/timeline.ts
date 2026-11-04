@@ -51,6 +51,7 @@ export function groupToolCalls(entries: readonly Entry[]): TimelineItem[] {
   };
   for (const entry of entries) {
     if (entry.kind === 'tool') {
+      if (run.length > 0 && run[0]!.runId !== entry.item.runId) flush();
       run.push(entry.item);
       continue;
     }

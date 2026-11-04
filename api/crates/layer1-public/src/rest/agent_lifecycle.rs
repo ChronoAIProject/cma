@@ -20,6 +20,13 @@ use utoipa::ToSchema;
 #[serde(deny_unknown_fields)]
 pub struct AgentLifecycleCreateRequest {
     pub name: String,
+    /// Exact initial task, at most 262144 UTF-8 bytes and not whitespace-only.
+    /// Replaces the readiness prompt after preparation; omission retains setup.
+    /// Repository tasks prepare an immutable source checkout in a new Sandbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_message: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desktop: bool,
     /// Provision a desktop-capable Linux runtime for this Agent.
     ///
     /// Desktop runtimes are immutable Sandbox configuration.  The option is
@@ -121,6 +128,10 @@ pub struct AgentLifecycleOperationView {
     pub phase: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// Omitted without an Agent ID or when observation fails; null for a missing or Deleted Agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, nullable = true)]
+    pub callback_url: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub events: Vec<AgentLifecycleEventView>,
@@ -174,6 +185,8 @@ pub trait AgentLifecycleOperationReader: Send + Sync {
 
 #[derive(Debug, Error)]
 pub enum AgentLifecycleProvisioningError {
+    #[error("desktop is unavailable: {0}")]
+    DesktopUnsupported(String),
     #[error("the Agent Manager lifecycle implementation is unavailable")]
     Unavailable,
     #[error("the authenticated caller cannot create an Agent")]
@@ -196,6 +209,12 @@ pub enum AgentLifecycleProvisioningError {
 impl IntoResponse for AgentLifecycleProvisioningError {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match &self {
+            Self::DesktopUnsupported(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent-manager-desktop-unsupported",
+                "desktop_unsupported",
+                self.to_string(),
+            ),
             Self::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "agent-manager-unavailable",
@@ -260,6 +279,22 @@ impl IntoResponse for AgentLifecycleProvisioningError {
 /// Provisioning port implemented by the composed Agent Manager.
 #[async_trait]
 pub trait AgentLifecycleProvisioner: Send + Sync {
+    async fn desktop_capability(
+        &self,
+        _caller: &Caller,
+        _context: Option<&CallerContext>,
+        _scope: super::DesktopCreationScope,
+    ) -> Result<
+        layer2_core::sandbox::desktop_creation::DesktopCapability,
+        AgentLifecycleProvisioningError,
+    > {
+        Ok(
+            layer2_core::sandbox::desktop_creation::DesktopCapability::unavailable(
+                "This service does not support desktop creation.",
+            ),
+        )
+    }
+
     async fn create(
         &self,
         caller: &Caller,

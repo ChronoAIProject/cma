@@ -220,6 +220,7 @@ fn composed_rest_router() -> Router {
     );
     let workspaces = WorkspaceService::new(Arc::clone(&sandbox_store), profile_store.clone());
     let projections = AgentProjectionServices::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         Arc::clone(&sandbox_store),
         profile_store.clone(),
         Arc::new(LiveAgentRegistry::default()),
@@ -301,6 +302,101 @@ async fn cors_preflight_grants_only_configured_origins_and_headers() {
         response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
         Some(&HeaderValue::from_static("https://console.example"))
     );
+}
+
+#[tokio::test]
+async fn cors_browser_control_and_replay_preflights_keep_exact_origin_policy() {
+    let app = with_cors(
+        Router::new(),
+        vec![HeaderValue::from_static("https://console.example")],
+    );
+    for (origin, method, path, headers, allowed) in [
+        (
+            "https://console.example",
+            "GET",
+            "/api/v2/agents/one/events/snapshot",
+            "authorization, Prefer",
+            true,
+        ),
+        (
+            "https://console.example",
+            "POST",
+            "/api/v1/agents/one/browser/control",
+            "authorization, content-type, X-Cma-Browser-Client",
+            true,
+        ),
+        (
+            "https://console.example",
+            "GET",
+            "/api/v1/agents/one/browser/control",
+            "authorization, x-cma-browser-client",
+            true,
+        ),
+        (
+            "https://unlisted.example",
+            "GET",
+            "/api/v2/agents/one/events",
+            "authorization, prefer",
+            false,
+        ),
+        (
+            "https://console.example",
+            "GET",
+            "/api/v1/agents/one/answers/event:3/deliverables",
+            "authorization, X-CMA-Document-Share-Token",
+            true,
+        ),
+        (
+            "https://console.example",
+            "POST",
+            "/api/v1/agents/one/browser/control",
+            "authorization, x-cma-browser-client, x-unsupported",
+            false,
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri(path)
+                    .header(header::ORIGIN, origin)
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, method)
+                    .header(header::ACCESS_CONTROL_REQUEST_HEADERS, headers)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if allowed {
+            assert_eq!(
+                response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                Some(&HeaderValue::from_static("https://console.example")),
+                "{method} {path} with {headers}",
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+                Some(&HeaderValue::from_static("true")),
+            );
+            let granted = response.headers()[header::ACCESS_CONTROL_ALLOW_HEADERS]
+                .to_str()
+                .unwrap();
+            for requested in headers.split(',') {
+                assert!(granted
+                    .split(',')
+                    .any(|grant| grant.trim().eq_ignore_ascii_case(requested.trim())));
+            }
+        } else {
+            assert!(!response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+            assert!(!response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_HEADERS));
+        }
+    }
 }
 
 #[tokio::test]

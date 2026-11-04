@@ -6,8 +6,9 @@ use layer2_core::{
     profiles::{SkillRef, SkillSource},
     sandbox::{
         store::{AgentWorkMutation, AgentWorkerStore},
-        AgentLogKind, AgentSkillInstallStatus, AgentStatus, AgentWorkStep, ResolvedAgentSkill,
-        Sandbox, SandboxCredentialPrerequisite, SandboxCredentialPrerequisiteError,
+        AgentLogKind, AgentOperationService, AgentSkillInstallStatus, AgentStatus, AgentWorkStep,
+        ResolvedAgentSkill, Sandbox, SandboxCredentialPrerequisite,
+        SandboxCredentialPrerequisiteError,
     },
     Authorization, Capability, ServiceId, SkillId, SubjectId,
 };
@@ -51,6 +52,30 @@ impl AgentModelRuntimeSupport for RuntimeSupport {
 impl AgentSkillRuntimeSupport for RuntimeSupport {
     async fn supported(&self, _: &Sandbox) -> bool {
         self.0
+    }
+}
+
+struct InstallDuringSupportCheck(Arc<AgentOperationService>);
+
+#[async_trait]
+impl AgentSkillRuntimeSupport for InstallDuringSupportCheck {
+    async fn supported(&self, sandbox: &Sandbox) -> bool {
+        self.0
+            .install_skill(
+                &layer2_core::Caller {
+                    subject: sandbox.owner.clone(),
+                    authorization: Authorization::new([Capability::UseOwnSandboxes]),
+                },
+                &layer2_core::AgentId("agt_contract".into()),
+                SkillRef {
+                    source: SkillSource::Ornn,
+                    id: SkillId("research".into()),
+                    version: Some("1.0".into()),
+                },
+            )
+            .await
+            .expect("competing skill installation is admitted during the runtime support check");
+        true
     }
 }
 
@@ -112,8 +137,15 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         Arc::new(Models(mode == "catalog_unavailable")),
         support.clone(),
     );
+    let skill_support: Arc<dyn AgentSkillRuntimeSupport> = if mode == "install_race" {
+        Arc::new(InstallDuringSupportCheck(
+            fixture.state.agent_operations.clone(),
+        ))
+    } else {
+        support
+    };
     Some(Scenario {
-        router: agent_router(fixture.state.with_skill_support(support)).merge(models),
+        router: agent_router(fixture.state.with_skill_support(skill_support)).merge(models),
         subject: match mode {
             "anonymous" => None,
             "foreign" => Some("owner-b"),

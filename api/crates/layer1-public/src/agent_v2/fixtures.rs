@@ -9,6 +9,9 @@ use layer2_core::{
 pub(crate) use crate::responses::v2::controls::fixtures::{context, request};
 pub(crate) const SNAPSHOT: &str = "/api/v2/agents/agt_fixture/events/snapshot";
 pub(crate) const EVENTS: &str = "/api/v2/agents/agt_fixture/events";
+pub(crate) fn task_policy() -> Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy> {
+    Arc::new(serde_json::from_value(serde_json::json!({"mode":"all","accounts":[],"capabilities":["task_home_admission","suggested_followup_admission","desktop_enable","browser_takeover","replay_presentation"]})).unwrap())
+}
 pub(super) struct NoAdmission;
 #[async_trait]
 impl AgentCommandAdmissionAuthority for NoAdmission {

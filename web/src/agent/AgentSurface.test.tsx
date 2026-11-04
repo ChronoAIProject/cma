@@ -5,7 +5,7 @@ import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../tes
 import { ApiError } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
 import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
-import { conversationFromTranscript, type ConversationState } from './conversation';
+import { conversationFromTranscript, foldAgentEvent, type ConversationState } from './conversation';
 import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
@@ -15,6 +15,139 @@ vi.mock('@novnc/novnc', () => ({
     disconnect() {}
   },
 }));
+
+it.each(['active', 'delivery', 'previous'] as const)(
+  'opens model discovery from %s evidence before initial Agent success without remounting the composer',
+  async (evidence) => {
+    const models = vi.fn(async () => [
+      { id: 'corrective-model', label: 'Corrective model', available: true },
+    ]);
+    const client = agentClient({
+      readAgentModels: models,
+      readAgentSettings: async () => ({
+        model: 'saved-model',
+        reasoning_effort: 'high',
+        permission_mode: 'autonomous',
+      }),
+      updateAgentSettings: vi.fn(),
+    });
+    const starting = {
+      ...AGENT_DETAIL,
+      status: 'starting' as const,
+      readyAt: undefined,
+      sandbox: { ...AGENT_DETAIL.sandbox, status: 'installing' as const },
+    };
+    const draw = (credentialDelivered: boolean) => {
+      const detail =
+        credentialDelivered && evidence === 'previous'
+          ? { ...starting, status: 'failed' as const, readyAt: AGENT_DETAIL.readyAt }
+          : starting;
+      const sandboxEvents =
+        credentialDelivered && evidence === 'delivery'
+          ? [
+              {
+                sandboxId: starting.sandbox.id,
+                seq: 1,
+                appendedAt: '2026-11-03T00:00:00Z',
+                kind: { type: 'work_step_completed', step: { kind: 'deliver_initial_credential' } },
+              },
+            ]
+          : [];
+      return (
+        <CmaClientProvider client={client}>
+          <AgentSurface
+            agentId="agt_1"
+            controller={controller(
+              {
+                status: 'ready',
+                detail,
+                workspace: workspaceFixture(),
+                conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+                sandboxEvents,
+              },
+              undefined,
+              {
+                progressObservation: {
+                  stale: false,
+                  sandbox: {
+                    ...sandboxFixture(),
+                    id: starting.sandbox.id,
+                    status: credentialDelivered && evidence === 'active' ? 'active' : 'installing',
+                  },
+                },
+              },
+            )}
+            detailsOpen={false}
+            onDetailsOpenChange={vi.fn()}
+            onNavigate={vi.fn()}
+          />
+        </CmaClientProvider>
+      );
+    };
+    const view = render(draw(false));
+    await screen.findByRole('button', { name: /^Agent settings:/ });
+    expect(models).not.toHaveBeenCalled();
+    const editor = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(editor, { target: { value: 'Keep the next message' } });
+    view.rerender(draw(true));
+    await waitFor(() => expect(models).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(editor);
+    expect(editor).toHaveValue('Keep the next message');
+  },
+);
+
+it.each([false, true])(
+  'links the current turn plan and preserves the draft with machine desktop=%s',
+  (desktop) => {
+    let conversation = conversationFromTranscript({ agentId: 'agt_1', throughSeq: 0, turns: [] });
+    const append = (seq: number, kind: Record<string, unknown>) => {
+      conversation = foldAgentEvent(conversation, {
+        seq,
+        appendedAt: '2026-11-03T00:00:00Z',
+        kind: kind as { type: string },
+      });
+    };
+    append(1, { type: 'turn_started', turn_sequence: 1 });
+    append(2, {
+      type: 'plan_set',
+      entries: [
+        { title: 'Read instructions', status: 'completed' },
+        { title: 'Apply change', status: 'in_progress' },
+        { title: 'Verify', status: 'pending' },
+      ],
+    });
+    const draw = () => (
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller({
+          status: 'ready',
+          detail: { ...AGENT_DETAIL, desktop },
+          workspace: workspaceFixture(),
+          conversation,
+        })}
+        detailsOpen={false}
+        onDetailsOpenChange={() => {}}
+        onNavigate={() => {}}
+      />
+    );
+    const view = render(draw());
+    const link = screen.getByRole('link', { name: 'Current plan: Working · step 2 of 3' });
+    expect(link.closest('header')).not.toBeNull();
+    expect(link).toHaveAttribute('href', `#${screen.getByRole('region', { name: 'Plan' }).id}`);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+      target: { value: 'Retain next draft' },
+    });
+    append(3, { type: 'turn_completed', turn_sequence: 1 });
+    append(4, { type: 'turn_started', turn_sequence: 4 });
+    view.rerender(draw());
+    expect(screen.queryByRole('link', { name: /^Current plan:/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('region', { name: 'Plan' })).toHaveLength(1);
+    expect(
+      screen.getByText('Response finished · Plan completion not fully reported'),
+    ).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Retain next draft');
+  },
+);
 
 it('places settings inside the composer box and preserves draft and busy-turn apply rules', async () => {
   const defaults = {
@@ -45,7 +178,8 @@ it('places settings inside the composer box and preserves draft and busy-turn ap
     </CmaClientProvider>
   );
   const view = render(draw(true));
-  const chip = await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  fireEvent.click(await screen.findByRole('button', { name: /^Agent settings:/ }));
+  const chip = screen.getByRole('button', { name: /^Model and reasoning effort/ });
   expect(chip).toHaveTextContent('GPT-6 High');
   const form = screen.getByRole('form', { name: 'Message Agent' });
   // Settings sit inside the composer box, in the row of controls under the draft.
@@ -163,7 +297,7 @@ it('preserves a draft and visible history while incomplete event activity retrie
     expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
     expect(
       screen
-        .getByText('Conversation activity is unavailable. Reconnecting.')
+        .getByText('Earlier activity could not be loaded. Retrying…')
         .closest('[role="status"]'),
     ).toBeInTheDocument();
     const draft = screen.getByRole('textbox', { name: 'Message' });
@@ -174,13 +308,13 @@ it('preserves a draft and visible history while incomplete event activity retrie
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(
       screen
-        .getByText('Conversation activity is unavailable. Reconnecting.')
+        .getByText('Earlier activity could not be loaded. Retrying…')
         .closest('[role="status"]'),
     ).toHaveAttribute('inert');
     expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
     await act(() => vi.advanceTimersByTimeAsync(200));
     expect(
-      screen.queryByText('Conversation activity is unavailable. Reconnecting.'),
+      screen.queryByText('Earlier activity could not be loaded. Retrying…'),
     ).not.toBeInTheDocument();
     expect(draft).toHaveValue('Retain this unsubmitted draft');
     expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
@@ -189,9 +323,7 @@ it('preserves a draft and visible history while incomplete event activity retrie
     fireEvent.click(screen.getByRole('button', { name: 'Reload conversation' }));
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
-    expect(
-      screen.getByText('Conversation activity is unavailable. Reconnecting.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Earlier activity could not be loaded. Retrying…')).toBeInTheDocument();
   } finally {
     view.unmount();
     vi.useRealTimers();
@@ -476,6 +608,7 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: '1 tool call' }));
   const tool = screen.getByRole('article', { name: 'Tool call: Typecheck' });
   expect(tool).toHaveTextContent('shell');
   expect(tool).toHaveTextContent('Completed');
@@ -533,8 +666,9 @@ it('removes completed preparation while preserving active and failed preparation
 });
 import '../test/connectedAccounts';
 
-it('keeps the composer and history mounted beside the Machine and across viewer toggles', async () => {
+it('routes desktop access through the common computer panel while preserving the conversation', async () => {
   const client = agentClient();
+  const openComputer = vi.fn();
   const draw = (desktop = true, accessUncertain = false) => (
     <CmaClientProvider client={client}>
       <AgentSurface
@@ -547,6 +681,7 @@ it('keeps the composer and history mounted beside the Machine and across viewer 
           conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
         })}
         detailsOpen={false}
+        onFilesOpenChange={openComputer}
         onDetailsOpenChange={vi.fn()}
         onNavigate={vi.fn()}
       />
@@ -556,15 +691,9 @@ it('keeps the composer and history mounted beside the Machine and across viewer 
   const input = screen.getByRole('textbox', { name: 'Message' });
   const history = screen.getByText('The repository is ready.');
   fireEvent.change(input, { target: { value: 'Open a terminal on the desktop' } });
-  expect(screen.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Hide machine desktop' })).toHaveAttribute(
-    'aria-expanded',
-    'true',
-  );
-  fireEvent.click(screen.getByRole('button', { name: 'Close machine desktop' }));
   expect(screen.queryByRole('region', { name: 'Machine desktop' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Open machine desktop' }));
-  expect(screen.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Show Agent computer' }));
+  expect(openComputer).toHaveBeenCalledWith(true);
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
   expect(input).toHaveValue('Open a terminal on the desktop');
   expect(screen.getByText('The repository is ready.')).toBe(history);

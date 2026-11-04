@@ -10,7 +10,9 @@ impl HostedAdapter {
         request: &crate::RuntimeProvisionRequest,
         operation_id: &str,
     ) -> crate::Result<crate::RuntimeProvisionReceipt> {
-        let mut rendered = self.deployment.render_runtime(&request.spec, request.generation)?;
+        let mut rendered = self
+            .deployment
+            .render_runtime(&request.spec, request.generation)?;
         rendered.funded_until = request.funded_until;
         self.backend.validate_funding(&rendered).await?;
         self.verify_spec_home(&request.spec).await?;
@@ -396,4 +398,38 @@ fn sha256_fingerprint(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+impl HostedAdapter {
+    pub(super) async fn deadline_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        until: u64,
+    ) -> crate::Result<()> {
+        let rendered = self
+            .deployment
+            .render_adoption(request, request.generation)?;
+        self.backend
+            .set_runtime_deadline(&request.handle, &rendered, until)
+            .await
+    }
+    pub(super) async fn resources_exact(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::ResourceReading> {
+        self.known_state(handle).await?;
+        match self
+            .exchange(handle, crate::wire::RequestFrame::Resources)
+            .await?
+        {
+            crate::wire::ResponseFrame::Resources(reading) => Ok(reading),
+            _ => unreachable!("exchange verifies response operation"),
+        }
+    }
+    pub(super) async fn teardown_exact(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+        self.known_state(handle).await?;
+        self.backend.teardown(handle).await?;
+        self.states.lock().await.remove(handle);
+        Ok(())
+    }
 }

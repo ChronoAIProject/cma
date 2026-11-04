@@ -1,5 +1,5 @@
 use super::*;
-use layer2_core::sandbox::{HierarchyReadService, HierarchyReadStore};
+use layer2_core::sandbox::{AgentTaskStatus, HierarchyReadService, HierarchyReadStore};
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -25,9 +25,14 @@ async fn hierarchy_children_use_one_read_only_snapshot_and_preserve_retained_sta
     let workspace = before.lineage.workspace.as_ref().unwrap();
     let agent = before.lineage.agent.as_ref().unwrap();
     let log = store.agent_log(&agent.id, 0, 20).await.unwrap();
+    assert_eq!(agent.status, AgentStatus::Ready);
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        0
+    );
     for sandbox_read in [true, false] {
         trace.lock().unwrap().clear();
-        if sandbox_read {
+        let expected_reads = if sandbox_read {
             let value = store
                 .read_sandbox_hierarchy(&root.id)
                 .await
@@ -37,6 +42,12 @@ async fn hierarchy_children_use_one_read_only_snapshot_and_preserve_retained_sta
             assert_eq!(value.workspaces, std::slice::from_ref(workspace));
             assert_eq!(value.worktrees, [before.lineage.worktree.clone().unwrap()]);
             assert_eq!(value.agents, std::slice::from_ref(agent));
+            vec![
+                doc! {"find": "sandboxes", "filter": {"_id": root.id.as_str()}, "limit": 1_i64, "singleBatch": true},
+                doc! {"find": "workspaces", "filter": {"sandbox_id": root.id.as_str()}, "sort": {"_id": 1}},
+                doc! {"find": "worktrees", "filter": {"sandbox_id": root.id.as_str()}, "sort": {"_id": 1}},
+                doc! {"find": "agents", "filter": {"sandbox_id": root.id.as_str()}, "sort": {"_id": 1}},
+            ]
         } else {
             let value = store
                 .read_workspace_hierarchy(&workspace.id)
@@ -46,15 +57,42 @@ async fn hierarchy_children_use_one_read_only_snapshot_and_preserve_retained_sta
             assert_eq!(value.workspace, *workspace);
             assert_eq!(value.worktrees, [before.lineage.worktree.clone().unwrap()]);
             assert_eq!(value.agents, std::slice::from_ref(agent));
-        }
+            assert_eq!(
+                value.task_statuses,
+                std::collections::HashMap::from([(agent.id.clone(), AgentTaskStatus::NotStarted)])
+            );
+            vec![
+                doc! {"find": "workspaces", "filter": {"_id": workspace.id.as_str()}, "limit": 1_i64, "singleBatch": true},
+                doc! {"find": "worktrees", "filter": {"workspace_id": workspace.id.as_str()}, "sort": {"_id": 1}},
+                doc! {"find": "agents", "filter": {"workspace_id": workspace.id.as_str()}, "sort": {"_id": 1}},
+                doc! {
+                    "find": "agent_log",
+                    "filter": {
+                        "agent_id": agent.id.as_str(),
+                        "record.kind.type": {"$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"]},
+                    },
+                    "sort": {"seq": -1}, "limit": 1_i64, "singleBatch": true,
+                },
+                doc! {
+                    "find": "agent_commands",
+                    "filter": {
+                        "agent_id": agent.id.as_str(),
+                        "status": {"$in": ["queued", "in_progress", "waiting_action"]},
+                    },
+                    "limit": 1_i64, "singleBatch": true,
+                },
+            ]
+        };
         let commands = trace.lock().unwrap().clone();
-        let count = if sandbox_read { 4 } else { 3 };
-        assert_eq!(commands.len(), count + 1, "root, children and abort only");
+        assert_eq!(
+            commands.len(),
+            expected_reads.len() + 1,
+            "only the specified hierarchy/status reads and abort are allowed"
+        );
         let first = &commands[0].1;
         assert!(command_uses_snapshot_read(first));
         assert!(first.get_bool("startTransaction").unwrap());
-        for (name, command) in &commands[..count] {
-            assert_eq!(name, "find");
+        for (_, command) in &commands {
             assert_eq!(
                 command.get_document("lsid").unwrap(),
                 first.get_document("lsid").unwrap()
@@ -65,13 +103,40 @@ async fn hierarchy_children_use_one_read_only_snapshot_and_preserve_retained_sta
             );
             assert!(!command.get_bool("autocommit").unwrap());
         }
-        assert_eq!(commands[count].0, "abortTransaction");
+        for (_, command) in &commands[1..] {
+            assert!(!command.contains_key("startTransaction"));
+            assert!(!command.contains_key("readConcern"));
+        }
+        for ((command_name, command), expected) in commands.iter().zip(&expected_reads) {
+            assert_eq!(command_name, "find");
+            assert_eq!(command.get_str("$db").unwrap(), name);
+            assert_eq!(command.get_i32("maxTimeMS").unwrap(), 10_000);
+            for field in [
+                "find",
+                "filter",
+                "sort",
+                "limit",
+                "singleBatch",
+                "projection",
+            ] {
+                assert_eq!(
+                    command.get(field),
+                    expected.get(field),
+                    "{field}: {command:?}"
+                );
+            }
+        }
+        assert_eq!(commands.last().unwrap().0, "abortTransaction");
     }
     assert_eq!(
         store.resource_access_snapshot(&target).await.unwrap(),
         before
     );
     assert_eq!(store.agent_log(&agent.id, 0, 20).await.unwrap(), log);
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        0
+    );
     admin.database(&name).drop().await.unwrap();
 }
 

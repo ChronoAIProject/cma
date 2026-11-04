@@ -105,6 +105,14 @@
   flex: none;
 }
 
+@media (pointer: coarse), (max-width: 30rem) {
+  .composer-attachments__item .button {
+    min-width: 44px;
+    min-height: 44px;
+    flex: none;
+  }
+}
+
 .message-attachments {
   display: flex;
   gap: 8px;
