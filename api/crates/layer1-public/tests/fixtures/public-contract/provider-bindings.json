@@ -103,6 +103,115 @@
       }
     },
     {
+      "id": "binding-put-initial-skill-version",
+      "operation": "PUT /api/v1/cmaeg/bindings/{binding_id}",
+      "scenario": "binding_management_skill_version",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/cmaeg/bindings/binding-contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "route-test",
+              "owner": {
+                "kind": "human",
+                "subject": "owner"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded"
+            },
+            "context": {
+              "skills": [
+                {
+                  "id": "research",
+                  "source": "ornn",
+                  "version": "1.0"
+                }
+              ]
+            },
+            "environment": {
+              "size": {
+                "cpu_cores": 1,
+                "memory_gib": 2
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              }
+            }
+          },
+          "profile_digest": "sha256:da05bdf83819a02b6feeb21a68ce392db0f965c1d681aafaaf828e1f53ad97f8",
+          "agent_key": "$ephemeral_credential",
+          "tools": {
+            "native_mcp_url": "https://gateway.example/mcp",
+            "nyxid_service_slug": "cmaeg"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "binding_id": "binding-contract",
+          "owner": "owner",
+          "profile_digest": "sha256:da05bdf83819a02b6feeb21a68ce392db0f965c1d681aafaaf828e1f53ad97f8",
+          "sandbox_id": "sbx_contract",
+          "workspace_id": "wks_contract",
+          "level": "l2",
+          "state": "provisioning",
+          "honoured": [
+            "context.mcp_servers",
+            "context.skills",
+            "context.system_prompt",
+            "environment.environment_variables",
+            "environment.size",
+            "environment.workspace",
+            "metadata",
+            "model.access",
+            "model.api_type",
+            "model.model",
+            "model.service",
+            "model.thinking_effort",
+            "permission.action_mode",
+            "permission.service_scope"
+          ],
+          "refused": [
+            {
+              "field": "tools.native_mcp_url",
+              "reason": "external tool endpoints are not supported"
+            }
+          ],
+          "generation": 1,
+          "created_at": "2026-09-22T00:00:00Z",
+          "updated_at": "2026-09-22T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_at": "/created_at",
+        "sandbox_id": "/sandbox_id",
+        "updated_at": "/updated_at",
+        "workspace_id": "/workspace_id"
+      }
+    },
+    {
       "id": "binding-put-skill-version-update-unsupported",
       "operation": "PUT /api/v1/cmaeg/bindings/{binding_id}",
       "scenario": "binding_management_skill_version",

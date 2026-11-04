@@ -1510,11 +1510,11 @@
           "content-type": "application/problem+json"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
-          "title": "agent operation in flight",
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-skill-version-upgrade-unsupported",
+          "title": "agent skill version upgrade unsupported",
           "status": 409,
-          "detail": "Another durable operation currently owns this agent.",
-          "code": "agent_operation_in_flight"
+          "detail": "Skill \"research\" is already installed at version \"1.0\"; changing it to version \"2.0\" is unsupported on an existing Agent. Create a replacement Agent with the requested profile.",
+          "code": "agent_skill_version_upgrade_unsupported"
         },
         "bodyKind": "json"
       },

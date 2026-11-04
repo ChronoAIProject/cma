@@ -21,7 +21,7 @@
           "schema_version": 1,
           "agent_id": "agt_fixture",
           "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
           "items": [
             {
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
@@ -96,6 +96,19 @@
               "sequence": 7,
               "appended_at": "2026-09-16T00:00:01Z",
               "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-09-16T00:00:01Z",
+              "kind": {
                 "type": "delivery_changed",
                 "operation_sequence": 3,
                 "operation": "send_message",
@@ -104,8 +117,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
-              "sequence": 8,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "tool_started",
@@ -117,8 +130,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
-              "sequence": 9,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.10",
+              "sequence": 10,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "tool_updated",
@@ -129,8 +142,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.10",
-              "sequence": 10,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.11",
+              "sequence": 11,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "tool_updated",
@@ -141,8 +154,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.11",
-              "sequence": 11,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.12",
+              "sequence": 12,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "approval_requested",
@@ -153,8 +166,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.12",
-              "sequence": 12,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.13",
+              "sequence": 13,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "approval_resolved",
@@ -164,8 +177,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.13",
-              "sequence": 13,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+              "sequence": 14,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "usage",
@@ -177,8 +190,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
-              "sequence": 14,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+              "sequence": 15,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "message",
@@ -220,7 +233,7 @@
           "schema_version": 1,
           "agent_id": "agt_fixture",
           "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
           "items": [
             {
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
@@ -288,6 +301,13 @@
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
               "sequence": 7,
               "appended_at": "2026-09-16T00:00:01Z",
+              "kind": null,
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-09-16T00:00:01Z",
               "kind": {
                 "type": "delivery_changed",
                 "operation_sequence": 3,
@@ -297,8 +317,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
-              "sequence": 8,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "tool_started",
@@ -310,8 +330,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
-              "sequence": 9,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.10",
+              "sequence": 10,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "tool_updated",
@@ -322,8 +342,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.10",
-              "sequence": 10,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.11",
+              "sequence": 11,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "tool_updated",
@@ -334,8 +354,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.11",
-              "sequence": 11,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.12",
+              "sequence": 12,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "approval_requested",
@@ -346,8 +366,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.12",
-              "sequence": 12,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.13",
+              "sequence": 13,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "approval_resolved",
@@ -357,8 +377,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.13",
-              "sequence": 13,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+              "sequence": 14,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "usage",
@@ -370,8 +390,8 @@
               "response_binding": null
             },
             {
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
-              "sequence": 14,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+              "sequence": 15,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "message",
@@ -413,7 +433,7 @@
           "schema_version": 1,
           "agent_id": "agt_fixture",
           "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
           "items": [
             {
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
@@ -436,7 +456,7 @@
               "response_binding": null
             }
           ],
-          "next_page_cursor": "ags1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14.2"
+          "next_page_cursor": "ags1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15.2"
         },
         "bodyKind": "json"
       },
@@ -448,7 +468,7 @@
       "scenario": "agent_events_v2_owner",
       "request": {
         "method": "GET",
-        "path": "/api/v2/agents/agt_fixture/events/snapshot?limit=2&page_cursor=ags1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14.2",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot?limit=2&page_cursor=ags1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15.2",
         "headers": {}
       },
       "response": {
@@ -462,7 +482,7 @@
           "schema_version": 1,
           "agent_id": "agt_fixture",
           "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
           "items": [
             {
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
@@ -491,7 +511,7 @@
               }
             }
           ],
-          "next_page_cursor": "ags1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14.4"
+          "next_page_cursor": "ags1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15.4"
         },
         "bodyKind": "json"
       },
@@ -628,10 +648,11 @@
               "sequence": 7,
               "appended_at": "2026-09-16T00:00:01Z",
               "kind": {
-                "type": "delivery_changed",
-                "operation_sequence": 3,
-                "operation": "send_message",
-                "state": "write_confirmed"
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
               },
               "response_binding": null
             }
@@ -644,13 +665,12 @@
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
               "sequence": 8,
-              "appended_at": "2026-09-16T00:00:00Z",
+              "appended_at": "2026-09-16T00:00:01Z",
               "kind": {
-                "type": "tool_started",
-                "call_id": "tool-contract",
-                "title": "Inspect file",
-                "kind": "read",
-                "status": "running"
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
               },
               "response_binding": null
             }
@@ -665,10 +685,11 @@
               "sequence": 9,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
-                "type": "tool_updated",
+                "type": "tool_started",
                 "call_id": "tool-contract",
-                "status": "running",
-                "title": "Inspect configuration"
+                "title": "Inspect file",
+                "kind": "read",
+                "status": "running"
               },
               "response_binding": null
             }
@@ -685,8 +706,8 @@
               "kind": {
                 "type": "tool_updated",
                 "call_id": "tool-contract",
-                "status": "completed",
-                "title": null
+                "status": "running",
+                "title": "Inspect configuration"
               },
               "response_binding": null
             }
@@ -701,10 +722,10 @@
               "sequence": 11,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
-                "type": "approval_requested",
-                "approval_id": "approval-contract",
-                "action": "write",
-                "detail": "Update configuration"
+                "type": "tool_updated",
+                "call_id": "tool-contract",
+                "status": "completed",
+                "title": null
               },
               "response_binding": null
             }
@@ -719,9 +740,10 @@
               "sequence": 12,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
-                "type": "approval_resolved",
+                "type": "approval_requested",
                 "approval_id": "approval-contract",
-                "decision": "allow"
+                "action": "write",
+                "detail": "Update configuration"
               },
               "response_binding": null
             }
@@ -736,11 +758,9 @@
               "sequence": 13,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
-                "type": "usage",
-                "input_tokens": 10,
-                "output_tokens": 20,
-                "context_used": 30,
-                "context_window": 128000
+                "type": "approval_resolved",
+                "approval_id": "approval-contract",
+                "decision": "allow"
               },
               "response_binding": null
             }
@@ -753,6 +773,25 @@
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
               "sequence": 14,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "usage",
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "context_used": 30,
+                "context_window": 128000
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+              "sequence": 15,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "message",
@@ -891,12 +930,7 @@
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
               "sequence": 7,
               "appended_at": "2026-09-16T00:00:01Z",
-              "kind": {
-                "type": "delivery_changed",
-                "operation_sequence": 3,
-                "operation": "send_message",
-                "state": "write_confirmed"
-              },
+              "kind": null,
               "response_binding": null
             }
           },
@@ -908,13 +942,12 @@
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
               "sequence": 8,
-              "appended_at": "2026-09-16T00:00:00Z",
+              "appended_at": "2026-09-16T00:00:01Z",
               "kind": {
-                "type": "tool_started",
-                "call_id": "tool-contract",
-                "title": "Inspect file",
-                "kind": "read",
-                "status": "running"
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
               },
               "response_binding": null
             }
@@ -929,10 +962,11 @@
               "sequence": 9,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
-                "type": "tool_updated",
+                "type": "tool_started",
                 "call_id": "tool-contract",
-                "status": "running",
-                "title": "Inspect configuration"
+                "title": "Inspect file",
+                "kind": "read",
+                "status": "running"
               },
               "response_binding": null
             }
@@ -949,8 +983,8 @@
               "kind": {
                 "type": "tool_updated",
                 "call_id": "tool-contract",
-                "status": "completed",
-                "title": null
+                "status": "running",
+                "title": "Inspect configuration"
               },
               "response_binding": null
             }
@@ -965,10 +999,10 @@
               "sequence": 11,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
-                "type": "approval_requested",
-                "approval_id": "approval-contract",
-                "action": "write",
-                "detail": "Update configuration"
+                "type": "tool_updated",
+                "call_id": "tool-contract",
+                "status": "completed",
+                "title": null
               },
               "response_binding": null
             }
@@ -983,9 +1017,10 @@
               "sequence": 12,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
-                "type": "approval_resolved",
+                "type": "approval_requested",
                 "approval_id": "approval-contract",
-                "decision": "allow"
+                "action": "write",
+                "detail": "Update configuration"
               },
               "response_binding": null
             }
@@ -1000,11 +1035,9 @@
               "sequence": 13,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
-                "type": "usage",
-                "input_tokens": 10,
-                "output_tokens": 20,
-                "context_used": 30,
-                "context_window": 128000
+                "type": "approval_resolved",
+                "approval_id": "approval-contract",
+                "decision": "allow"
               },
               "response_binding": null
             }
@@ -1017,6 +1050,25 @@
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
               "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
               "sequence": 14,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "usage",
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "context_used": 30,
+                "context_window": 128000
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+              "sequence": 15,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "message",
@@ -1037,7 +1089,7 @@
       "scenario": "agent_events_v2_owner",
       "request": {
         "method": "GET",
-        "path": "/api/v2/agents/agt_fixture/events?follow=false&after_cursor=ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.13",
+        "path": "/api/v2/agents/agt_fixture/events?follow=false&after_cursor=ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
         "headers": {}
       },
       "response": {
@@ -1050,12 +1102,12 @@
         "body": [
           {
             "event": "cma.agent.event",
-            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
             "data": {
               "agent_id": "agt_fixture",
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
-              "sequence": 14,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+              "sequence": 15,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "message",
@@ -1078,7 +1130,7 @@
         "method": "GET",
         "path": "/api/v2/agents/agt_fixture/events?follow=false",
         "headers": {
-          "Last-Event-ID": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.13"
+          "Last-Event-ID": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14"
         }
       },
       "response": {
@@ -1091,12 +1143,12 @@
         "body": [
           {
             "event": "cma.agent.event",
-            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
             "data": {
               "agent_id": "agt_fixture",
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
-              "sequence": 14,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+              "sequence": 15,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "message",
@@ -1567,7 +1619,7 @@
       "scenario": "agent_events_v2_live",
       "request": {
         "method": "GET",
-        "path": "/api/v2/agents/agt_fixture/events?after_cursor=ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+        "path": "/api/v2/agents/agt_fixture/events?after_cursor=ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
         "headers": {}
       },
       "response": {
@@ -1590,12 +1642,12 @@
           },
           {
             "event": "cma.agent.event",
-            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
             "data": {
               "agent_id": "agt_fixture",
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
-              "sequence": 8,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "delivery_changed",
@@ -1612,7 +1664,7 @@
               "agent_id": "agt_fixture",
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
               "turn_sequence": 4,
-              "after_sequence": 8,
+              "after_sequence": 9,
               "message_id": "1d3cf368b83214f37a16bde1537bf7c593fa5e4e0d81006e7acbfe2ab08b6065",
               "kind": "text_delta",
               "delta": "Live answer"
@@ -1624,7 +1676,7 @@
               "agent_id": "agt_fixture",
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
               "turn_sequence": 4,
-              "after_sequence": 8,
+              "after_sequence": 9,
               "message_id": "040fa57469956d68bee7191e98c70573312b78a7df55723a892223fb3258b92c",
               "kind": "reasoning_summary_delta",
               "delta": "Reviewing the file"
@@ -1641,7 +1693,7 @@
       "scenario": "agent_events_v2_lagged",
       "request": {
         "method": "GET",
-        "path": "/api/v2/agents/agt_fixture/events?after_cursor=ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+        "path": "/api/v2/agents/agt_fixture/events?after_cursor=ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
         "headers": {}
       },
       "response": {
@@ -1664,12 +1716,12 @@
           },
           {
             "event": "cma.agent.event",
-            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
             "data": {
               "agent_id": "agt_fixture",
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
-              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
-              "sequence": 8,
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
               "appended_at": "2026-09-16T00:00:00Z",
               "kind": {
                 "type": "delivery_changed",
@@ -1696,7 +1748,7 @@
               "agent_id": "agt_fixture",
               "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
               "turn_sequence": 4,
-              "after_sequence": 8,
+              "after_sequence": 9,
               "message_id": "1d3cf368b83214f37a16bde1537bf7c593fa5e4e0d81006e7acbfe2ab08b6065",
               "kind": "text_delta",
               "delta": "Live answer"

@@ -185,7 +185,7 @@
               "response_id": null,
               "admitted_at": "2026-09-16T00:00:00Z",
               "agent_order": 2,
-              "event_cursor": 9
+              "event_cursor": 10
             },
             "status": "queued",
             "queue_deadline": "2026-09-16T00:05:00Z",
@@ -242,7 +242,7 @@
               "response_id": null,
               "admitted_at": "2026-09-16T00:00:00Z",
               "agent_order": 2,
-              "event_cursor": 9
+              "event_cursor": 10
             },
             "status": "queued",
             "queue_deadline": "2026-09-16T00:05:00Z",
@@ -283,7 +283,7 @@
             "response_id": null,
             "admitted_at": "2026-09-16T00:00:00Z",
             "agent_order": 2,
-            "event_cursor": 9
+            "event_cursor": 10
           },
           "status": "queued",
           "queue_deadline": "2026-09-16T00:05:00Z",
@@ -367,7 +367,7 @@
               "response_id": null,
               "admitted_at": "2026-09-16T00:00:00Z",
               "agent_order": 3,
-              "event_cursor": 9
+              "event_cursor": 10
             },
             "status": "queued",
             "queue_deadline": "2026-09-16T00:05:00Z",
@@ -426,7 +426,7 @@
               "response_id": null,
               "admitted_at": "2026-09-16T00:00:00Z",
               "agent_order": 4,
-              "event_cursor": 9
+              "event_cursor": 10
             },
             "status": "queued",
             "queue_deadline": "2026-09-16T00:05:00Z",
