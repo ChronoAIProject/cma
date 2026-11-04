@@ -93,6 +93,47 @@ fn diagnostic_counter_overflow_cannot_panic_or_change_database_behavior() {
     assert_eq!(window.samples[0].total_us, u64::MAX);
 }
 
+#[test]
+fn connection_holds_survive_windows_and_closed_connections_release_tracking() {
+    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+    observer.checked_out(1, Duration::ZERO);
+    observer.checked_out(2, Duration::ZERO);
+    {
+        let mut window = observer.0.lock().unwrap();
+        window.started = Instant::now() - WINDOW;
+        window
+            .checked_out
+            .insert(1, Instant::now() - Duration::from_secs(12));
+        assert_eq!(window.in_use_peak, 2);
+    }
+    observer.record(0, Duration::ZERO, false);
+    assert_eq!(observer.0.lock().unwrap().checked_out.len(), 2);
+    observer.returned(1, false);
+    observer.returned(2, true);
+    observer.returned(2, true);
+    let window = observer.0.lock().unwrap();
+    assert!(window.checked_out.is_empty());
+    assert_eq!(window.samples[3].count, 2);
+    assert_eq!(window.samples[3].failures, 1);
+    assert!(window.samples[3].max_us >= 12_000_000);
+}
+
+#[test]
+fn connection_tracking_is_bounded_and_separates_server_local_ids() {
+    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+    for key in 0..MAX_TRACKED_CONNECTIONS as u64 + 2 {
+        observer.checked_out(key, Duration::ZERO);
+    }
+    let window = observer.0.lock().unwrap();
+    assert_eq!(window.checked_out.len(), MAX_TRACKED_CONNECTIONS);
+    assert_eq!(window.untracked, 2);
+    drop(window);
+    let left = mongodb::options::ServerAddress::parse("first.example:27017").unwrap();
+    let right = mongodb::options::ServerAddress::parse("second.example:27017").unwrap();
+    assert_ne!(connection_key(&left, 1), connection_key(&right, 1));
+    assert_ne!(connection_key(&left, 1), connection_key(&left, 2));
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
 async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
