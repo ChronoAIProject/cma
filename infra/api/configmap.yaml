@@ -12,6 +12,13 @@ data:
   CHRONO_USAGE_BILLING_ENABLED: "false"
   CHRONO_USAGE_LAGO_API_URL: ""
   CHRONO_USAGE_LAGO_PLAN_CODE: "starter"
+  # NyxID prepaid Sandbox lifecycle admission is independently gated and off
+  # until the producer contract is deployed and acceptance-tested.
+  CHRONO_NYXID_SANDBOX_BILLING_ENABLED: "false"
+  CHRONO_NYXID_SANDBOX_BILLING_BASE_URL: ""
+  CHRONO_NYXID_SANDBOX_BILLING_PRODUCER_ID: ""
+  # Names an out-of-band Secret/env key; the credential value is never checked in.
+  CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF: ""
   CHRONO_SANDBOX_PROVIDER: "agent-sandbox"
   CHRONO_RETAIN_OPENSANDBOX: "true"
   CHRONO_AGENT_SANDBOX_ENABLED: "true"
