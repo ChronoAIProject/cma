@@ -182,6 +182,8 @@ mod binary_support;
 mod boundaries;
 #[path = "management/github_integrations.rs"]
 mod github_integrations;
+#[path = "management/health.rs"]
+mod health;
 #[path = "management/lifecycle.rs"]
 mod lifecycle;
 #[path = "management/list.rs"]
