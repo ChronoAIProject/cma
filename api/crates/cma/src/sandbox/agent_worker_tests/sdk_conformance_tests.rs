@@ -297,6 +297,7 @@ async fn projection_components<S: FixtureStore>(
         None => runtime_tests::SdkRegistry::new(harness.registry.clone(), harness.updates.clone()),
     };
     let services = AgentProjectionServices::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         harness.store.clone(),
         profiles.clone(),
         registry,

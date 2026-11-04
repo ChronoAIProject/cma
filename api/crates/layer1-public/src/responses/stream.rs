@@ -95,7 +95,9 @@ fn open_inner(
                 // a durable turn outcome or release buffered private frames.
                 Err(_) => return None,
             };
-            let Some(response) = retrieve::project(&agent, &history, open.turn) else {
+            let Some(response) =
+                retrieve::project(&open.state.agent_page_origin, &agent, &history, open.turn)
+            else {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             };

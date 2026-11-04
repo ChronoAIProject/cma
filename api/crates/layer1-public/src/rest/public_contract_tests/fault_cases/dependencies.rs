@@ -95,6 +95,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             operations.clone(),
         ))
         .merge(agent_router(AgentRoutesState::new(
+            crate::agent_page::AgentPageOrigin::test(),
             AgentService::new(
                 store.clone(),
                 profiles,
