@@ -1,0 +1,124 @@
+# Agent log capacity: incident, settlement and continuation choices
+
+Design for [#1321](https://github.com/ChronoAIProject/cma/issues/1321).
+The [production investigation](https://github.com/ChronoAIProject/cma/issues/1321#issuecomment-6635920585)
+records two affected Agents in two Sandboxes, each at exactly 10,000 entries.
+The cleanup Agent has failed `CloseProcess` since October 19; the reconnect
+Agent repeatedly fails `PublishConnection` at approximately 18-minute intervals.
+No production changes are authorized by this document.
+
+## Owner decision: can an exhausted Agent ever continue?
+
+**Under the current design, reaching 10,000 entries permanently exhausts an
+Agent's normal append budget.** There is no time window, expiry, lease reset,
+log segment rollover, or automatic reclamation. The alternative lifetime limit
+is 64 MiB of complete BSON log documents. A byte-budget rejection can leave room
+for a smaller entry, but repeating the rejected append with unchanged history
+cannot succeed. A full entry count leaves no normal append room at all.
+
+Every retained event counts, including lifecycle retries, tool output and turn
+boundaries. The native provider's context compaction does not free this budget.
+Restarting CMA, waiting for the 18-minute lease, refreshing the browser, or
+retrying a message does not reclaim capacity. A connected native process may
+still exist; CMA cannot promise durable conversation progress once its required
+writes are rejected.
+
+The immediate fix settles a deterministic lifecycle failure with a named
+`agent_log_capacity_exceeded` condition and releases its claim promptly. For
+normal startup/reconnect work, the proposed outcome is `Failed`, retaining the
+Agent ID, native conversation, pending recovery facts, home and complete log.
+It neither creates a replacement Agent nor claims the native process stopped.
+Already-authorized cleanup remains able to complete with its original effect
+identities and receipts.
+
+**This settlement does not enable continued work on the exhausted Agent.**
+The existing API has no reopen operation for a Failed Agent. Raising limits
+alone would not automatically reopen one already settled as Failed. Continuing
+the same Agent would require an explicit, tested recovery operation as well as
+additional append capacity; ambiguous prior input must never be replayed as
+new input. A new Agent is a separate owner decision, with a distinct identity
+and history; it is not a transparent continuation of the old Agent.
+
+The owner chooses the long-term capacity policy. This PR does not implement any
+of the following options without an explicit go:
+
+| Option | Can the same Agent continue? | Benefits | Risks and prerequisites |
+|---|---|---|---|
+| Raise entry/byte limits | Potentially, with an authorized recovery path if already Failed | Smallest storage-policy change; retains all records and existing sequence numbers | Only postpones exhaustion; increases full-scan CPU, memory, Mongo transaction work and latency. Existing readers reject histories beyond their hard ceilings, so reader deployment and a compatible rollback floor must precede larger writes. Preserve separate stop/delete headroom. |
+| Roll over to a new log segment | Yes, after a compatible reader/writer migration and recovery path | Bounds active-segment work while preserving unlimited logical history | Requires durable segment manifests, atomic rollover/fencing, stable global sequence/cursor semantics, cross-segment integrity and replay, and unknown-commit recovery. Old readers that assume one bounded complete log cannot consume it. All retained segments must remain accessible. |
+| Compact projections while retaining original events | Potentially; only if accounting and readers explicitly support archived segments | Speeds current-state reconstruction without destroying audit/recovery data | A summary is not equivalent to exact messages, tool records, receipts or original input identities. Keeping originals in the counted log does not free capacity. A checkpoint must prove its covered prefix, retain references and support replay/rebuild across the full archive. Native context compaction alone is unrelated. |
+| Archive older immutable segments to durable storage | Yes, with a unified reader and supported recovery path | Reduces hot-store size and can bound normal append accounting | Copying events alone frees nothing. Moving them requires a committed archive manifest, integrity checks, access policy, encryption/key retention, availability and backup/restore guarantees, stable cursors and exact recovery lookup. Archive outages must be distinguishable from missing history. No deletion of retained records to satisfy old readers. |
+
+Recommended direction for sustained long-running Agents is immutable segmented
+history with compact current-state projections and archival behind the same
+read/recovery contract. That is a storage migration, not an emergency increase
+of an unexplained constant. The owner may instead choose a measured limit
+increase as an interim policy, with an explicit maximum and reader floor.
+
+## Immediate fix and invariants
+
+Normal append capacity stays at 10,000 entries / 64 MiB. Stop/failure capacity
+ends at 10,064 / 64.5 MiB, and delete capacity at 10,128 / 65 MiB. The 16-MiB
+per-document and 64-entry per-batch checks remain independent.
+
+1. Treat `AgentLogCapacityExceeded` as a known-aborted deterministic publication,
+   separate from Mongo unavailability and unknown commit outcomes. Unknown
+   commits retain the existing reconciliation and lease rules.
+2. Refresh only the same still-owned, unexpired claim before settling. Preserve
+   concurrent committed metadata; reject replaced work, runtime identity,
+   changed authority and expired leases. Settlement must be validated and
+   committed atomically with its diagnostic event.
+3. For normal startup/reconnect failure, publish the named failure promptly and
+   remove pending lifecycle work. Preserve runtime identity, receipts and
+   cleanup debt. Settle only input proved never dispatched; preserve accepted
+   receipt identity and all ambiguous/dispatched input evidence.
+4. Allow finite cleanup completions to use the relevant reserve: stop fencing
+   and process-close completion use stop capacity; deletion close/home/worktree
+   completions use delete capacity. The full domain validator must still prove
+   each transition and effect receipt before reserve selection. A completed
+   close is never fabricated to work around capacity.
+5. Repeated cleanup failures must not consume terminal reserves indefinitely.
+   The integration stage will record bounded capacity evidence and retry state
+   without requiring an ever-growing identical failure history. Durable retry
+   timing and attempt accounting remain; successful cleanup still appends its
+   authoritative completion event. This must be proved with a transient
+   failure followed by success beyond the normal budget.
+6. Keep every retained entry and reader, including #1311 tool output. No new
+   log segmentation, physical history removal or implicit replacement Agent.
+   Surface an actionable remediation instead of presenting repeated retries as
+   recovery. Describe any changed persisted semantic shape and reader floor.
+
+The existing finite reserve is a safety mechanism, not a second conversation
+budget. Reconnect success events and ordinary retry events must not borrow it.
+If physical capacity is exhausted or history is corrupt, do not overwrite old
+evidence or invent successful settlement; return a distinct actionable failure
+and retain the original recovery facts for operator repair.
+
+## Integration boundary
+
+Prepare the design, cleanup-reserve selection, boundary diagnostics and tests
+without editing files changed by open PR #1318. The lead will explicitly send
+`GO: #1318 merged`; only then merge `origin/develop` into
+`tl/cma-log-capacity/integration` and extend its version of the validated
+settlement path. #1316 history-reader files, #1317 files and Sandbox billing
+files remain protected. One final PR uses `Refs #1321`.
+
+## Verification
+
+Use real disposable Mongo tests for cumulative count and BSON-byte limits;
+the in-memory store does not enforce these lifetime budgets. Test exact normal
+and reserve boundaries, unchanged rejection across repeated normal attempts,
+finite cleanup completion, retry failure followed by successful cleanup,
+history/output readback and reopening. Test expired/replaced claims, concurrent
+metadata, unknown commits, preserved undispatched and ambiguous command facts,
+and prompt settlement before the lifecycle lease expires.
+
+Run affected crates with `CARGO_BUILD_JOBS=4` while iterating. After integration,
+run full required local gates once, including source size/structure, before
+opening the PR. Do not push further commits to an open PR unless the lead asks.
+
+The eventual PR's production verification compares read-only capacity/attempt
+aggregates over at least two former lease periods after deployment, checks
+explicit settlement or authoritative cleanup completion, and verifies retained
+history remains readable. The lead owns deployment and issue closure. No test
+turn, stop, cancellation or replay is implied by this plan.
