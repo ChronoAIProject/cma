@@ -163,6 +163,9 @@ RUN apt-get update \
         bash \
         bubblewrap \
         ca-certificates \
+        chromium=156.0.8078.79-1~deb13u1 \
+        chromium-common=156.0.8078.79-1~deb13u1 \
+        chromium-sandbox=156.0.8078.79-1~deb13u1 \
         curl \
         build-essential \
         git \
@@ -332,6 +335,7 @@ RUN set -eux; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bin/cma-browser
 
 # A Machine Included Sandbox starts this rootless desktop session from the
 # supervisor.  noVNC is bound to loopback; CMA must relay it through the
@@ -364,6 +368,7 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && node /tmp/cma-codex-source/turn_steering.cjs \
     && node /tmp/cma-codex-source/open_completion.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
+    && test -x /usr/local/bin/codex-acp \
     && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/endpoint_migration.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs \
     && python3 /tmp/cma-codex-source/recovery_test.py \
     && python3 /tmp/cma-codex-source/recovery_desktop_test.py \
@@ -453,6 +458,7 @@ RUN bash /tmp/install-omarchy.sh && rm /tmp/install-omarchy.sh /tmp/secure-omarc
 COPY --from=omarchy-cma /usr/local/bin/ /usr/local/bin/
 # Toolchain donor stays pinned; the supervisor must match this source revision.
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bin/cma-browser
 COPY --from=omarchy-cma /usr/local/lib/ /usr/local/lib/
 COPY --from=omarchy-cma /etc/codex/ /etc/codex/
 COPY --from=omarchy-cma /usr/share/cma-runtime-home/ /usr/share/cma-runtime-home/

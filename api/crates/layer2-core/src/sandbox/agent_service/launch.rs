@@ -3,6 +3,7 @@ use crate::resource_access::ResourceActor;
 use crate::trigger_domain::LaunchInitiation;
 
 pub(super) struct CreationAttribution {
+    pub desktop: bool,
     pub actor: Option<ResourceActor>,
     pub initiation: Option<LaunchInitiation>,
     pub first_message_purpose: super::super::FirstMessagePurpose,
@@ -10,6 +11,7 @@ pub(super) struct CreationAttribution {
 impl CreationAttribution {
     pub fn ordinary(actor: ResourceActor) -> Self {
         Self {
+            desktop: false,
             actor: Some(actor),
             initiation: None,
             first_message_purpose: super::super::FirstMessagePurpose::Task,
@@ -74,6 +76,7 @@ impl AgentService {
             true,
             reuse_existing,
             CreationAttribution {
+                desktop: false,
                 actor: Some(actor),
                 initiation,
                 first_message_purpose: super::super::FirstMessagePurpose::Task,

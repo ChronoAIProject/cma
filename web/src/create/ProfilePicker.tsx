@@ -201,7 +201,7 @@ export function ProfilePicker({
           ) : null}
           {value.kind === 'workspace' ? (
             <p>
-              {value.revision.content.location.type === 'git_repository'
+              {value.revision.content.location.type !== 'directory'
                 ? value.revision.content.location.url
                 : value.revision.content.location.name}
             </p>

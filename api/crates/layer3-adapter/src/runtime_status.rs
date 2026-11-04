@@ -31,6 +31,8 @@ impl RuntimeStatusRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeStatus {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_browser: bool,
     /// Runtime supports descriptor-confined management of the complete persistent home.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_filesystem: bool,
@@ -104,7 +106,36 @@ mod compatibility_tests {
         assert!(!status.agent_filesystem);
         assert!(!status.agent_model_catalog);
         assert!(!status.agent_skill_install);
+        assert!(!status.agent_browser);
         assert!(!status.agent_resource_preparation);
         assert_eq!(serde_json::to_value(status).unwrap(), original);
+    }
+
+    #[test]
+    fn browser_and_resource_preparation_capabilities_are_independent() {
+        for browser in [false, true] {
+            for preparation in [false, true] {
+                let original = serde_json::json!({
+                    "sandbox_id": "sandbox", "generation": 1,
+                    "home_identity": "a".repeat(43), "boot_id": "a".repeat(32),
+                    "installation_ready": true, "credential_ready": true,
+                    "restore_pending": false, "agent_processes": 0,
+                    "agent_browser": browser,
+                    "agent_resource_preparation": preparation
+                });
+                let status: RuntimeStatus = serde_json::from_value(original).unwrap();
+                status
+                    .validate_for(&RuntimeStatusRequest {
+                        sandbox_id: "sandbox".into(),
+                        generation: 1,
+                        home_identity: "a".repeat(43),
+                    })
+                    .unwrap();
+                let restored: RuntimeStatus =
+                    serde_json::from_value(serde_json::to_value(status).unwrap()).unwrap();
+                assert_eq!(restored.agent_browser, browser);
+                assert_eq!(restored.agent_resource_preparation, preparation);
+            }
+        }
     }
 }

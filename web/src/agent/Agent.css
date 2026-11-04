@@ -480,7 +480,8 @@
 }
 .message:hover :is(.message__timestamp, .message__usage, .message-footer__actions),
 .message:focus-within :is(.message__timestamp, .message__usage, .message-footer__actions),
-.message-footer[data-voted] .message-footer__actions {
+.message-footer[data-voted] .message-footer__actions,
+.message-footer[data-feedback-status] .message-footer__actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -505,7 +506,7 @@
 .message-footer__error {
   margin-top: 4px;
 }
-@media (hover: none) {
+@media (hover: none), (max-width: 30rem) {
   .message__timestamp,
   .message__usage,
   .message-footer__actions {
@@ -513,7 +514,11 @@
     pointer-events: auto;
   }
 }
-@media (pointer: coarse) {
+@media (pointer: coarse), (max-width: 30rem) {
+  .message-footer .button {
+    min-width: 44px;
+    min-height: 44px;
+  }
   .message-footer__actions .button {
     width: 44px;
     height: 44px;

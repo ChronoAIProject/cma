@@ -125,6 +125,10 @@ async fn send_message_fences_before_input_and_moves_ready_to_working() {
                 )
     ));
     let logs = store.agent_log(&ready.id, 0, 20).await.unwrap();
+    let logs: Vec<_> = logs
+        .into_iter()
+        .filter(|entry| !matches!(entry.kind, AgentLogKind::RuntimeMetadataChanged { .. }))
+        .collect();
     assert!(matches!(
         logs.as_slice(),
         [

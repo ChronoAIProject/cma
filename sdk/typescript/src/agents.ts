@@ -9,6 +9,11 @@ import {
   type MessageVote,
 } from './agents/message-feedback.js';
 import {
+  feedbackDetails,
+  setFeedbackReasons,
+  type FeedbackReasonRequest,
+} from './agents/feedback-reasons.js';
+import {
   readAgentSettings,
   changeAgentSettings,
   type UpdateAgentSettingsRequest,
@@ -28,9 +33,10 @@ import {
   type UpdateAgentServiceAccessRequest,
 } from './agents/access-requests.js';
 import type { ResolvedConfig } from './config.js';
+import { readSuggestions } from './agents/suggestions.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { ProtocolError } from './errors.js';
-import { array, boolean, integer, object, optional, text, type Parser } from './schema.js';
+import { boolean, object, text, type Parser } from './schema.js';
 import {
   command,
   identity,
@@ -43,7 +49,7 @@ import {
   type EventOptions,
   type PageOptions,
 } from './resources.js';
-import { agentStatus, type AgentStatus } from './instances/types.js';
+import { agentStatus, agentTaskStatus, type AgentStatus } from './instances/types.js';
 import {
   agent,
   agentResources,
@@ -65,17 +71,18 @@ import {
   agentProvenanceInventoryItem,
   type AgentCreationCategory,
 } from './agents/provenance.js';
-import { agentEvent } from './agents/events.js';
+import { readAgentEvents } from './agents/events.js';
 import {
-  agentLifecycleCreateReceipt,
-  agentLifecycleCreateRequest,
-  agentLifecycleOperation,
+  createAgentLifecycle,
+  readAgentLifecycle,
+  recoverAgentWorktree,
   type AgentLifecycleCreateRequest,
 } from './agents/lifecycle.js';
 import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
 import { listAgentProviderAssociations } from './agents/provider-associations.js';
 import { readAgentChannelUsage, listAgentChannelUsageHistory } from './agents/channel-usage.js';
+import { readDesktopCapability, type DesktopScope } from './agents/desktop.js';
 import {
   listAgentArtifacts,
   readAgentArtifact,
@@ -83,6 +90,16 @@ import {
   downloadAgentArtifact,
   type PublishAgentArtifactRequest,
 } from './agents/artifacts.js';
+import {
+  listAnswerDeliverables,
+  readAnswerDeliverable,
+  downloadAnswerDeliverable,
+  describeDeliverable,
+  type AnswerDeliverable,
+  type DeliverableReadOptions,
+  type DeliverableResource,
+} from './agents/deliverables.js';
+import type { DocumentAccessOptions } from './documents.js';
 
 export interface AgentListOptions extends PageOptions {
   readonly sandbox?: string;
@@ -96,6 +113,7 @@ export interface AccessibleAgentListOptions extends AgentListOptions {
 }
 
 export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOptions {
+  readonly taskStatus?: import('./instances/types.js').AgentTaskStatus;
   /** Explicit incoming shares across current organizations; mutually exclusive with organization. */
   readonly shared?: boolean;
   /** Immutable category. Continue with `next` even after an empty filtered page. */
@@ -109,6 +127,26 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  suggestions(
+    id: string,
+    scope: import('./answer-context.js').AnswerContext,
+    options: OperationOptions = {},
+  ) {
+    return readSuggestions(this.config, id, scope, options);
+  }
+
+  feedbackDetails(id: string, messageId: string, options: OperationOptions = {}) {
+    return feedbackDetails(this.config, id, messageId, options);
+  }
+  setFeedbackReasons(
+    id: string,
+    messageId: string,
+    body: FeedbackReasonRequest,
+    options: OperationOptions = {},
+  ) {
+    return setFeedbackReasons(this.config, id, messageId, body, options);
+  }
 
   /** Read saved owner votes; use next as after until pagination completes. */
   messageFeedback(id: string, options: EventOptions = {}) {
@@ -187,38 +225,23 @@ export class Agents {
 
   /** Admit or resume the exact same inline request with its original idempotency key. */
   createLifecycle(body: AgentLifecycleCreateRequest, options: CommandOptions) {
-    return read(this.config, '/api/v1/agents', agentLifecycleCreateReceipt, {
-      ...command(options),
-      method: 'POST',
-      body: input(agentLifecycleCreateRequest, body),
-      expectedStatus: 202,
-    });
+    return createAgentLifecycle(this.config, body, options);
+  }
+
+  desktopCapability(scope: DesktopScope = {}, options: OperationOptions = {}) {
+    return readDesktopCapability(this.config, scope, options);
   }
 
   /** Retry a never-ready Agent's failed initial worktree preparation, preserving its PV and identity.
    * The failed worktree is retained and a fresh one is allocated. Reuse the key after uncertain replies.
    */
   recoverWorktree(id: string, options: CommandOptions) {
-    return read(
-      this.config,
-      `/api/v1/agents/${segment(id)}/recover-worktree`,
-      identity(agent, id),
-      {
-        ...command(options),
-        method: 'POST',
-        expectedStatus: 202,
-      },
-    );
+    return recoverAgentWorktree(this.config, id, options);
   }
 
   /** Read owner-visible provisioning progress; succeeded means the Agent is ready. */
   readLifecycle(id: string, options: OperationOptions = {}) {
-    return read(
-      this.config,
-      `/api/v1/agent-lifecycle/${segment(id)}`,
-      identity(agentLifecycleOperation, id),
-      options,
-    );
+    return readAgentLifecycle(this.config, id, options);
   }
 
   /** Legacy Bridge usage projection; provider admissions require providerAssociations(). */
@@ -252,8 +275,36 @@ export class Agents {
     return downloadAgentArtifact(this.config, id, artifactId, options);
   }
 
+  answerDeliverables(id: string, answerId: string, options: DocumentAccessOptions = {}) {
+    return listAnswerDeliverables(this.config, id, answerId, options);
+  }
+  describeDeliverable(
+    id: string,
+    selected: DeliverableResource,
+    options: DocumentAccessOptions = {},
+  ) {
+    return describeDeliverable(this.config, id, selected, options);
+  }
+  readAnswerDeliverable(
+    id: string,
+    answerId: string,
+    deliveryId: string,
+    options: DeliverableReadOptions = {},
+  ) {
+    return readAnswerDeliverable(this.config, id, answerId, deliveryId, options);
+  }
+  downloadAnswerDeliverable(
+    id: string,
+    answerId: string,
+    expected: AnswerDeliverable,
+    options: DocumentAccessOptions = {},
+  ) {
+    return downloadAnswerDeliverable(this.config, id, answerId, expected, options);
+  }
+
   /** Safe creation inventory. Omit organization and shared for personal scope. */
   provenanceInventory(options: AgentProvenanceInventoryOptions = {}) {
+    if (options.taskStatus !== undefined) input(agentTaskStatus, options.taskStatus);
     if (options.status !== undefined) input(agentStatus, options.status);
     if (options.creationOrigin !== undefined) input(agentCreationCategory, options.creationOrigin);
     if (options.channelActive !== undefined) input(boolean, options.channelActive);
@@ -267,6 +318,7 @@ export class Agents {
         workspace: options.workspace,
         status: options.status,
         creation_origin: options.creationOrigin,
+        task_status: options.taskStatus,
         channel_active:
           options.channelActive === undefined ? undefined : String(options.channelActive),
         channel_history:
@@ -376,16 +428,8 @@ export class Agents {
     return this.operate(id, '', 'DELETE', options);
   }
 
-  events(id: string, options: EventOptions = {}) {
-    return read(
-      this.config,
-      query(`/api/v1/agents/${segment(id)}/events`, {
-        after: options.after,
-        limit: options.limit,
-      }),
-      object({ items: array(agentEvent), next: optional(integer) }),
-      options,
-    );
+  events(id: string, options: EventOptions & { readonly toolOutput?: boolean } = {}) {
+    return readAgentEvents(this.config, id, options);
   }
 
   transcript(id: string, options: OperationOptions = {}) {

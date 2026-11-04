@@ -141,6 +141,8 @@ pub(crate) struct WorkspaceContextView {
     profile: InstanceProfileReferenceView,
     #[serde(skip_serializing_if = "Option::is_none")]
     resolved_commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<super::instances_openapi_shapes::WorkspaceSourceView>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -334,6 +336,13 @@ impl AgentView {
                     digest: workspace.profile.digest,
                 },
                 resolved_commit: workspace.resolved_commit,
+                source: matches!(
+                    workspace.source,
+                    layer2_core::sandbox::WorkspaceSource::RepositorySnapshot { .. }
+                )
+                .then(|| {
+                    super::instances_openapi_shapes::WorkspaceSourceView::from(&workspace.source)
+                }),
             },
             sandbox: SandboxContextView {
                 id: sandbox.id.to_string(),

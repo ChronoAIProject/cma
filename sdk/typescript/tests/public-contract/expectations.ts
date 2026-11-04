@@ -3,6 +3,13 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['deliverables-owner-invalid-revision', 'invalid_deliverable_reference'],
+  ['deliverables-owner-invalid-answer-list', 'invalid_deliverable_reference'],
+  ['deliverables-owner-invalid-answer-read', 'invalid_deliverable_reference'],
+  ['suggestions-invalid_query', 'invalid_instance_query'],
+  ['feedback-reasons-invalid-comment', 'invalid_agent_request'],
+  ['feedback-reasons-invalid-message', 'invalid_agent_request'],
+  ['feedback-reasons-unknown-reason', 'invalid_json'],
   ['usage-sandboxes-zero-limit', 'invalid_query'],
   ['usage-admin-sandboxes-zero-limit', 'invalid_query'],
 
@@ -137,6 +144,14 @@ const protectedQueries = new Map([
 export function expectation(
   fixture: ContractCase,
 ): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
+  if (fixture.id === 'desktop-capability-owner-400') {
+    assert.equal(fixture.operation, 'GET /api/v1/desktop-capability');
+    assert.equal(problemBody(fixture).code, 'invalid_instance_query');
+    assert(
+      new URL(fixture.request.path, 'https://contract.example').searchParams.has('unexpected'),
+    );
+    return 'raw-wire-only';
+  }
   if (
     [
       'binding-media-missing-length',
@@ -301,6 +316,9 @@ export function expectation(
 
 export function expectedRequestUrl(fixture: ContractCase): URL {
   const url = new URL(fixture.request.path, 'https://contract.example');
+  if (fixture.operation.includes('/answers/{answer_id}/deliverables')) {
+    url.pathname = url.pathname.replace('/answers/event:', '/answers/event%3A');
+  }
   for (const key of protectedQueries.get(fixture.id) ?? []) url.searchParams.delete(key);
   if (fixture.operation === 'GET /api/v1/agui/events') {
     if (!url.searchParams.has('starting_after')) url.searchParams.set('starting_after', '0');

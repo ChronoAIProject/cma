@@ -69,6 +69,14 @@ pub struct AgentProfileContent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceLocation {
+    /// Prepare a source snapshot through the existing GitHub connection.
+    RepositorySnapshot {
+        /// HTTPS GitHub repository URL.
+        url: String,
+        /// Requested branch, tag, or commit; omission selects the default branch.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+    },
     /// Clone a Git repository.
     GitRepository {
         /// Repository URL.

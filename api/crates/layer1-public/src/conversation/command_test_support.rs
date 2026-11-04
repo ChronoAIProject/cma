@@ -89,7 +89,10 @@ pub(crate) fn compose(
     let authority = Arc::new(Authority);
     let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
     state.reads = state.reads.with_resource_access(access.clone());
-    state.with_commands(AgentCommandService::new(store, access, authority))
+    state.with_commands(
+        AgentCommandService::new(store, access, authority)
+            .with_task_experience(crate::agent_v2::fixtures::task_policy()),
+    )
 }
 
 pub(crate) fn authenticate(request: &mut Request) {
@@ -151,8 +154,15 @@ pub(crate) fn router(state: AgentConversationState, store: Arc<InMemorySandboxSt
     let execution = Arc::new(Execution(state.clone()));
     let worker =
         AgentCommandWorker::new(store, execution, "protocol-contract-worker".into()).unwrap();
+    let v2 = state.commands.clone().map_or_else(Router::new, |commands| {
+        crate::responses::v2::router(crate::responses::v2::ResponsesV2State::new(
+            commands,
+            state.reads.clone(),
+        ))
+    });
     crate::agui::router(state.clone())
         .merge(crate::responses::router(state))
+        .merge(v2)
         .layer(axum::middleware::from_fn_with_state(worker, drive))
 }
 
@@ -162,13 +172,31 @@ async fn drive(
     next: Next,
 ) -> Response {
     authenticate(&mut request);
-    let mutation = request.method() == axum::http::Method::POST
-        && matches!(
-            request.uri().path(),
-            "/api/v1/agui/run" | "/api/v1/responses"
-        );
+    let v2 =
+        request.method() == axum::http::Method::POST && request.uri().path() == "/api/v2/responses";
+    let mutation = v2
+        || request.method() == axum::http::Method::POST
+            && matches!(
+                request.uri().path(),
+                "/api/v1/agui/run" | "/api/v1/responses"
+            );
     if !mutation {
         return next.run(request).await;
+    }
+    if v2 {
+        let response = next.run(request).await;
+        for command in worker
+            .discover(&PageRequest::default())
+            .await
+            .unwrap()
+            .items
+        {
+            worker
+                .run_one(&command.receipt.envelope.command_id)
+                .await
+                .unwrap();
+        }
+        return response;
     }
     let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {

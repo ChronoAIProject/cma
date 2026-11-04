@@ -11,10 +11,13 @@ export function mergeRuntimeMetadata(
   incoming: AgentRuntimeMetadata | undefined,
 ): AgentRuntimeMetadata | undefined {
   if (incoming === undefined) return previous;
+  const hasTaskTitle =
+    previous?.descriptionSource === 'provider_title' ||
+    (previous?.descriptionSource === 'prompt_preview' &&
+      previous.descriptionIsSetupPreview === false);
   const description =
-    incoming.description === undefined ||
-    (previous?.descriptionSource === 'provider_title' &&
-      incoming.descriptionSource !== 'provider_title') ||
+    !incoming.description?.trim() ||
+    (hasTaskTitle && incoming.descriptionSource !== 'provider_title') ||
     (incoming.description === previous?.description &&
       incoming.descriptionSource === undefined &&
       previous?.descriptionSource !== undefined)

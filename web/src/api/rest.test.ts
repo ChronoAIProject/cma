@@ -278,7 +278,9 @@ describe('public REST web binding', () => {
       items: [{ seq: 1, appendedAt: NOW, kind }],
       next: 1,
     });
-    expect(test.fetch.mock.calls.at(-1)?.[0]).toBe('/api/v1/agents/agent-1/events?after=0');
+    expect(test.fetch.mock.calls.at(-1)?.[0]).toBe(
+      '/api/v1/agents/agent-1/events?after=0&tool_output=true',
+    );
     test.reply({
       agent_id: 'agent-1',
       through_seq: 4,
