@@ -8,6 +8,9 @@ use layer2_core::sandbox::store::{
 use super::AgentWorker;
 use crate::sandbox::live_agents::LiveAgentTarget;
 
+mod maintenance;
+pub(super) use maintenance::MaintenanceChecks;
+
 const MANAGED_GUIDANCE_REVISION: u64 = 1;
 
 impl AgentWorker {
@@ -23,6 +26,7 @@ impl AgentWorker {
         let mut context_current = 0_u64;
         let mut context_deferred = 0_u64;
         let mut context_checks = 0_u64;
+        let mut context_throttled = 0_u64;
         let mut transport_attempts = 0_u64;
         loop {
             let page = self
@@ -63,6 +67,10 @@ impl AgentWorker {
                         }
                         if migration.is_some() && transport_attempts >= 2 {
                             context_deferred += 1;
+                            continue;
+                        }
+                        if !self.maintenance.should_check(&candidate, desired_revision) {
+                            context_throttled += 1;
                             continue;
                         }
                         context_checks += 1;
@@ -109,6 +117,7 @@ impl AgentWorker {
                     context_current,
                     context_deferred,
                     context_checks,
+                    context_throttled,
                     transport_attempts,
                     scheduled,
                     elapsed_ms = started.elapsed().as_millis() as u64,

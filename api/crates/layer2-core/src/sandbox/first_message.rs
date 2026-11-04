@@ -5,6 +5,8 @@ use crate::seconds_from_rfc3339;
 
 use super::SandboxModelError;
 
+mod startup;
+
 pub const MAX_FIRST_MESSAGE_BYTES: usize = 256 * 1024;
 const MAX_ORIGIN_KEY_BYTES: usize = 256;
 
@@ -197,7 +199,10 @@ impl FirstMessageRecord {
                 fenced && self.completed_at.is_some() && self.failure.is_none()
             }
             FirstMessageDelivery::Failed => {
-                (fenced || self.unattempted_runtime_loss() || self.unattempted_common_failure())
+                (fenced
+                    || self.unattempted_runtime_loss()
+                    || self.unattempted_common_failure()
+                    || self.unattempted_startup_failure())
                     && self.failed_at.is_some()
                     && self.completed_at.is_none()
                     && self.failure.is_some()
