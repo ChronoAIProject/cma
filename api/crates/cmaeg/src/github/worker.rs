@@ -237,14 +237,15 @@ impl Gateway {
         let providers = self.providers.as_ref()?;
         let ingress = self.ingress.as_ref()?;
         let channel = ingress.resolver.resolve(&group.channel_id).await.ok()?;
-        let credential = channel.definition.secrets.provider_credential.as_ref()?;
+        let consumer = channel.consumer(None)?;
+        let credential = consumer.credential?;
         let identity = crate::providers::RecoveryIdentity {
             response_id: response_id.to_owned(),
             native_agent_id: None,
             metadata: metadata.clone(),
         };
         let snapshot = providers
-            .response_snapshot(&channel.definition.provider.slug, &identity, credential)
+            .response_snapshot(&consumer.provider.slug, &identity, credential)
             .await;
         match snapshot {
             Ok(snapshot) => parse_task_result(&snapshot.response),
