@@ -67,6 +67,7 @@ const sandboxFields = {
   color: optional(sandboxColor),
   status: sandboxStatus,
   profile: profileReference,
+  always_on: optional(boolean),
   nyxid_services: optional(array(text)),
   limits: object({ max_workspaces: positiveInteger, max_agents_per_workspace: positiveInteger }),
   lifecycle: optional(sandboxLifecycle),

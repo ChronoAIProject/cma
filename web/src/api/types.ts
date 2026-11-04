@@ -100,6 +100,7 @@ export interface SandboxSummary {
   readonly lifecycle?: SandboxLifecycle;
   readonly runtimeUpdate?: SandboxRuntimeUpdate;
   readonly profile: ProfileReference;
+  readonly alwaysOn?: boolean;
   readonly lastActivityAt: string;
   readonly createdAt: string;
   readonly updatedAt: string;

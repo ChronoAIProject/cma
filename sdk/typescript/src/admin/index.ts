@@ -25,7 +25,7 @@ import {
   type EventOptions,
   type PageOptions,
 } from '../resources.js';
-import { array, enumeration, integer, nullable, object, text, type Output } from '../schema.js';
+import { array, boolean, enumeration, integer, nullable, object, text, type Output } from '../schema.js';
 import {
   patchSettingsRequest,
   replaceSettingsRequest,
@@ -63,6 +63,14 @@ export interface ActivityListOptions extends PageOptions {
   readonly actor?: string;
   readonly action?: ActivityAction;
 }
+
+const autoPausePreview = object({ candidates: integer });
+export type AutoPausePreview = Output<typeof autoPausePreview>;
+const pauseIdleNowRequest = object({ confirmed: boolean });
+const pauseIdleNow = object({ scheduled: integer, already_satisfied: integer, skipped: integer });
+export type PauseIdleNow = Output<typeof pauseIdleNow>;
+const setSandboxAlwaysOnRequest = object({ always_on: boolean, expected_revision: integer });
+export type SetSandboxAlwaysOnRequest = Output<typeof setSandboxAlwaysOnRequest>;
 
 const runtimeInventory = object({
   observed_at: text,
@@ -251,6 +259,28 @@ export class Administration {
       ...options,
       method: 'POST',
       body: input(resetSettingsRequest, body),
+    });
+  }
+  previewAutoPause(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/auto-pause/preview', autoPausePreview, options);
+  }
+  pauseIdleNow(confirmed: boolean, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/auto-pause/pause-idle-now', pauseIdleNow, {
+      ...options,
+      method: 'POST',
+      body: input(pauseIdleNowRequest, { confirmed }),
+    });
+  }
+  setSandboxAlwaysOn(
+    id: string,
+    body: SetSandboxAlwaysOnRequest,
+    options: OperationOptions = {},
+  ) {
+    return read(this.config, `/api/v1/admin/sandboxes/${segment(id)}/always-on`, identity(sandbox, id), {
+      ...options,
+      method: 'POST',
+      body: input(setSandboxAlwaysOnRequest, body),
+      expectedStatus: 200,
     });
   }
   pauseTriggers(options: OperationOptions = {}) {

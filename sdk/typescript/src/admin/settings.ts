@@ -1,6 +1,6 @@
 import { ProtocolError } from '../errors.js';
 import { profileReference } from '../profiles/types.js';
-import { boolean, integer, object, optional, record, type Output } from '../schema.js';
+import { boolean, integer, object, optional, record, text, type Output } from '../schema.js';
 
 const u32 = (value: unknown) => {
   const number = integer(value);
@@ -19,7 +19,11 @@ const sections = {
     workspace_profile: profileReference,
     agent_profile: profileReference,
   }),
-  inactivity: object({ pause_after_seconds: pauseSeconds }),
+  inactivity: object({
+    auto_pause_enabled: optional(boolean),
+    pause_after_seconds: pauseSeconds,
+    grace_started_at: optional(text),
+  }),
   retention: object({ agent_log_days: u32 }),
   limits: object({
     max_sandboxes_per_user: u32,
