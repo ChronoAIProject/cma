@@ -31,7 +31,27 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 16px;
+  padding: 24px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+.delivery-preview__document {
+  margin-top: 16px;
+  padding: 32px;
+  min-height: 100%;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+}
+.delivery-preview__body > p {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+@media (max-width: 600px) {
+  .delivery-preview__body,
+  .delivery-preview__document {
+    padding: 16px;
+  }
 }
 .delivery-preview__actions {
   display: flex;

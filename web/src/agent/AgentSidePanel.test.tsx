@@ -63,6 +63,8 @@ it('withdraws existing shared output when current read authority expires or rene
     </CmaClientProvider>,
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByText('scoped-proof', { exact: true })).not.toBeVisible();
+  fireEvent.click(screen.getByText('Command 1'));
   expect(screen.getByText('scoped-proof', { exact: true })).toBeVisible();
   renewal = 'pending';
   vi.setSystemTime(Date.now() + 50_001);
@@ -78,6 +80,8 @@ it('withdraws existing shared output when current read authority expires or rene
   renewal = 'ready';
   fireEvent.click(screen.getByRole('button', { name: 'Check output access again' }));
   await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByText('scoped-proof', { exact: true })).not.toBeVisible();
+  fireEvent.click(screen.getByText('Command 1'));
   expect(screen.getByText('scoped-proof', { exact: true })).toBeVisible();
   renewal = 'failed';
   fireEvent.focus(window);
