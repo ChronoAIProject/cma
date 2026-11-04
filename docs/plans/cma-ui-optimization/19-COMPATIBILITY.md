@@ -13,8 +13,10 @@ Task19 policy adds no migration that may delete these records on disable.
 The parent baseline decoder rejects an unnegotiated `agent_browser` runtime field.
 The integrated runtime preserves the legacy status shape unless the caller sends
 `Accept: application/vnd.chrono.cma.agent-computer-status+json`. This opt-in
-advertises browser, filesystem and attachment capabilities supported by that
-runtime. The separate `agent-resources-status` media type opts in only to resource
+advertises the new browser capability. Established filesystem and attachment
+capabilities retain their original advertisement based on runtime support,
+including for readers that do not request the computer extension. The separate
+`agent-resources-status` media type opts in only to resource
 preparation; callers can request both media types in one Accept header. Embedded
 Workspace status remains in the legacy shape regardless of Accept. Both native
 and provider transports request the new capabilities; retained runtimes can ignore
