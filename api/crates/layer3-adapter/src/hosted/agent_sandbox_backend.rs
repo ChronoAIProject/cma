@@ -73,7 +73,11 @@ impl HostedBackend for AgentSandboxBackend {
             .select_runtime(request, image, home)
             .await
     }
-    async fn validate_funding(&self, request: &ProviderSandboxRequest) -> Result<()> {
+    async fn validate_funding(
+        &self,
+        request: &ProviderSandboxRequest,
+        _existing: Option<&RuntimeHandle>,
+    ) -> Result<()> {
         if let Some(until) = request.funded_until {
             crate::agent_sandbox::funding::deadline(until)?;
         }
