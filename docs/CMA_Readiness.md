@@ -1,4 +1,4 @@
-# Agent Manager dependency readiness
+# Agent Manager dependency readiness and background work
 
 Refs #1343. Agent Manager keeps process liveness separate from application-store
 readiness. `/livez` returns `200 ok` without consulting MongoDB. `/ready` returns
@@ -37,6 +37,49 @@ success from reporting readiness indefinitely. A healthy cached result can
 remain visible while the next check is in progress, until that check fails or
 the freshness limit is reached.
 
+## Background Mongo budget
+
+Agent connection reconciliation, Sandbox maintenance/reconciliation and online
+Agent provenance backfill share a process-local budget of two concurrent work
+chains. A deferred operation is not constructed or polled, so it does not enter
+Mongo's checkout queue. Each worker is single-flight and releases its permit
+before waiting for another attempt. This budget applies to these three worker
+families; it is not a limit on every Mongo operation in the process.
+
+Public/tool request handling and admitted Agent, Sandbox and Workspace lifecycle
+execution mark foreground activity without waiting for background permits.
+While foreground activity is present, new background admission is reduced to
+one concurrent chain. Existing work finishes or reaches its deadline; one
+background chain can still progress under sustained interactive traffic.
+Request priority ends when response headers are constructed, so an open SSE
+stream does not retain it indefinitely. This controls competing demand on the
+shared client without changing the client's pool or connection settings.
+
+Reconciliation attempts have a 30-second deadline; provenance scans and rows
+retain their 15-second deadline. Successful reconciliation intervals are up to
+one second for Agents and 15 seconds for Sandboxes. Provenance rows wait up to
+250 ms. Busy-budget retries wait up to 250 ms; failed, timed-out or cancelled
+attempts back off exponentially from two seconds to a maximum of 60 seconds.
+These waits use jitter between 75% and 100% of the stated bound. The backfill
+still waits 30 seconds at startup and five minutes between full sweeps. Budget
+deferral retains the current backfill page/row; corrupt or unavailable rows
+retain the existing skip-and-revisit behavior.
+
+Cancellation drops the in-flight operation before releasing its permit. The
+real-driver tests verify connection release on both a background deadline and
+explicit task cancellation. As with readiness, this proves the checked-out
+command cleanup path, not transaction outcome certainty. Reconciliation keeps
+the existing durable authority/idempotency checks; cancellation never records
+an uncertain write as a success or replays accepted user input.
+
+Fixed-category completion logs record work kind, reason, elapsed time, pending
+age, completed count and retry delay. A sweep deadline restarts reconciliation
+from its existing discovery boundary. Repeated deadlines may delay later
+candidates; production verification must confirm completed sweeps and backlog
+progress as well as bounded durations. The budget does not cure a database or
+network outage, and readiness correctly remains 503 if its dependency cannot
+make progress.
+
 ## Verification
 
 From `api/`, run the health regressions with bounded compilation resources:
@@ -44,12 +87,16 @@ From `api/`, run the health regressions with bounded compilation resources:
 ```sh
 CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 \
 CARGO_PROFILE_TEST_DEBUG=0 RUST_MIN_STACK=33554432 \
-cargo test --locked -p cma --bin cma health:: -- --test-threads=4
+cargo test --locked -p cma --bin cma -- health:: background:: \
+  sandbox::agent_scheduler:: sandbox::provenance_backfill:: --test-threads=4
 ```
 
 The loopback peer binds an ephemeral localhost port and requires neither a
 Mongo installation nor production credentials. Unit tests also cover freshness,
 startup, errors, single-flight behavior and dependency-independent liveness.
+Background regressions cover shared concurrency, priority, retry/backoff,
+permit release, scheduler admission during saturation and backfill cursor
+preservation while the budget is busy.
 
 ## Production verification
 
@@ -60,6 +107,10 @@ budget, readiness state-change logs contain bounded durations, `/livez` stays
 responsive, and successful dependency checks resume after transient failures.
 Check application admission and read latency alongside readiness; a successful
 ping alone does not establish acceptable application throughput.
+Compare background completion/pending-age logs and reconciliation candidate
+progress during the same busy windows. Confirm admitted lifecycle operations
+continue while optional workers are deferred and that backfill/reconciliation
+recover without a burst when dependency progress returns.
 
 Exercise stalled checkout and unanswered commands only in an authorized
 non-production saturation test. Verify 503 readiness, continued 200 liveness,

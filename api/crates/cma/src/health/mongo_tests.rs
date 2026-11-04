@@ -113,3 +113,75 @@ async fn router_shutdown_releases_an_inflight_mongo_connection() {
     assert_eq!(peer.trace.lock().unwrap().dropped, 1);
     peer.client.clone().shutdown().await;
 }
+
+#[tokio::test]
+async fn background_deadline_and_cancellation_release_real_driver_connections() {
+    use crate::background::{BackgroundBudget, BackgroundWork};
+    use layer2_core::sandbox::store::SandboxStoreError;
+
+    let peer = MongoPeer::start().await;
+    let budget = BackgroundBudget::new();
+    peer.block(true);
+    let work = BackgroundWork::new(
+        budget.clone(),
+        "deadline_test",
+        Duration::from_millis(200),
+        Duration::ZERO,
+    );
+    let client = peer.client.clone();
+    let timed = tokio::spawn(async move {
+        work.run(|| async {
+            DriverProbe(client)
+                .ping()
+                .await
+                .map_err(|_| SandboxStoreError::Unavailable("fixture".into()))
+        })
+        .await
+    });
+    peer.wait_for(|| peer.ping_count() == 2).await;
+    assert!(timed.await.unwrap().is_err());
+    peer.wait_for(|| peer.in_use() == 0 && peer.peer_closed.load(Ordering::SeqCst) == 1)
+        .await;
+
+    let work = BackgroundWork::new(
+        budget.clone(),
+        "cancel_test",
+        Duration::from_secs(5),
+        Duration::ZERO,
+    );
+    let client = peer.client.clone();
+    let cancelled = tokio::spawn(async move {
+        work.run(|| async {
+            DriverProbe(client)
+                .ping()
+                .await
+                .map_err(|_| SandboxStoreError::Unavailable("fixture".into()))
+        })
+        .await
+    });
+    peer.wait_for(|| peer.ping_count() == 3).await;
+    cancelled.abort();
+    assert!(cancelled.await.unwrap_err().is_cancelled());
+    peer.wait_for(|| peer.in_use() == 0 && peer.peer_closed.load(Ordering::SeqCst) == 2)
+        .await;
+    assert_eq!(peer.trace.lock().unwrap().dropped, 2);
+    peer.block(false);
+    let work = BackgroundWork::new(
+        budget,
+        "recover_test",
+        Duration::from_secs(1),
+        Duration::ZERO,
+    );
+    assert_eq!(
+        work.run(|| async {
+            DriverProbe(peer.client.clone())
+                .ping()
+                .await
+                .map_err(|_| SandboxStoreError::Unavailable("fixture".into()))
+        })
+        .await
+        .unwrap(),
+        Some(())
+    );
+    peer.client.clone().shutdown().await;
+}
