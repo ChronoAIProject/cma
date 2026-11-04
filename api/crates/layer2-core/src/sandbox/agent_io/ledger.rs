@@ -361,6 +361,11 @@ pub fn validate_command_reservation(
     {
         return Err(CommandLedgerError::NotFound);
     }
+    // A closed Agent cannot become eligible by refreshing an observation. Exact
+    // accepted-key replay has already returned before this new-admission check.
+    if !agent.status.is_live() {
+        return Err(CommandLedgerError::NotAdmissible);
+    }
     if request.expected_agent_revision != agent.revision
         || request.parent != SandboxMutationGuard::capture(parent)
     {

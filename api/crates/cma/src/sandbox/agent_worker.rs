@@ -93,6 +93,7 @@ impl AgentWorkerConfig {
 pub(crate) struct AgentWorker {
     dependencies: AgentWorkerDependencies,
     config: AgentWorkerConfig,
+    maintenance: reconcile::MaintenanceChecks,
 }
 
 impl AgentWorker {
@@ -103,6 +104,7 @@ impl AgentWorker {
         Arc::new(Self {
             dependencies,
             config,
+            maintenance: reconcile::MaintenanceChecks::default(),
         })
     }
 
