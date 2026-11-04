@@ -4,6 +4,12 @@ use super::{Phase, Supervisor};
 use crate::failure::{Result, RuntimeError};
 
 impl Supervisor {
+    pub(crate) fn advertise_agent_computer_capabilities(&self, status: &mut RuntimeStatus) {
+        status.agent_browser = true;
+        status.agent_filesystem = crate::agent_attachment::supported(&self.config);
+        status.agent_attachment_upload = status.agent_filesystem;
+    }
+
     pub(super) async fn tool_proxy_status(
         &self,
         request: layer3_adapter::ToolProxyRequest,
@@ -60,9 +66,9 @@ impl Supervisor {
             ));
         }
         let status = RuntimeStatus {
-            agent_browser: true,
-            agent_filesystem: crate::agent_attachment::supported(&self.config),
-            agent_attachment_upload: crate::agent_attachment::supported(&self.config),
+            agent_browser: false,
+            agent_filesystem: false,
+            agent_attachment_upload: false,
             agent_skill_install: true,
             agent_model_catalog: true,
             // Advertised only by the negotiated HTTP status response. Embedded
