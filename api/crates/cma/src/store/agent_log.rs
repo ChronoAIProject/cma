@@ -10,6 +10,7 @@ use mongodb::{Collection, IndexModel};
 use super::agent_log_integrity::{
     ensure_append_capacity, scan_complete_log, AppendCapacity, LogSummary, TransactionLogError,
 };
+use super::agent_log_reads::scan_read_log;
 use super::agents::read_agent;
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, read_record,
@@ -94,44 +95,6 @@ where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
     scan_complete_log(store, agent_id, last_seq, session, true, visit).await
-}
-
-async fn scan_read_log<F>(
-    store: &MongoSandboxStore,
-    agent_id: &AgentId,
-    visit: F,
-) -> Result<(), SandboxStoreError>
-where
-    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
-{
-    let mut session = store
-        .client
-        .start_session()
-        .snapshot(true)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let Some(aggregate) = store
-        .agents
-        .find_one(doc! { "_id": agent_id.as_str() })
-        .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-    else {
-        return Ok(());
-    };
-    require_version(&aggregate).map_err(SandboxStoreError::Corrupt)?;
-    let last_seq = aggregate
-        .get_i64("last_seq")
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
-        .and_then(|value| {
-            unsigned(value, "agent log sequence").map_err(SandboxStoreError::Corrupt)
-        })?;
-    scan_complete_log_with_snapshot_session(store, agent_id, last_seq, &mut session, visit)
-        .await
-        .map_err(transaction_error)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -496,13 +459,6 @@ impl AgentLogStore for MongoSandboxStore {
             return Err(SandboxStoreError::SequenceConflict);
         }
         Ok(entries)
-    }
-}
-
-fn transaction_error(error: TransactionLogError) -> SandboxStoreError {
-    match error {
-        TransactionLogError::Domain(error) => error,
-        TransactionLogError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
     }
 }
 
