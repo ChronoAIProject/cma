@@ -1,0 +1,225 @@
+use super::*;
+use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
+use layer3_adapter::provider::ProviderSandboxRequest;
+use layer3_adapter::wire::{
+    AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame,
+};
+use layer3_adapter::{AgentLaunch, ContentBlock, ConversationChannel, RuntimeObservation};
+
+struct RuntimeBoundary {
+    backend: InMemoryHostedBackend,
+    prompts: Arc<Mutex<Vec<Vec<ContentBlock>>>>,
+    lose_prompt_response: bool,
+}
+
+#[async_trait::async_trait]
+impl HostedBackend for RuntimeBoundary {
+    async fn provision(
+        &self,
+        request: ProviderSandboxRequest,
+    ) -> layer3_adapter::Result<RuntimeHandle> {
+        self.backend.provision(request).await
+    }
+
+    async fn adopt(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.backend.adopt(handle, request).await
+    }
+
+    async fn exchange(
+        &self,
+        handle: &RuntimeHandle,
+        request: RequestFrame,
+    ) -> layer3_adapter::Result<ResponseFrame> {
+        self.backend.exchange(handle, request).await
+    }
+
+    async fn open_agent(
+        &self,
+        handle: &RuntimeHandle,
+        launch: FencedRequest<AgentLaunch>,
+        resume: Option<String>,
+        settings: HostedAgentOpenSettings,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        let (channel, receipt) = self
+            .backend
+            .open_agent(handle, launch, resume, settings, updates)
+            .await?;
+        let prompts = self.prompts.clone();
+        let lose_response = self.lose_prompt_response;
+        let input = ConversationInputSender::spawn(1, move |input| {
+            let sender = channel.input.clone();
+            let prompts = prompts.clone();
+            async move {
+                let task = match &input {
+                    ConversationInput::Prompt(content)
+                    | ConversationInput::RecoverablePrompt { content, .. } => Some(content.clone()),
+                    _ => None,
+                };
+                sender.send(input).await?;
+                if let Some(task) = task {
+                    prompts.lock().unwrap().push(task);
+                    if lose_response {
+                        return Err(AdapterError::Unavailable(
+                            "isolated runtime prompt response lost".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            }
+        });
+        Ok((
+            ConversationChannel {
+                input,
+                conversation_id: channel.conversation_id,
+            },
+            receipt,
+        ))
+    }
+
+    async fn teardown(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<()> {
+        self.backend.teardown(handle).await
+    }
+}
+
+async fn replace_worker(
+    harness: &mut Harness<MongoSandboxStore>,
+    client: &mongodb::Client,
+    database: &mongodb::Database,
+    holder: &str,
+) {
+    let store = Arc::new(
+        MongoSandboxStore::open(client, database.name())
+            .await
+            .unwrap(),
+    );
+    let registry = Arc::new(LiveAgentRegistry::default());
+    let updates = DurableAgentUpdateRecorder::new(store.clone());
+    harness.worker = AgentWorker::new(
+        AgentWorkerDependencies {
+            store: store.clone(),
+            adapter: harness.adapter.clone(),
+            skills: Arc::new(EmptyAgentSkillResolver),
+            registry: registry.clone(),
+            updates: updates.clone(),
+            operations: AgentOperationService::new(store.clone(), registry.clone()),
+        },
+        AgentWorkerConfig::new(holder, DEPLOYMENT_ID),
+    );
+    harness.store = store;
+    harness.registry = registry;
+    harness.updates = updates;
+}
+
+async fn first_message(service: &Router, identity: &AgentId) -> Value {
+    serde_json::from_str(
+        &cross_interface_tests::read(service, &format!("/api/v1/agents/{identity}")).await,
+    )
+    .unwrap()
+}
+
+async fn exercise_restart(phase: &str) {
+    let (client, database, mut harness) = isolated_environment().await;
+    let prompts = Arc::new(Mutex::new(vec![]));
+    harness.adapter = Arc::new(CodexAdapter::new(
+        Arc::new(RuntimeBoundary {
+            backend: harness.backend.clone(),
+            prompts: prompts.clone(),
+            lose_prompt_response: phase == "uncertain",
+        }),
+        CodexSandboxSpec::default(),
+    ));
+    replace_worker(&mut harness, &client, &database, "task-before-restart").await;
+    let service = router(&harness, &database, &client).await;
+    let original = "  比较三个工具\n保留原文。  ";
+    let body =
+        json!({"name":"New task", "workspace_id":harness.workspace.id, "initial_message":original});
+    let (status, receipt) = create(&service, &body, "restart-task").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+    let identity = admitted_identity(&service, &receipt).await;
+    let expected = match phase {
+        "queued" => "queued",
+        "uncertain" => "recovery_required",
+        _ => "write_confirmed",
+    };
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let detail = first_message(&service, &identity).await;
+            if (phase != "queued" || detail["status"] == "ready")
+                && detail["first_message"]["state"] == expected
+            {
+                break;
+            }
+            harness
+                .worker
+                .run_one(&identity, SystemTime::now())
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        prompts.lock().unwrap().len(),
+        usize::from(phase != "queued")
+    );
+    harness.registry.fence(&identity, None, u64::MAX);
+    drop(service);
+    replace_worker(&mut harness, &client, &database, "task-after-restart").await;
+    let restarted = router(&harness, &database, &client).await;
+    let (status, replay) = create(&restarted, &body, "restart-task").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{replay}");
+    assert_eq!(replay["id"], receipt["id"]);
+    assert_eq!(admitted_identity(&restarted, &replay).await, identity);
+    for _attempt in 0..8 {
+        harness
+            .worker
+            .run_one(&identity, SystemTime::now())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let detail = first_message(&restarted, &identity).await;
+    assert_eq!(detail["first_message"]["purpose"], "task");
+    assert_eq!(
+        detail["first_message"]["state"],
+        if phase == "uncertain" {
+            "recovery_required"
+        } else {
+            "write_confirmed"
+        }
+    );
+    let transcript: Value = serde_json::from_str(
+        &cross_interface_tests::read(&restarted, &format!("/api/v1/agents/{identity}/transcript"))
+            .await,
+    )
+    .unwrap();
+    let turns = transcript["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 1, "{transcript}");
+    assert_eq!(turns[0]["owner_message"], original);
+    assert_eq!(prompts.lock().unwrap().len(), 1);
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn initial_task_public_worker_restart_before_dispatch_keeps_one_task() {
+    exercise_restart("queued").await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn initial_task_public_worker_restart_after_dispatch_does_not_resend() {
+    exercise_restart("confirmed").await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn initial_task_public_uncertain_runtime_write_requires_recovery_without_resend() {
+    exercise_restart("uncertain").await;
+}

@@ -20,6 +20,14 @@ mod checkpoint_tests;
 
 pub(crate) mod commands;
 
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+#[allow(dead_code)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AnswerContextRequest {
+    pub turn_sequence: u64,
+    pub answer_sequence: u64,
+}
+
 #[cfg(test)]
 pub(crate) mod command_test_support;
 

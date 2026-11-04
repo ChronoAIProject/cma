@@ -29,6 +29,7 @@ fn fixture() -> (Sandbox, RuntimeStatus) {
         agent_attachment_upload: false,
         agent_skill_install: false,
         agent_model_catalog: false,
+        agent_browser: false,
         agent_resource_preparation: false,
         sandbox_id: sandbox.id.to_string(),
         generation: 1,

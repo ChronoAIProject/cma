@@ -102,11 +102,27 @@ impl<S: FixtureStore> Harness<S> {
         skills: Arc<dyn AgentSkillResolver>,
         generation: u64,
     ) -> Self {
+        Self::with_store_services(store, skills, generation, None).await
+    }
+
+    async fn with_store_services(
+        store: Arc<S>,
+        skills: Arc<dyn AgentSkillResolver>,
+        generation: u64,
+        services: Option<Vec<ServiceId>>,
+    ) -> Self {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_788_537_600);
         let stamp = rfc3339_at(now);
         let owner = SubjectId::new("owner");
         let sandbox_id = SandboxId::generate();
         let mut sandbox = sandbox(&sandbox_id, owner.clone(), &stamp);
+        if let Some(mut services) = services {
+            services.sort();
+            sandbox.credential.reaches = services.clone();
+            sandbox.profile.content.nyxid_services = services;
+            sandbox.profile.digest =
+                layer2_core::profiles::content_digest(&sandbox.profile.content).unwrap();
+        }
         let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
         let adapter = Arc::new(adapter);
         let runtime = adapter

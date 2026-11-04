@@ -40,7 +40,7 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
     />,
   );
   const user = userEvent.setup();
-  expect(screen.getByRole('button', { name: 'Agents' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByText('Tasks')).toBeVisible();
   const summary = { selector: '.navigation-filters__summary' };
   const filter = screen.getByRole('button', { name: 'Filter' });
   // Defaults are not restated: no dot, no summary line, no description.
@@ -57,7 +57,8 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(filter).toHaveAccessibleDescription('Working');
   expect(filter.querySelector('.navigation-filters__dot')).not.toBeNull();
   expect(screen.getByText('Working', summary)).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Sandboxes' }));
+  await user.click(screen.getByRole('button', { name: 'Settings' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',
   );
@@ -66,14 +67,15 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(filter.querySelector('.navigation-filters__dot')).toBeNull();
   expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('chrono-bot');
   await user.click(screen.getByRole('button', { name: 'Collapse Atlas' }));
-  await user.click(screen.getByRole('button', { name: 'Agents' }));
+  await user.click(screen.getByRole('button', { name: 'Back to tasks' }));
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent('Working');
-  await user.click(screen.getByRole('button', { name: 'Sandboxes' }));
+  await user.click(screen.getByRole('button', { name: 'Settings' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
   expect(screen.getByRole('button', { name: 'Expand Atlas' })).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
 });
 
-it('poses each Agent character from its effective status and moves only attention states', async () => {
+it('shows visible task states alongside characters and respects parent lifecycle barriers', async () => {
   const refresh = vi.fn();
   const draw = (sandbox: 'active' | 'paused', agent: AgentStatus) => (
     <ManagerNavigation
@@ -83,21 +85,28 @@ it('poses each Agent character from its effective status and moves only attentio
   );
   const view = render(draw('active', 'ready'));
   const cases = [
-    // Ready is settled and usable: a still, looking-ahead character; the word is still heard.
-    ['active', 'ready', 'idle', 'still', 'brand', 'Ready'],
-    ['active', 'starting', 'preparing', 'live', 'brand', 'Starting'],
-    ['active', 'working', 'thinking', 'live', 'brand', 'Working'],
-    ['active', 'waiting_approval', 'approval', 'live', 'warning', 'Needs approval'],
-    ['active', 'failed', 'failed', 'still', 'error', 'Needs attention'],
-    ['active', 'stopped', 'paused', 'still', 'brand', 'Stopped'],
-    // A held parent holds its Agents too: they sleep, still.
-    ['paused', 'working', 'paused', 'still', 'brand', 'Paused'],
+    ['active', 'ready', 'idle', 'still', 'brand', 'Ready', 'Status unavailable', 'neutral'],
+    ['active', 'starting', 'preparing', 'live', 'brand', 'Starting', 'Preparing', 'ongoing'],
+    ['active', 'working', 'thinking', 'live', 'brand', 'Working', 'Working', 'ongoing'],
+    [
+      'active',
+      'waiting_approval',
+      'approval',
+      'live',
+      'warning',
+      'Needs approval',
+      'Waiting for approval',
+      'warning',
+    ],
+    ['active', 'failed', 'failed', 'still', 'error', 'Needs attention', 'Failed', 'error'],
+    ['active', 'stopped', 'paused', 'still', 'brand', 'Stopped', 'Stopped', undefined],
+    ['paused', 'working', 'paused', 'still', 'brand', 'Paused', 'Paused', undefined],
   ] as const;
-  for (const [sandbox, agent, pose, motion, tone, word] of cases) {
+  for (const [sandbox, agent, pose, motion, tone, word, taskWord, state] of cases) {
     view.rerender(draw(sandbox, agent));
-    const name = new RegExp(`^Agent one, ${word}`);
+    const name = new RegExp(`^Agent one,\\s*${taskWord}`);
     const row = screen.getByRole('treeitem', { name });
-    expect(row).toHaveAttribute('data-layout', 'line');
+    expect(row).toHaveTextContent(taskWord);
     expect(screen.getByRole('link', { name })).toBe(row.querySelector('a'));
     const character = row.querySelector('.tree-row__signal .character-avatar');
     expect(character).toHaveAttribute('aria-hidden', 'true');
@@ -105,6 +114,9 @@ it('poses each Agent character from its effective status and moves only attentio
     expect(character).toHaveAttribute('data-motion', motion);
     expect(character).toHaveAttribute('data-tone', tone);
     expect(row.querySelector('.tree-row__signal')).toHaveAttribute('title', word);
+    const dot = row.querySelector('.tree-row__state .statedot');
+    if (state === undefined) expect(dot).toBeNull();
+    else expect(dot).toHaveAttribute('data-state', state);
   }
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Filter' }));
@@ -118,7 +130,8 @@ it('poses each Agent character from its effective status and moves only attentio
       navigation={{ status: 'ready', items: navigationFixture(), refresh }}
     />,
   );
-  await user.click(screen.getByRole('button', { name: 'Sandboxes' }));
+  await user.click(screen.getByRole('button', { name: 'Settings' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
   const live = screen.getByRole('tree', { name: 'Live sandboxes' });
   expect(live.querySelector('.tree-row__state .statedot')).toHaveAttribute('data-state', 'neutral');
   expect(live.querySelectorAll('.statedot[data-state="done"]')).toHaveLength(0);
@@ -212,7 +225,7 @@ it('clears status and scope together and names the scope in the summary', async 
   expect(summary()).toHaveTextContent(/^Shared$/);
 });
 
-it('keeps one-line Agent rows operable by keyboard, with their age and menu key in place', async () => {
+it('keeps task rows and their action menus operable by keyboard', async () => {
   const onAction = vi.fn();
   const onNavigate = vi.fn();
   render(
@@ -230,13 +243,8 @@ it('keeps one-line Agent rows operable by keyboard, with their age and menu key 
     />,
   );
   const user = userEvent.setup();
-  const row = screen.getByRole('treeitem', { name: /^Agent one, Working/ });
-  // The current row: its age and menu key are drawn rather than left to hover.
+  const row = screen.getByRole('treeitem', { name: /^Agent one,\s*Working/ });
   expect(row).toHaveAttribute('aria-selected', 'true');
-  expect(row.querySelector('time.tree-row__age')).toHaveAttribute(
-    'dateTime',
-    '2026-09-06T00:05:00Z',
-  );
   row.focus();
   await user.keyboard('{Enter}');
   expect(onNavigate).toHaveBeenCalledWith({ kind: 'agent', agentId: 'agt_1' });

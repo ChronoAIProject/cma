@@ -23,6 +23,8 @@ use std::{
 #[path = "agent_command_admission_tests/fixtures.rs"]
 mod fixtures;
 use fixtures::*;
+#[path = "agent_command_admission_tests/contextual_suggestions.rs"]
+mod contextual_suggestions;
 
 #[path = "agent_command_admission_tests/lookup_failures.rs"]
 mod lookup_failures;

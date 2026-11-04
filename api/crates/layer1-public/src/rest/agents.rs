@@ -77,10 +77,18 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
         .route("/api/v1/workspaces/{id}/agents", post(create))
         .route("/api/v1/agents", get(list).post(create_lifecycle))
         .route(
+            "/api/v1/desktop-capability",
+            get(super::desktop_creation::read),
+        )
+        .route(
             "/api/v1/agent-lifecycle/{id}",
             get(read_lifecycle_operation),
         )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
+        .route(
+            "/api/v1/agents/{id}/suggestions",
+            get(super::suggestions::read),
+        )
         .route(
             "/api/v1/agents/{id}/recover-worktree",
             post(super::agent_worktree_recovery::recover_worktree),
@@ -91,7 +99,11 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
         )
         .route(
             "/api/v1/agents/{id}/messages/{message_id}/feedback",
-            put(super::message_feedback::set),
+            put(super::message_feedback::set).get(super::message_feedback_reasons::get),
+        )
+        .route(
+            "/api/v1/agents/{id}/messages/{message_id}/feedback/reasons",
+            put(super::message_feedback_reasons::set),
         )
         .route(
             "/api/v1/agents/{id}/skills",
@@ -174,6 +186,12 @@ pub(crate) async fn create_lifecycle(
         Ok(body) => body,
         Err(error) => return error.into_response(),
     };
+    if request.desktop && request.initial_message.is_none() {
+        return AgentLifecycleProvisioningError::Invalid(
+            "desktop creation requires initial_message".into(),
+        )
+        .into_response();
+    }
     provisioner
         .create(
             &caller,

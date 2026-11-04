@@ -50,7 +50,10 @@ export function AgentProvisioningProgress({
     startedAt,
     active ? now : status === 'succeeded' ? Date.parse(completedAt ?? '') : NaN,
   );
-  const steps = agentProvisioningSteps.map(({ phase, label }) => ({
+  const reportedSteps = events.some((event) => event.phase === 'desktop_preparation')
+    ? [...agentProvisioningSteps, { phase: 'desktop_preparation', label: 'Desktop preparation' }]
+    : agentProvisioningSteps;
+  const steps = reportedSteps.map(({ phase, label }) => ({
     phase,
     label,
     state: provisioningStepState(phase, events, operation),

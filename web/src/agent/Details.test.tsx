@@ -8,6 +8,34 @@ import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { NamedReferences } from '../test/references';
 import { AgentDetails } from './Details';
 
+it('shows the recorded checkout and source commits separately from the requested repository ref', async () => {
+  render(
+    <CmaClientProvider client={agentClient()}>
+      <AgentDetails
+        detail={{
+          ...AGENT_DETAIL,
+          workspace: {
+            ...AGENT_DETAIL.workspace,
+            resolvedCommit: 'b'.repeat(40),
+            source: {
+              type: 'repository_snapshot',
+              url: 'https://github.com/example/project',
+              reference: 'proof/fixed',
+              source_commit: 'a'.repeat(40),
+            },
+          },
+        }}
+        open
+      />
+    </CmaClientProvider>,
+  );
+  expect(await screen.findByText('Checkout commit')).toBeVisible();
+  expect(screen.getByText('b'.repeat(40))).toBeVisible();
+  expect(screen.getByText('Source commit')).toBeVisible();
+  expect(screen.getByText('a'.repeat(40))).toBeVisible();
+  expect(screen.getByText('proof/fixed')).toBeVisible();
+});
+
 it('summarises service access read-only beside skills without duplicating composer settings', async () => {
   const readAgentSettings = vi.fn();
   const client = agentClient({ readAgentSettings });

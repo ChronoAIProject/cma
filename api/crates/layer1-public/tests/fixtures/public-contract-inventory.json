@@ -1,7 +1,15 @@
 {
   "version": 1,
-  "openapi_operations": 245,
+  "openapi_operations": 260,
   "operations": {
+    "GET /api/v1/agents/{id}/environment": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_environment.rs# Authorized read-only Agent environment observations preserve file scope and explicit feature availability without contacting the runtime.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
     "GET /api/v1/organizations": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/organizations.rs# Authenticated current organization choices contain presentation roles and no reusable resource evidence.",
@@ -2207,7 +2215,7 @@
     },
     "GET /api/v2/agents/{agent_id}/events/snapshot": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors.",
+      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent operation replay uses current-policy frame fences, distinct incarnation-bound cursors and opt-in cma-tool-output; operation-replay.json covers commands, recorded output, plan and fixed page boundaries through the real handler and both typed SDKs.",
       "required_problems": [
         "not_authenticated",
         "agent_not_found",
@@ -2221,7 +2229,7 @@
     },
     "GET /api/v2/agents/{agent_id}/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors.",
+      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors; operation-replay.json covers finite read-only catch-up with after_cursor and opt-in cma-tool-output through the real handler and both typed SDKs.",
       "required_problems": [
         "not_authenticated",
         "agent_not_found",
@@ -2236,6 +2244,13 @@
     "GET /api/v2/ui/transport": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/agent_v2/eligibility.rs# Current process flag and complete composition select new tabs only; authenticated no-store discovery is not command authority.",
+      "required_problems": [
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v2/ui/task-experience": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/task_experience.rs# Current caller policy is private/no-store and separate from environment capability or accepted recovery.",
       "required_problems": [
         "not_authenticated"
       ]
@@ -2269,7 +2284,8 @@
       "required_problems": [
         "not_authenticated",
         "forbidden",
-        "invalid_binding"
+        "invalid_binding",
+        "binding_skill_version_update_unsupported"
       ]
     },
     "GET /api/v1/cmaeg/bindings/{binding_id}": {
@@ -2287,16 +2303,6 @@
       "required_problems": [
         "not_authenticated",
         "forbidden"
-      ]
-    },
-    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bindings/inspection.rs# Read-only mapping inspection uses binding management authority.",
-      "required_problems": [
-        "not_authenticated",
-        "forbidden",
-        "binding_not_found",
-        "invalid_binding"
       ]
     },
     "PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
@@ -2598,7 +2604,9 @@
         "forbidden",
         "not_authenticated",
         "permission_denied",
-        "temporarily_unavailable"
+        "temporarily_unavailable",
+        "desktop_unsupported",
+        "invalid_request"
       ]
     },
     "GET /api/v1/agent-lifecycle/{id}": {
@@ -2763,6 +2771,7 @@
         "agent_not_found",
         "agent_not_ready",
         "agent_operation_in_flight",
+        "agent_skill_version_upgrade_unsupported",
         "connections_required",
         "forbidden",
         "hierarchy_service_unavailable",
@@ -2861,6 +2870,17 @@
         "idempotency_key_reused",
         "hierarchy_service_unavailable",
         "runtime_update_not_available"
+      ]
+    },
+    "GET /api/v1/agents/{id}/suggestions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/suggestions.rs# Owner-scoped saved contextual suggestions; reads do not generate or send input.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_instance_query"
       ]
     },
     "GET /api/v1/agents/{id}/message-feedback": {
@@ -3238,6 +3258,158 @@
         "not_authenticated",
         "sandbox_checkpoint_in_progress",
         "store_failed"
+      ]
+    },
+    "GET /api/v1/agents/{id}/messages/{message_id}/feedback": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback_reasons.rs# Conditional owner feedback metadata.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_agent_request"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback_reasons.rs# Conditional owner feedback metadata.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "feedback_version_conflict",
+        "invalid_json"
+      ]
+    },
+    "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/deliverable-references": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "deliverable_unavailable",
+        "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "deliverable_not_found",
+        "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "deliverable_changed",
+        "deliverable_unavailable",
+        "document_not_found",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
+      "required_problems": [
+        "file_conflict",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "not_authenticated",
+        "resource_not_found",
+        "invalid_file_request"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
+      "required_problems": [
+        "file_conflict",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "not_authenticated",
+        "resource_not_found",
+        "resource_forbidden"
+      ]
+    },
+    "DELETE /api/v1/agents/{id}/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
+      "required_problems": [
+        "file_conflict",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "not_authenticated",
+        "resource_not_found",
+        "invalid_file_request"
+      ]
+    },
+    "GET /api/v1/agents/{id}/browser/control": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser_control.rs# Current authorized control status and original operation recovery, scoped to Agent, incarnation and browser context.",
+      "required_problems": [
+        "browser_control_conflict",
+        "browser_control_not_ready",
+        "browser_control_unknown",
+        "browser_control_unsupported",
+        "invalid_browser_control",
+        "not_authenticated",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agents/{id}/browser/control": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser_control.rs# Owner-only revision-fenced control mutation with exact operation identity and bounded input.",
+      "required_problems": [
+        "browser_control_conflict",
+        "browser_control_not_ready",
+        "browser_control_unknown",
+        "browser_control_unsupported",
+        "invalid_browser_control",
+        "not_authenticated",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/desktop-capability": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/desktop_creation.rs# Read-only verified creation capability; no resource allocation.",
+      "required_problems": [
+        "not_authenticated",
+        "permission_denied",
+        "invalid_instance_query",
+        "invalid_request",
+        "temporarily_unavailable"
+      ]
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/inspection.rs# Read-only mapping inspection uses binding management authority.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding"
       ]
     },
     "GET /api/v1/agents/{id}/desktop": {
