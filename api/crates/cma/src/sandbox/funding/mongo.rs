@@ -90,15 +90,18 @@ impl FundingControl for RuntimeControl {
     ) -> Result<(), FundingError> {
         let result = self
             .store
-            .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
-                sandbox.id.clone(),
-                sandbox.owner.clone(),
-                rfc3339_at(now),
-                Some(format!(
-                    "Prepaid funding unavailable: {}",
-                    detail.chars().take(180).collect::<String>()
-                )),
-            ))
+            .schedule_sandbox_lifecycle(
+                SandboxLifecycleCommand::pause(
+                    sandbox.id.clone(),
+                    sandbox.owner.clone(),
+                    rfc3339_at(now),
+                    Some(format!(
+                        "Prepaid funding unavailable: {}",
+                        detail.chars().take(180).collect::<String>()
+                    )),
+                )
+                .at_revision(sandbox.revision),
+            )
             .await
             .map_err(error)?;
         if let SandboxLifecycleCommandResult::NotEligible(current) = result {
