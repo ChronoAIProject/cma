@@ -16,7 +16,7 @@ async fn prepared_connection_settles_capacity_under_its_new_claim() {
         .unwrap();
     let revision = full.revision;
     full.conversation.first_message = Some(
-        FirstMessageRecord::new(&full.creation_key, "retained input", &rfc3339_at(at())).unwrap(),
+        FirstMessageRecord::new(&full.creation_key, "retained input", rfc3339_at(at())).unwrap(),
     );
     full.revision += 1;
     fixture
