@@ -1,4 +1,5 @@
-use super::projection::{events, project};
+use super::projection::events;
+use crate::agent_page::AgentPageOrigin;
 use layer2_core::{
     ids::{AgentCommandId, AgentResponseId},
     sandbox::{
@@ -12,6 +13,13 @@ use layer2_core::{
 };
 
 const AT: &str = "2026-10-15T00:00:00Z";
+
+fn project(
+    reading: AgentResponseReading,
+    snapshot: &AgentEventStreamSnapshot,
+) -> Option<super::V2ResponseObject> {
+    super::projection::project(&AgentPageOrigin::test(), reading, snapshot)
+}
 
 fn start(turn_sequence: u64, model: Option<&str>) -> AgentLogKind {
     AgentLogKind::TurnStarted {
@@ -125,13 +133,13 @@ fn changing_current_settings_never_relabels_completed_response_models_or_replay(
         })
         .collect();
     assert_eq!(
-        super::super::retrieve::project(&agent, &entries, 1)
+        super::super::retrieve::project(&AgentPageOrigin::test(), &agent, &entries, 1)
             .unwrap()
             .model,
         "creation-model"
     );
     assert_eq!(
-        super::super::retrieve::project(&agent, &entries, 4)
+        super::super::retrieve::project(&AgentPageOrigin::test(), &agent, &entries, 4)
             .unwrap()
             .model,
         "selected-alternate"

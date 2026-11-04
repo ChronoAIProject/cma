@@ -355,12 +355,14 @@ pub(crate) async fn read(
             )
             .await
             .map(AccessibleAgentView::from)
-            .map(Json)
+            .map(|view| Json(view.with_agent_page(&state.agent_page_origin)))
             .map_err(InstanceProblem::from);
     }
-    read_view(&state, &caller, &AgentId(id))
-        .await
-        .map(|view| Json(AccessibleAgentView::Personal(Box::new(view))))
+    read_view(&state, &caller, &AgentId(id)).await.map(|view| {
+        Json(
+            AccessibleAgentView::Personal(Box::new(view)).with_agent_page(&state.agent_page_origin),
+        )
+    })
 }
 
 #[utoipa::path(

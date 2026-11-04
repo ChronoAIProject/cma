@@ -144,6 +144,7 @@ async fn router_with_support(
             .unwrap(),
     );
     let services = AgentProjectionServices::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         store.clone(),
         profiles.clone(),
         registry,
@@ -176,6 +177,8 @@ async fn router_with_support(
         sandboxes,
         workspaces,
         services.agents(),
+        store.clone(),
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
         ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
         ProfileCapacityBounds {

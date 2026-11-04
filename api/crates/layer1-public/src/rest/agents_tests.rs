@@ -298,7 +298,13 @@ async fn fixture_with_ports<R: AgentRuntimeRegistry + 'static>(
     let agent_operations = AgentOperationService::new(store.clone(), registry.clone());
     let operation_records: Arc<dyn OperationStore> =
         operations.unwrap_or_else(|| Arc::new(MemoryOperationStore::default()));
-    let state = AgentRoutesState::new(agents, reads, agent_operations, operation_records);
+    let state = AgentRoutesState::new(
+        crate::agent_page::AgentPageOrigin::test(),
+        agents,
+        reads,
+        agent_operations,
+        operation_records,
+    );
     let router = agent_router(state.clone());
     Fixture {
         state,
@@ -811,6 +817,10 @@ async fn detail_and_read_refusals_use_the_frozen_capability_grants() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        detail["callback_url"],
+        "https://cma.example/agents/agt_grants"
+    );
     assert_eq!(
         detail["conforms_to"],
         json!([

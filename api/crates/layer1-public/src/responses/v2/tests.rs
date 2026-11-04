@@ -143,7 +143,11 @@ pub(crate) async fn fixture() -> Fixture {
     let commands = AgentCommandService::new(store.clone(), access.clone(), authority);
     let reads = state.reads.with_resource_access(access.clone());
     Fixture {
-        router: super::router(super::ResponsesV2State::new(commands, reads)),
+        router: super::router(super::ResponsesV2State::new(
+            crate::agent_page::AgentPageOrigin::test(),
+            commands,
+            reads,
+        )),
         store,
         access,
     }
@@ -200,7 +204,22 @@ async fn canonical_alias_disconnect_and_retrieval_keep_one_durable_receipt() {
         .get_agent(&AgentId("agt_fixture".into()))
         .await
         .unwrap();
-    let created = create(&f, false).await;
+    let mut hostile = request(
+        Method::POST,
+        "/api/v2/responses",
+        "owner-a",
+        Some("same-key"),
+        Some(
+            json!({"conversation":"agt_fixture","input":"Hello","stream":true,"metadata":{"private":"owner metadata"}}),
+        ),
+    );
+    hostile
+        .headers_mut()
+        .insert("host", "evil.example".parse().unwrap());
+    hostile
+        .headers_mut()
+        .insert("x-forwarded-host", "evil.example".parse().unwrap());
+    let created = f.router.clone().oneshot(hostile).await.unwrap();
     assert_eq!(created.status(), StatusCode::OK);
     let id = created.headers()["x-cma-response-id"]
         .to_str()
@@ -215,6 +234,9 @@ async fn canonical_alias_disconnect_and_retrieval_keep_one_durable_receipt() {
     assert_eq!(first[0]["type"], "response.created");
     assert_eq!(first[0]["response"]["status"], "queued");
     assert_eq!(first[0]["response"]["id"], id);
+    let callback = first[0]["response"]["callback_url"].as_str().unwrap();
+    assert_eq!(callback, "https://cma.example/agents/agt_fixture");
+    assert!(!callback.contains("resp_"));
     drop(body);
     let retry = create(&f, true).await;
     assert_eq!(retry.status(), StatusCode::OK);

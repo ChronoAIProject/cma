@@ -71,6 +71,8 @@ pub(crate) struct InlineAgentLifecycle {
     sandbox: Arc<SandboxService>,
     workspaces: Arc<WorkspaceService>,
     agents: Arc<AgentService>,
+    agent_records: Arc<dyn layer2_core::sandbox::store::AgentStore>,
+    agent_page_origin: layer1_public::agent_page::AgentPageOrigin,
     profiles: Arc<PrivateProfileCreationService>,
     image_resolver: Arc<dyn ImageResolver>,
     bounds: ProfileCapacityBounds,
@@ -105,6 +107,8 @@ impl InlineAgentLifecycle {
         sandbox: Arc<SandboxService>,
         workspaces: Arc<WorkspaceService>,
         agents: Arc<AgentService>,
+        agent_records: Arc<dyn layer2_core::sandbox::store::AgentStore>,
+        agent_page_origin: layer1_public::agent_page::AgentPageOrigin,
         profile_store: Arc<dyn BotProfileStore>,
         image_resolver: Arc<dyn ImageResolver>,
         bounds: ProfileCapacityBounds,
@@ -119,6 +123,8 @@ impl InlineAgentLifecycle {
             sandbox,
             workspaces,
             agents,
+            agent_records,
+            agent_page_origin,
             profiles: PrivateProfileCreationService::new(profile_store, bounds, scanner),
             image_resolver,
             bounds,
@@ -477,21 +483,5 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             id: operation_id,
             status: "provisioning".into(),
         })
-    }
-}
-
-#[async_trait]
-impl AgentLifecycleOperationReader for InlineAgentLifecycle {
-    async fn read(
-        &self,
-        caller: &Caller,
-        operation_id: &str,
-    ) -> Result<AgentLifecycleOperationView, AgentLifecycleOperationReadError> {
-        self.operations
-            .read_for_owner(&caller.subject, operation_id)
-            .await
-            .map_err(|_| AgentLifecycleOperationReadError::Unavailable)?
-            .map(|record| record.view())
-            .ok_or(AgentLifecycleOperationReadError::NotFound)
     }
 }

@@ -182,6 +182,9 @@ pub struct ResponseUsage {
 /// Durable response resource reconstructed from one Agent turn.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ResponseObject {
+    /// Browser page for the actual CMA Agent, when available.
+    #[serde(default)]
+    pub callback_url: Option<String>,
     /// Standard response identity.
     pub id: String,
     /// Standard object tag.

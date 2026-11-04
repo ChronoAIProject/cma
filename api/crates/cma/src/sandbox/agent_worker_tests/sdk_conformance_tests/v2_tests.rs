@@ -188,8 +188,11 @@ where
         worker_holder.into(),
     )
     .unwrap();
-    let mut responses =
-        layer1_public::responses::v2::ResponsesV2State::new(commands, services.reads());
+    let mut responses = layer1_public::responses::v2::ResponsesV2State::new(
+        layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
+        commands,
+        services.reads(),
+    );
     if let Some(bindings) = bindings {
         responses = responses.with_bindings(bindings);
     }

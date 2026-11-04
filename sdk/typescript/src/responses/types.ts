@@ -60,6 +60,7 @@ export const conversation = object({
 });
 export type Conversation = Output<typeof conversation>;
 export const responseFields = {
+  callback_url: optional(nullable(text)),
   id: text,
   object: enumeration('response'),
   created_at: integer,
