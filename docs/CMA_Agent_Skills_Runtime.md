@@ -36,6 +36,11 @@ Busy Agents, unsupported runtimes, and replacing an installed skill ID with a
 different version are refused. Installation is additive and capped at 32 total
 profile plus live skills. Failed rows are retained as evidence; this endpoint
 does not remove or replace an installed skill or reset a failed runtime mutation.
+An attempted version change returns HTTP 409 with
+`agent_skill_version_upgrade_unsupported` and identifies the installed and
+requested versions. Updating a CMAEG channel profile with the same change
+returns HTTP 409 with `binding_skill_version_update_unsupported`; the channel
+must be recreated with the requested profile.
 
 Admission persists separate live-skill work inside the Agent aggregate, leaving
 the immutable profile and initial material untouched. The existing worker lease

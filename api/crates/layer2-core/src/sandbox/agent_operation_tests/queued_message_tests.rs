@@ -5,9 +5,10 @@ use layer3_adapter::{ConversationInput, ConversationUpdate, PromptResponse, Turn
 use crate::sandbox::store::{AgentLogStore, AgentStore, SandboxStore, SandboxWorkerStore};
 use crate::sandbox::{
     AgentMessageAssembly, AgentMessageOutcome, AgentOperationDelivery, AgentOperationError,
-    AgentOperationService, AgentStatus, AgentUpdateRecorder, DurableAgentUpdateRecorder,
-    InMemorySandboxStore, QueuedMessageState, SandboxImageRotationPhase, SandboxReviveCause,
-    SandboxRevivePhase, SandboxRotationIdentity, SandboxStatus, SandboxWorkState, SandboxWorkStep,
+    AgentOperationService, AgentStatus, AgentTaskStatus, AgentUpdateRecorder,
+    DurableAgentUpdateRecorder, InMemorySandboxStore, QueuedMessageState,
+    SandboxImageRotationPhase, SandboxReviveCause, SandboxRevivePhase, SandboxRotationIdentity,
+    SandboxStatus, SandboxWorkState, SandboxWorkStep,
 };
 
 use super::fixtures::*;
@@ -142,7 +143,7 @@ async fn lifecycle_queue_ambiguous_write_waits_for_execution_evidence() {
     let observed = store.get_agent(&agent.id).await.unwrap().unwrap();
     assert_eq!(observed.status, AgentStatus::Ready);
     assert_eq!(
-        observed.conversation.operation.unwrap().state,
+        observed.conversation.operation.as_ref().unwrap().state,
         AgentOperationDelivery::ExecutionObserved
     );
     assert_eq!(
@@ -150,6 +151,34 @@ async fn lifecycle_queue_ambiguous_write_waits_for_execution_evidence() {
         QueuedMessageState::Delivered
     );
     assert_eq!(inputs.lock().unwrap().len(), 1);
+    let history = store.agent_log(&agent.id, 0, 100).await.unwrap();
+    assert_eq!(
+        AgentTaskStatus::from_log(&observed, &history, false),
+        AgentTaskStatus::Completed
+    );
+    assert_eq!(
+        AgentTaskStatus::from_log(&observed, &history, true),
+        AgentTaskStatus::Working
+    );
+    for state in [
+        QueuedMessageState::Queued,
+        QueuedMessageState::DispatchFenced,
+        QueuedMessageState::RecoveryRequired,
+    ] {
+        let mut outstanding = observed.clone();
+        outstanding.conversation.queued_messages[0].state = state;
+        assert_eq!(
+            AgentTaskStatus::from_log(&outstanding, &history, false),
+            AgentTaskStatus::Working,
+            "outstanding {state:?} must block completion"
+        );
+    }
+    let mut active = observed.clone();
+    active.conversation.active_turn = Some(100);
+    assert_eq!(
+        AgentTaskStatus::from_log(&active, &history, false),
+        AgentTaskStatus::Working
+    );
 }
 
 #[tokio::test]

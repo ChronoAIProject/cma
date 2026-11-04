@@ -114,6 +114,25 @@ fn metadata_reconfiguration_preserves_generation_and_never_schedules_cleanup() {
     }
 }
 
+#[test]
+fn skill_version_update_is_detected_without_widening_reconfiguration() {
+    let mut value = binding();
+    value.profile.agent.skills = vec![crate::profiles::SkillRef {
+        source: crate::profiles::SkillSource::Ornn,
+        id: crate::SkillId::new("research"),
+        version: Some("1.0".into()),
+    }];
+    let mut changed = value.profile.clone();
+    changed.agent.skills[0].version = Some("1.1".into());
+    assert_eq!(
+        value.skill_version_update(&changed),
+        Some(("research".into(), "1.0".into(), "1.1".into()))
+    );
+
+    changed.agent.system_prompt = "changed".into();
+    assert!(value.skill_version_update(&changed).is_none());
+}
+
 #[tokio::test]
 async fn binding_cas_and_conversation_identity_survive_competing_creates_and_retirement() {
     let store = InMemorySandboxStore::default();

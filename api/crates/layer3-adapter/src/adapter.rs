@@ -16,6 +16,9 @@ use crate::{
 /// Drives the complete lifecycle of one sandbox and the agents inside it.
 #[async_trait::async_trait]
 pub trait SandboxAdapter: Send + Sync {
+    fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
+        None
+    }
     /// Optional provider proof and graceful recovery of unpublished runtimes.
     fn runtime_recovery(&self) -> Option<&dyn crate::RuntimeRecovery> {
         None

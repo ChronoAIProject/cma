@@ -1,9 +1,10 @@
 import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
-import { agentSignal, keyboardNavigation, lineMeta } from './treePresentation';
+import { agentSignal, keyboardNavigation } from './treePresentation';
+import { taskStateMeta, taskStatus } from './taskStatus';
 import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
-import { agentDisplayTitle } from '../agent/presentation';
+import { taskTitle } from './taskTitle';
 import type { AgentSummary, SandboxDetail } from '../api/types';
 
 interface AgentCard {
@@ -26,7 +27,7 @@ function agentCards(items: TreeProps['items'], statusFilter: string): readonly A
         .filter(
           (agent) =>
             agent.status !== 'deleted' &&
-            (statusFilter === 'all' || sandboxChildStatus(sandbox, agent.status) === statusFilter),
+            (statusFilter === 'all' || taskStatus(agent, sandbox) === statusFilter),
         )
         .map((agent) => ({ sandbox, agent })),
     )
@@ -65,19 +66,23 @@ export function PersonalAgentTree({
       onKeyDown={keyboardNavigation}
     >
       {cards.map(({ sandbox, agent }) => {
-        const status = sandboxChildStatus(sandbox, agent.status);
+        const status = taskStatus(agent, sandbox);
         return (
           <TreeRow
             key={agent.id}
             nodeId={`agent:${agent.id}`}
             level={1}
-            layout="line"
-            label={agentDisplayTitle(agent)}
-            icon={agentSignal(status, agent.id, 24, sandbox.color)}
+            label={taskTitle(agent)}
+            icon={agentSignal(
+              sandboxChildStatus(sandbox, agent.status),
+              agent.id,
+              24,
+              sandbox.color,
+            )}
             route={{ kind: 'agent', agentId: agent.id }}
             selected={route.kind === 'agent' && route.agentId === agent.id}
             dimmed={sandbox.status === 'paused'}
-            meta={lineMeta(status, agent.updatedAt)}
+            meta={taskStateMeta(status, refreshError !== undefined)}
             actions={agentActions(
               agent.status,
               permissions,

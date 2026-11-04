@@ -7,6 +7,27 @@ receipt, and render conversation history from the Agent event stream. Response
 
 ## Transport eligibility
 
+Task experience eligibility is independent of transport selection. Authenticated
+`GET /api/v2/ui/task-experience` returns `Cache-Control: private, no-store` and:
+
+```json
+{"object":"cma.ui.task_experience","schema_version":1,"account_id":"current-caller","capabilities":{"task_home_admission":false,"suggested_followup_admission":false,"desktop_enable":false,"browser_takeover":false,"replay_presentation":false}}
+```
+
+Only the authenticated caller's identity and selected capabilities are disclosed;
+cohort ids are never returned. Fence this observation to the current viewer and
+refresh on identity/focus changes. Errors, unsupported servers and unknown schemas
+do not authorize new entry. Policy eligibility does not prove an environment's
+capability. New task creation, answer-scoped follow-ups, desktop enablement and
+takeover are enforced by the server after current authorization and exact accepted
+recovery. Replay is a presentation switch; authorized history remains readable.
+Closing takeover stops new acquire/input/renew, while status, original receipt
+recovery and explicit return remain available under current authority. Keep the
+mounted return UI and the unchanged native15-second lease. Never clear pending
+keys, transport selection, drafts or retained records on eligibility changes.
+See the bounded `19-ROLLOUT-POLICY.md` component in the UI optimization plan for
+configuration and reader-floor requirements; it is not combined19 acceptance.
+
 `GET /api/v2/ui/transport` requires authentication and returns
 `Cache-Control: private, no-store`. Its `enabled` value is the process-start
 `CHRONO_V2_UI_TRANSPORT_ENABLED` flag combined with composed Responses,
@@ -110,6 +131,24 @@ baseline carries no control authority; observe response controls before a new
 control intent.
 
 ## Snapshot bootstrap
+
+The Computer operation replay also uses this public query, independently of the
+selected conversation input transport. `Prefer: cma-tool-output` includes bounded
+recorded output. Its index uses Agent incarnation, recorded turn sequence, tool
+identity and durable event cursor. A selected record freezes the reported title,
+status, output, timestamp and preceding plan from that turn. It does not project
+current files, browser images or current plans into the past.
+
+The Web reader retains at most 50 operation records per window and renders one
+selected record. Earlier windows and reloads reread authorized snapshot pages;
+historical folds stop at the selected cursor. Live catch-up uses the existing
+finite `events?follow=false&after_cursor=...` read from the last applied cursor,
+without rescanning the historical prefix or opening another live subscription.
+Return Live reads a fresh fixed-head snapshot. Querying these surfaces never
+admits or recovers commands, approvals, feedback, suggestions or control.
+Missing events, `history_gap`, expired positions and authorization failures must
+be explained instead of silently substituting current state. The retained event
+contract declares no expiry deadline or screen recording capability.
 
 `GET /api/v2/agents/{agent_id}/events/snapshot` captures a durable high-water
 mark and returns a chronological page. `limit` is 1–200, default 100. Follow
@@ -216,6 +255,22 @@ Stream membership evidence does not renew through polling. Dependency IO is
 bounded to 15 seconds and to any earlier membership deadline.
 
 ## Cursors and failures
+
+`Prefer: cma-tool-output` enables the optional `output: {text, truncated}` field
+on `tool_updated`, and the `tool_output_reported` event with `call_id` and
+`output` only. It composes with the existing preference tokens. Output-only ACP
+updates do not invent a status. Values are bounded reported text snapshots,
+not deltas to concatenate, terminal input, stdout/stderr channels or exit codes.
+The core retains at most 16 KiB of valid UTF-8 per output record. It extracts
+ACP text content or the adapter's explicitly reported formatted output;
+metadata-only transport deltas do not create one durable record per byte chunk.
+
+Without this preference, output fields are omitted and output-only entries have
+`kind: null`, preserving their cursor positions. Existing history authorization,
+Agent incarnation and turn boundaries apply. Old logs without output remain
+valid. Once new output records are written, older core binaries that reject the
+new durable variant/fields cannot read them: downgrade requires a compatible
+reader or restoring pre-upgrade data. There is no automatic rollback migration.
 
 Cursors are opaque incarnation-bound coordinates, never authorization.
 Current encoding uses `ag1.<digest>.<sequence>`; snapshot page tokens use the

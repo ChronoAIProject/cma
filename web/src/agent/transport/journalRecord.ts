@@ -1,7 +1,9 @@
 import type { AgentTransport } from './journal';
+import { answerContext, type AnswerContext } from '@chronoai/cma-sdk';
 import { parseControl, type ControlRecord } from './controlRecord';
 
 export type InputRecord = {
+  readonly answerContext?: AnswerContext;
   readonly key: string;
   readonly input: string;
 } & (
@@ -48,7 +50,16 @@ function identifier(value: unknown): string {
   return value;
 }
 function inputRecord(value: unknown): InputRecord {
-  const row = object(value, ['key', 'input', 'state', 'receipt']);
+  const hasContext =
+    typeof value === 'object' && value !== null && Object.hasOwn(value, 'answerContext');
+  const row = object(value, [
+    'key',
+    'input',
+    'state',
+    'receipt',
+    ...(hasContext ? ['answerContext'] : []),
+  ]);
+  const scope = hasContext ? { answerContext: answerContext(row.answerContext) } : {};
   const key = identifier(row.key);
   if (
     typeof row.input !== 'string' ||
@@ -57,12 +68,13 @@ function inputRecord(value: unknown): InputRecord {
   )
     return invalid();
   if (row.state === 'pending' && row.receipt === null)
-    return { key, input: row.input, state: 'pending', receipt: null };
+    return { key, input: row.input, state: 'pending', receipt: null, ...scope };
   if (row.state !== 'accepted') return invalid();
   const receipt = object(row.receipt, ['responseId', 'commandId']);
   return {
     key,
     input: row.input,
+    ...scope,
     state: 'accepted',
     receipt: {
       responseId: identifier(receipt.responseId),

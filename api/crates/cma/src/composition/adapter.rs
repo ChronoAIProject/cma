@@ -6,6 +6,18 @@ pub(super) struct ProductionAdapters {
     pub preparation: crate::sandbox::native_prepared::NativePreparedWorker,
 }
 
+pub(super) fn desktop_creation(
+    config: &Config,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Result<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>, String> {
+    layer2_core::sandbox::desktop_creation::DesktopCreationService::new(
+        adapter,
+        config.runtime.sandbox_image.clone(),
+        config.desktop_verified_runtime_image.clone(),
+    )
+    .map_err(str::to_owned)
+}
+
 pub(super) async fn production_adapter(
     config: &Config,
     store: Arc<crate::store::MongoSandboxStore>,

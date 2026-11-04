@@ -53,6 +53,7 @@ data:
   # Additional gates still require their own canary verification.
   # New file admissions only; supporting readers/workers must precede enablement.
   CHRONO_V2_UI_TRANSPORT_ENABLED: "true"
+  CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
@@ -221,6 +222,7 @@ data:
   # Profiles above and existing Sandbox reservations keep their recorded values.
   CHRONO_AGENT_MANAGER_SANDBOX_CPU: "2"
   CHRONO_AGENT_MANAGER_SANDBOX_MEMORY: "8Gi"
+  CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE: ""
   CHRONO_DEFAULT_AGENT_MODEL: "gpt-6"
   CHRONO_DEFAULT_AGENT_EFFORT: "high"
   # Read-only Secret Manager projection, resolved once at startup.

@@ -6,6 +6,8 @@ mod artifacts;
 mod attachments;
 #[path = "rest/channel_usage.rs"]
 mod channel_usage;
+#[path = "rest/deliverables.rs"]
+mod deliverables;
 #[path = "rest/hierarchy.rs"]
 mod hierarchy;
 #[path = "rest/lifecycle.rs"]

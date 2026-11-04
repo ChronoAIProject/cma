@@ -1,4 +1,4 @@
-import type { AgentStatus } from '@chronoai/cma-sdk';
+import type { AgentTaskStatus } from '@chronoai/cma-sdk';
 import { scopeValue } from './scope';
 import { useAccessSummaries } from './useAccessSummaries';
 import { ResourceAccessSummary } from './ResourceAccessSummary';
@@ -10,7 +10,9 @@ import { ResourceLink } from './ResourceLink';
 import { Button } from '../ui/Button';
 import { creationLabels } from '../agent/provenance';
 import { TreeRow } from '../shell/TreeRow';
-import { keyboardNavigation, stateMeta } from '../shell/treePresentation';
+import { keyboardNavigation } from '../shell/treePresentation';
+import { taskStateMeta, taskStatus } from '../shell/taskStatus';
+import { taskTitle } from '../shell/taskTitle';
 import { IconAgentPresetOutline16 } from '../ui/icons';
 import { channelLabel } from './channelLabels';
 
@@ -38,7 +40,7 @@ export function SharedAgentNavigation({
       const page = await client.agents.provenanceInventory({
         shared,
         organization,
-        status: statusFilter === 'all' ? undefined : (statusFilter as AgentStatus),
+        taskStatus: statusFilter === 'all' ? undefined : (statusFilter as AgentTaskStatus),
         cursor,
         limit: 50,
         signal,
@@ -58,11 +60,14 @@ export function SharedAgentNavigation({
     },
     [client, cursor, organization, shared, statusFilter],
   );
-  const current = useAuthorizedRead(read);
+  const current = useAuthorizedRead(read, true);
+  const stale = current.state.status === 'ready' && current.state.stale;
   const accessSummaries = useAccessSummaries(
     client,
     'agent',
-    current.state.status === 'ready' ? current.state.value.items.map((row) => row.agent_id) : [],
+    current.state.status === 'ready' && !current.state.stale
+      ? current.state.value.items.map((row) => row.agent_id)
+      : [],
     scopeValue(organization, shared),
   );
   return (
@@ -79,6 +84,7 @@ export function SharedAgentNavigation({
         <p role="alert">{current.state.message}</p>
       ) : (
         <>
+          {current.state.refreshError ? <p role="alert">{current.state.refreshError}</p> : null}
           {current.state.value.items.length === 0 ? (
             <p>No Agents match this scope and status on this page.</p>
           ) : (
@@ -93,18 +99,22 @@ export function SharedAgentNavigation({
                   key={row.agent_id}
                   nodeId={`agent:${row.agent_id}`}
                   level={1}
-                  label={row.title?.trim() || 'Untitled agent'}
+                  label={taskTitle({ id: row.agent_id, title: row.title })}
                   icon={<IconAgentPresetOutline16 />}
                   route={{ kind: 'agent', agentId: row.agent_id }}
                   selected={route?.kind === 'agent' && route.agentId === row.agent_id}
-                  meta={stateMeta(
-                    row.status,
+                  disabled={stale}
+                  meta={
                     <>
+                      {taskStateMeta(
+                        taskStatus({ status: row.status, taskStatus: row.task_status }),
+                        stale,
+                      )}
                       <span>{creationLabels[row.creation_origin]}</span>
                       <span>{channelLabel(row.channel_usage)}</span>
                       <ResourceAccessSummary compact value={accessSummaries.get(row.agent_id)} />
-                    </>,
-                  )}
+                    </>
+                  }
                   onNavigate={onNavigate}
                 />
               ))}
@@ -113,14 +123,14 @@ export function SharedAgentNavigation({
           <div className="scoped-navigation__pages">
             <Button
               size="sm"
-              disabled={cursors.length === 1}
+              disabled={current.state.stale || cursors.length === 1}
               onClick={() => setCursors((values) => values.slice(0, -1))}
             >
               Previous Agents
             </Button>
             <Button
               size="sm"
-              disabled={current.state.value.next === undefined}
+              disabled={current.state.stale || current.state.value.next === undefined}
               onClick={() => {
                 if (current.state.status === 'ready') {
                   const next = current.state.value.next;

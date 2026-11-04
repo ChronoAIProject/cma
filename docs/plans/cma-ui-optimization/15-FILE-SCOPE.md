@@ -1,0 +1,92 @@
+# Ticket 15 file scope
+
+Comparison base: integration `cf6774fd87dd39be8325e01984165efba12c7e87`.
+
+The 84 tracked paths below are the complete ticket delta after merging the latest integration. Runtime binary provenance and U/A/R results are in [15-EVIDENCE.md](15-EVIDENCE.md). Final source hashes and external artifact hashes are in `/Users/liuyitian/code/cma-ui-worktrees/ticket15-proof/manifest.json`.
+
+The capability seam remains Agent-scoped environment + browser GET/PUT/DELETE. Runtime CDP and input mediation stay private; no 16 Home toggle or 17 takeover/control route is implemented. Shared hunks preserve 14 file guards, 04 Console extraction, 08 previews, 18 operation replay, and both 14/07 SDK corpora. Test fixture extensions supply runtime responses only in controlled A tests; the native-chain proof forwards actual immutable runtime responses.
+
+- `api/crates/layer1-public/src/rest/agent_browser.rs`
+- `api/crates/layer1-public/src/rest/agent_filesystem.rs`
+- `api/crates/layer1-public/src/rest/openapi/composition.rs`
+- `api/crates/layer1-public/src/rest/public_contract_tests/browser_cases.rs`
+- `api/crates/layer1-public/src/rest/public_contract_tests/deliverable_cases.rs`
+- `api/crates/layer1-public/src/rest/public_contract_tests/filesystem_cases.rs`
+- `api/crates/layer1-public/src/rest/public_contract_tests/filesystem_runtime.rs`
+- `api/crates/layer1-public/src/rest/public_contract_tests/inventory.rs`
+- `api/crates/layer1-public/src/rest/public_contract_tests/native_browser_chain.rs`
+- `api/crates/layer1-public/tests/fixtures/public-contract-inventory.json`
+- `api/crates/layer1-public/tests/fixtures/public-contract/agent-browser.json`
+- `api/crates/layer2-core/src/sandbox/agent_attachments_tests.rs`
+- `api/crates/layer2-core/src/sandbox/agent_browser_service.rs`
+- `api/crates/layer2-core/src/sandbox/agent_environment.rs`
+- `api/crates/layer2-core/src/sandbox/agent_environment_service.rs`
+- `api/crates/layer2-core/src/sandbox/agent_filesystem.rs`
+- `api/crates/layer2-core/src/sandbox/runtime_health_tests.rs`
+- `api/crates/layer3-adapter/src/adapter.rs`
+- `api/crates/layer3-adapter/src/agent_sandbox/pool/backend_native_proof_tests.rs`
+- `api/crates/layer3-adapter/src/agent_sandbox/pool/backend_native_status_tests.rs`
+- `api/crates/layer3-adapter/src/browser.rs`
+- `api/crates/layer3-adapter/src/codex/construction.rs`
+- `api/crates/layer3-adapter/src/codex/mod.rs`
+- `api/crates/layer3-adapter/src/hosted/adapter_filesystem.rs`
+- `api/crates/layer3-adapter/src/hosted/adapter_sandbox.rs`
+- `api/crates/layer3-adapter/src/hosted/control_correlation.rs`
+- `api/crates/layer3-adapter/src/hosted/managed_context_tests.rs`
+- `api/crates/layer3-adapter/src/hosted/memory.rs`
+- `api/crates/layer3-adapter/src/hosted/memory_status.rs`
+- `api/crates/layer3-adapter/src/hosted/reply.rs`
+- `api/crates/layer3-adapter/src/lib.rs`
+- `api/crates/layer3-adapter/src/runtime_status.rs`
+- `api/crates/layer3-adapter/src/wire.rs`
+- `api/crates/layer3-adapter/src/workspace_removal_tests.rs`
+- `api/crates/layer4-runtime/src/browser.rs`
+- `api/crates/layer4-runtime/src/browser/command.cjs`
+- `api/crates/layer4-runtime/src/browser/devtools.cjs`
+- `api/crates/layer4-runtime/src/browser/mediator.cjs`
+- `api/crates/layer4-runtime/src/browser/native-chain.cjs`
+- `api/crates/layer4-runtime/src/browser/native-http-fixture.cjs`
+- `api/crates/layer4-runtime/src/browser/native-http.test.cjs`
+- `api/crates/layer4-runtime/src/browser/native-navigation.test.cjs`
+- `api/crates/layer4-runtime/src/browser/runtime-policy.test.cjs`
+- `api/crates/layer4-runtime/src/browser/unsupported-policy.test.cjs`
+- `api/crates/layer4-runtime/src/main.rs`
+- `api/crates/layer4-runtime/src/supervisor.rs`
+- `api/crates/layer4-runtime/src/supervisor_agent.rs`
+- `api/crates/layer4-runtime/src/supervisor_browser.rs`
+- `api/crates/layer4-runtime/src/supervisor_browser_http_tests.rs`
+- `api/crates/layer4-runtime/src/supervisor_execute.rs`
+- `api/crates/layer4-runtime/src/supervisor_filesystem_http_tests.rs`
+- `api/crates/layer4-runtime/src/supervisor_status.rs`
+- `api/crates/layer4-runtime/src/wire_operation.rs`
+- `docs/API_REST.md`
+- `docs/Web_Style.md`
+- `docs/plans/cma-ui-optimization/15-EVIDENCE.md`
+- `docs/plans/cma-ui-optimization/15-FILE-SCOPE.md`
+- `docs/plans/cma-ui-optimization/IMPLEMENTATION.md`
+- `docs/plans/cma-ui-optimization/issues/15-browser-live.md`
+- `infra/runtime/Dockerfile`
+- `sdk/rust/docs/agents.md`
+- `sdk/rust/src/agent_browser.rs`
+- `sdk/rust/src/lib.rs`
+- `sdk/rust/tests/agent_browser.rs`
+- `sdk/rust/tests/public_contract.rs`
+- `sdk/rust/tests/public_contract/agent_browser.rs`
+- `sdk/typescript/docs/agents.md`
+- `sdk/typescript/src/agent-browser.ts`
+- `sdk/typescript/src/client.ts`
+- `sdk/typescript/src/index.ts`
+- `sdk/typescript/tests/agent-browser.test.ts`
+- `sdk/typescript/tests/public-contract.test.ts`
+- `sdk/typescript/tests/public-contract/agent-browser.ts`
+- `web/e2e/browser-live-chain.check.ts`
+- `web/e2e/browser-live-chain.config.ts`
+- `web/e2e/browser-observation.check.ts`
+- `web/e2e/browser-observation.config.ts`
+- `web/src/agent/AgentSidePanel.tsx`
+- `web/src/agent/BrowserPanel.test.tsx`
+- `web/src/agent/environment/AgentComputer.css`
+- `web/src/agent/environment/BrowserPanel.tsx`
+- `web/src/agent/environment/availability.tsx`
+- `web/src/api/client.ts`
+- `web/src/api/rest.ts`

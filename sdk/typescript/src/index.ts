@@ -1,6 +1,12 @@
 /** Typed, repository-only client for CMA's public resource APIs. */
 
 export { Cma, createClient } from './client.js';
+export type {
+  TaskExperience,
+  TaskExperienceCapabilities,
+  TaskExperienceClient,
+} from './task-experience.js';
+export { answerContext, type AnswerContext } from './answer-context.js';
 export * from './resource-access.js';
 export * from './usage.js';
 export * from './agent-files.js';
@@ -8,6 +14,14 @@ export * from './bots.js';
 export * from './bot-setups.js';
 export * from './agent-delegations.js';
 export * from './gateway-interactions.js';
+export type { AgentBrowserClient, BrowserObservation, BrowserScope } from './agent-browser.js';
+export type {
+  AgentBrowserControlClient,
+  BrowserControl,
+  BrowserControlScope,
+  BrowserControlChange,
+  BrowserInput,
+} from './agent-browser-control.js';
 export {
   Agents,
   type AgentListOptions,
@@ -35,12 +49,15 @@ export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
 export type * from './agents/lifecycle.js';
+export type * from './agents/desktop.js';
 export type * from './agents/models.js';
 export type * from './agents/skills.js';
 export type * from './agents/access-requests.js';
 export type * from './agents/shared.js';
 export type * from './agents/provenance.js';
 export type * from './agents/artifacts.js';
+export type * from './agents/deliverables.js';
+export { DeliverableUnavailable } from './agents/deliverables.js';
 export type * from './agents/attachments.js';
 export type * from './agents/channel-usage.js';
 export type * from './agents/provider-associations.js';
@@ -112,12 +129,24 @@ export * from './event-worker-profiles.js';
 
 export type { AgentSettings, UpdateAgentSettingsRequest } from './agents/settings.js';
 
+export type { SuggestedReplySet, SuggestedReplyReading } from './agents/suggestions.js';
 export type {
   MessageVote,
   MessageFeedback,
   MessageFeedbackPage,
 } from './agents/message-feedback.js';
+export type {
+  FeedbackReason,
+  FeedbackReasonRequest,
+  FeedbackDetails,
+} from './agents/feedback-reasons.js';
 
 export * from './documents.js';
 
 export type { AgentPreferences, UpdateAgentPreferencesRequest } from './agents/preferences.js';
+export {
+  agentEnvironment,
+  environmentFeature,
+  type AgentEnvironment,
+  type EnvironmentFeature,
+} from './agent-environment.js';

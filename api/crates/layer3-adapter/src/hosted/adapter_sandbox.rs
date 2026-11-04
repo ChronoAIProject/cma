@@ -2,6 +2,9 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
+        Some(self)
+    }
     async fn open_desktop(&self, handle: &RuntimeHandle) -> crate::Result<DesktopConnectionHandle> {
         self.open_desktop(handle).await
     }

@@ -61,7 +61,12 @@ fn response(kinds: &[AgentLogKind]) -> V2ResponseObject {
         },
         metadata: Default::default(),
     };
-    project(reading, &snapshot).unwrap()
+    project(
+        &crate::agent_page::AgentPageOrigin::test(),
+        reading,
+        &snapshot,
+    )
+    .unwrap()
 }
 fn started(call: &str, title: &str) -> AgentLogKind {
     AgentLogKind::ToolCallStarted {
@@ -76,6 +81,7 @@ fn done(call: &str, status: &str) -> AgentLogKind {
         call_id: call.into(),
         status: status.into(),
         title: None,
+        output: None,
     }
 }
 fn kinds(events: &[Value]) -> Vec<&str> {

@@ -226,6 +226,7 @@
           ],
           "agents": [
             {
+              "task_status": "unknown",
               "id": "agt_contract",
               "worktree_id": "wkt_agt_contract",
               "workspace_id": "wks_route",

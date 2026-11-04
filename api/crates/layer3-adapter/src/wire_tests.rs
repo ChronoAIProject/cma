@@ -215,6 +215,7 @@ fn every_contract_3_reply_round_trips_and_failures_stay_typed() {
             name: "repo".into(),
             path: "/home/cma/repo".into(),
             resolved_commit: sha(),
+            source_commit: None,
         }),
         ResponseFrame::WorkspaceSetup(SetupReceipt {
             operation_id: "workspace:wks-repo:setup:v1".into(),

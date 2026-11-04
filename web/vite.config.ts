@@ -1,10 +1,12 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { systemText } from './build/systemText';
+import { devFixtures } from './build/devFixtures';
 import { fileURLToPath } from 'node:url';
 
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(({ command, mode }) => ({
+  // `npm run dev:fixtures` only: answers /auth and /api locally (build/devFixtures.ts).
+  plugins: [react(), ...(command === 'serve' && mode === 'fixtures' ? [devFixtures()] : [])],
   css: { postcss: { plugins: [systemText()] } },
   server: {
     fs: {
@@ -43,4 +45,4 @@ export default defineConfig({
       exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/main.tsx'],
     },
   },
-});
+}));

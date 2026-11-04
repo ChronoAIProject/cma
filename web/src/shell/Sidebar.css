@@ -220,6 +220,12 @@
   align-items: center;
   min-width: 0;
 }
+.navigation-filters__heading {
+  flex: 1;
+  padding-left: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
 /* Words, not a track: the switch changes the list, it is not an action. */
 .navigation-filters__views {
   display: flex;
