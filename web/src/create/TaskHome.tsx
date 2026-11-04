@@ -3,6 +3,7 @@ import type { CmaWebClient } from '../api/client';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { IconSendOutline16 } from '../ui/icons';
 import { validRepository } from './repository';
 import { useLifecycleIntent } from './lifecycleIntent';
 import { useLifecycleAgent } from './lifecycleAgent';
@@ -19,11 +20,20 @@ import './AgentLifecycleCard.css';
 import './TaskHome.css';
 
 const templates = [
-  ['Research', 'Compare three tools and summarize their strengths, limitations, and sources.'],
-  ['Spreadsheet', 'Create a spreadsheet to compare options, with clear columns and formulas.'],
-  ['Document', 'Write a concise document explaining the problem, findings, and next steps.'],
-  ['Website', 'Build a responsive website for this idea: '],
-  ['Code', 'Implement this feature and verify its behavior: '],
+  [
+    'Research a topic',
+    'Compare three tools and summarize their strengths, limitations, and sources.',
+  ],
+  [
+    'Analyze a spreadsheet',
+    'Create a spreadsheet to compare options, with clear columns and formulas.',
+  ],
+  [
+    'Write a document',
+    'Write a concise document explaining the problem, findings, and next steps.',
+  ],
+  ['Build a website', 'Build a responsive website for this idea: '],
+  ['Write code', 'Implement this feature and verify its behavior: '],
 ] as const;
 
 export interface TaskHomeProps {
@@ -133,7 +143,11 @@ function TaskComposer({
   }, [agent, handoff, lifecycle, onCreated, operation]);
   return (
     <section className="task-home" aria-labelledby={titleId}>
-      <h1 id={titleId}>What would you like to do?</h1>
+      <h1 id={titleId}>What should your Agent work on?</h1>
+      <p className="task-home__intro">
+        It gets its own computer, works through the task step by step, and asks you when it needs a
+        decision.
+      </p>
       {!policy.task_home_admission && !intent ? (
         <>
           <p role="status">
@@ -207,12 +221,11 @@ function TaskComposer({
           });
         }}
       >
-        <label className="field__label" htmlFor={inputId}>
-          Your task
-        </label>
-        <div className="input task-home__field">
+        <div className="task-home__composer">
           <textarea
-            className="input__control"
+            className="task-home__input"
+            aria-label="Your task"
+            placeholder="Describe a task, ask a question, or share an idea…"
             ref={input}
             id={inputId}
             value={draft.text}
@@ -223,76 +236,97 @@ function TaskComposer({
               draft.change(event.target.value);
             }}
           />
+          <div className="task-home__options">
+            <details className="task-home__option">
+              <summary>{draft.repositoryUrl ? 'Repository added' : 'Add a GitHub repo'}</summary>
+              <div className="task-home__settings">
+                {!workspaceId &&
+                !sandboxId &&
+                (repositorySupported || draft.repositoryUrl || draft.repositoryRef) ? (
+                  <>
+                    <label className="field__label" htmlFor={`${inputId}-repository`}>
+                      GitHub repository
+                    </label>
+                    <Input
+                      id={`${inputId}-repository`}
+                      type="url"
+                      value={draft.repositoryUrl}
+                      placeholder="Optional · https://github.com/owner/repository"
+                      onChange={(event) =>
+                        draft.changeRepository(event.target.value, draft.repositoryRef)
+                      }
+                    />
+                    <label className="field__label" htmlFor={`${inputId}-ref`}>
+                      Repository ref
+                    </label>
+                    <Input
+                      id={`${inputId}-ref`}
+                      value={draft.repositoryRef}
+                      placeholder="Default branch"
+                      onChange={(event) =>
+                        draft.changeRepository(draft.repositoryUrl, event.target.value)
+                      }
+                    />
+                    <p>The requested ref is verified during preparation.</p>
+                    {draft.repositoryUrl || draft.repositoryRef ? (
+                      <Button onClick={() => draft.changeRepository('', '')}>
+                        Clear repository
+                      </Button>
+                    ) : null}
+                  </>
+                ) : (
+                  <p>
+                    {workspaceId || sandboxId
+                      ? 'Repository context is inherited. Start from Home to choose another repository.'
+                      : 'Repository tasks are unavailable on this service.'}
+                  </p>
+                )}
+              </div>
+            </details>
+            <details className="task-home__option">
+              <summary>
+                {draft.machineIncluded || draft.desktop ? 'Desktop selected' : 'Desktop options'}
+              </summary>
+              <div className="task-home__settings">
+                <MachineOption
+                  available={machineIncludedAvailable}
+                  enabled={intent ? intent.body.machine_included === true : draft.machineIncluded}
+                  frozen={Boolean(intent)}
+                  onChange={draft.changeMachineIncluded}
+                />
+                <DesktopOption
+                  policyAllowed={policy.desktop_enable}
+                  client={client}
+                  workspaceId={workspaceId}
+                  sandboxId={sandboxId}
+                  enabled={intent ? intent.body.desktop === true : draft.desktop}
+                  frozen={Boolean(intent)}
+                  onChange={draft.changeDesktop}
+                  onAvailable={setDesktopAvailable}
+                />
+              </div>
+            </details>
+            <Button
+              type="submit"
+              variant="primary"
+              icon={<IconSendOutline16 />}
+              aria-label="Start task"
+              disabled={
+                !policy.task_home_admission ||
+                lifecycle.pending ||
+                Boolean(intent) ||
+                !canCreate ||
+                supported !== true
+              }
+            />
+          </div>
         </div>
-        {!workspaceId &&
-        !sandboxId &&
-        (repositorySupported || draft.repositoryUrl || draft.repositoryRef) ? (
-          <>
-            <label className="field__label" htmlFor={`${inputId}-repository`}>
-              GitHub repository
-            </label>
-            <Input
-              id={`${inputId}-repository`}
-              type="url"
-              value={draft.repositoryUrl}
-              placeholder="Optional · https://github.com/owner/repository"
-              onChange={(event) => draft.changeRepository(event.target.value, draft.repositoryRef)}
-            />
-            <label className="field__label" htmlFor={`${inputId}-ref`}>
-              Repository ref
-            </label>
-            <Input
-              id={`${inputId}-ref`}
-              value={draft.repositoryRef}
-              placeholder="Default branch"
-              onChange={(event) => draft.changeRepository(draft.repositoryUrl, event.target.value)}
-            />
-            <p>The requested ref is verified during preparation.</p>
-            {draft.repositoryUrl || draft.repositoryRef ? (
-              <Button onClick={() => draft.changeRepository('', '')}>Clear repository</Button>
-            ) : null}
-          </>
-        ) : (
-          <p>
-            {workspaceId || sandboxId
-              ? 'Repository context is inherited. Start from Home to choose another repository.'
-              : 'Repository tasks are unavailable on this service.'}
-          </p>
-        )}
-        <MachineOption
-          available={machineIncludedAvailable}
-          enabled={intent ? intent.body.machine_included === true : draft.machineIncluded}
-          frozen={Boolean(intent)}
-          onChange={draft.changeMachineIncluded}
-        />
-        <DesktopOption
-          policyAllowed={policy.desktop_enable}
-          client={client}
-          workspaceId={workspaceId}
-          sandboxId={sandboxId}
-          enabled={intent ? intent.body.desktop === true : draft.desktop}
-          frozen={Boolean(intent)}
-          onChange={draft.changeDesktop}
-          onAvailable={setDesktopAvailable}
-        />
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={
-            !policy.task_home_admission ||
-            lifecycle.pending ||
-            Boolean(intent) ||
-            !canCreate ||
-            supported !== true
-          }
-        >
-          Start task
-        </Button>
       </form>
       <div className="task-home__templates" role="group" aria-label="Task templates">
         {templates.map(([name, text]) => (
           <Button
             key={name}
+            variant="outline"
             onClick={() => {
               draft.change(text);
               input.current?.focus();
@@ -302,6 +336,7 @@ function TaskComposer({
           </Button>
         ))}
       </div>
+      <p className="task-home__defaults">GPT-6 · High reasoning · Autonomous</p>
       {supported === undefined ? <p role="status">Checking task creation…</p> : null}
       {supported === false ? (
         <p role="status">Task creation is unavailable on this service.</p>

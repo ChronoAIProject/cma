@@ -37,11 +37,12 @@
 .agent-toolbar__progress {
   display: flex;
   align-items: center;
-  min-height: 44px;
+  min-height: 28px;
   min-width: 0;
   padding: 4px 8px;
-  border-radius: 8px;
-  color: var(--dsw-alias-label-secondary);
+  border-radius: 16px;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-bg-layer-2);
   font-size: 12px;
   line-height: 18px;
   text-decoration: none;
@@ -144,6 +145,7 @@
   .agent-toolbar__progress {
     order: 1;
     flex-basis: 100%;
+    min-height: 44px;
   }
   .agent-toolbar__completion {
     order: 1;

@@ -24,7 +24,7 @@ test('R pinned native command output survives the public projection and page rel
     for (const attempt of ['initial', 'reload']) {
       if (attempt === 'reload') await page.reload();
       const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
-      await computer.getByRole('tab', { name: 'Operation output' }).click();
+      await computer.getByRole('tab', { name: 'Terminal' }).click();
       const operation = computer
         .getByRole('region', { name: 'Turn 3', exact: true })
         .getByRole('article');
@@ -32,7 +32,7 @@ test('R pinned native command output survives the public projection and page rel
       await expect(operation.getByText('Completed', { exact: true })).toBeVisible();
       expect(
         await computer
-          .getByRole('tabpanel', { name: 'Operation output' })
+          .getByRole('tabpanel', { name: 'Terminal' })
           .locator('input, textarea, [contenteditable=true], iframe')
           .count(),
       ).toBe(0);
@@ -124,7 +124,7 @@ test('LOCAL scoped environment refresh withdraws existing output and reports bro
     );
     await page.goto('/agents/agt_contract');
     const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
-    await computer.getByRole('tab', { name: 'Operation output' }).click();
+    await computer.getByRole('tab', { name: 'Terminal' }).click();
     await expect(computer.locator('pre')).toHaveText('environment-proof');
     await computer.getByRole('tab', { name: 'Browser', exact: true }).click();
     await expect(
@@ -136,7 +136,7 @@ test('LOCAL scoped environment refresh withdraws existing output and reports bro
       computer.getByText('Browser access is not permitted.', { exact: true }),
     ).toBeVisible();
     expect(await computer.locator('iframe, video, canvas').count()).toBe(0);
-    await computer.getByRole('tab', { name: 'Operation output' }).click();
+    await computer.getByRole('tab', { name: 'Terminal' }).click();
     await expect(computer.locator('pre')).toHaveText('environment-proof');
     outputAvailability = 'forbidden';
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -206,7 +206,7 @@ test('LOCAL output-only updates retain the reported status and explicit missing 
     );
     await page.goto('/agents/agt_contract');
     const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
-    await computer.getByRole('tab', { name: 'Operation output' }).click();
+    await computer.getByRole('tab', { name: 'Terminal' }).click();
     const partial = computer.getByRole('article', {
       name: 'Operation: printf partial',
       exact: true,
@@ -301,7 +301,7 @@ test('LOCAL ten thousand operation turns stay paged while assistant text streams
     );
     await page.goto('/agents/agt_contract');
     const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
-    await computer.getByRole('tab', { name: 'Operation output' }).click();
+    await computer.getByRole('tab', { name: 'Terminal' }).click();
     await expect(
       computer.getByRole('article', { name: 'Operation: printf proof-10000', exact: true }),
     ).toBeVisible({ timeout: 90_000 });
@@ -482,7 +482,7 @@ test('LOCAL files and recorded turn output preserve the composer and reading pos
       element.scrollTop = 100;
     });
     const position = await scroll.evaluate((element) => element.scrollTop);
-    await computer.getByRole('tab', { name: 'Operation output' }).click();
+    await computer.getByRole('tab', { name: 'Terminal' }).click();
     await expect(computer.getByText('computer-proof', { exact: true })).toBeVisible();
     await expect(computer.getByRole('heading', { name: 'Turn 1', exact: true })).toBeVisible();
     await expect(composer).toHaveValue('Keep my unsent draft');

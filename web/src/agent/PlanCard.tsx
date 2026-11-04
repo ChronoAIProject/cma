@@ -10,7 +10,6 @@ import {
 import type { StatusTone } from '../vocabulary/status';
 import type { ConversationState, PlanSnapshot } from './model';
 import { planAnchor, reportedPlanProgress } from './plans';
-import '../ui/Badge.css';
 import './PlanCard.css';
 import { Button } from '../ui/Button';
 
@@ -48,34 +47,44 @@ export function PlanCard({
   const stepsId = useId();
   const { completed, currentIndex, multiple, known, summary } = reportedPlanProgress(plan);
   return (
-    <section className="plan-card" aria-label="Plan" id={planAnchor(plan)} tabIndex={-1}>
-      <span className="plan-card__eyebrow" aria-hidden="true">
-        Plan
-      </span>
-      <div className="plan-card__status" role="status" aria-live="polite" aria-atomic="true">
-        {active ? null : (
-          <span className="plan-card__summary">
-            {outcome === 'completed'
-              ? known && completed === plan.entries.length && plan.entries.length > 0
-                ? `Completed all ${completed} steps`
-                : 'Response finished · Plan completion not fully reported'
-              : outcome === 'failed'
-                ? 'Response failed'
-                : outcome === 'interrupted'
-                  ? 'Response cancelled'
-                  : 'Outcome unknown'}
-          </span>
-        )}
-        <span className="plan-card__summary">{summary}</span>
-        {known ? null : <span className="plan-card__current">Progress unknown</span>}
-        {multiple ? <span className="plan-card__current">Multiple steps in progress</span> : null}
-        {!active || currentIndex < 0 ? null : (
-          <span className="plan-card__current">
-            Current step {currentIndex + 1}: {plan.entries[currentIndex]!.title}
-          </span>
-        )}
+    <section
+      className="plan-card"
+      data-active={active || undefined}
+      aria-label="Plan"
+      id={planAnchor(plan)}
+      tabIndex={-1}
+    >
+      <div className="plan-card__header">
+        <span className="plan-card__eyebrow" aria-hidden="true">
+          Plan
+        </span>
+        <div className="plan-card__status" role="status" aria-live="polite" aria-atomic="true">
+          {active ? null : (
+            <span className="plan-card__summary">
+              {outcome === 'completed'
+                ? known && completed === plan.entries.length && plan.entries.length > 0
+                  ? `Completed all ${completed} steps`
+                  : 'Response finished · Plan completion not fully reported'
+                : outcome === 'failed'
+                  ? 'Response failed'
+                  : outcome === 'interrupted'
+                    ? 'Response cancelled'
+                    : 'Outcome unknown'}
+            </span>
+          )}
+          {active || !known || completed !== plan.entries.length ? (
+            <span className="plan-card__summary">{summary}</span>
+          ) : null}
+          {known ? null : <span className="plan-card__current">Progress unknown</span>}
+          {multiple ? <span className="plan-card__current">Multiple steps in progress</span> : null}
+          {!active || currentIndex < 0 ? null : (
+            <span className="plan-card__current plan-card__current-step">
+              Current step {currentIndex + 1}: {plan.entries[currentIndex]!.title}
+            </span>
+          )}
+        </div>
       </div>
-      {known ? (
+      {known && open ? (
         <div
           className="plan-card__progress"
           role="progressbar"
@@ -96,9 +105,9 @@ export function PlanCard({
         onClick={() => setChosen(!open)}
       >
         {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
-        View plan and operations
+        {active ? (open ? 'Hide plan' : 'Show plan') : 'View plan and operations'}
       </button>
-      {onReplay && plan.runId ? (
+      {onReplay && plan.runId && open && !active ? (
         <Button size="sm" onClick={() => onReplay(plan.runId!)}>
           View plan and replay
         </Button>
@@ -108,9 +117,9 @@ export function PlanCard({
           {plan.entries.map((entry, index) => {
             const { word, tone } = planStatus(entry.status);
             return (
-              <li className="plan-card__step" key={index}>
+              <li className="plan-card__step" key={index} data-status={entry.status}>
                 <span className="plan-card__title">{entry.title}</span>
-                <span className="badge" data-tone={tone}>
+                <span className="plan-card__icon" data-tone={tone}>
                   {entry.status === 'completed' ? (
                     <IconCheckOutline14 />
                   ) : entry.status === 'in_progress' ? (
@@ -120,7 +129,7 @@ export function PlanCard({
                   ) : (
                     <IconQuestionOutline14 />
                   )}
-                  <span className="badge__word">{word}</span>
+                  <span className="plan-card__word">{word}</span>
                 </span>
               </li>
             );

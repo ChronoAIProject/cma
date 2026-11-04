@@ -229,7 +229,7 @@ it('enables only after owner action, exposes failure, and defaults an enabled Co
   render(view('files'));
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(onSelect).toHaveBeenCalledExactlyOnceWith('browser');
-  fireEvent.click(screen.getByRole('tab', { name: 'Operation output' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Terminal' }));
   fireEvent(window, new Event('focus'));
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(onSelect.mock.calls).toEqual([['browser'], ['activity']]);
