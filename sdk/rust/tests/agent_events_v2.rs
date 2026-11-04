@@ -111,7 +111,7 @@ async fn retains_rich_recorded_snapshot_and_exact_turn_binding() {
         .snapshot(AGENT, &SnapshotOptions::default())
         .await
         .unwrap();
-    assert_eq!(page.items.len(), 14);
+    assert_eq!(page.items.len(), 15);
     assert_eq!(
         page.through_cursor.as_str(),
         value["through_cursor"].as_str().unwrap()
@@ -189,7 +189,7 @@ async fn malformed_snapshot_never_reaches_the_consumer() {
     v["items"].as_array_mut().unwrap().remove(4);
     cases.push(v);
     let mut v = original.clone();
-    v["next_page_cursor"] = json!(format!("ags1.{}.15.14", v["incarnation"].as_str().unwrap()));
+    v["next_page_cursor"] = json!(format!("ags1.{}.16.15", v["incarnation"].as_str().unwrap()));
     cases.push(v);
     for value in cases {
         let server = WireServer::new().await;

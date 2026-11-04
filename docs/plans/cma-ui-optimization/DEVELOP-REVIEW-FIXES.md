@@ -129,3 +129,36 @@ Final workspace `cargo +1.96.1 clippy --all-targets --all-features --locked -- -
 warnings` passes after the integration merge and legacy-pin correction. Formatting,
 source sizes and whitespace checks also pass. The only observed unresolved test
 failure remains the unchanged Core live-skill fixture described above.
+
+## Final CI integration corrections
+
+The initial PR run passed 7,145 of 7,147 Backend tests. Its two failures were the
+stored-skill fixture above and the shared public-contract runner. The Core fixture
+now starts from a validated, already-stored Agent snapshot through a test-only
+constructor. It does not admit pre-resolved material through `create_agent` or
+change any production store guard. An unpinned profile selection ensures the
+unchanged assertion specifically proves the resolved installed version. All five
+live-skill tests pass.
+
+The strict public-contract runner now passes all 106 non-auth corpus files. Exact
+event expectations include the task's prompt-preview metadata event, its owner-only
+content, subsequent cursors, AG-UI completion/failure/replay frames and control
+receipts. Shared readers still receive a null event kind for private metadata.
+The binding-version scenario creates its initial profile through a real PUT using
+the same scenario credential before requesting the unsupported upgrade. A test
+router also preserves deliberately missing command dependencies without unwrapping
+the optional v2 composition. Existing error, privacy, pagination, replay and frame
+count assertions remain strict; temporary diagnostics were removed.
+
+The corrected corpus passes 3,135 targeted TypeScript SDK tests and the Rust SDK's
+shared-corpus, response-control, interruption and event-reader checks (20 tests).
+The Rust event-reader fixture expects 15 entries and still rejects a mismatched
+next-page boundary. Formatting and source-size checks pass. No CI gate, timeout,
+test ignore or product behavior changed in these fixture corrections.
+
+Runtime status compatibility is independently verified on the combined branch:
+only the new browser capability requires the computer-status Accept opt-in;
+established filesystem/upload advertisement remains identical to develop. Both
+original review axes and the follow-up compatibility finding are closed. PR #1311
+remains the authority for final-head CI and merge state. Human suggestion-quality
+acceptance and any deployment remain separate.
