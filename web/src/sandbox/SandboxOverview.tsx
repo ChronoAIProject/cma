@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { SandboxDetail, SandboxProfileSettings } from '../api/types';
 import { Button } from '../ui/Button';
 import { codexProviderName } from '../profiles/modelProvider';
@@ -18,6 +18,7 @@ export function SandboxOverview({
   runtime,
   busy,
   stale = false,
+  onAlwaysOnChange,
 }: {
   readonly sandbox: SandboxDetail;
   readonly contents?: SandboxContents;
@@ -28,12 +29,46 @@ export function SandboxOverview({
   readonly runtime?: ReactNode;
   readonly busy: boolean;
   readonly stale?: boolean;
+  readonly onAlwaysOnChange?: (alwaysOn: boolean) => Promise<void>;
 }) {
+  const [alwaysOnBusy, setAlwaysOnBusy] = useState(false);
+  const [alwaysOnError, setAlwaysOnError] = useState<string>();
   const resourceAgent = contents?.agents.find((agent) => agent.status !== 'deleted');
   const workspaces = sandbox.workspaces.filter((workspace) => workspace.status !== 'removed');
   return (
     <>
       {runtime}
+      <section className="sandbox-page__band">
+        {onAlwaysOnChange === undefined ? null : (
+          <div>
+            <h2>Sandbox controls</h2>
+            <label className="operator-switch">
+              <input
+                type="checkbox"
+                checked={sandbox.alwaysOn === true}
+                disabled={alwaysOnBusy || busy || stale}
+                onChange={(event) => {
+                  const value = event.target.checked;
+                  setAlwaysOnBusy(true);
+                  setAlwaysOnError(undefined);
+                  void onAlwaysOnChange(value)
+                    .catch((error: unknown) => {
+                      setAlwaysOnError(
+                        error instanceof Error ? error.message : 'Could not save this control.',
+                      );
+                    })
+                    .finally(() => setAlwaysOnBusy(false));
+                }}
+              />
+              Always on
+            </label>
+            <p className="sandbox-page__hint">
+              Always-on Sandboxes stay running when the administrator enables automatic pause.
+            </p>
+            {alwaysOnError === undefined ? null : <p role="alert">{alwaysOnError}</p>}
+          </div>
+        )}
+      </section>
       <section className="sandbox-page__band">
         <h2>Machine resources</h2>
         <p className="sandbox-page__hint">
