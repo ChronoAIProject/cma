@@ -75,7 +75,7 @@ export function DeliverablePreview({
     >
       <header className="delivery-preview__header">
         <h2>{item.reference.name}</h2>
-        <Button size="sm" onClick={onClose}>
+        <Button size="sm" onClick={onClose} aria-label="Close preview">
           Close preview
         </Button>
       </header>
@@ -100,15 +100,17 @@ export function DeliverablePreview({
           >
             {downloading ? 'Downloading…' : 'Download'}
           </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              setFailure(undefined);
-              reading.reload();
-            }}
-          >
-            Retry preview
-          </Button>
+          {reading.state.status === 'error' || (value && value.status !== 'ready') ? (
+            <Button
+              size="sm"
+              onClick={() => {
+                setFailure(undefined);
+                reading.reload();
+              }}
+            >
+              Retry preview
+            </Button>
+          ) : null}
         </div>
         {value && value.status !== 'error' && content ? (
           <p role="status">{statusText[value.status]}</p>
@@ -124,7 +126,9 @@ export function DeliverablePreview({
         ) : !content ? (
           <p role="status">{statusText[value.status as keyof typeof statusText]}</p>
         ) : previewFormat(item) === 'markdown' && text !== undefined ? (
-          <MessageContent content={text} inertResources />
+          <div className="delivery-preview__document">
+            <MessageContent content={text} inertResources />
+          </div>
         ) : (
           <FilePreview
             file={{

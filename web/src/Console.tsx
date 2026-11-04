@@ -375,6 +375,8 @@ function ConsoleContent({
       previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
       onPreviewOpen={() => setPanel(undefined)}
       phoneTitle="Agent Manager"
+      taskLayout
+      workspaceDetails={panel !== 'details'}
       detailsOpen={
         !accessUncertain &&
         (personalAgentId !== undefined || shared !== undefined) &&
@@ -387,6 +389,7 @@ function ConsoleContent({
           <AgentSidePanel
             key={route.agentId}
             agentId={route.agentId}
+            viewerId={user.id}
             shared={shared !== undefined}
             detail={ready?.detail}
             panel={panel}

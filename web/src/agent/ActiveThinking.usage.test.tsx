@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { V2AgentCursor, V2AgentEventKind } from '@chronoai/cma-sdk';
 import { MessageStream } from './MessageStream';
@@ -84,6 +84,8 @@ it.each(['responses', 'agui'] as const)(
             'agent',
           );
     const view = render(draw(observed));
+    expect(screen.queryByLabelText('Turn input tokens: 13,963')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
     expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
       /27,801 input · 107 output/,
     );
@@ -96,6 +98,7 @@ it.each(['responses', 'agui'] as const)(
     expect(input).toHaveTextContent('13,963 input');
     expect(screen.getByLabelText('Turn output tokens: 20')).toHaveTextContent('20 output');
     view.rerender(draw(start(observed, 32)));
+    fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
     expect(screen.queryByLabelText('Turn input tokens: 13,963')).not.toBeInTheDocument();
     expect(
       screen.getByRole('region', { name: 'What the agent is working through' }),
@@ -115,6 +118,8 @@ it('keeps legacy context-only reports distinct from real token counts and report
     kind: { type: 'usage', input_tokens: 0, output_tokens: 0, context_used: 23657 },
   });
   const view = render(draw(legacy));
+  expect(screen.queryByText('Turn input unavailable · output unavailable')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
   expect(
     screen.getByRole('region', { name: 'What the agent is working through' }),
   ).toHaveTextContent('Turn input unavailable · output unavailable');

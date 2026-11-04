@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from 'react';
 import type { ToolCall } from '../model';
 import { toolOutcome, toolOutcomeWord } from '../toolStatus';
 import { Button } from '../../ui/Button';
+import { OperationDetails } from './OperationDetails';
 
 const PAGE_SIZE = 50;
 
@@ -61,16 +62,12 @@ export const OperationOutput = memo(function OperationOutput({
           <h3>{turn ? `Turn ${turn}` : 'Turn not reported'}</h3>
           {tools.map((tool) => (
             <article key={tool.id} aria-label={`Operation: ${tool.title}`}>
-              <h4>{tool.title}</h4>
-              <p>{toolOutcomeWord(toolOutcome(tool, activeRunId), tool.status)}</p>
-              {tool.output ? (
-                <>
-                  <pre>{tool.output.text}</pre>
-                  {tool.output.truncated ? <p>Output truncated</p> : null}
-                </>
-              ) : (
-                <p>Output not reported</p>
-              )}
+              <OperationDetails
+                number={operations.indexOf(tool) + 1}
+                title={tool.title}
+                status={toolOutcomeWord(toolOutcome(tool, activeRunId), tool.status)}
+                output={tool.output}
+              />
             </article>
           ))}
         </section>
