@@ -45,7 +45,8 @@ async function runtimeFixture(modelOrigin, agentId = 'browser-agent', sandboxId 
   const origin = 'http://127.0.0.1:19415';
   const control = async frame => {
     const response = await fetch(origin + '/runtime/control', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(frame),
+      method: 'POST', headers: { 'content-type': 'application/json',
+        accept: 'application/vnd.chrono.cma.agent-computer-status+json' }, body: JSON.stringify(frame),
       signal: AbortSignal.timeout(20000), redirect: 'error',
     });
     assert.equal(response.status, 200, diagnostic);

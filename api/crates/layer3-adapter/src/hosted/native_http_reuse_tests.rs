@@ -468,8 +468,9 @@ async fn status_capability_opt_in_is_present_on_new_and_reused_native_http() {
     assert_eq!(requests.len(), 2);
     for received in requests {
         assert!(received.to_ascii_lowercase().contains(&format!(
-            "accept: {}",
-            crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE
+            "accept: {}, {}",
+            crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+            crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
         )));
     }
     assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 1);
