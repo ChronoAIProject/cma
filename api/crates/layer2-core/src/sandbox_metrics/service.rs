@@ -15,6 +15,9 @@ pub trait MetricsStore: Send + Sync {
     async fn page(&self, report: &Report, query: PageQuery) -> Result<Rows>;
     async fn detail(&self, report: &Report, id: &str) -> Result<Row>;
     async fn series(&self, report: &Report, query: SeriesQuery) -> Result<Series>;
+    async fn owners(&self, _report: &Report, _query: OwnerQuery) -> Result<Owners> {
+        Err(MetricsError::Unavailable)
+    }
 }
 
 pub struct MetricsService {
@@ -122,6 +125,18 @@ impl MetricsService {
             }
         }
         self.store.series(&report, query).await
+    }
+    pub async fn owners(
+        &self,
+        caller: &Caller,
+        id: &str,
+        query: OwnerQuery,
+        now: u64,
+    ) -> Result<Owners> {
+        authorize(caller, true)?;
+        query.validate()?;
+        let report = self.ready(caller, true, id, now).await?;
+        self.store.owners(&report, query).await
     }
     async fn ready(&self, caller: &Caller, admin: bool, id: &str, now: u64) -> Result<Report> {
         let report = self.report(caller, admin, id, now).await?;

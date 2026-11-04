@@ -345,6 +345,8 @@ pub struct Summary {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Infrastructure {
+    pub state: String,
+    pub unproven_count: u64,
     pub unassigned_pool: [Option<f64>; 3],
     pub unattributed: [Option<f64>; 3],
     pub observed_at: Option<u64>,
@@ -420,4 +422,12 @@ pub struct Series {
     pub unit: String,
     pub source: String,
     pub lines: Vec<Line>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Owners {
+    pub items: Vec<Owner>,
+    pub next: Option<String>,
+    pub report_id: String,
 }

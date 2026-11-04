@@ -31,7 +31,7 @@ pub enum MetricsError {
     Expired,
     #[error("reporting budget exhausted; retry with a narrower range")]
     Busy,
-    #[error("usage reporting is temporarily unavailable")]
+    #[error("usage reporting is temporarily unavailable; retry or use a narrower range")]
     Unavailable,
 }
 pub type Result<T> = std::result::Result<T, MetricsError>;
