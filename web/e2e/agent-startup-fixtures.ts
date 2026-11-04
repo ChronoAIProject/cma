@@ -62,6 +62,20 @@ export class LocalStartup {
         });
       if (url.pathname === '/auth/connections/check')
         return reply({ owner: 'local-owner', ready: true, checked_at: localTime, services: [] });
+      if (url.pathname === '/openapi.json')
+        return reply({
+          openapi: '3.1.0',
+          info: { title: 'CMA', version: '1' },
+          paths: {},
+          'x-cma-task-repository': true,
+          components: {
+            schemas: {
+              AgentLifecycleCreateRequest: {
+                properties: { name: { type: 'string' }, initial_message: { type: 'string' } },
+              },
+            },
+          },
+        });
       if (!url.pathname.startsWith('/api/')) return route.continue();
       if (url.pathname === `/api/v1/agents/${this.agent.id}/channel-usage`)
         return reply({
@@ -154,7 +168,38 @@ export class LocalStartup {
               },
         );
       }
-      switch (url.pathname) {
+      switch (url.pathname.replace(this.agent.id, 'agt_contract')) {
+        case '/api/v1/agents/agt_contract/files/tree':
+          return reply({ path: url.searchParams.get('path') ?? '', entries: [] });
+        case '/api/v1/agents/agt_contract/environment': {
+          const unsupported = {
+            state: 'unsupported',
+            reason: 'not_supported_by_contract',
+            scope: 'none',
+            writable: false,
+          };
+          return reply({
+            agent_id: this.agent.id,
+            policy_revision: 1,
+            runtime_incarnation: null,
+            revalidate_at: null,
+            files: {
+              state: 'available',
+              reason: 'authorized_mounted_home',
+              scope: 'mounted_home',
+              writable: true,
+            },
+            operation_output: {
+              state: 'available',
+              reason: 'recorded_output_only',
+              scope: 'agent_turn_history',
+              writable: false,
+            },
+            browser: unsupported,
+            replay: unsupported,
+            control: unsupported,
+          });
+        }
         case '/api/agent-manager/v1/agents/agt_contract/access-requests':
           return reply({ items: [] });
         case '/api/v1/agents/agt_contract/message-feedback':

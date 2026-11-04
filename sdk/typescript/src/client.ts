@@ -1,4 +1,5 @@
 import { Documents } from './documents.js';
+import { TaskExperiencePolicy } from './task-experience.js';
 import { SandboxUsage } from './usage.js';
 import { EventWorkerProfiles } from './event-worker-profiles.js';
 import { ProviderBindings } from './provider-bindings.js';
@@ -19,6 +20,8 @@ import type { OperationOptions } from './http.js';
 import { Agents } from './agents.js';
 import { AgentAttachments } from './agents/attachments.js';
 import { AgentFiles } from './agent-files.js';
+import { AgentBrowser } from './agent-browser.js';
+import { AgentBrowserControl } from './agent-browser-control.js';
 import { Marketplace } from './marketplace.js';
 import { Profiles } from './profiles.js';
 import { Sandboxes } from './sandboxes.js';
@@ -40,6 +43,7 @@ import { AgentEventsV2 } from './agent-events-v2/index.js';
 export class Cma {
   readonly #config: ResolvedConfig;
   readonly documents: Documents;
+  readonly taskExperience: TaskExperiencePolicy;
   readonly usage: SandboxUsage;
   readonly providerBindings: ProviderBindings;
   readonly gatewayRecords: GatewayRecords;
@@ -52,6 +56,8 @@ export class Cma {
   readonly agents: Agents;
   readonly agentAttachments: AgentAttachments;
   readonly agentFiles: AgentFiles;
+  readonly agentBrowser: AgentBrowser;
+  readonly agentBrowserControl: AgentBrowserControl;
   readonly resourceAccess: ResourceAccess;
   readonly sandboxes: Sandboxes;
   readonly workspaces: Workspaces;
@@ -79,6 +85,7 @@ export class Cma {
   constructor(config: ClientConfig = {}) {
     this.#config = resolveConfig(config);
     this.documents = new Documents(this.#config);
+    this.taskExperience = new TaskExperiencePolicy(this.#config);
     this.usage = new SandboxUsage(this.#config);
     this.providerBindings = new ProviderBindings(this.#config);
     this.gatewayRecords = new GatewayRecords(this.#config);
@@ -91,6 +98,8 @@ export class Cma {
     this.agents = new Agents(this.#config);
     this.agentAttachments = new AgentAttachments(this.#config);
     this.agentFiles = new AgentFiles(this.#config);
+    this.agentBrowser = new AgentBrowser(this.#config);
+    this.agentBrowserControl = new AgentBrowserControl(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);
     this.sandboxes = new Sandboxes(this.#config);
     this.workspaces = new Workspaces(this.#config);

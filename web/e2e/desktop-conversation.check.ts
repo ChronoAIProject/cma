@@ -77,7 +77,7 @@ test('LOCAL restores a cleared desktop without losing the conversation or granti
     await expect(desktop.getByRole('status')).toContainText('Connected');
     await message.fill('Keep this unsent draft while restoring the display.');
     const originalComposer = await message.elementHandle();
-    await desktop.getByRole('button', { name: 'Control desktop', exact: true }).click();
+    await desktop.getByRole('button', { name: 'Take control', exact: true }).click();
     const originalCanvas = await desktop.locator('canvas').elementHandle();
     // A real browser drawing-buffer reset leaves a transparent canvas while
     // the WebSocket remains open, matching the reported connected/blank state.
@@ -85,9 +85,7 @@ test('LOCAL restores a cleared desktop without losing the conversation or granti
       canvas.getContext('2d')?.reset();
     });
     await expect(desktop.getByRole('status')).toContainText('Restoring', { timeout: 6_000 });
-    await expect(
-      desktop.getByRole('button', { name: 'Control desktop', exact: true }),
-    ).toBeDisabled();
+    await expect(desktop.getByRole('button', { name: 'Take control', exact: true })).toBeDisabled();
     await expect.poll(() => stream.connections.length).toBe(2);
     await expect(desktop.getByRole('status')).toContainText('Connected');
     await expect(desktop.getByRole('status')).toContainText('Ask the Agent');
@@ -146,9 +144,12 @@ for (const width of [1600, 1024, 390]) {
         const message = page.getByRole('textbox', { name: 'Message', exact: true });
         const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
         await expect(message).toBeEnabled();
+        await message.fill('Open a terminal and run pwd where I can see it.');
+        const field = await message.elementHandle();
+        if (width < 1024) await page.getByRole('button', { name: 'Show Agent computer' }).click();
         await expect(desktop.getByRole('status')).toContainText('Connected');
         await expect(
-          desktop.getByRole('button', { name: 'Control desktop', exact: true }),
+          desktop.getByRole('button', { name: 'Take control', exact: true }),
         ).toBeEnabled();
         const expectPaintedDesktop = async () => {
           await expect
@@ -162,8 +163,6 @@ for (const width of [1600, 1024, 390]) {
             .toBe(true);
         };
         await expectPaintedDesktop();
-        await message.fill('Open a terminal and run pwd where I can see it.');
-        const field = await message.elementHandle();
         await expect
           .poll(() =>
             page.evaluate((sideBySide) => {
@@ -178,9 +177,9 @@ for (const width of [1600, 1024, 390]) {
                 canvas.left >= desktop.left &&
                 canvas.right <= desktop.right + 1 &&
                 canvas.bottom <= desktop.bottom + 1 &&
-                (sideBySide ? desktop.left >= chat.right - 1 : desktop.top >= chat.bottom - 1)
+                (sideBySide ? desktop.left >= chat.right - 1 : desktop.left >= 0)
               );
-            }, width === 1600),
+            }, width >= 1024),
           )
           .toBe(true);
         await page.screenshot({ path: info.outputPath(`split-${width}-${theme}.png`) });
@@ -192,9 +191,9 @@ for (const width of [1600, 1024, 390]) {
         await expectPaintedDesktop();
         expect(connections).toHaveLength(1);
         expect(await message.evaluate((node, original) => node === original, field)).toBe(true);
-        await page.getByRole('button', { name: 'Hide machine desktop', exact: true }).click();
+        await page.getByRole('button', { name: 'Back to conversation', exact: true }).click();
         await expect(desktop).toHaveCount(0);
-        await page.getByRole('button', { name: 'Open machine desktop', exact: true }).click();
+        await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
         await expect(desktop.getByRole('status')).toContainText('Connected');
         expect(await message.evaluate((node, original) => node === original, field)).toBe(true);
         await expect(message).toHaveValue('Open a terminal and run pwd where I can see it.');
@@ -203,7 +202,7 @@ for (const width of [1600, 1024, 390]) {
         fixture.live('text_delta', 'Opening the terminal on your desktop.');
         await expect(desktop.getByRole('status')).toContainText('Agent is working');
         await expect(
-          desktop.getByRole('button', { name: 'Control desktop', exact: true }),
+          desktop.getByRole('button', { name: 'Take control', exact: true }),
         ).toBeDisabled();
         await expect(
           page.getByText('Opening the terminal on your desktop.', { exact: true }),
@@ -211,10 +210,16 @@ for (const width of [1600, 1024, 390]) {
         fixture.append({ type: 'turn_completed', turn_sequence: 1 });
         await expect(desktop.getByRole('status')).toContainText('Ask the Agent');
         await expectPaintedDesktop();
-        await page.getByRole('button', { name: 'Show files', exact: true }).click();
+        const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+        await expect(computer).toBeVisible();
+        await computer.getByRole('tab', { name: 'Terminal' }).click();
+        await expect(desktop).toHaveCount(0);
+        await computer.getByRole('tab', { name: 'Browser', exact: true }).click();
         await expectPaintedDesktop();
-        await page.getByRole('button', { name: 'Close files', exact: true }).click();
-        await expectPaintedDesktop();
+        await computer.getByRole('button', { name: 'Back to conversation', exact: true }).click();
+        await expect(computer).toHaveCount(0);
+        await expect(desktop).toHaveCount(0);
+        await expect(message).toHaveValue('Open a terminal and run pwd where I can see it.');
         expect(fixture.writes).toEqual([]);
         expect(fixture.boundary.writes).toEqual([]);
       } finally {
@@ -250,7 +255,7 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) {
       );
       await page.goto('/agents/agt_contract');
       const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
-      const control = desktop.getByRole('button', { name: 'Control desktop', exact: true });
+      const control = desktop.getByRole('button', { name: 'Take control', exact: true });
       await expect(desktop.getByRole('status')).toContainText('Loading the desktop screen');
       await expect(control).toBeDisabled();
       await expect(desktop.locator('.agent-desktop__loading')).toBeVisible();

@@ -1,0 +1,122 @@
+.answer-deliveries {
+  min-width: 0;
+}
+
+.answer-deliveries__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.answer-deliveries__heading {
+  margin: 16px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.answer-deliveries__type {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 44px;
+  flex: none;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.answer-deliveries__row:has([aria-pressed='true']) {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.answer-deliveries__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.answer-deliveries__row > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.answer-deliveries__detail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.answer-deliveries__name {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.answer-deliveries__name[aria-pressed] {
+  cursor: pointer;
+  text-align: left;
+  min-height: 32px;
+  padding: 0;
+  color: inherit;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.answer-deliveries__name[aria-pressed='true'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.answer-deliveries__name:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.answer-deliveries__metadata,
+.answer-deliveries__status,
+.answer-deliveries__pending {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.answer-deliveries__pending {
+  min-height: 82px;
+  margin-top: 12px;
+}
+
+.answer-deliveries__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+@media (max-width: 30rem) {
+  .answer-deliveries__row {
+    flex-wrap: wrap;
+  }
+
+  .answer-deliveries__actions {
+    width: 100%;
+    padding-left: 24px;
+  }
+
+  .answer-deliveries__actions .button,
+  .answer-deliveries__pending .button {
+    min-height: 44px;
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "suggestions-owner",
+      "operation": "GET /api/v1/agents/{id}/suggestions",
+      "scenario": "suggestions_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/suggestions?turn_sequence=3&answer_sequence=5",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "status": "expired",
+          "set": null,
+          "observation": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "suggestions-foreign",
+      "operation": "GET /api/v1/agents/{id}/suggestions",
+      "scenario": "suggestions_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/suggestions?turn_sequence=3&answer_sequence=5",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "suggestions-anonymous",
+      "operation": "GET /api/v1/agents/{id}/suggestions",
+      "scenario": "suggestions_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/suggestions?turn_sequence=3&answer_sequence=5",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "suggestions-forbidden",
+      "operation": "GET /api/v1/agents/{id}/suggestions",
+      "scenario": "suggestions_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/suggestions?turn_sequence=3&answer_sequence=5",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "suggestions-unavailable",
+      "operation": "GET /api/v1/agents/{id}/suggestions",
+      "scenario": "suggestions_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/suggestions?turn_sequence=3&answer_sequence=5",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "suggestions-invalid_query",
+      "operation": "GET /api/v1/agents/{id}/suggestions",
+      "scenario": "suggestions_invalid_query",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/suggestions?turn_sequence=3&answer_sequence=invalid",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

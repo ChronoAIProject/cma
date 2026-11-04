@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useCmaClient } from '../api/context';
 import type { AgentModelOption, AgentSettingsView } from '../api/client';
 import { Button } from '../ui/Button';
@@ -6,29 +6,26 @@ import { AgentSettingsError } from '../api/rest/agentSettings';
 import { Presence } from '../ui/Presence';
 import { ModelEffortPicker } from './ModelEffortPicker';
 import { PermissionChip } from './PermissionChip';
+import { effortLabel, modelLabel, permissionLabel } from './settingsChoices';
+import { IconChevronDownOutline14 } from '../ui/icons';
 import './ComposerSettings.css';
 
-/**
- * The Agent's model, reasoning effort and permission mode, in the composer's
- * control row — `docs/Web_Style.md` §13.
- *
- * It renders loose pieces rather than one box: the permission chip, the model
- * and effort chip and a status line each take their own place in the
- * composer's grid. Choosing changes a draft only; nothing reaches the Agent
- * until Apply, and an uncertain update is retried with its original key.
- */
 export function SessionSettings({
   agentId,
   active,
+  runtimeReady,
   busy,
   authorizeUpdate,
 }: {
   readonly agentId: string;
   readonly active: boolean;
+  readonly runtimeReady: boolean;
   readonly busy: boolean;
   readonly authorizeUpdate?: (signal: AbortSignal) => Promise<void>;
 }) {
   const client = useCmaClient();
+  const [expanded, setExpanded] = useState(false);
+  const settingsId = useId();
   const [value, setValue] = useState<AgentSettingsView>();
   const [saved, setSaved] = useState<AgentSettingsView>();
   const [error, setError] = useState<string>();
@@ -40,7 +37,7 @@ export function SessionSettings({
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string>();
   useEffect(() => {
-    if (!active) return;
+    if (!active || !runtimeReady) return;
     const request = new AbortController();
     void (async () => {
       setModelsLoading(true);
@@ -62,7 +59,7 @@ export function SessionSettings({
       }
     })();
     return () => request.abort();
-  }, [active, agentId, busy, client, modelsReload]);
+  }, [active, runtimeReady, agentId, busy, client, modelsReload]);
   const [intent, setIntent] = useState<{ key: string; body: AgentSettingsView } | undefined>(
     undefined,
   );
@@ -170,32 +167,58 @@ export function SessionSettings({
     setValue(next);
     setConfirmed(false);
   };
+  const summary = draft
+    ? `${modelLabel(models, draft.model)} · ${effortLabel(draft.reasoning_effort)} · ${permissionLabel(draft.permission_mode)}`
+    : undefined;
   return (
     <>
       {draft ? (
         <>
-          <PermissionChip
-            value={draft.permission_mode}
-            disabled={locked}
-            onChange={(permission_mode) => change({ ...draft, permission_mode })}
-          />
-          <ModelEffortPicker
-            value={draft}
-            saved={saved}
-            models={models}
-            modelsLoading={modelsLoading}
-            modelsError={modelsError}
-            onRetryModels={() => setModelsReload((count) => count + 1)}
-            disabled={locked}
-            onChange={change}
-          />
+          <button
+            type="button"
+            className="composer-chip agent-settings__summary"
+            aria-label={`Agent settings: ${summary}`}
+            aria-expanded={expanded}
+            aria-controls={settingsId}
+            title={`Agent settings: ${summary}`}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            <span className="composer-chip__label">{summary}</span>
+            <IconChevronDownOutline14 />
+          </button>
+          <div
+            id={settingsId}
+            role="region"
+            aria-label="Agent settings"
+            className="agent-settings__panel"
+            hidden={!expanded}
+          >
+            {expanded ? (
+              <>
+                <PermissionChip
+                  value={draft.permission_mode}
+                  disabled={locked}
+                  onChange={(permission_mode) => change({ ...draft, permission_mode })}
+                />
+                <ModelEffortPicker
+                  value={draft}
+                  saved={saved}
+                  models={models}
+                  modelsLoading={modelsLoading}
+                  modelsError={modelsError}
+                  onRetryModels={() => setModelsReload((count) => count + 1)}
+                  disabled={locked}
+                  onChange={change}
+                />
+              </>
+            ) : null}
+          </div>
         </>
       ) : error ? null : (
         <p className="agent-settings__loading" role="status">
           Loading Agent settings…
         </p>
       )}
-      {/* Present only when there is something to say; an empty line takes no room. */}
       <div className="agent-settings__status">
         {value?.pending ? (
           <p role="status">Waiting for the runtime to confirm these settings.</p>

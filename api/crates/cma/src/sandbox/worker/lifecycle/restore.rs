@@ -16,7 +16,7 @@ use super::super::support::{
 };
 use super::super::SandboxWorker;
 use super::checkpoint::{pinned_checkpoint, require_quiet_agent};
-use super::support::{lifecycle_lease, model_error, operation_id};
+use super::support::{lifecycle_lease, model_error, operation_id, replacement_runtime_version};
 use crate::sandbox::runtime_mapping::sandbox_spec;
 
 impl SandboxWorker {
@@ -485,19 +485,4 @@ pub(super) fn replacement_runtime_generation(
         .checked_add(1)
         .ok_or_else(|| WorkerFailure::terminal_validation("lifecycle authority is exhausted"))?;
     Ok(next_agent_generation.max(next_authority_generation))
-}
-
-fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> String {
-    sandbox
-        .admitted_runtime_update_target()
-        .map(str::to_owned)
-        .or_else(|| {
-            sandbox
-                .lifecycle
-                .suspended_runtime
-                .as_ref()
-                .map(|binding| binding.runtime_version.clone())
-        })
-        .or_else(|| sandbox.profile.content.runtime_image.clone())
-        .unwrap_or_else(|| deployed.to_owned())
 }

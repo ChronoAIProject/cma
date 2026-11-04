@@ -880,6 +880,16 @@ key and body; use a fresh key only after a definitive refusal. A successful
 
 ## Configuration Inventory
 
+The lifecycle flags `machine_included` and `desktop` retain independent meanings.
+`machine_included` selects `CHRONO_MACHINE_SANDBOX_IMAGE` and records
+`CMA_MACHINE_INCLUDED=1` for the shared desktop and authenticated noVNC transport.
+`desktop` requests per-Agent browser preparation before the first task, subject
+to task-experience admission and `CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE` proof.
+A request enabling both must verify the selected machine image against that exact
+desktop image reference. Accepted operations retain both original flags on replay.
+Both runtime build targets install the current browser command alongside the
+supervisor; the Omarchy toolchain donor does not determine that command version.
+
 Every quoted `CHRONO_*` key read by `cma/src/config.rs` and its modules is listed
 below. `.github/scripts/check-config-keys.sh` checks manifest/reference parity;
 `.github/scripts/check-config-docs.mjs` checks this documentation. Secret values
@@ -895,6 +905,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed browser origins; default local `http://localhost:5173`. Cookie-authenticated Event Gateway writes and actor-link consent accept these origins plus `CHRONO_SERVER_PUBLIC_URL`; Desktop WebSockets use the same explicit origin set; duplicate, missing cookie-auth Origin and unlisted origins remain refused. Retain both CMA domains during migration. |
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
 | `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the integrated v2 browser transport; false code default, true in the production ConfigMap for new Agent tabs (including durable Starting input). Existing tabs retain their selected transport. Deploy with the matching API/Web release, ConfigMap compare-and-set, and API rollout; does not disable existing public v2 API routes or change an accepted request protocol |
+| `CHRONO_TASK_EXPERIENCE_POLICY` | Strict JSON, absent defaults to `{"mode":"disabled","accounts":[],"capabilities":[]}`; production also disables it. Modes: `disabled`, `accounts`, `all`. Exact authenticated subject ids only (at most1000, nonempty, at most256 UTF-8 bytes, no whitespace/control characters); ids are never returned to clients. Explicit capabilities: `task_home_admission`, `suggested_followup_admission`, `desktop_enable`, `browser_takeover`, `replay_presentation`. Unknown/duplicate fields, capabilities or accounts and contradictory settings fail startup: accounts must be empty outside accounts mode; disabled must have no capabilities. Empty account cohort admits nobody. Policy eligibility does not establish environment capability. Changes require an API rollout with compatible retained readers; closing new admission preserves exact accepted recovery, manual conversation, retained history/files/feedback, browser status and explicit return. See `plans/cma-ui-optimization/19-ROLLOUT-POLICY.md`. |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_IMAGE_MANAGER_BASE_URL` | Image Manager service base URL used for delegated image resolution; defaults to the CMA public origin with `/api/image-manager` when unset |
@@ -915,6 +926,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SANDBOX_API_KEY_FILE` | Required readable nonempty mounted provider key; never a ConfigMap value |
 | `CHRONO_SANDBOX_NAMESPACE` | Required DNS-label namespace for CMA-owned provider resources |
 | `CHRONO_SANDBOX_IMAGE` | Required immutable OCI reference ending in `@sha256:<64 lowercase hex digits>` |
+| `CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE` | Optional exact image reference verified for desktop creation; unset or the empty string defaults to no verified desktop runtime. A configured value must have a nonempty image name followed by `@sha256:` and exactly 64 lowercase hexadecimal digits; invalid values fail desktop-service composition. The selected image (or an existing Sandbox's recorded runtime image) must match the complete reference exactly. This declaration does not replace runtime proof: the adapter must expose browser and retained-home support, configured capacity must be at least 1000 millicores and 2048 MiB, and an existing Sandbox must be active, without a pending lifecycle operation, and pass current runtime checks. It neither enables the task-experience policy nor upgrades or restarts existing Sandboxes. |
 | `CHRONO_MACHINE_SANDBOX_IMAGE` | Optional immutable OCI reference for the Agent Manager **Machine Included** choice. It must point to a runtime built with `RUNTIME_DESKTOP=1` (XFCE session, panel, desktop icons, Thunar, terminal and Chromium). Leaving it unset makes that choice fail closed. |
 | `CHRONO_SANDBOX_PROVIDER` | Runtime provider selector: `opensandbox` (default) or `agent-sandbox`; selects the direct agent-sandbox backend for new allocations |
 | `CHRONO_RETAIN_OPENSANDBOX` | Whether to retain the legacy OpenSandbox endpoint configuration; `true` by default, and required while existing OpenSandbox runtimes remain addressable |

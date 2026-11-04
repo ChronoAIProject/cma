@@ -10,6 +10,9 @@ string_enum! { /// Access projection marker for nonpersonal readers.
 /// Safe shared Agent detail without parent configuration or runtime identity.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SharedAgent {
+    /// Browser page for the actual CMA Agent, when available.
+    #[serde(default)]
+    pub callback_url: Option<String>,
     /// Explicit shared projection marker.
     pub access: SharedAgentAccess,
     /// CMA Agent identifier.
@@ -38,7 +41,7 @@ pub enum AccessibleAgent {
     /// Complete owner detail including parent context.
     Personal(Box<Agent>),
     /// Agent-only detail for other authorized readers.
-    Shared(SharedAgent),
+    Shared(Box<SharedAgent>),
 }
 impl AccessibleAgent {
     /// The CMA Agent identity in either projection.
@@ -71,7 +74,7 @@ pub enum AccessibleAgentSummary {
     /// Existing personal list summary including parent context.
     Personal(Box<super::AgentSummary>),
     /// Shared summary without parent or profile context.
-    Shared(SharedAgent),
+    Shared(Box<SharedAgent>),
 }
 impl<'de> Deserialize<'de> for AccessibleAgentSummary {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {

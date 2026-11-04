@@ -2,35 +2,54 @@
 
 <!-- nav: 5 Agents -->
 
+`client.agents().suggestions(agent_id, cma_sdk::answer_context::AnswerContext {
+turn_sequence: 3, answer_sequence: 5 }).await` reads a saved contextual result.
+This GET never generates or sends input. A `ready` reading contains a stable
+`SuggestedReplySet`; pending, empty, unavailable, failed and expired states do
+not block ordinary conversation. Preserve the returned scope for an unchanged
+suggestion's normal conditional send. Observations retain measured tokens and
+latency, with provider-reported cost when available and `None` when unknown.
+
 Use `agents().create_lifecycle` for Image Manager selections and inline Agent
 configuration. Omit the image to use the deployment default. Persist the exact
 request and key before submission so an uncertain result can be retried safely.
 
 ```rust,no_run
 use cma_sdk::{Client, IdempotencyKey};
-use cma_sdk::agents::{AgentLifecycleCreateRequest, AgentLifecycleStatus};
+use cma_sdk::agents::AgentLifecycleCreateRequest;
 # async fn provision(client: Client) -> Result<(), Box<dyn std::error::Error>> {
 let key = IdempotencyKey::new(std::env::var("CMA_CREATE_KEY")?)?;
 let request = AgentLifecycleCreateRequest {
+    desktop: None,
+    initial_message: Some("Compare three tools and cite your sources.".into()),
     workspace_id: None,
     sandbox_id: None,
     name: "Research".into(), machine_included: false, image: None, repository: None, profile: None,
 };
 let receipt = client.agents().create_lifecycle(&request, &key).await?;
-let operation = client.agents().read_lifecycle(&receipt.id).await?;
-if operation.status == AgentLifecycleStatus::Succeeded {
-    // Only now is operation.agent_id ready to open.
-}
+let _operation = client.agents().read_lifecycle(&receipt.id).await?;
 # Ok(())
 # }
 ```
 
-The receipt acknowledges durable admission. Poll `read_lifecycle` until global
-success; a phase event's `ready` state is only one gate. `WaitingForConnection`
+The receipt acknowledges durable admission. Read `read_lifecycle` and verify
+its exact `agent_id` and owned parent hierarchy before opening the preparing
+conversation. Operation success means preparation, not task completion;
+a phase event's `ready` state is only one gate. `WaitingForConnection`
 supplies missing services and an owner-bound connection target. After the owner
 verifies those connections, repeat `create_lifecycle` with the original request
 and key to resume the same operation. `Failed` is terminal and includes a safe
 error when available.
+
+`initial_message` preserves exact text, including whitespace and newlines, in
+the original idempotent request. It must contain non-whitespace text and fit
+262144 UTF-8 bytes. The server queues it durably as `purpose: task` after
+environment preparation, replacing the readiness prompt. Omission retains
+legacy `setup` behavior. With `repository`, a new Sandbox prepares the pinned
+source checkout before delivering the task; omit existing Workspace and Sandbox
+IDs in this mode. Discover support in the served OpenAPI request schema and its
+`x-cma-task-repository` extension. Do not send a separate first message after
+creation. Read Agent detail/transcript for delivery, recovery and results.
 
 For a new desktop Sandbox, set `machine_included: true` and omit `image`.
 `agents().read(id).await?.desktop` reports its desktop capability. Call
@@ -497,7 +516,23 @@ Some(MessageVote::Up))` sets a positive vote; use `MessageVote::Down` to switch 
 These idempotent metadata writes need no command key and never create turns.
 Serialize changes to one message and avoid replaying an old write after a newer
 choice. Current owner authority is required; shared readers cannot inspect or
-change these votes.
+change these votes. New writes accept only the nonempty Assistant message with
+the greatest durable sequence in a successfully completed turn. Other targets
+return 404; historical votes remain readable, and the up/down/null request and
+response shapes remain unchanged.
+
+`agents().feedback_details(agent_id, "event:42")` returns `FeedbackDetails` with
+viewer/Agent/answer identities, `version`, `reasons`, `comment`, `updated_at`,
+and `request_id`. After confirming down, call `set_feedback_reasons(agent_id,
+"event:42", &FeedbackReasonRequest { expected_version, request_id, reasons,
+comment })`. `FeedbackReason` has six variants: `Inaccurate`, `Unanswered`,
+`UnusableSteps`, `Incomplete`, `Unclear`, `Other`; selections must be distinct.
+Use an empty optional comment or at most 500 Unicode code points, and a stable
+ASCII request ID (1–128 letters/digits or `_.:-`). Exact retries recover the same
+durable result; stale versions or changed request reuse return 409
+`feedback_version_conflict`. Reread after an uncertain outcome. Up/null atomically
+clears saved details for all clients, while retaining a version fence. No Agent
+input or training operation is created.
 
 ### Agent session share links
 
@@ -527,6 +562,98 @@ is automatically retried. Retain local edits after a conflict and reread before
 an explicit retry. View links may browse/download; only owners and current
 view-write links may change files. Older runtimes return
 `file_runtime_unsupported` until updated while idle.
+
+### Computer observation
+
+`client.agent_files().environment(agent_id)` reads current feature availability,
+reasons and scopes with a policy revision, opaque runtime incarnation and renewal
+deadline. The SDK validates the Agent identity. Each later operation still
+checks authorization. Files retain the mounted-home scope. Authorized operation
+record replay is available with `operation_records_only`, `agent_turn_history`
+and `writable: false`; browser and control require verified runtime capabilities
+and explicit browser enablement.
+
+Use `SnapshotOptions { tool_output: true, ..Default::default() }` and
+`TailOptions { tool_output: true, ..Default::default() }` for Agent events v2, or
+`agents().events_with_output(agent_id, options)` for legacy event reads. Reported
+output is a bounded `{text, truncated}` replacement snapshot. Output-only events
+do not carry a status. Responses v2 `ActivityItem.recorded_output` reads the
+additive `cma:output` extension while the standard `output` remains absent.
+
+Replay uses `agent_events_v2().snapshot(agent_id, options)` and the existing
+opaque Agent and page cursors. Read no more than 200 events per page and retain
+the fixed `through_cursor` while following `next_page_cursor`. A historical
+record is identified by Agent, recorded turn sequence and event cursor. Fold
+only through that cursor for its command, output, status, timestamp and preceding
+plan; absent snapshots stay unknown. Fresh authorized reads restore a position
+after reload. Keep live reception separate and use a fresh snapshot for Live.
+Expose gaps and unavailable or expired positions; no expiry deadline is promised
+by the retained event contract. These queries admit no command or control effects.
+
+### Answer deliverables
+
+`agents().answer_deliverables(agent_id, "event:42", None)` reads the explicitly
+referenced resources in one completed final answer. Each item keeps its original
+Agent, answer, turn, resource kind and version evidence. A live home file remains
+a mutable file; an approved artifact and a document source revision retain their
+independent identities. Ordinary filenames in prose do not create deliveries.
+
+`describe_deliverable(agent_id, &DeliverableResource::LiveFile { path:
+"report.csv".into() }, None)` verifies an explicit resource and returns a marker
+for inclusion as a standalone line in the final answer. It does not publish files.
+Document references use an explicit positive source revision. Agent runtime tools
+return the same verified markers with publication receipts.
+
+`read_answer_deliverable(agent_id, answer_id, delivery_id, true, None)` verifies
+one item's bytes on an explicit retry. Metadata listing does not eagerly read
+file bodies. `download_answer_deliverable(agent_id, answer_id, &item, None)`
+returns opaque bytes only after checking the size, SHA-256 and current independent
+resource authorization, including another authorization read after buffering.
+Dropping the future cancels the operation; all download steps share one deadline.
+Saving the bytes is the caller's choice. Changed live files cannot substitute for
+the answer's original bytes; changed documents can still deliver their original
+source revision. Pass a document share token only when independently authorized.
+
+### Browser observation
+
+Read `agent_files().environment(agent_id)` for the current opaque
+`runtime_incarnation` and browser availability. The owner explicitly calls
+`agent_browser().configure(agent_id, incarnation, true)` to enable that Agent's
+browser in that runtime incarnation. Observation defaults off. Inspect the
+returned state: a successful HTTP response can truthfully report `unsupported`.
+
+`agent_browser().read(agent_id, incarnation, Some(observer), context)` returns a
+bounded observation under current authorization. Pin the returned context,
+reuse one observer per mounted viewer and stop reads on Agent, account or access
+changes. Dropping the future cancels the read. Real frames expire after 3000 ms;
+duplicates never renew freshness. Poll no faster than 1000 ms and call
+`agent_browser().release(agent_id, incarnation, observer)` when hidden or closed.
+Release preserves the page. Observation grants no input authority.
+
+### Exclusive browser control
+
+Use `agent_browser_control().read(agent_id, &scope)` to read current control and
+its bounded audit, and `change(agent_id, &change)` for acquire, input, renew and
+return. `BrowserControlScope` pins the environment incarnation, browser context,
+unique client id and independent random UUID `client_key`. The SDK sends the
+private key in `X-CMA-Browser-Client`, never in the query or JSON body.
+
+Only a current owner may acquire, recover a selected receipt, input, renew or
+return. Every mutation needs an original UUID operation id and the last observed
+revision; input, renew and return also need the acquired lease token. The fixed
+15-second lease uses a monotonic runtime clock and requires explicit renewal.
+Inputs are viewport clicks, bounded text and supported keys without modifiers.
+Native Agent input is fenced while the user holds control. Return preserves the
+same browser context and page and creates no task or conversation input.
+
+After a lost response, read the original operation or resend the identical
+change. Do not issue another operation until its outcome is known. A receipt
+contains both the original operation revision and current control state; it may
+report an expired lease. Stop input/renewal on account, authority, incarnation,
+offline or visibility changes. Public audit contains at most 128 metadata entries
+and no input text, client keys or lease tokens. It is volatile per incarnation.
+See `docs/plans/cma-ui-optimization/17-CONTROL-CONTRACT.md` for reader floors and
+bounded revocation behavior.
 
 ## Binding event media continuations
 

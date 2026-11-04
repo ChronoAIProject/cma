@@ -31,6 +31,9 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/agents/{id}/environment" => {
+            c.check(client.agent_files().environment(c.param("id")).await)
+        }
         "GET /api/v1/agents/{id}/desktop" => c.check(client.agents().desktop(c.param("id")).await),
         "GET /api/v1/agents/{id}/files/tree" => c.check(
             client
@@ -140,10 +143,34 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .deny_access_request(c.param("id"), c.param("request_id"), &c.key()?)
                 .await,
         ),
+        "GET /api/v1/agents/{id}/suggestions" => c.check(
+            client
+                .agents()
+                .suggestions(
+                    c.param("id"),
+                    cma_sdk::answer_context::AnswerContext {
+                        turn_sequence: c.number("turn_sequence")?.unwrap_or_default(),
+                        answer_sequence: c.number("answer_sequence")?.unwrap_or_default(),
+                    },
+                )
+                .await,
+        ),
         "GET /api/v1/agents/{id}/message-feedback" => c.check(
             client
                 .agents()
                 .message_feedback(c.param("id"), c.events()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/messages/{message_id}/feedback" => c.check(
+            client
+                .agents()
+                .feedback_details(c.param("id"), c.param("message_id"))
+                .await,
+        ),
+        "PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons" => c.check(
+            client
+                .agents()
+                .set_feedback_reasons(c.param("id"), c.param("message_id"), &c.body()?)
                 .await,
         ),
         "PUT /api/v1/agents/{id}/messages/{message_id}/feedback" => {
@@ -186,6 +213,15 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "GET /api/v1/agent-lifecycle/{id}" => {
             c.check(client.agents().read_lifecycle(c.param("id")).await)
         }
+        "GET /api/v1/desktop-capability" => c.check(
+            client
+                .agents()
+                .desktop_capability(&cma_sdk::agents::DesktopCreationScope {
+                    workspace_id: c.query.get("workspace_id").cloned(),
+                    sandbox_id: c.query.get("sandbox_id").cloned(),
+                })
+                .await,
+        ),
         "POST /api/v1/sandboxes/{id}/workspaces/inline" => c.check(
             client
                 .workspaces()
@@ -458,6 +494,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
             client
                 .agents()
                 .provenance_inventory(&AgentProvenanceInventoryOptions {
+                    task_status: c.tag("task_status")?,
                     shared: c.q("shared").as_deref() == Some("true"),
                     scope: AccessibleAgentListOptions {
                         organization: c.q("organization"),

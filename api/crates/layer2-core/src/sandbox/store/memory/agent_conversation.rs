@@ -140,6 +140,7 @@ fn apply_conversation(
             .require_current()
             .map_err(|_| SandboxStoreError::Conflict)?;
     }
+    super::suggestions::enqueue(candidate, &id);
     Ok(appended)
 }
 

@@ -20,6 +20,9 @@ use crate::{
 pub const AGENT_RESOURCES_STATUS_MEDIA_TYPE: &str =
     "application/vnd.chrono.cma.agent-resources-status+json";
 
+pub const AGENT_COMPUTER_STATUS_MEDIA_TYPE: &str =
+    "application/vnd.chrono.cma.agent-computer-status+json";
+
 /// A stable reference to one agent slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -147,6 +150,8 @@ pub struct AgentHomeRemoveReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireOperation {
+    BrowserControl,
+    Browser,
     UploadAgentAttachment,
     ListAgentFiles,
     ReadAgentFile,
@@ -214,6 +219,8 @@ pub enum CheckpointUploadResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum RequestFrame {
+    BrowserControl(crate::BrowserControlRequest),
+    Browser(crate::BrowserRequest),
     UploadAgentAttachment(crate::AgentAttachmentUpload),
     ListAgentFiles(crate::AgentFileListRequest),
     ReadAgentFile(crate::AgentFileReadRequest),
@@ -250,6 +257,8 @@ pub enum RequestFrame {
 impl RequestFrame {
     pub const fn operation(&self) -> WireOperation {
         match self {
+            Self::Browser(_) => WireOperation::Browser,
+            Self::BrowserControl(_) => WireOperation::BrowserControl,
             Self::UploadAgentAttachment(_) => WireOperation::UploadAgentAttachment,
             Self::ListAgentFiles(_) => WireOperation::ListAgentFiles,
             Self::ReadAgentFile(_) => WireOperation::ReadAgentFile,
@@ -289,6 +298,8 @@ impl RequestFrame {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ResponseFrame {
+    BrowserControl(crate::BrowserControlReceipt),
+    Browser(crate::BrowserReceipt),
     UploadAgentAttachment(crate::AgentAttachmentReceipt),
     ListAgentFiles(crate::AgentFileListReceipt),
     ReadAgentFile(crate::AgentFileReadReceipt),

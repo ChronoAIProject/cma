@@ -10,9 +10,11 @@ import {
   DETAILS_MIN,
   clampWidth,
   computeColumns,
+  computeWorkspaceColumns,
 } from './columns';
 import { IconPanelLeftOutline16 } from '../ui/icons';
 import './AppFrame.css';
+import { usePlateFocus } from '../ui/plate';
 
 /**
  * The page — `docs/Web_Style.md` §9.
@@ -45,7 +47,11 @@ interface AppFrameProps {
   readonly details?: ReactNode;
   /** Whether the details column is asked for. */
   readonly detailsOpen: boolean;
+  readonly workspaceDetails?: boolean;
+  readonly taskLayout?: boolean;
   readonly compactDetailsOverlay?: boolean;
+  readonly compactDetailsInline?: boolean;
+  readonly onDetailsClose?: () => void;
   /**
    * Whether the owner has asked for the sidebar to be closed.
    *
@@ -69,7 +75,11 @@ export function AppFrame({
   center,
   details,
   detailsOpen,
+  workspaceDetails = false,
+  taskLayout = false,
   compactDetailsOverlay = false,
+  compactDetailsInline = false,
+  onDetailsClose,
   overlay,
   sidebarCollapsed = false,
   sidebarLocked = false,
@@ -77,9 +87,11 @@ export function AppFrame({
   phoneTitle = 'CMA',
 }: AppFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
+  const detailsRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  const [sidebarWidth, setSidebarWidth] = useState(taskLayout ? SIDEBAR_MIN : SIDEBAR_DEFAULT);
   const [detailsWidth, setDetailsWidth] = useState(DETAILS_MIN);
+  const [workspaceWidth, setWorkspaceWidth] = useState<number>();
   const [dragging, setDragging] = useState(false);
   /*
    * A handle reports displacement from pointer-down, so its width must be
@@ -169,7 +181,10 @@ export function AppFrame({
    * a sheet over the page, and a top bar holds the way back to it.
    */
   const phone = viewport > 0 && viewport < CENTER_MIN;
-  const solved = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
+  const solved =
+    workspaceDetails && detailsOpen
+      ? computeWorkspaceColumns(viewport, sidebarPreference, workspaceWidth)
+      : computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
   const columns = phone
     ? { sidebar: effectiveSidebarCollapsed ? 0 : solved.sidebar, center: viewport, details: 0 }
     : solved;
@@ -213,9 +228,21 @@ export function AppFrame({
   const onSidebarDrag = useCallback((to: number) => {
     setSidebarWidth(clampWidth(to, SIDEBAR_MIN, SIDEBAR_MAX));
   }, []);
-  const onDetailsDrag = useCallback((to: number) => {
-    setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
-  }, []);
+  const onDetailsDrag = useCallback(
+    (to: number) => {
+      if (workspaceDetails) setWorkspaceWidth(clampWidth(to, 360, viewport - solved.sidebar - 360));
+      else setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
+    },
+    [workspaceDetails, viewport, solved.sidebar],
+  );
+  const detailsInline = detailsOpen && columns.details === 0 && compactDetailsInline;
+  const detailsOverlay =
+    detailsOpen && columns.details === 0 && compactDetailsOverlay && !detailsInline;
+  usePlateFocus(
+    detailsRef,
+    onDetailsClose ?? (() => {}),
+    detailsOverlay && onDetailsClose !== undefined,
+  );
 
   return (
     <div
@@ -223,9 +250,8 @@ export function AppFrame({
       className="frame"
       data-dragging={dragging ? '' : undefined}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
-      data-details-overlay={
-        detailsOpen && columns.details === 0 && compactDetailsOverlay ? '' : undefined
-      }
+      data-details-overlay={detailsOverlay ? '' : undefined}
+      data-details-inline={detailsInline ? '' : undefined}
       data-sidebar-overlay={sidebarOverlay ? '' : undefined}
       data-phone={phone ? '' : undefined}
       style={{
@@ -236,6 +262,7 @@ export function AppFrame({
     >
       <div
         className="frame__sidebar"
+        inert={detailsOverlay || undefined}
         hidden={phone && effectiveSidebarCollapsed}
         style={
           sidebarOverlay
@@ -245,7 +272,7 @@ export function AppFrame({
       >
         {renderedSidebar}
       </div>
-      <div className="frame__center" inert={sidebarOverlay || undefined}>
+      <div className="frame__center" inert={sidebarOverlay || detailsOverlay || undefined}>
         {phone && sidebarOwnsToggle ? (
           <div className="frame__topbar">
             {sidebarLocked ? null : (
@@ -267,7 +294,15 @@ export function AppFrame({
       {sidebarOverlay ? (
         <div className="frame__scrim" aria-hidden="true" onClick={toggleSidebar} />
       ) : null}
-      <div className="frame__details">{details}</div>
+      <div
+        className="frame__details"
+        ref={detailsRef}
+        role={detailsOverlay ? 'dialog' : undefined}
+        aria-modal={detailsOverlay || undefined}
+        aria-label={detailsOverlay ? 'Agent panel' : undefined}
+      >
+        {details}
+      </div>
 
       {/*
         The handles are children of the frame rather than of the columns they
@@ -300,8 +335,12 @@ export function AppFrame({
           at={columns.sidebar + columns.center}
           label="Resize the details column"
           value={columns.details}
-          min={DETAILS_MIN}
-          max={Math.min(DETAILS_MAX, viewport - columns.sidebar - CENTER_MIN)}
+          min={workspaceDetails ? 360 : DETAILS_MIN}
+          max={
+            workspaceDetails
+              ? viewport - columns.sidebar - 360
+              : Math.min(DETAILS_MAX, viewport - columns.sidebar - CENTER_MIN)
+          }
           onResize={onDetailsDrag}
           onDrag={(dx) => {
             // Dragging left widens: the column grows from its leading edge.

@@ -1,6 +1,13 @@
 import { writeFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
+import {
+  channelActivityFrame,
+  channelCapabilities,
+  cmaSession,
+  gatewaySession,
+  teamChannel,
+} from '../build/fixtures/eventGateway';
 
 test('LOCAL channel map preserves node drafts and renders every producer and consumer in both themes', async ({
   page,
@@ -31,197 +38,25 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await page.addInitScript(() => localStorage.setItem('cma:appearance', 'light'));
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL!);
-  await page.route('**/auth/session', (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        subject: 'local-owner',
-        display_name: 'Local owner',
-        capabilities: [
-          'use_own_sandboxes',
-          'create_sandbox',
-          'delete_own_sandbox',
-          'manage_own_bots',
-        ],
-      },
-    }),
-  );
+  await page.route('**/auth/session', (route) => route.fulfill({ json: cmaSession }));
   await page.route('**/api/v1/bots?**', (route) =>
     route.fulfill({ json: { items: [], next_after: null } }),
   );
-  const channel = {
-    channel_id: 'channel-local',
-    record_id: 'record-local',
-    version: 3,
-    created_at: '2026-10-27T01:00:00Z',
-    owner: { subject: 'local-owner', display_name: 'Local owner' },
-    provider: { slug: 'cma_codex', level: 'l2' },
-    definition: {
-      name: 'Team workspace',
-      schema_version: 1,
-      provider: { slug: 'cma_codex', binding_id: 'binding-local' },
-      sources: ['telegram', 'whatsapp', 'lark', 'discord'].map((platform) => ({
-        type: 'nyxid_relay',
-        platform,
-        issuer: 'https://nyx.example',
-        key_id: 'public-signing-key',
-        route_ids: [`${platform}-team-route`],
-        admission: { type: 'all' },
-      })),
-      partition: { version: 1, key: 'conversation_and_sender' },
-      reply: { auto_final: true, ack_after_ms: 1500, sinks: [{ type: 'source' }] },
-      routing: {
-        version: 1,
-        default_consumer: { name: 'assistant', label: 'CMA Agent' },
-        default_targets: ['default'],
-        consumers: [
-          {
-            id: 'reviewer',
-            name: 'reviewer',
-            label: 'Nyxbot reviewer',
-            provider: { slug: 'nyxbot', binding_id: 'binding-reviewer' },
-          },
-        ],
-        rules: [],
-      },
-    },
-    endpoints: {
-      custom_event_url: 'https://gateway.example/events',
-      nyxid_callback_url: 'https://gateway.example/callback',
-    },
-  };
   let writes = 0;
   await page.route('**/api/event-gateway/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (route.request().method() !== 'GET') writes++;
-    if (path.endsWith('/auth/session'))
-      return route.fulfill({
-        json: {
-          authenticated: true,
-          subject: 'local-owner',
-          permissions: ['cma-eg:admin'],
-          expires_at: 9999999999,
-        },
-      });
+    if (path.endsWith('/auth/session')) return route.fulfill({ json: gatewaySession });
     if (path.endsWith('/v1/channel-capabilities'))
-      return route.fulfill({
-        json: {
-          agent_tools: (
-            [
-              [
-                'replyToEvent',
-                'Send a reply to the event sender with the original destination and confirmed delivery receipt.',
-              ],
-              [
-                'updateMessage',
-                'Update a confirmed message when its transport supports edits and the saved source still authorizes the action.',
-              ],
-              [
-                'sendTyping',
-                'Show a typing indicator when the original platform and conversation support it.',
-              ],
-              [
-                'readEventContext',
-                'Read the incoming event, original sender and conversation, and the capabilities of its source.',
-              ],
-              [
-                'readEventAttachment',
-                'Read an authorized image, document, audio transcript or video attachment from the original event.',
-              ],
-              [
-                'readMessageCapabilities',
-                'Check the deletion and reaction capabilities of a confirmed message before attempting an action.',
-              ],
-              [
-                'deleteMessage',
-                'Delete an authorized confirmed bot message within the platform permission and age limits.',
-              ],
-              [
-                'setMessageReaction',
-                'Set or clear the bot’s own reaction on an authorized confirmed message without changing other reactions.',
-              ],
-              [
-                'readEventHistory',
-                'Read earlier messages in the original native Discord conversation with source conversation history consent.',
-              ],
-              ['prepareFormReply', 'Prepare a native WhatsApp form with explicit source consent.'],
-            ] as const
-          ).map(([name, description]) => ({
-            name,
-            description,
-            read_only: name.startsWith('read'),
-            destructive: ['updateMessage', 'deleteMessage', 'setMessageReaction'].includes(name),
-            idempotent: name.startsWith('read'),
-            open_world: true,
-          })),
-          relay_authoring: {
-            dynamic_sources_writes_enabled: true,
-            relay_raw_verification_writes_enabled: true,
-            outbound_messages_writes_enabled: true,
-            native_media_writes_enabled: true,
-            multi_consumer_writes_enabled: true,
-            native_bot_mentions_writes_enabled: true,
-            thread_contract_writes_enabled: true,
-            platforms: ['telegram', 'whatsapp', 'lark', 'discord'].map((id) => ({
-              id,
-              label: id,
-              verification_modes: [
-                { id: 'raw_event', writes_enabled: true },
-                { id: 'nyxid_normalized', writes_enabled: true },
-              ],
-            })),
-          },
-        },
-      });
+      return route.fulfill({ json: channelCapabilities });
     if (path.endsWith('/v1/connections')) return route.fulfill({ json: { items: [] } });
     if (path.endsWith('/activity/stream'))
       return route.fulfill({
         contentType: 'text/event-stream',
-        body: `id: activity-fixture\nevent: activity\ndata: ${JSON.stringify({
-          cursor: 'activity-fixture',
-          retention_days: 7,
-          limit: 50,
-          has_more: false,
-          items: [
-            {
-              event_id: 'event-fixture',
-              source: { type: 'nyxid_relay', platform: 'telegram' },
-              actor: { id: 'producer-fixture', display_name: 'Project updates', kind: 'service' },
-              conversation: { id: 'team-chat', kind: 'group' },
-              occurred_at: '2026-10-27T01:30:00Z',
-              received_at: '2026-10-27T01:30:01Z',
-              consumers: [
-                {
-                  consumer_id: 'reviewer',
-                  display_name: 'Nyxbot reviewer',
-                  agent_id: 'agent-reviewer',
-                  provider: 'nyxbot',
-                  conversation_id: 'review-conversation',
-                  state: 'completed',
-                  dispatched_at: '2026-10-27T01:30:02Z',
-                  accepted_at: '2026-10-27T01:30:03Z',
-                  produced_at: '2026-10-27T01:30:04Z',
-                  completed_at: '2026-10-27T01:30:05Z',
-                  response_id: 'response-fixture',
-                  deliveries: [
-                    {
-                      step: 'answer',
-                      destination: 'origin',
-                      outcome: 'confirmed',
-                      observed_at: '2026-10-27T01:30:05Z',
-                      confirmed_at: '2026-10-27T01:30:05Z',
-                      platform_message_id: 'message-fixture',
-                      recipients: [{ kind: 'telegram_chat', id: 'team-chat', thread_id: null }],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        })}\n\n`,
+        body: channelActivityFrame,
       });
     if (path.endsWith('/v1/channels'))
-      return route.fulfill({ json: { items: [channel], next_cursor: null } });
+      return route.fulfill({ json: { items: [teamChannel], next_cursor: null } });
     return route.fulfill({ status: 404, json: { detail: 'Unexpected local request' } });
   });
   await page.setViewportSize({ width: 1600, height: 1000 });

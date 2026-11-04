@@ -25,8 +25,12 @@ export function FileExplorer({
   onClose,
   onAccessChanged,
   panel = false,
+  embedded = false,
+  active = true,
 }: {
   readonly panel?: boolean;
+  readonly embedded?: boolean;
+  readonly active?: boolean;
   readonly client: AgentFilesClient;
   readonly agentId: string;
   readonly readOnly: boolean;
@@ -91,6 +95,7 @@ export function FileExplorer({
   );
   const load = useCallback(
     async (path: string, signal: AbortSignal) => {
+      if (signal.aborted) return;
       setLoading((value) => new Set([...value, path]));
       try {
         const entries = await client.list(agentId, path, { signal });
@@ -109,6 +114,7 @@ export function FileExplorer({
     [agentId, client, failure],
   );
   useEffect(() => {
+    if (!active) return;
     const request = new AbortController();
     lifetime.current = request;
     queueMicrotask(() => {
@@ -118,7 +124,7 @@ export function FileExplorer({
       request.abort();
       readRequest.current?.abort();
     };
-  }, [load]);
+  }, [load, active]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(undefined), 4000);
@@ -131,6 +137,7 @@ export function FileExplorer({
     else action();
   };
   const openFile = async (file: AgentFileEntry) => {
+    if (!active || lifetime.current?.signal.aborted) return;
     readRequest.current?.abort();
     const request = new AbortController();
     readRequest.current = request;
@@ -157,7 +164,7 @@ export function FileExplorer({
   };
   const run = async (action: (signal: AbortSignal) => Promise<void>) => {
     const signal = lifetime.current?.signal;
-    if (mutation.current || !signal || signal.aborted || denied) return;
+    if (!active || mutation.current || !signal || signal.aborted || denied) return;
     mutation.current = true;
     setBusy(true);
     setError(undefined);
@@ -167,7 +174,7 @@ export function FileExplorer({
       if (!signal.aborted) failure(cause);
     } finally {
       mutation.current = false;
-      if (!signal.aborted) setBusy(false);
+      setBusy(false);
     }
   };
   const refresh = async (path: string, signal: AbortSignal) => {
@@ -268,6 +275,7 @@ export function FileExplorer({
       setCreate(undefined);
       setName('');
       await refresh(directory, signal);
+      if (signal.aborted) return;
       if (!folder)
         await openFile({ path, name, kind: 'file', hidden: name.startsWith('.'), size_bytes: 0 });
       setNotice(folder ? 'Folder created.' : 'File created.');
@@ -300,8 +308,14 @@ export function FileExplorer({
     });
   };
 
+  if (!active) return <p role="status">Checking file access. Your unsaved changes are kept.</p>;
   return (
-    <FileExplorerFrame panel={panel} busy={busy} onClose={() => guardDraft(onClose)}>
+    <FileExplorerFrame
+      panel={panel}
+      embedded={embedded}
+      busy={busy}
+      onClose={() => guardDraft(onClose)}
+    >
       <FileToolbar
         hidden={hidden}
         onHidden={setHidden}

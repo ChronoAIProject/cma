@@ -52,7 +52,10 @@ async fn desktop_fixture(
     store.create_agent(a).await.unwrap();
     DesktopService::new(
         AgentReadService::new(store, Arc::new(Resources)),
-        Arc::new(UnusedRuntime { status: None }),
+        Arc::new(UnusedRuntime {
+            status: None,
+            file_root: None,
+        }),
     )
 }
 

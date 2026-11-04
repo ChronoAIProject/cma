@@ -70,12 +70,19 @@ const components: Components = {
   ),
 };
 
+const inertComponents: Components = {
+  ...components,
+  a: ({ children }) => <span>{children}</span>,
+  img: ({ alt }) => <span>{alt}</span>,
+};
 export const MessageContent = memo(function MessageContent({
   content,
   streaming = false,
+  inertResources = false,
 }: {
   readonly content: string;
   readonly streaming?: boolean;
+  readonly inertResources?: boolean;
 }) {
   const access = useContext(MessageMediaContext);
   return (
@@ -84,7 +91,7 @@ export const MessageContent = memo(function MessageContent({
         {/* Default HTML handling preserves placeholders and markup as inert text. */}
         <Markdown
           remarkPlugins={[remarkGfm]}
-          components={components}
+          components={inertResources ? inertComponents : components}
           urlTransform={(url) =>
             messageFilePath(url, access?.workingDirectory) === undefined
               ? defaultUrlTransform(url)

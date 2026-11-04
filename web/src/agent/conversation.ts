@@ -7,7 +7,8 @@ import { liveTool, updateTool } from './toolCalls';
 import { setPlan } from './plans';
 import { descriptionSource, durableRuntimeMetadata, mergeRuntimeMetadata } from './runtimeMetadata';
 import { sessionCommands } from './slashCommands';
-import { number, object, text } from './conversationValues';
+import { number, object, text, upsert } from './conversationValues';
+import { liveReasoning } from './liveReasoning';
 import { startTurn, finishTurn } from './turnTiming';
 import type { ApprovalRequest, ConversationState, RecoveryNotice } from './model';
 export type {
@@ -17,14 +18,16 @@ export type {
   RecoveryNotice,
 } from './model';
 
-function upsert<T extends { readonly id: string }>(items: readonly T[], item: T): readonly T[] {
-  const at = items.findIndex(({ id }) => id === item.id);
-  if (at < 0) return [...items, item];
-  return items.map((current, index) => (index === at ? item : current));
-}
-
 function recover(state: ConversationState, notice: RecoveryNotice): ConversationState {
   return { ...state, recovery: upsert(state.recovery, notice) };
+}
+
+function hasRecordedGap(state: ConversationState, runId: string | undefined): boolean {
+  return state.recovery.some(
+    (notice) =>
+      notice.runId === runId &&
+      (notice.id.startsWith('gap:') || notice.id.startsWith('history-gap:')),
+  );
 }
 
 export function foldAgentEvent(state: ConversationState, event: AgentEvent): ConversationState {
@@ -80,20 +83,27 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           id,
           runId: next.activeRunId,
           title: text(kind.title) ?? 'Tool call',
+          sequence: event.seq,
           kind: text(kind.kind),
           status: text(kind.status) ?? 'running',
         },
         true,
       );
     }
+    case 'tool_output_reported':
     case 'tool_call_updated': {
       const id = text(kind.call_id);
       const current = next.toolCalls.find((tool) => tool.id === id);
       if (id === undefined || current === undefined) return next;
+      const output = object(kind.output);
       return updateTool(next, {
         ...current,
         title: text(kind.title) ?? current.title,
         status: text(kind.status) ?? current.status,
+        output:
+          typeof output?.text === 'string' && typeof output.truncated === 'boolean'
+            ? { text: output.text, truncated: output.truncated }
+            : current.output,
       });
     }
     case 'approval_requested': {
@@ -145,6 +155,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'conversation_gap':
       return recover(next, {
         id: `gap:${String(event.seq)}`,
+        runId: next.activeRunId,
         title: 'Incomplete conversation output',
         detail: `${String(number(kind.frames) ?? 0)} live frame(s) were lost. Stored messages remain available, but the output may be incomplete.`,
       });
@@ -170,7 +181,38 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         agentStatus: text(kind.to) as AgentStatus | undefined,
         agentStatusAt: event.appendedAt,
       };
-    case 'turn_completed':
+    case 'turn_completed': {
+      const runId = number(kind.turn_sequence)?.toString() ?? next.activeRunId;
+      const incomplete = hasRecordedGap(next, runId);
+      const finalMessage = next.messages.reduce<ConversationState['messages'][number] | undefined>(
+        (latest, message) =>
+          message.runId === runId &&
+          !message.liveOnly &&
+          message.sequence !== undefined &&
+          (latest === undefined || message.sequence > latest.sequence!)
+            ? message
+            : latest,
+        undefined,
+      );
+      return {
+        ...finishTurn(next, runId, event.appendedAt),
+        turnOutcomes: {
+          ...next.turnOutcomes,
+          [runId ?? 'unattributed']: incomplete ? 'failed' : 'completed',
+        },
+        messages: next.messages.map((message) =>
+          message === finalMessage &&
+          message.role === 'assistant' &&
+          message.content.trim() !== '' &&
+          !incomplete
+            ? { ...message, finalAnswer: true }
+            : message,
+        ),
+        activeRunId: undefined,
+        activeRunStartedAt: undefined,
+        reasoning: [],
+      };
+    }
     case 'turn_interrupted':
       return {
         ...finishTurn(
@@ -178,6 +220,11 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           number(kind.turn_sequence)?.toString() ?? next.activeRunId,
           event.appendedAt,
         ),
+        turnOutcomes: {
+          ...next.turnOutcomes,
+          [number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? 'unattributed']:
+            'interrupted',
+        },
         activeRunId: undefined,
         activeRunStartedAt: undefined,
         reasoning: [],
@@ -191,6 +238,11 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
             number(kind.turn_sequence)?.toString() ?? next.activeRunId,
             event.appendedAt,
           ),
+          turnOutcomes: {
+            ...next.turnOutcomes,
+            [number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? 'unattributed']:
+              'failed',
+          },
           activeRunId: undefined,
           activeRunStartedAt: undefined,
           reasoning: [],
@@ -209,35 +261,6 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     default:
       return next;
   }
-}
-
-function liveReasoning(state: ConversationState, event: AgentLiveEvent): ConversationState {
-  const id = text(event.messageId) ?? `reasoning:${event.runId}`;
-  const current = state.reasoning.find((reasoning) => reasoning.id === id);
-  if (event.type.endsWith('START')) {
-    return {
-      ...state,
-      reasoning: upsert(state.reasoning, {
-        id,
-        runId: event.runId,
-        content: '',
-        status: 'streaming',
-      }),
-    };
-  }
-  if (event.type.includes('CONTENT')) {
-    const block = current ?? { id, runId: event.runId, content: '', status: 'streaming' as const };
-    return {
-      ...state,
-      reasoning: upsert(state.reasoning, {
-        ...block,
-        content: `${block.content}${text(event.delta) ?? text(event.content) ?? ''}`,
-      }),
-    };
-  }
-  return current === undefined
-    ? state
-    : { ...state, reasoning: upsert(state.reasoning, { ...current, status: 'complete' }) };
 }
 
 function approvalFrom(value: unknown): ApprovalRequest | undefined {
@@ -398,8 +421,13 @@ function foldLive(
 ): ConversationState {
   if (event.threadId !== threadId) return state;
   const cursor = number(event.cursor);
+  if (event.type === 'STATE_DELTA' && cursor !== undefined && cursor <= state.cursor) return state;
   const next = cursor === undefined || cursor <= state.cursor ? state : { ...state, cursor };
   if (event.type.startsWith('TEXT_MESSAGE_')) return liveMessage(next, event);
+  if (event.type === 'CUSTOM' && event.name === 'cma.tool_output_reported') {
+    const value = object(event.value);
+    return liveTool(next, { ...event, toolCallId: value?.toolCallId, 'cma:output': value?.output });
+  }
   if (event.type.startsWith('TOOL_CALL_')) return liveTool(next, event);
   if (event.type.includes('REASONING') || event.type.startsWith('THINKING_')) {
     return liveReasoning(next, event);
@@ -415,15 +443,33 @@ function foldLive(
       .reduce((items, approval) => upsert(items, approval), next.approvals);
     return {
       ...(interrupts.length === 0 ? finishTurn(next, event.runId, event.timestamp) : next),
+      turnOutcomes:
+        interrupts.length === 0 && (outcome?.type === 'complete' || outcome?.type === 'interrupt')
+          ? {
+              ...next.turnOutcomes,
+              [event.runId]:
+                outcome.type === 'interrupt'
+                  ? 'interrupted'
+                  : hasRecordedGap(next, event.runId)
+                    ? 'failed'
+                    : 'completed',
+            }
+          : next.turnOutcomes,
       approvals,
       reasoning: [],
-      activeRunId: undefined,
-      activeRunStartedAt: undefined,
+      activeRunId: interrupts.length === 0 ? undefined : event.runId,
+      activeRunStartedAt: interrupts.length === 0 ? undefined : next.activeRunStartedAt,
     };
   }
   if (event.type === 'RUN_ERROR') {
-    const finished = finishTurn(next, event.runId, event.timestamp);
-    if (['owner', 'operator', 'sandbox_retired', 'agent_deleted'].includes(text(event.code) ?? ''))
+    const cancelled = ['owner', 'operator', 'sandbox_retired', 'agent_deleted'].includes(
+      text(event.code) ?? '',
+    );
+    const finished: ConversationState = {
+      ...finishTurn(next, event.runId, event.timestamp),
+      turnOutcomes: { ...next.turnOutcomes, [event.runId]: cancelled ? 'interrupted' : 'failed' },
+    };
+    if (cancelled)
       return { ...finished, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] };
     return recover(
       { ...finished, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] },

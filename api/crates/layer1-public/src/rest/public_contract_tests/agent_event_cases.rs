@@ -3,7 +3,7 @@ use crate::agent_v2::fixtures::{append, context, fixture, unavailable, with_live
 use axum::Extension;
 use layer2_core::{
     resource_access::*,
-    sandbox::{store::AgentStore, AgentLogKind},
+    sandbox::{store::AgentStore, AgentLogKind, AgentPlanStep, RecordedToolOutput},
     AgentId, SubjectId,
 };
 
@@ -20,11 +20,54 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         "enabled",
         "off",
         "live",
-        "lagged"
+        "lagged",
+        "operation_replay"
     ]
     .contains(&mode));
     let rich = matches!(mode, "owner" | "shared");
-    let f = fixture(rich || matches!(mode, "live" | "lagged"), mode == "enabled").await;
+    let f = fixture(
+        rich || matches!(mode, "live" | "lagged" | "operation_replay"),
+        mode == "enabled",
+    )
+    .await;
+    if mode == "operation_replay" {
+        append(
+            &f.store,
+            AgentLogKind::PlanSet {
+                entries: vec![AgentPlanStep {
+                    title: "Inspect recorded commands".into(),
+                    status: "in_progress".into(),
+                }],
+            },
+        )
+        .await;
+        for number in 1..=3 {
+            append(
+                &f.store,
+                AgentLogKind::ToolCallStarted {
+                    call_id: format!("replay-{number}"),
+                    title: format!("printf replay-{number}"),
+                    kind: "execute".into(),
+                    status: "running".into(),
+                },
+            )
+            .await;
+            append(
+                &f.store,
+                AgentLogKind::ToolCallUpdated {
+                    call_id: format!("replay-{number}"),
+                    status: "completed".into(),
+                    title: None,
+                    output: Some(RecordedToolOutput {
+                        text: format!("replay-{number}\n"),
+                        truncated: number == 3,
+                    }),
+                },
+            )
+            .await;
+        }
+        append(&f.store, AgentLogKind::PlanSet { entries: vec![] }).await;
+    }
     if rich {
         for kind in [
             AgentLogKind::ToolCallStarted {
@@ -37,11 +80,13 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 call_id: "tool-contract".into(),
                 status: "running".into(),
                 title: Some("Inspect configuration".into()),
+                output: None,
             },
             AgentLogKind::ToolCallUpdated {
                 call_id: "tool-contract".into(),
                 status: "completed".into(),
                 title: None,
+                output: None,
             },
             AgentLogKind::ApprovalRequested {
                 approval_id: "approval-contract".into(),
