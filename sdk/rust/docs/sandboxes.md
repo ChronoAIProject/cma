@@ -221,3 +221,27 @@ share recipients cannot retire the owner's Sandbox. Execution rechecks the origi
 actor and current resource authority. Receipt reads require that actor's current
 Sandbox visibility. Queue deadlines never renew. Public receipts include no owner
 configuration, credential reference or internal audit.
+
+## Measured resource reports
+
+Use `client.usage_metrics()` for owner reports and `client.admin_usage_metrics()`
+for administrator reports. `create(&usage_metrics::Query::default())` accepts
+200 ready or 202 pending. Poll `report(&report_id)` with a bounded application
+policy respecting Retry-After; the SDK never polls indefinitely. Once ready,
+`sandboxes`, `sandbox` and `series` share that immutable report ID. Administrator
+`owners` searches the complete frozen cohort by owner-subject prefix.
+
+The report exposes the requested range, finalized `effective_range`, cutoff,
+independent metric timestamps/coverage and optional admin infrastructure footer.
+CPU is cores, RAM is working-set bytes, and disk is persistent-home filesystem
+bytes. Period core-hours/GiB-hours are observational estimates; allocated billing
+and charges remain separate. Agent filtering still returns shared Sandbox usage.
+Null and stale/unmounted values are not zero. Report expiry returns 410; queue
+or source pressure returns 429/503 with Retry-After. Reauthorization applies to
+every cached request.
+
+`usage_metrics::Quantity::Number(f64)` represents ordinary values and
+`Quantity::Decimal(String)` preserves large integer quantities. Integer fields
+use lossless u64 parsing of either safe JSON integers or canonical decimal
+strings. Choose an explicit presentation conversion; never silently convert
+large byte/second strings into floating-point invoice evidence.
