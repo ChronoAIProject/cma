@@ -64,6 +64,7 @@ async fn every_owner_controlled_string_is_escaped_and_no_secret_is_rendered() {
                     key_id: SCRIPT.into(),
                 }
             }
+            Source::Github { app_ref, .. } => *app_ref = SCRIPT.into(),
         }
     }
     stored.secrets.hmac_secrets =

@@ -1,0 +1,461 @@
+use std::sync::Arc;
+
+use base64::Engine;
+use cmaeg_core::seal::{open_blob, seal_blob, MasterKeyRing};
+use futures_util::TryStreamExt;
+use mongodb::{
+    bson::{doc, spec::BinarySubtype, Binary, Document},
+    options::{Acknowledgment, CollectionOptions, ReadConcern, WriteConcern},
+    Collection, Database, IndexModel,
+};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
+use super::{
+    schema::{runtime_role, COLLECTION},
+    Error,
+};
+
+pub(super) struct Store {
+    database: Database,
+    raw: crate::records::mongo::MongoRecords,
+    records: Collection<Row>,
+    keys: Arc<MasterKeyRing>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Row {
+    #[serde(rename = "_id")]
+    id: String,
+    owner: String,
+    kind: String,
+    version: i64,
+    schema_version: i32,
+    blob: Binary,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Sealed {
+    id: String,
+    owner: String,
+    kind: String,
+    value: serde_json::Value,
+}
+
+pub(super) struct NewRecord {
+    id: String,
+    kind: &'static str,
+    value: serde_json::Value,
+}
+
+impl NewRecord {
+    pub fn new(id: &str, kind: &'static str, value: &impl Serialize) -> Result<Self, Error> {
+        Ok(Self {
+            id: id.into(),
+            kind,
+            value: serde_json::to_value(value).map_err(|_| Error::Unavailable)?,
+        })
+    }
+}
+
+impl Store {
+    pub async fn open(database: Database, keys: Arc<MasterKeyRing>) -> Result<Self, Error> {
+        let hello = database
+            .run_command(doc! {"hello":1})
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if hello.get_str("setName").is_err() {
+            return Err(Error::Unavailable);
+        }
+        let marker = database
+            .collection::<Document>(crate::records::mongo::MIGRATIONS)
+            .find_one(doc! {"_id":"github_integrations","version":2})
+            .read_concern(ReadConcern::majority())
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if marker.is_none() {
+            return Err(Error::Unavailable);
+        }
+        let status = database
+            .run_command(doc! {"connectionStatus":1,"showPrivileges":true})
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        cma_service_auth::mongodb_authority::verify_shared_schema(
+            &status,
+            database.name(),
+            &runtime_role(database.name()),
+        )
+        .map_err(|_| Error::Unavailable)?;
+        let indexes: Vec<IndexModel> = database
+            .collection::<Document>(COLLECTION)
+            .list_indexes()
+            .await
+            .map_err(|_| Error::Unavailable)?
+            .try_collect()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if indexes.len() != 2
+            || !indexes
+                .iter()
+                .any(|index| index.keys == doc! {"owner":1,"kind":1,"_id":1})
+            || indexes.iter().any(|index| {
+                index.options.as_ref().is_some_and(|options| {
+                    options.expire_after.is_some()
+                        || options.partial_filter_expression.is_some()
+                        || options.sparse == Some(true)
+                })
+            })
+        {
+            return Err(Error::Unavailable);
+        }
+        let options = CollectionOptions::builder()
+            .read_concern(ReadConcern::majority())
+            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+            .build();
+        let raw = crate::records::mongo::MongoRecords::open_with_authority(
+            database.clone(),
+            cma_service_auth::mongodb_authority::MongoAuthorityMode::SharedSchema,
+        )
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .for_kind(crate::records::RecordKind::Interaction);
+        Ok(Self {
+            records: database.collection_with_options(COLLECTION, options),
+            raw,
+            database,
+            keys,
+        })
+    }
+
+    pub async fn create(
+        &self,
+        id: &str,
+        owner: &str,
+        kind: &str,
+        value: &impl Serialize,
+    ) -> Result<(), Error> {
+        let row = self.row(id, owner, kind, 1, value)?;
+        self.records
+            .insert_one(row)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        Ok(())
+    }
+
+    pub async fn create_many(&self, owner: &str, records: Vec<NewRecord>) -> Result<(), Error> {
+        let rows = records
+            .iter()
+            .map(|record| self.row(&record.id, owner, record.kind, 1, &record.value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut session = self
+            .database
+            .client()
+            .start_session()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        self.records
+            .insert_many(rows)
+            .session(&mut session)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        session
+            .commit_transaction()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        Ok(())
+    }
+
+    pub async fn update<T: Serialize>(
+        &self,
+        id: &str,
+        owner: &str,
+        kind: &str,
+        expected_version: u64,
+        value: &T,
+    ) -> Result<u64, Error> {
+        let expected_version = i64::try_from(expected_version).map_err(|_| Error::Conflict)?;
+        let next_version = expected_version.checked_add(1).ok_or(Error::Conflict)?;
+        let row = self.row(id, owner, kind, next_version, value)?;
+        let result = self
+            .records
+            .replace_one(
+                doc! {
+                    "_id": id,
+                    "owner": owner,
+                    "kind": kind,
+                    "version": expected_version,
+                },
+                row,
+            )
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if result.matched_count != 1 {
+            return Err(Error::Conflict);
+        }
+        u64::try_from(next_version).map_err(|_| Error::Unavailable)
+    }
+
+    pub async fn update_integration(
+        &self,
+        owner: &str,
+        expected_version: u64,
+        integration: &super::AppIntegration,
+        records: Vec<NewRecord>,
+    ) -> Result<(), Error> {
+        let expected = i64::try_from(expected_version).map_err(|_| Error::ManagementConflict)?;
+        let next = expected.checked_add(1).ok_or(Error::ManagementConflict)?;
+        let row = self.row(
+            &integration.app_ref,
+            owner,
+            "app_integration",
+            next,
+            integration,
+        )?;
+        let rows = records
+            .iter()
+            .map(|record| self.row(&record.id, owner, record.kind, 1, &record.value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut session = self
+            .database
+            .client()
+            .start_session()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let result = self.records.replace_one(doc! {"_id":&integration.app_ref,"owner":owner,"kind":"app_integration","version":expected}, row).session(&mut session).await.map_err(|_| Error::Unavailable)?;
+        if result.matched_count != 1 {
+            return Err(Error::ManagementConflict);
+        }
+        self.records
+            .insert_many(rows)
+            .session(&mut session)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        session
+            .commit_transaction()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        Ok(())
+    }
+
+    pub async fn source(
+        &self,
+        owner: &str,
+        receipt: &super::Receipt,
+        body: &[u8],
+    ) -> Result<Vec<String>, Error> {
+        let mut ids = Vec::new();
+        for (index, chunk) in body.chunks(32 * 1024).enumerate() {
+            let id = uuid::Uuid::new_v4().to_string();
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "kind": "github_source_chunk_v1",
+                "receipt_id": receipt.receipt_id,
+                "owner": owner,
+                "body_sha256": receipt.body_sha256,
+                "index": index,
+                "count": body.len().div_ceil(32 * 1024),
+                "expires_at": receipt.raw_body_expires_at,
+                "bytes": base64::engine::general_purpose::STANDARD.encode(chunk),
+            }))
+            .map_err(|_| Error::Unavailable)?;
+            let blob = cmaeg_core::seal::seal_interaction(&self.keys, &id, &bytes)
+                .map_err(|_| Error::Unavailable)?;
+            self.raw
+                .put_expiring(&id, owner, &blob, None, Some(receipt.raw_body_expires_at))
+                .await
+                .map_err(|_| Error::Unavailable)?;
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
+    fn row(
+        &self,
+        id: &str,
+        owner: &str,
+        kind: &str,
+        version: i64,
+        value: &impl Serialize,
+    ) -> Result<Row, Error> {
+        let sealed = Sealed {
+            id: id.into(),
+            owner: owner.into(),
+            kind: kind.into(),
+            value: serde_json::to_value(value).map_err(|_| Error::Unavailable)?,
+        };
+        let bytes = serde_json::to_vec(&sealed).map_err(|_| Error::Unavailable)?;
+        let blob = seal_blob(&self.keys, &bytes).map_err(|_| Error::Unavailable)?;
+        Ok(Row {
+            id: id.into(),
+            owner: owner.into(),
+            kind: kind.into(),
+            version,
+            schema_version: 1,
+            blob: Binary {
+                subtype: BinarySubtype::Generic,
+                bytes: blob,
+            },
+        })
+    }
+
+    pub async fn commit_with_authority(
+        &self,
+        owner: &str,
+        binding: &super::Binding,
+        expected_revision: u64,
+        delivery: &super::Delivery,
+    ) -> Result<(), Error> {
+        let revision = i64::try_from(binding.authority_revision).map_err(|_| Error::Unavailable)?;
+        let expected_revision = i64::try_from(expected_revision).map_err(|_| Error::Unavailable)?;
+        let binding_row = self.row(&binding.binding_id, owner, "binding", revision, binding)?;
+        let delivery_row =
+            self.row(&delivery.receipt.receipt_id, owner, "delivery", 1, delivery)?;
+        let mut session = self
+            .database
+            .client()
+            .start_session()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let updated = self
+            .records
+            .replace_one(
+                doc! {"_id":&binding.binding_id,"owner":owner,"version":expected_revision},
+                binding_row,
+            )
+            .session(&mut session)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if updated.matched_count != 1 {
+            return Err(Error::Forbidden);
+        }
+        self.records
+            .insert_one(delivery_row)
+            .session(&mut session)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        session
+            .commit_transaction()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        Ok(())
+    }
+
+    pub async fn read<T: DeserializeOwned>(
+        &self,
+        id: &str,
+        kind: &str,
+    ) -> Result<(String, T), Error> {
+        let (owner, _, value) = self.read_versioned(id, kind).await?;
+        Ok((owner, value))
+    }
+
+    pub async fn read_versioned<T: DeserializeOwned>(
+        &self,
+        id: &str,
+        kind: &str,
+    ) -> Result<(String, u64, T), Error> {
+        let row = self
+            .records
+            .find_one(doc! {"_id":id,"kind":kind})
+            .await
+            .map_err(|_| Error::Unavailable)?
+            .ok_or(Error::NotFound)?;
+        self.open_row(row)
+    }
+
+    fn open_row<T: DeserializeOwned>(&self, row: Row) -> Result<(String, u64, T), Error> {
+        let opened = open_blob(&self.keys, &row.blob.bytes).map_err(|_| Error::Unavailable)?;
+        let sealed: Sealed =
+            serde_json::from_slice(&opened.payload).map_err(|_| Error::Unavailable)?;
+        if sealed.id != row.id
+            || sealed.owner != row.owner
+            || sealed.kind != row.kind
+            || row.schema_version != 1
+            || row.version < 1
+        {
+            return Err(Error::Unavailable);
+        }
+        Ok((
+            sealed.owner,
+            u64::try_from(row.version).map_err(|_| Error::Unavailable)?,
+            serde_json::from_value(sealed.value).map_err(|_| Error::Unavailable)?,
+        ))
+    }
+
+    pub async fn list_owner<T: DeserializeOwned>(
+        &self,
+        owner: &str,
+        kind: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<(String, u64, T)>, Error> {
+        let mut filter = doc! {"owner":owner,"kind":kind};
+        if let Some(after) = after {
+            filter.insert("_id", doc! {"$gt":after});
+        }
+        let mut cursor = self
+            .records
+            .find(filter)
+            .sort(doc! {"_id":1})
+            .limit(i64::from(limit))
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let mut values = Vec::new();
+        while let Some(row) = cursor.try_next().await.map_err(|_| Error::Unavailable)? {
+            let id = row.id.clone();
+            let (_, version, value) = self.open_row(row)?;
+            values.push((id, version, value));
+        }
+        Ok(values)
+    }
+
+    pub async fn list_kind<T: DeserializeOwned>(
+        &self,
+        kind: &str,
+    ) -> Result<Vec<(String, String, u64, T)>, Error> {
+        let mut cursor = self
+            .records
+            .find(doc! {"kind":kind})
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let mut values = Vec::new();
+        while let Some(row) = cursor.try_next().await.map_err(|_| Error::Unavailable)? {
+            let opened = open_blob(&self.keys, &row.blob.bytes).map_err(|_| Error::Unavailable)?;
+            let sealed: Sealed =
+                serde_json::from_slice(&opened.payload).map_err(|_| Error::Unavailable)?;
+            if sealed.id != row.id
+                || sealed.owner != row.owner
+                || sealed.kind != kind
+                || row.schema_version != 1
+                || row.version < 1
+            {
+                return Err(Error::Unavailable);
+            }
+            values.push((
+                sealed.id,
+                sealed.owner,
+                u64::try_from(row.version).map_err(|_| Error::Unavailable)?,
+                serde_json::from_value(sealed.value).map_err(|_| Error::Unavailable)?,
+            ));
+        }
+        Ok(values)
+    }
+}
