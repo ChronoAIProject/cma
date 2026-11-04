@@ -699,3 +699,6 @@ mod provenance_inventory;
 
 #[path = "agent_admission_mongo_integration_tests/contention.rs"]
 mod contention;
+
+#[path = "agent_worktree_recovery_mongo_tests.rs"]
+mod worktree_recovery;

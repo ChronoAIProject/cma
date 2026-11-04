@@ -16,6 +16,10 @@ type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 mod access_tool_tests;
 #[path = "acp_channel_tool_tests.rs"]
 mod channel_tool_tests;
+#[path = "acp_initialize_tests.rs"]
+mod initialize_tests;
+#[path = "acp_open_completion_tests.rs"]
+mod open_completion_tests;
 #[path = "acp_provider_tool_tests.rs"]
 mod provider_tool_tests;
 
@@ -109,7 +113,10 @@ async fn reject(server: &mut ServerSocket, request: &serde_json::Value) {
         serde_json::json!({
             "jsonrpc": "2.0",
             "id": request["id"].clone(),
-            "error": { "code": -32000, "message": "already initialized" },
+            "error": {
+                "code": -32603, "message": "Internal error",
+                "data": { "details": "Already initialized" },
+            },
         }),
     )
     .await;
@@ -117,6 +124,11 @@ async fn reject(server: &mut ServerSocket, request: &serde_json::Value) {
 
 fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
+        already_initialized_error: Some(serde_json::json!({
+            "code": -32603, "message": "Internal error",
+            "data": { "details": "Already initialized" },
+        })),
+        open_completion: None,
         context_refresh: None,
         permission_mode: permission_mode.map(str::to_string),
         own_credential,
@@ -124,6 +136,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
         provider_tool: None,
         access_tool: None,
         recovered_prompt: None,
+        recovered_context_sequence: None,
     }
 }
 
@@ -503,3 +516,6 @@ async fn owner_authentication_precedes_a_fresh_session() {
     server.await.expect("ACP fixture completes");
     stop(opened).await;
 }
+
+#[path = "acp_provider_refresh_tests.rs"]
+mod provider_refresh_tests;

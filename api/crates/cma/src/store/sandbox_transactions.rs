@@ -182,6 +182,9 @@ async fn apply_transaction(
                 .validate_service_access_transaction(sandbox, event, event_at)
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
             current
+                .validate_unpublished_recovery_save(sandbox)
+                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+            current
                 .validate_checkpoint_capture_successor(sandbox)
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
             layer2_core::sandbox::ProvisioningExecution::validate_successor(
@@ -244,9 +247,11 @@ async fn apply_transaction(
             store
                 .sandbox_events
                 .insert_one(event_document(&event).map_err(ApplyError::Domain)?)
-                .session(session)
+                .session(&mut *session)
                 .await
                 .map_err(classify_sequence_write)?;
+            super::sandbox_usage::lifecycle_event(store, session, &event, Some(*expected_revision))
+                .await?;
             Ok(Receipt::SaveSandbox(event, revival_receipt))
         }
         SandboxTransaction::SaveWorkspaceAndAppend {

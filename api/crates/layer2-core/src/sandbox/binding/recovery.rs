@@ -49,6 +49,12 @@ impl BindingService {
         use BindingWork::*;
         let mut next = binding.clone();
         match binding.work {
+            Idle if super::store::binding_is_recovery_candidate(binding) => {
+                return match self.credentials.recover_binding(binding).await {
+                    Ok(_) | Err(crate::CoreError::InvalidState(_)) => Ok(()),
+                    Err(error) => Err(unavailable(error)),
+                };
+            }
             AwaitingCredential | Idle => return Ok(()),
             DeliverCredential => {
                 let sandbox = self
@@ -78,6 +84,10 @@ impl BindingService {
                     .previous
                     .as_ref()
                     .ok_or_else(|| BindingError::Corrupt("missing previous environment".into()))?;
+                if old.retire_sandbox {
+                    self.begin_sandbox_retirement(binding, &old.sandbox_id)
+                        .await?;
+                }
                 if !self.cleanup_conversations(binding, old.generation).await? {
                     return Ok(());
                 }
@@ -159,6 +169,10 @@ impl BindingService {
                 }
             }
             RetireCurrentConversations => {
+                if binding.existing_agent.is_none() {
+                    self.begin_sandbox_retirement(binding, &binding.sandbox_id)
+                        .await?;
+                }
                 if !self
                     .cleanup_conversations(binding, binding.generation)
                     .await?
@@ -200,18 +214,31 @@ impl BindingService {
         Ok(())
     }
 
+    // Fence revival before waiting for paused Agents: their retained runtime must
+    // be removed by parent retirement before process absence can be proved.
+    // Retirement is monotonic; a concurrent later binding revision cannot make
+    // this exact owned hierarchy live again. The parent write also uses its CAS.
+    async fn begin_sandbox_retirement(
+        &self,
+        binding: &ProviderBinding,
+        id: &crate::SandboxId,
+    ) -> Result<bool, BindingError> {
+        if self.store.binding(&binding.binding_id).await?.as_ref() != Some(binding) {
+            return Err(BindingError::Conflict);
+        }
+        self.resources
+            .sandboxes
+            .retire_for_binding(binding, id)
+            .await
+            .map_err(unavailable)
+    }
+
     async fn cleanup_sandbox(
         &self,
         binding: &ProviderBinding,
         id: &crate::SandboxId,
     ) -> Result<bool, BindingError> {
-        if !self
-            .resources
-            .sandboxes
-            .retire_for_binding(binding, id)
-            .await
-            .map_err(unavailable)?
-        {
+        if !self.begin_sandbox_retirement(binding, id).await? {
             return Ok(false);
         }
         // A reservation can be deleted before its Sandbox aggregate exists.

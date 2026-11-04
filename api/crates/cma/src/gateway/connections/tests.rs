@@ -341,10 +341,13 @@ fn setup_links_allow_only_the_exact_legacy_or_canonical_namespace() {
         "https://gateway.example",
     )
     .unwrap()
-    .with_public_api("https://bot.example/event-gateway")
+    .with_public_api("https://new-bot.example/event-gateway")
+    .unwrap()
+    .with_public_api_aliases(&["https://bot.example/event-gateway".into()])
     .unwrap();
     for valid in [
         "https://gateway.example/connect/start/cmaeg1.cs.opaque",
+        "https://new-bot.example/event-gateway/connect/start/cmaeg1.cs.opaque",
         "https://bot.example/event-gateway/connect/start/cmaeg1.cs.opaque",
     ] {
         let mut connection: Connection = serde_json::from_value(receipt("fixture-id")).unwrap();

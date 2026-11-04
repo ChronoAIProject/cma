@@ -53,6 +53,7 @@ pub enum AcceptedStatus {
 #[serde(deny_unknown_fields)]
 struct Mode {
     mode: Option<String>,
+    media_responses: Option<bool>,
 }
 pub fn router(state: CustomIngressState) -> Router {
     crate::telemetry::http::instrument(
@@ -64,6 +65,7 @@ pub fn router(state: CustomIngressState) -> Router {
 }
 #[utoipa::path(post, path="/v1/channels/{channel_id}/events", operation_id="receiveCustomEvent", tag="ingress",
     params(("channel_id"=String, Path), ("mode"=Option<String>, Query, description="stream requires a configured Sync sink"),
+        ("media_responses"=Option<bool>, Query, description="Requires mode=stream. Explicitly opt into response-scoped media events and a bounded wait for supplementary responses. Omitted or false preserves the legacy stream terminal contract."),
         ("webhook-id"=Option<String>, Header, description="Required for HMAC authentication"),
         ("webhook-timestamp"=Option<String>, Header, description="Required for HMAC authentication; Unix seconds within 300 seconds"),
         ("webhook-signature"=Option<String>, Header, description="Required for HMAC authentication; v1,base64 over id.timestamp.raw_body using the retained secret string bytes"),
@@ -97,6 +99,9 @@ pub async fn receive_event(
         None => false,
         _ => return invalid("invalid mode"),
     };
+    if mode.media_responses.is_some() && !stream {
+        return invalid("media_responses requires mode=stream");
+    }
     let Ok(permit) = state.ingress.inflight.clone().try_acquire_owned() else {
         let mut response = problem(
             StatusCode::TOO_MANY_REQUESTS,
@@ -116,7 +121,16 @@ pub async fn receive_event(
         waiter,
         mut accepted,
         report,
-    } = match prepare_event(&state, &channel_id, stream, request, timing).await {
+    } = match prepare_event(
+        &state,
+        &channel_id,
+        stream,
+        mode.media_responses.unwrap_or(false),
+        request,
+        timing,
+    )
+    .await
+    {
         Ok(prepared) => prepared,
         Err(response) => return response,
     };
@@ -145,9 +159,14 @@ pub async fn receive_event(
         LaunchOutcome::Admitted {
             sync_waiter_attached: false,
             ..
-        } if waiter.is_some() => {
+        }
+        | LaunchOutcome::Deferred
+            if waiter.is_some() =>
+        {
             // Durable acceptance is replayable; the original process-local
-            // stream is not. Dropping this unbound waiter also releases capacity.
+            // stream is not. An elapsed budget also cannot prove that this
+            // waiter owns the admission. Drop it rather than promise an empty
+            // stream while a concurrent duplicate is resolved in the runner.
             (StatusCode::ACCEPTED, Json(accepted)).into_response()
         }
         _ => match waiter {
@@ -220,6 +239,7 @@ async fn prepare_event(
     state: &CustomIngressState,
     channel_id: &str,
     stream: bool,
+    media_responses: bool,
     request: Request,
     timing: IngressTiming,
 ) -> Result<PreparedEvent, Response> {
@@ -373,7 +393,8 @@ async fn prepare_event(
                 invalid("stream requires a Sync sink"),
             ));
         }
-        let Some((id, pending)) = state.waiters.register() else {
+        let Some((id, pending)) = state.waiters.register_with_media_responses(media_responses)
+        else {
             return Err(report.refuse(
                 ingress,
                 "sync_capacity",

@@ -17,7 +17,7 @@ test("steering patch rejects unreviewed provider bytes", () => {
 
 test("native long-running turn remains cancellable after repeated steering without spawning a new turn", { timeout: 45000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   const directory = mkdtempSync(join(tmpdir(), "cma-steering-interrupt-"));
   const home = join(directory, "home"); mkdirSync(home);
   let requests = 0;
@@ -66,6 +66,6 @@ test("native long-running turn remains cancellable after repeated steering witho
   } finally {
     await bridge.close(); await prompt?.catch(() => {});
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

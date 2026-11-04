@@ -47,6 +47,7 @@ pub enum ResolveError {
     Tampered,
     NotFound,
     InvalidDefinition,
+    CreationPending,
     RateLimited,
     Unavailable,
 }
@@ -61,6 +62,11 @@ impl ResolveError {
                 ProblemCode::ChannelInvalid,
                 503,
                 "stored channel is invalid",
+            ),
+            Self::CreationPending => (
+                ProblemCode::Conflict,
+                409,
+                "channel_creation_pending: the channel owner must complete the original creation request before sending events",
             ),
             Self::RateLimited => (
                 ProblemCode::RateLimited,
@@ -359,7 +365,7 @@ impl ChannelResolver {
             .as_ref()
             .is_some_and(|value| !value.ready)
         {
-            return Err(ResolveError::Unavailable);
+            return Err(ResolveError::CreationPending);
         }
         let agent_key_hash = decode_key_hash(&definition.secrets.agent_key_hash)?;
         let mut consumer_keys = vec![(ConsumerId::default_consumer(), agent_key_hash)];
@@ -457,6 +463,22 @@ impl ChannelResolver {
             channel,
             activity,
             event,
+        )
+        .await
+    }
+}
+
+impl ChannelResolver {
+    pub(crate) async fn whatsapp_message_change_current(
+        &self,
+        channel: &ResolvedChannel,
+        plan: &crate::ingress::routing_store::AdmittedPlan,
+    ) -> Result<(), crate::whatsapp::message_context::Error> {
+        crate::whatsapp::message_context::current(
+            &self.inner.records,
+            &self.inner.keys,
+            channel,
+            plan,
         )
         .await
     }

@@ -7,6 +7,17 @@ use crate::sandbox::{AgentStatus, AgentWorkStep};
 
 #[async_trait]
 impl AgentControlStore for InMemorySandboxStore {
+    async fn begin_agent_worktree_recovery(
+        &self,
+        id: &AgentId,
+        caller: &crate::Caller,
+        operation_id: &str,
+        successor_id: &WorktreeId,
+        now: String,
+    ) -> Result<Agent, AgentControlStoreError> {
+        super::agent_worktree_recovery::begin(self, id, caller, operation_id, successor_id, now)
+    }
+
     async fn schedule_agent_stop(
         &self,
         request: AgentStopRequest,

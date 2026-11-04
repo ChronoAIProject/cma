@@ -23,7 +23,6 @@ impl Write for Capture {
 #[tokio::test]
 async fn socket_metric_is_under_twenty_ms_and_logs_no_secrets() {
     let metrics = cmaeg::telemetry::install().unwrap();
-    let mut fixture = Fixture::new(Default::default(), Default::default(), 4).await;
     let capture = Capture(Default::default());
     let writer = capture.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -32,6 +31,13 @@ async fn socket_metric_is_under_twenty_ms_and_logs_no_secrets() {
         .with_writer(move || writer.clone())
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
+    // Initialize the process-global metrics/tracing callsites outside the
+    // measured turn, using a different provider, transport and metric label.
+    // The fixture measured below still makes its first Responses connection.
+    prime_instrumentation().await;
+    capture.0.lock().unwrap().clear();
+    let mut fixture = ready_fixture().await;
+    assert!(fixture.fake.log().is_empty());
     let mut request = fixture.request("metric");
     let request_span = tracing::info_span!(
         "cmaeg.request",
@@ -50,7 +56,10 @@ async fn socket_metric_is_under_twenty_ms_and_logs_no_secrets() {
     let scrape = metrics.render();
     let line = scrape
         .lines()
-        .find(|line| line.starts_with("cmaeg_ingress_to_provider_seconds_sum{"))
+        .find(|line| {
+            line.starts_with("cmaeg_ingress_to_provider_seconds_sum{")
+                && line.contains("source=\"custom\"")
+        })
         .unwrap();
     let seconds: f64 = line.split_whitespace().last().unwrap().parse().unwrap();
     let writes: Vec<_> = logs
@@ -102,8 +111,49 @@ async fn socket_metric_is_under_twenty_ms_and_logs_no_secrets() {
     assert!(scrape.lines().any(
         |line| line.starts_with("cmaeg_turn_duration_seconds_count{")
             && line.contains("completed")
-            && line.ends_with(" 1")
+            && line.ends_with(" 2")
     ));
+    assert_eq!(fixture.fake.requests().len(), 1);
+    fixture.fake.close().await;
+}
+
+/// Establish HTTP-server readiness without touching the measured Responses
+/// transport. Agent-card discovery uses its own reqwest connection and does not
+/// record a Responses POST or prefill the runner's pool.
+async fn ready_fixture() -> Fixture {
+    let fixture = Fixture::new(Default::default(), Default::default(), 4).await;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let response = client
+        .get(format!(
+            "{}/.well-known/agent-card.json",
+            fixture.fake.base_url()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let card: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(card["name"], "fake");
+    fixture
+}
+
+async fn prime_instrumentation() {
+    let mut fixture = ready_fixture().await;
+    let mut request = fixture.request("instrumentation-startup");
+    let timing = cmaeg::telemetry::timing::IngressTiming::new("fixture_startup");
+    timing.received();
+    request.timing = Some(timing);
+    fixture.runner.launch(request).await;
+    fixture.terminal().await;
+    assert!(
+        fixture
+            .tracker
+            .drain(std::time::Instant::now() + std::time::Duration::from_secs(1))
+            .await
+    );
     assert_eq!(fixture.fake.requests().len(), 1);
     fixture.fake.close().await;
 }

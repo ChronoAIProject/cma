@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::{broadcast, Mutex};
 
+#[path = "batch.rs"]
+mod batch;
 #[path = "refresh.rs"]
 mod refresh;
 #[cfg(test)]
@@ -178,6 +180,7 @@ impl ActivityStore {
             ),
         };
         let row = ChannelActivity {
+            quoted_context: super::model::QuotedContextSummary::from_activity(activity),
             event_id: activity.event_id.to_string(),
             kind: Some(kind.into()),
             event_type,

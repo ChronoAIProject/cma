@@ -8,6 +8,7 @@ fn request() -> WorkspaceRemovalRequest {
             agent_skill_install: false,
             agent_model_catalog: false,
             agent_browser: false,
+            agent_resource_preparation: false,
             sandbox_id: "sandbox".into(),
             generation: 2,
             home_identity: "a".repeat(43),

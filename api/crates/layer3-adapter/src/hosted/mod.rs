@@ -5,6 +5,7 @@ mod acp_context_refresh;
 mod acp_handshake;
 mod acp_inbound;
 mod acp_observations;
+mod acp_open_completion;
 mod acp_settings;
 mod acp_turn;
 mod adapter;
@@ -18,8 +19,10 @@ mod deployment;
 mod home;
 #[cfg(test)]
 mod home_tests;
+mod inspection_timing;
 mod managed_context;
 mod memory;
+mod nonexecuting;
 mod provider_backend;
 mod provider_endpoint;
 mod provider_http;
@@ -28,12 +31,16 @@ mod provider_transport;
 mod reply;
 mod startup_timing;
 mod subscriptions;
+mod tool_confirmation;
 mod update_relay;
 
+pub use acp_open_completion::HostedOpenCompletionProtocol;
 pub use adapter::HostedAdapter;
 pub use agent_sandbox_backend::{
     AgentSandboxBackend, NativeStatusInspection, RuntimeBackends, RuntimeRoutingStore,
 };
+#[doc(hidden)]
+pub use backend::RuntimeRecoveryCommand;
 pub use backend::{HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend};
 pub use channel_tools::{HostedChannelToolBinding, HostedChannelToolSource};
 pub use checkpoint_store::{
@@ -49,6 +56,9 @@ pub use deployment::{
 };
 pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
+pub(crate) use nonexecuting::IdleBootstrapProof;
+#[doc(hidden)]
+pub use nonexecuting::NonexecutingRuntimeProof;
 pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
 pub use provider_tools::{
     HostedProviderToolBinding, HostedProviderToolSource, HostedToolOpenReceipt,

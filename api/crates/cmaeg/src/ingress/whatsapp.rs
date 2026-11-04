@@ -56,7 +56,10 @@ pub(crate) fn launch(
     if message.group_id.is_some()
         && matches!(
             message.content,
-            Content::Control { .. } | Content::Reaction { .. }
+            Content::Control { .. }
+                | Content::Reaction { .. }
+                | Content::Edit { .. }
+                | Content::Revoke { .. }
         )
     {
         return Err(());
@@ -85,6 +88,7 @@ pub(crate) fn launch(
             attachments: vec![attachment.as_ref().clone()],
             mentions_bot: false,
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         },
         Content::Text { text } => ActivityKind::Message {
@@ -92,6 +96,7 @@ pub(crate) fn launch(
             attachments: Vec::new(),
             mentions_bot: false,
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         },
         Content::Control { .. } => ActivityKind::Message {
@@ -99,8 +104,35 @@ pub(crate) fn launch(
             attachments: Vec::new(),
             mentions_bot: false,
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         },
+        Content::Edit { target, .. } | Content::Revoke { target } => {
+            let (original_event, author) = original.ok_or(())?;
+            let mut data = json!({"message_id":target,"original_event_id":original_event,
+                "original_author":author,"provider_timestamp":message.timestamp});
+            let event_type = if let Content::Edit { text, .. } = &message.content {
+                data["patch"] = json!({"text":text});
+                "cma.message.updated.v1"
+            } else {
+                "cma.message.deleted.v1"
+            };
+            ActivityKind::Event {
+                attachments: Vec::new(),
+                ce: CloudEvent {
+                    specversion: "1.0".into(),
+                    id: event_id.to_string(),
+                    source: format!("urn:cma:whatsapp:{app_id}:{waba_id}:{phone_number_id}"),
+                    r#type: event_type.into(),
+                    time: Some(occurred_at.clone()),
+                    subject: Some(target.clone()),
+                    datacontenttype: Some("application/json".into()),
+                    dataschema: None,
+                    extensions: Default::default(),
+                    data: Some(data),
+                },
+            }
+        }
         Content::Reaction { target, emoji } => {
             let (original_event, author) = original.ok_or(())?;
             let reactions = if emoji.is_empty() {
@@ -162,7 +194,9 @@ pub(crate) fn launch(
     let reply_target = match &message.content {
         Content::Flow { .. } => return Err(()),
         Content::Text { .. } | Content::Media { .. } | Content::Control { .. } => &message.id,
-        Content::Reaction { target, .. } => target,
+        Content::Reaction { target, .. }
+        | Content::Edit { target, .. }
+        | Content::Revoke { target } => target,
     };
     let payload = EventRefPayload {
         telegram_admission: None,

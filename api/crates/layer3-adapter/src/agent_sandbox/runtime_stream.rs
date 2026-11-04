@@ -27,11 +27,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> RuntimeIo for T {}
 pub(crate) enum RuntimeStreamKind {
     Request,
     Conversation,
+    Desktop,
 }
 
 /// Owns the forwarding task for precisely as long as its stream is usable.
 /// Kubernetes error-channel contents are deliberately excluded from errors/logs.
-pub(crate) struct RuntimeStream {
+pub struct RuntimeStream {
     stream: Box<dyn RuntimeIo>,
     owner: StreamOwner,
     // true denotes a successful exec exit; its buffered stdout must still drain.
@@ -79,7 +80,7 @@ impl AgentSandboxClient {
         // No unbounded queue behind long-lived conversations. Clones share this budget.
         let permits = match kind {
             RuntimeStreamKind::Request => &self.runtime_requests,
-            RuntimeStreamKind::Conversation => &self.runtime_streams,
+            RuntimeStreamKind::Conversation | RuntimeStreamKind::Desktop => &self.runtime_streams,
         };
         let permit = permits.clone().try_acquire_owned().map_err(|_| {
             AdapterError::AtCapacity("native runtime stream capacity is exhausted".into())

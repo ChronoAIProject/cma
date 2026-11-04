@@ -24,6 +24,23 @@ pub(crate) struct SupervisorBoundary {
 }
 
 impl SupervisorBoundary {
+    pub(crate) fn require_no_writers(self) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        if let Some(root) = self.root {
+            let supervisor = CHILD_SUPERVISOR.get().ok_or("writer boundary is absent")?;
+            let _spawn = supervisor
+                .spawn_gate
+                .write()
+                .map_err(|_| "writer spawn gate is poisoned")?;
+            return crate::writer_process::require_no_other_processes(root);
+        }
+        if cfg!(test) {
+            Ok(())
+        } else {
+            Err("process absence requires a supervisor writer boundary".into())
+        }
+    }
+
     pub(crate) fn install() -> Result<Self, String> {
         #[cfg(not(target_os = "linux"))]
         {

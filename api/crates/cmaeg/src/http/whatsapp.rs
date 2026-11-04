@@ -181,6 +181,28 @@ pub async fn callback(
             )
         }
     };
+    if let Some(routing) = &state.routed {
+        match routing
+            .whatsapp_quote_batch_conflict(&channel, source, &body)
+            .await
+        {
+            Ok(false) => {}
+            Ok(true) => {
+                return problem(
+                    StatusCode::CONFLICT,
+                    ProblemCode::Conflict,
+                    "native_whatsapp_quote_identity_conflict",
+                )
+            }
+            Err(_) => {
+                return problem(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ProblemCode::ProviderUnavailable,
+                    "native_whatsapp_quote_projection_unavailable",
+                )
+            }
+        }
+    }
     let statuses = match crate::whatsapp::status::extract(source, &body) {
         Ok(statuses) => statuses,
         Err(_) => {
@@ -193,7 +215,12 @@ pub async fn callback(
     };
     // Establish ordinary-message authority first when a batch contains both the
     // original and its reaction. Distinct reactions retain provider timestamps.
-    messages.sort_by_key(|message| matches!(message.content, Content::Reaction { .. }));
+    messages.sort_by_key(|message| {
+        matches!(
+            message.content,
+            Content::Reaction { .. } | Content::Edit { .. } | Content::Revoke { .. }
+        )
+    });
     let mut result = WhatsappWebhookResponse {
         accepted: 0,
         refused: 0,

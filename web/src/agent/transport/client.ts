@@ -33,6 +33,11 @@ export class AgentV2Session {
     return this.user;
   }
 
+  /** A fresh replay handle keeps the tab's selection and pending-input journal. */
+  forSnapshotRefresh(): AgentV2Session {
+    return new AgentV2Session(this.sdk, this.journal, this.user, this.options);
+  }
+
   async authorize(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     this.journal.read();

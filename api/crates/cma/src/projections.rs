@@ -259,9 +259,10 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
             .await
             .map_err(|error| match error {
                 AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
-                AdapterError::Unavailable(_) | AdapterError::AtCapacity(_) => {
-                    AgentHistoryExportError::Unavailable
-                }
+                AdapterError::InputAuthorityUnavailable(_)
+                | AdapterError::PromptNotWritten(_)
+                | AdapterError::Unavailable(_)
+                | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
                 AdapterError::Rejected(_)
                 | AdapterError::OperationIdentityConflict(_)
                 | AdapterError::RuntimeContractMismatch(_) => AgentHistoryExportError::Rejected,
@@ -323,11 +324,12 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
         | AdapterError::RuntimeContractMismatch(_) => SandboxResourceReadError::Corrupt(
             "the runtime resource authority or reply is invalid".into(),
         ),
-        AdapterError::Unavailable(_) | AdapterError::AtCapacity(_) => {
-            SandboxResourceReadError::Unavailable(
-                "the runtime resource transport is unavailable".into(),
-            )
-        }
+        AdapterError::InputAuthorityUnavailable(_)
+        | AdapterError::PromptNotWritten(_)
+        | AdapterError::Unavailable(_)
+        | AdapterError::AtCapacity(_) => SandboxResourceReadError::Unavailable(
+            "the runtime resource transport is unavailable".into(),
+        ),
     }
 }
 

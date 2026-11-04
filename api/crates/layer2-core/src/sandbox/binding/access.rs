@@ -60,6 +60,13 @@ impl BindingAccessService {
     ) -> Result<bool, crate::sandbox::store::SandboxStoreError> {
         self.store.contains_key_hash(hash).await
     }
+    /// Fresh current/retained-key classification; store errors never mean unknown.
+    pub async fn classify_worker_key_hash(
+        &self,
+        hash: &str,
+    ) -> Result<bool, crate::sandbox::store::SandboxStoreError> {
+        self.store.classify_worker_key_hash(hash).await
+    }
     pub fn new(store: Arc<dyn BindingStore>) -> Arc<Self> {
         Arc::new(Self { store })
     }
@@ -75,6 +82,28 @@ impl BindingAccessService {
             ));
         }
         Ok(Some(principal(&binding)))
+    }
+
+    /// Pin the generation before resolving transport aliases or source-user
+    /// affinity. A migrated binding refuses markerless old provider requests.
+    pub async fn submission_generation(
+        &self,
+        hash: &str,
+        expected: Option<u64>,
+    ) -> Result<u64, BindingError> {
+        let binding = self
+            .store
+            .find_by_key_hash(hash)
+            .await?
+            .ok_or(BindingError::NotFound)?;
+        binding.validate().map_err(BindingError::Corrupt)?;
+        if binding.key_sha256 != hash || binding.state == BindingState::Retired {
+            return Err(BindingError::NotFound);
+        }
+        binding
+            .require_generation(expected)
+            .map_err(|_| BindingError::Conflict)?;
+        Ok(binding.generation)
     }
 
     /// Deferred commands retain the binding generation, so replacement of an

@@ -20,6 +20,23 @@ pub(super) fn normalize(
     bot: &str,
     policy: &AdmissionPolicy,
 ) -> Result<Normalized, GatewayError> {
+    normalize_with_content(raw, bot, policy, None)
+}
+pub(super) fn normalize_with_content(
+    raw: &Value,
+    bot: &str,
+    policy: &AdmissionPolicy,
+    content: Option<&super::content::Snapshot>,
+) -> Result<Normalized, GatewayError> {
+    normalize_with_projections(raw, bot, policy, content, None)
+}
+pub(super) fn normalize_with_projections(
+    raw: &Value,
+    bot: &str,
+    policy: &AdmissionPolicy,
+    content: Option<&super::content::Snapshot>,
+    forward: Option<&super::forward::Snapshot>,
+) -> Result<Normalized, GatewayError> {
     let id = snowflake(&raw["id"])?;
     let chat = snowflake(&raw["channel_id"])?;
     let sender = snowflake(&raw["author"]["id"])?;
@@ -54,7 +71,11 @@ pub(super) fn normalize(
         Some(reference) => Some(snowflake(&reference["message_id"])?),
         None => None,
     };
+    if let Some(snapshot) = forward {
+        snapshot.verify(raw)?;
+    }
     let reply = match parent {
+        Some(_) if forward.is_some() => Ok(Some(false)),
         Some(parent) => facts::reply_author(raw, parent, chat, Some(bot)),
         None => Ok(Some(false)),
     }
@@ -100,6 +121,14 @@ pub(super) fn normalize(
     if text.len() > 32 * 1024 {
         return Ok(Normalized::Refused(Refusal::ContentUnsupported));
     }
+    let text = match content {
+        Some(snapshot) => snapshot.text(raw)?,
+        None => text.to_owned(),
+    };
+    let text = match forward {
+        Some(snapshot) => snapshot.append(raw, text)?,
+        None => text,
+    };
     let files = raw["attachments"]
         .as_array()
         .ok_or(GatewayError::Protocol)?;
@@ -150,10 +179,11 @@ pub(super) fn normalize(
         event_id: EventId::new(format!("discord:{bot}:{id}"))
             .map_err(|_| GatewayError::Protocol)?,
         kind: ActivityKind::Message {
-            text: text.into(),
+            text,
             attachments,
             mentions_bot: mentioned == Some(true),
             reply_to: None,
+            quoted_message: None,
             album_id: None,
         },
         actor: Actor {

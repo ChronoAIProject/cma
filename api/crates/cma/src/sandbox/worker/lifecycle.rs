@@ -18,6 +18,7 @@ mod restore;
 mod service_access;
 mod support;
 mod tombstones;
+mod unpublished_recovery;
 
 impl SandboxWorker {
     pub(super) async fn run_lifecycle(

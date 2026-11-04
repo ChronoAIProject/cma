@@ -1,12 +1,8 @@
 //! Exact authenticated channel evidence, retained with the immutable inbox.
-use super::{
-    discovery::DiscordApi,
-    normalize::{normalize, snowflake, Normalized},
-    GatewayError,
-};
+use super::{discovery::DiscordApi, normalize::snowflake, GatewayError};
 use cmaeg_core::{
     activity::{Activity, ConversationKind},
-    channel::{AdmissionPolicy, Secret},
+    channel::Secret,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,13 +17,6 @@ pub(super) enum ChannelEvidence {
         parent_id: Option<String>,
     },
     Unavailable,
-}
-
-pub(super) fn candidate(dispatch: &Value, admission: &AdmissionPolicy, bot: &str) -> bool {
-    matches!(
-        normalize(dispatch, bot, admission),
-        Ok(Normalized::Activity(_))
-    )
 }
 
 impl DiscordApi {

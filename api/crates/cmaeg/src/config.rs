@@ -1,9 +1,9 @@
 //! Environment configuration for the CMA Event Gateway.
 
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{env, net::SocketAddr};
 
 use crate::providers::ProviderRegistry;
-use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
+use cmaeg_core::channel::Secret;
 use reqwest::Url;
 mod origins;
 pub(crate) use origins::validate_origin;
@@ -15,10 +15,13 @@ mod delivery;
 mod duration;
 use duration::positive_duration;
 mod ingress;
+mod management;
+pub use management::ManagementConfig;
 mod media;
 mod native_discord;
+pub mod owner_keys;
 mod routing;
-mod secrets;
+pub(crate) mod secrets;
 mod service;
 mod service_account;
 pub use service::*;
@@ -50,7 +53,9 @@ pub const CMAEG_PROVIDER_CONNECT_TIMEOUT_MS: &str = "CMAEG_PROVIDER_CONNECT_TIME
 pub const CMAEG_PROVIDER_REQUEST_TIMEOUT_MS: &str = "CMAEG_PROVIDER_REQUEST_TIMEOUT_MS";
 pub const CMAEG_PROVIDER_MAX_INFLIGHT: &str = "CMAEG_PROVIDER_MAX_INFLIGHT";
 pub const CMAEG_PUBLIC_URL: &str = "CMAEG_PUBLIC_URL";
+pub const CMAEG_CONSOLE_PUBLIC_URL: &str = "CMAEG_CONSOLE_PUBLIC_URL";
 pub const CMAEG_PUBLIC_API_URL: &str = "CMAEG_PUBLIC_API_URL";
+pub const CMAEG_PUBLIC_API_ALIASES: &str = "CMAEG_PUBLIC_API_ALIASES";
 pub const CMAEG_ADVERTISE_PUBLIC_API_URL: &str = "CMAEG_ADVERTISE_PUBLIC_API_URL";
 pub const CMAEG_MASTER_KEYS: &str = "CMAEG_MASTER_KEYS";
 pub const CMAEG_MASTER_KEYS_FILE: &str = "CMAEG_MASTER_KEYS_FILE";
@@ -107,7 +112,10 @@ impl std::fmt::Display for ConfigError {
                 )
             }
             Self::InvalidMaxInflight { value } => {
-                write!(formatter, "{CMAEG_PROVIDER_MAX_INFLIGHT}={value:?} is invalid: expected a positive integer")
+                write!(
+                    formatter,
+                    "{CMAEG_PROVIDER_MAX_INFLIGHT}={value:?} is invalid: expected a positive integer"
+                )
             }
             Self::InvalidManagement { detail } => {
                 write!(formatter, "management configuration is invalid: {detail}")
@@ -158,21 +166,43 @@ pub struct Config {
     pub native_lark_writes_enabled: bool,
     pub native_lark_intake_enabled: bool,
     pub native_lark_media_enabled: bool,
+    pub native_lark_stickers_enabled: bool,
     pub native_whatsapp_groups_writes_enabled: bool,
     pub native_whatsapp_groups_enabled: bool,
+    pub native_split_text_refs_enabled: bool,
     pub native_telegram_media_edits_enabled: bool,
+    pub native_telegram_media_controls_enabled: bool,
+    pub native_telegram_media_control_edits_enabled: bool,
     pub native_discord_media_edits_enabled: bool,
+    pub native_discord_media_controls_enabled: bool,
+    pub native_discord_media_card_edits_enabled: bool,
+    pub native_discord_media_card_replacements_enabled: bool,
+    pub native_discord_media_card_sets_enabled: bool,
     pub native_lark_controls_enabled: bool,
     pub native_lark_forms_enabled: bool,
     pub native_lark_message_effects_enabled: bool,
     pub native_lark_received_reactions_enabled: bool,
+    pub native_whatsapp_message_events_enabled: bool,
     pub native_whatsapp_forms_enabled: bool,
     pub native_whatsapp_flow_writes_enabled: bool,
+    pub native_typing_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
     pub native_whatsapp_media_enabled: bool,
     pub native_lark_outbound_media_enabled: bool,
+    pub native_lark_sticker_replies_enabled: bool,
+    pub native_lark_media_controls_enabled: bool,
+    pub native_lark_multi_image_controls_enabled: bool,
+    pub native_lark_media_card_replacements_enabled: bool,
+    pub native_media_presentations_enabled: bool,
+    pub native_discord_voice_enabled: bool,
+    pub native_telegram_structured_replies_enabled: bool,
+    pub native_whatsapp_structured_replies_enabled: bool,
+    pub native_telegram_albums_enabled: bool,
+    /// Start an exact admitted root thread with one explicit text reply.
+    pub native_lark_thread_start_enabled: bool,
     pub native_whatsapp_outbound_media_enabled: bool,
     pub native_whatsapp_interactions_enabled: bool,
+    pub native_whatsapp_media_controls_enabled: bool,
     pub native_whatsapp_reactions_enabled: bool,
     pub native_telegram_received_reactions_enabled: bool,
     pub native_discord_received_reactions_enabled: bool,
@@ -182,8 +212,11 @@ pub struct Config {
     pub native_telegram_message_events_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_telegram_topic_lifecycle_enabled: bool,
+    pub native_telegram_topic_creation_enabled: bool,
+    pub native_telegram_general_topic_lifecycle_enabled: bool,
     pub native_discord_thread_lifecycle_enabled: bool,
     pub native_lark_conversation_history_enabled: bool,
+    pub native_lark_mixed_history_enabled: bool,
     pub native_discord_conversation_history_enabled: bool,
     pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
@@ -196,22 +229,6 @@ pub struct Config {
     pub stt: SttConfig,
     pub transformer: TransformerConfig,
     pub console: ConsoleConfig,
-}
-
-/// Secrets and origins used by the channel management plane.
-#[derive(Debug, Clone)]
-pub struct ManagementConfig {
-    /// Legacy browser console authority; remains an origin.
-    pub public_url: String,
-    /// Canonical externally reachable API base, optionally with a path prefix.
-    pub public_api_url: String,
-    /// Disable only while old replicas still lack the canonical browser routes.
-    pub advertise_public_api_url: bool,
-    pub master_keys: Arc<MasterKeyRing>,
-    pub cma_base_url: String,
-    pub cma_service_token: Secret,
-    pub nyxid_base_url: String,
-    pub tools_nyxid_slug: String,
 }
 
 impl Config {
@@ -271,7 +288,7 @@ impl Config {
                     return Err(ConfigError::InvalidManagement {
                         detail: "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED must be true or false"
                             .into(),
-                    })
+                    });
                 }
             },
             thread_contract_writes_enabled: match env::var("CMAEG_THREAD_CONTRACT_WRITES_ENABLED") {
@@ -281,7 +298,7 @@ impl Config {
                 _ => {
                     return Err(ConfigError::InvalidManagement {
                         detail: "CMAEG_THREAD_CONTRACT_WRITES_ENABLED must be true or false".into(),
-                    })
+                    });
                 }
             },
             multi_consumer_writes_enabled: routing::write_flag(
@@ -296,11 +313,20 @@ impl Config {
             native_lark_conversation_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED",
             )?,
+            native_lark_mixed_history_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED",
+            )?,
             native_discord_conversation_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED",
             )?,
             native_telegram_topic_lifecycle_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED",
+            )?,
+            native_telegram_topic_creation_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED",
+            )?,
+            native_telegram_general_topic_lifecycle_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED",
             )?,
             native_discord_thread_lifecycle_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED",
@@ -314,14 +340,38 @@ impl Config {
             native_lark_writes_enabled: routing::write_flag("CMAEG_NATIVE_LARK_WRITES_ENABLED")?,
             native_lark_intake_enabled: routing::write_flag("CMAEG_NATIVE_LARK_INTAKE_ENABLED")?,
             native_lark_media_enabled: routing::write_flag("CMAEG_NATIVE_LARK_MEDIA_ENABLED")?,
+            native_lark_stickers_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_STICKERS_ENABLED",
+            )?,
             native_whatsapp_groups_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED",
             )?,
             native_whatsapp_groups_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED",
             )?,
+            native_telegram_media_control_edits_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED",
+            )?,
+            native_telegram_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED",
+            )?,
+            native_split_text_refs_enabled: routing::write_flag(
+                "CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED",
+            )?,
             native_telegram_media_edits_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED",
+            )?,
+            native_discord_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED",
+            )?,
+            native_discord_media_card_edits_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED",
+            )?,
+            native_discord_media_card_sets_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_MEDIA_CARD_SETS_ENABLED",
+            )?,
+            native_discord_media_card_replacements_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED",
             )?,
             native_discord_media_edits_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED",
@@ -336,23 +386,60 @@ impl Config {
             native_lark_received_reactions_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED",
             )?,
+            native_whatsapp_message_events_enabled: routing::write_flag(
+                "CMAEG_NATIVE_WHATSAPP_MESSAGE_EVENTS_ENABLED",
+            )?,
             native_whatsapp_forms_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED",
             )?,
             native_whatsapp_flow_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED",
             )?,
+            native_typing_enabled: routing::write_flag("CMAEG_NATIVE_TYPING_ENABLED")?,
             native_whatsapp_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED",
             )?,
+            native_lark_thread_start_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_THREAD_START_ENABLED",
+            )?,
+            native_lark_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED",
+            )?,
+            native_discord_voice_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_VOICE_ENABLED",
+            )?,
+            native_media_presentations_enabled: routing::write_flag(
+                "CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED",
+            )?,
+            native_telegram_structured_replies_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED",
+            )?,
+            native_whatsapp_structured_replies_enabled: routing::write_flag(
+                "CMAEG_NATIVE_WHATSAPP_STRUCTURED_REPLIES_ENABLED",
+            )?,
+            native_telegram_albums_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED",
+            )?,
+            native_lark_multi_image_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED",
+            )?,
+            native_lark_media_card_replacements_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_MEDIA_CARD_REPLACEMENTS_ENABLED",
+            )?,
             native_lark_outbound_media_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED",
+            )?,
+            native_lark_sticker_replies_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_STICKER_REPLIES_ENABLED",
             )?,
             native_whatsapp_outbound_media_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED",
             )?,
             native_whatsapp_interactions_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED",
+            )?,
+            native_whatsapp_media_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_WHATSAPP_MEDIA_CONTROLS_ENABLED",
             )?,
             native_whatsapp_reactions_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED",
@@ -389,60 +476,6 @@ impl Config {
             stt,
             transformer,
             console: ConsoleConfig::from_env()?,
-        })
-    }
-}
-
-impl ManagementConfig {
-    fn from_env() -> Result<Self, ConfigError> {
-        let public_url = required_origin(CMAEG_PUBLIC_URL)?;
-        let public_api_url = env::var(CMAEG_PUBLIC_API_URL)
-            .map(|value| validate_public_api_url(&value))
-            .unwrap_or_else(|_| Ok(public_url.clone()))?;
-        let advertisement = env::var(CMAEG_ADVERTISE_PUBLIC_API_URL);
-        let advertise_public_api_url = parse_api_advertisement(match &advertisement {
-            Ok(value) => Some(value.as_str()),
-            Err(env::VarError::NotPresent) => None,
-            Err(_) => Some("invalid"),
-        })?;
-        let cma_base_url = required_origin(CMAEG_CMA_BASE_URL)?;
-        let nyxid_base_url = required_origin(CMAEG_NYXID_BASE_URL)?;
-        let key_spec = secrets::read(CMAEG_MASTER_KEYS, CMAEG_MASTER_KEYS_FILE)?;
-        let master_keys =
-            MasterKeyRing::parse(&key_spec).map_err(|error| ConfigError::InvalidManagement {
-                detail: format!("{CMAEG_MASTER_KEYS} is not a valid key ring: {error}"),
-            })?;
-        let cma_service_token =
-            secrets::read(CMAEG_CMA_SERVICE_TOKEN, CMAEG_CMA_SERVICE_TOKEN_FILE)?;
-        if cma_service_token.len() > 16_384
-            || !cma_service_token
-                .bytes()
-                .all(|byte| (33..=126).contains(&byte))
-        {
-            return Err(ConfigError::InvalidManagement {
-                detail: format!("{CMAEG_CMA_SERVICE_TOKEN} must contain a printable bearer token"),
-            });
-        }
-        let tools_nyxid_slug =
-            env::var(CMAEG_TOOLS_NYXID_SLUG).unwrap_or_else(|_| "cmaeg".to_owned());
-        if !(1..=32).contains(&tools_nyxid_slug.len())
-            || !tools_nyxid_slug
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-        {
-            return Err(ConfigError::InvalidManagement {
-                detail: format!("{CMAEG_TOOLS_NYXID_SLUG} must match [a-z0-9_]{{1,32}}"),
-            });
-        }
-        Ok(Self {
-            public_url,
-            public_api_url,
-            advertise_public_api_url,
-            master_keys: Arc::new(master_keys),
-            cma_base_url,
-            cma_service_token: Secret::new(cma_service_token),
-            nyxid_base_url,
-            tools_nyxid_slug,
         })
     }
 }

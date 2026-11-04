@@ -17,6 +17,17 @@ impl MongoSandboxStore {
         target: u8,
         at: &str,
     ) -> Result<(), SandboxStoreError> {
+        self.reconcile_native_prepared_class(desired, target, at, false)
+            .await
+    }
+
+    pub(crate) async fn reconcile_native_prepared_class(
+        &self,
+        desired: Option<&NativePreparedPlan>,
+        target: u8,
+        at: &str,
+        machine: bool,
+    ) -> Result<(), SandboxStoreError> {
         if target > MAX_TARGET
             || (target > 0 && desired.is_none())
             || layer2_core::seconds_from_rfc3339(at).is_none()
@@ -25,11 +36,14 @@ impl MongoSandboxStore {
         }
         if let Some(plan) = desired {
             plan.validate()?;
+            if plan.machine() != machine {
+                return Err(SandboxStoreError::Conflict);
+            }
         }
         for _ in 0..16 {
             let mut session = self.client.start_session().await.map_err(unavailable)?;
             start_transaction(&mut session).await.map_err(unavailable)?;
-            match plan(self, desired, target, at, &mut session).await {
+            match plan(self, desired, target, at, machine, &mut session).await {
                 Ok(()) => (),
                 Err(PlanError::Driver(error))
                     if is_transient(&error) || is_duplicate_key(&error) =>
@@ -76,14 +90,21 @@ async fn plan(
     desired: Option<&NativePreparedPlan>,
     target: u8,
     at: &str,
+    machine: bool,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), PlanError> {
-    // A single fence serializes target planning and ownership transfer across API replicas.
-    store.native_prepared.update_one(doc!{"_id":"target"},doc!{"$inc":{"fence":1_i64},"$set":{
+    let target_id = if machine { "machine-target" } else { "target" };
+    // Each class serializes planning and ownership transfer under its own fence.
+    store.native_prepared.update_one(doc!{"_id":target_id},doc!{"$inc":{"fence":1_i64},"$set":{
         "kind":"target","target":i32::from(target),"plan":record_bson(&desired).map_err(SandboxStoreError::Corrupt)?,
         "document_schema_version":super::DOCUMENT_SCHEMA_VERSION,
     }}).upsert(true).session(&mut *session).await?;
-    let mut cursor=store.native_prepared.find(doc!{"kind":"reservation","state":{"$in":["preparing","installing","ready","retiring"]}})
+    let channel = if machine {
+        Bson::Boolean(true)
+    } else {
+        doc! {"$ne":true}.into()
+    };
+    let mut cursor=store.native_prepared.find(doc!{"kind":"reservation","machine":channel,"state":{"$in":["preparing","installing","ready","retiring"]}})
         .sort(doc!{"_id":1}).session(&mut *session).await?;
     let records = cursor.stream(&mut *session).try_collect::<Vec<_>>().await?;
     let occupied = records.len();

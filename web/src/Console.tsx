@@ -1,6 +1,6 @@
 import { Presence } from './ui/Presence';
 import { SkeletonRows } from './ui/Skeleton';
-import { Documents, Operations, TriggerPublisherPage } from './ConsolePages';
+import { Documents, Operations, Settings, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
@@ -8,19 +8,20 @@ import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
 import { useAgentDraft } from './agent/draft';
-import { AgentSidePanel, type AgentPanel } from './agent/AgentSidePanel';
+import { AgentSidePanel } from './agent/AgentSidePanel';
+import { useAgentPanel } from './agent/useAgentPanel';
 import { AgentComputerObservation } from './agent/environment/observation';
 import { useAgentController } from './agent/controller';
 import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { LegacyProfileNotice } from './profile/LegacyProfileNotice';
-import type { AppRoute } from './routing/routes';
-import { routePath } from './routing/routes';
+import { routePath, type AppRoute } from './routing/routes';
 import { useViewArrival } from './ui/arrivalMotion';
 import { DeliverablePreviewFrame as AppFrame } from './agent/DeliverablePreviewFrame';
 import { Sidebar } from './shell/Sidebar';
 import { ManagerNavigation } from './shell/ManagerNavigation';
-import { useNavigation } from './shell/navigation';
+import { navigationAgent, useNavigation } from './shell/navigation';
+import { CharacterColorContext } from './character/characterColor';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
@@ -77,17 +78,7 @@ function ConsoleContent({
 }: ConsoleProps) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [wide, setWide] = useState(() => window.matchMedia('(min-width: 1284px)').matches);
-  useEffect(() => {
-    const query = window.matchMedia('(min-width: 1284px)');
-    const changed = () => setWide(query.matches);
-    query.addEventListener('change', changed);
-    return () => query.removeEventListener('change', changed);
-  }, []);
-  const [selection, setPanel] = useState<AgentPanel | 'auto'>('auto');
-  const panel = selection === 'auto' ? (wide ? 'files' : undefined) : selection;
-  const detailsOpen = panel === 'details';
-  const setDetailsOpen = (open: boolean) => setPanel(open ? 'details' : undefined);
+  const { panel, setPanel, detailsOpen, setDetailsOpen } = useAgentPanel();
   const [positions] = useState(() => new AgentViewPositions());
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
   const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
@@ -99,7 +90,7 @@ function ConsoleContent({
       new AgentComputerObservation({ client, subject: user.id, agentId: selectedAgent }, () =>
         setPanel('activity'),
       ),
-    [client, user.id, selectedAgent],
+    [client, user.id, selectedAgent, setPanel],
   );
   const ownerViews = useOwnerViews();
   const scopeClient = user.visitor ? undefined : client.resourceViews;
@@ -146,16 +137,12 @@ function ConsoleContent({
     refreshNavigation();
     setRevision((value) => value + 1);
   }, [refreshNavigation]);
+  const located = navigationAgent(navigation, route.kind === 'agent' ? route.agentId : undefined);
   const agent = useAgentController(client, personalAgentId, {
     viewerId: user.id,
     suspended: accessUncertain,
     authorizedLineage: agentAccess.personalLineage,
-    summary:
-      route.kind === 'agent' && navigation.status === 'ready'
-        ? navigation.items
-            .flatMap(({ workspaces }) => workspaces.flatMap((workspace) => workspace.agents))
-            .find(({ id }) => id === route.agentId)
-        : undefined,
+    summary: located?.agent,
     onHierarchyChange: refresh,
     onDeleted: () => onNavigate({ kind: 'home' }),
   });
@@ -211,7 +198,10 @@ function ConsoleContent({
       />
     ) : route.kind === 'inventory' ? (
       client.resourceViews === undefined ? (
-        <UnavailableView title="Agent inventory unavailable" />
+        <UnavailableView
+          title="Agent inventory unavailable"
+          reason="This CMA deployment does not offer the Agents list. Your Agents are still listed in the sidebar."
+        />
       ) : (
         <AgentInventory
           client={client.resourceViews}
@@ -257,27 +247,29 @@ function ConsoleContent({
         )}
       </section>
     ) : route.kind === 'agent' ? (
-      <AgentSurface
-        computerObservation={client.operationReplay ? computerObservation : undefined}
-        key={route.agentId}
-        user={user}
-        lifecycleClient={client}
-        draft={draft}
-        agentId={route.agentId}
-        viewerId={user.id}
-        controller={agent}
-        viewPosition={viewPosition}
-        accessUncertain={accessUncertain}
-        accessAuthorized={agentAccess.personalReady && !accessUncertain}
-        filesOpen={panel !== undefined && panel !== 'details'}
-        onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
-        detailsOpen={detailsOpen}
-        onDetailsOpenChange={setDetailsOpen}
-        onNavigate={onNavigate}
-        permissions={permissions}
-        actionsBusy={actions.pending}
-        onAgentAction={actions.select}
-      />
+      <CharacterColorContext value={located?.sandbox.color}>
+        <AgentSurface
+          computerObservation={client.operationReplay ? computerObservation : undefined}
+          key={route.agentId}
+          user={user}
+          lifecycleClient={client}
+          draft={draft}
+          agentId={route.agentId}
+          viewerId={user.id}
+          controller={agent}
+          viewPosition={viewPosition}
+          accessUncertain={accessUncertain}
+          accessAuthorized={agentAccess.personalReady && !accessUncertain}
+          filesOpen={panel !== undefined && panel !== 'details'}
+          onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
+          detailsOpen={detailsOpen}
+          onDetailsOpenChange={setDetailsOpen}
+          onNavigate={onNavigate}
+          permissions={permissions}
+          actionsBusy={actions.pending}
+          onAgentAction={actions.select}
+        />
+      </CharacterColorContext>
     ) : route.kind === 'sandbox' ? (
       <SandboxAccessPage
         key={route.sandboxId}
@@ -322,6 +314,8 @@ function ConsoleContent({
       <LegacyProfileNotice />
     ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
       <LegacyProfileNotice />
+    ) : route.kind === 'settings' && operator ? (
+      <Settings client={operator.usage} tab={route.tab} onNavigate={onNavigate} />
     ) : route.kind === 'operations' ? (
       operator !== undefined && canOpenOperations(user.capabilities) ? (
         <Suspense
@@ -334,7 +328,10 @@ function ConsoleContent({
           <Operations client={operator} capabilities={user.capabilities} />
         </Suspense>
       ) : (
-        <UnavailableView title="Operations unavailable" />
+        <UnavailableView
+          title="Operations unavailable"
+          reason="Operations is for CMA operators. Ask your CMA administrator if you need access."
+        />
       )
     ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
       publisher !== undefined && !user.visitor && user.capabilities.includes('publish_triggers') ? (
@@ -354,7 +351,10 @@ function ConsoleContent({
           />
         </Suspense>
       ) : (
-        <UnavailableView title="Publishing unavailable" />
+        <UnavailableView
+          title="Publishing unavailable"
+          reason="Your account cannot publish Trigger links. Ask your CMA administrator for publishing access."
+        />
       )
     ) : route.kind === 'not_found' ? (
       <NotFoundView />

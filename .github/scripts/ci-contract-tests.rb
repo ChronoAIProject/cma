@@ -137,6 +137,22 @@ if mode == "release"
     end
     raise "Gateway contract accepted duplicate #{path}"
   end
+  %w[api web].product([nil, 30]).each do |service, timeout|
+    candidate = GatewaySourceContract.expected
+    defaults = candidate["infra/#{service}/gcpbackendpolicy.yaml"][0]["spec"]["default"]
+    if timeout.nil?
+      defaults.delete("connectionDraining")
+    else
+      defaults["connectionDraining"]["drainingTimeoutSec"] = timeout
+    end
+    begin
+      GatewaySourceContract.validate(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted absent or shortened #{service} connection drain"
+  end
   %w[/livez /].each do |health|
     candidate = GatewaySourceContract.expected
     candidate["infra/api/healthcheckpolicy.yaml"][0]["spec"]["default"]["config"]["httpHealthCheck"]["requestPath"] = health
@@ -195,6 +211,31 @@ if mode == "release"
       next
     end
     raise "Gateway contract accepted incompatible service routing: #{mutation}"
+  end
+  {
+    "infra/api/httproute.yaml" => %w[cma-web-nyxid cma-nyxid-http-redirect],
+    "infra/cmaeg/httproute.yaml" => %w[cma-event-gateway-public-nyxid],
+  }.each do |path, names|
+    names.each do |name|
+      %w[removed wrong-listener wildcard-host wrong-backend].each do |mutation|
+        candidate = GatewaySourceContract.expected
+        routes = candidate.fetch(path)
+        route = routes.find { |value| value.dig("metadata", "name") == name }
+        case mutation
+        when "removed" then routes.delete(route)
+        when "wrong-listener" then route["spec"]["parentRefs"] = GatewaySourceContract.parent("https")
+        when "wildcard-host" then route["spec"]["hostnames"] = ["*.nyxid.ai"]
+        when "wrong-backend" then route["spec"]["rules"][0]["backendRefs"] = GatewaySourceContract.backend("cma-web")
+        end
+        begin
+          GatewaySourceContract.validate(candidate)
+        rescue StandardError
+          tests += 1
+          next
+        end
+        raise "Gateway contract accepted unsafe Nyxid route: #{name}: #{mutation}"
+      end
+    end
   end
   config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
   GatewaySourceContract.validate_provider_origin(config)

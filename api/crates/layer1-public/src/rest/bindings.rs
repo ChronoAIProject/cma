@@ -2,7 +2,7 @@
 use crate::AuthenticatedCaller;
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::put,
     Json, Router,
@@ -14,6 +14,10 @@ use layer2_core::sandbox::binding::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
+pub(super) mod inspection;
+mod native_endpoints;
+use native_endpoints::validate_native_endpoint;
+pub(super) mod preparation;
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -82,17 +86,19 @@ pub struct BindingConversationView {
 }
 
 #[derive(Clone)]
-struct BindingRouteState {
+pub(super) struct BindingRouteState {
     service: Arc<BindingService>,
     native_endpoint: Option<String>,
-    native_advertisement_alias: Option<String>,
+    native_advertisement_aliases: Vec<String>,
+    preparation_enabled: bool,
 }
 
 pub fn binding_router(service: Arc<BindingService>) -> Router {
     routes(BindingRouteState {
         service,
         native_endpoint: None,
-        native_advertisement_alias: None,
+        native_advertisement_aliases: vec![],
+        preparation_enabled: false,
     })
 }
 
@@ -112,47 +118,59 @@ pub fn binding_router_with_native_tools_alias(
     endpoint: &str,
     advertisement_alias: &str,
 ) -> Result<Router, String> {
+    binding_router_with_native_tools_alias_and_preparation(
+        service,
+        endpoint,
+        advertisement_alias,
+        false,
+    )
+}
+
+pub fn binding_router_with_native_tools_alias_and_preparation(
+    service: Arc<BindingService>,
+    endpoint: &str,
+    advertisement_alias: &str,
+    preparation_enabled: bool,
+) -> Result<Router, String> {
+    binding_router_with_native_tools_aliases_and_preparation(
+        service,
+        endpoint,
+        &[advertisement_alias.into()],
+        preparation_enabled,
+    )
+}
+
+/// Retain exact deployment-owned advertisements without changing runtime authority.
+pub fn binding_router_with_native_tools_aliases_and_preparation(
+    service: Arc<BindingService>,
+    endpoint: &str,
+    advertisement_aliases: &[String],
+    preparation_enabled: bool,
+) -> Result<Router, String> {
     validate_native_endpoint(endpoint)?;
-    validate_native_endpoint(advertisement_alias)?;
+    for alias in advertisement_aliases {
+        validate_native_endpoint(alias)?;
+    }
     Ok(routes(BindingRouteState {
         service,
         native_endpoint: Some(endpoint.into()),
-        native_advertisement_alias: (advertisement_alias != endpoint)
-            .then(|| advertisement_alias.into()),
+        native_advertisement_aliases: advertisement_aliases.to_vec(),
+        preparation_enabled,
     }))
-}
-
-fn validate_native_endpoint(endpoint: &str) -> Result<(), String> {
-    let url = url::Url::parse(endpoint).map_err(|_| "invalid native tools endpoint")?;
-    let loopback = url.host_str().is_some_and(|host| {
-        host.trim_matches(['[', ']'])
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-    });
-    if endpoint.len() > 2_048
-        || url.as_str() != endpoint
-        || url.host_str().is_none()
-        || !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.port() == Some(0)
-    {
-        return Err("invalid native tools endpoint".into());
-    }
-    Ok(())
 }
 
 fn routes(state: BindingRouteState) -> Router {
     Router::new()
+        .merge(preparation::routes())
         .route(
             "/api/v1/cmaeg/bindings/{binding_id}",
             put(put_binding).get(get_binding).delete(delete_binding),
         )
         .route(
             "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
-            put(put_conversation).delete(delete_conversation),
+            put(put_conversation)
+                .delete(delete_conversation)
+                .get(inspection::get),
         )
         .with_state(state)
         .layer(axum::middleware::from_fn(no_store))
@@ -198,7 +216,9 @@ async fn put_binding(
     }
     if state.native_endpoint.as_ref().is_some_and(|expected| {
         expected != &body.tools.native_mcp_url
-            && state.native_advertisement_alias.as_ref() != Some(&body.tools.native_mcp_url)
+            && !state
+                .native_advertisement_aliases
+                .contains(&body.tools.native_mcp_url)
     }) {
         return error(BindingError::InvalidRequest(
             "tools advertisement differs from the configured gateway".into(),
@@ -260,20 +280,27 @@ async fn delete_binding(
     }
 }
 #[utoipa::path(put, path = "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}", tag = "provider bindings",
-    params(("binding_id" = String, Path), ("conversation_id" = String, Path)),
+    params(("binding_id" = String, Path), ("conversation_id" = String, Path), ("x-cma-binding-generation" = Option<u64>, Header)),
     responses((status = 201, body = BindingConversationView), (status = 200, body = BindingConversationView), (status = 400), (status = 401), (status = 403), (status = 404), (status = 409), (status = 503)))]
 async fn put_conversation(
     State(state): State<BindingRouteState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, conversation)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
+    let generation = match preparation::generation_header(&headers) {
+        Ok(value) => value,
+        Err(value) => return error(value),
+    };
     match state.service.read(&caller, &id).await {
         Ok(binding)
             if binding.existing_agent.is_none()
                 && binding.profile.session_affinity
                     == layer2_core::sandbox::binding::SessionAffinity::SourceUser =>
         {
-            if binding.state != BindingState::Ready {
+            if binding.state != BindingState::Ready
+                || binding.require_generation(generation).is_err()
+            {
                 return error(BindingError::Conflict);
             }
             if !valid_conversation(&conversation) {
@@ -295,7 +322,7 @@ async fn put_conversation(
     }
     match state
         .service
-        .ensure_conversation(&caller, &id, &conversation)
+        .ensure_conversation_at_generation(&caller, &id, &conversation, generation)
         .await
     {
         Ok((value, created)) => (
@@ -438,52 +465,4 @@ fn error(error: BindingError) -> Response {
 }
 
 #[cfg(test)]
-mod error_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn unsupported_update_explains_that_retained_work_is_unchanged() {
-        let response = error(BindingError::ReconfigurationUnsupported);
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let bytes = axum::body::to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(body["code"], "binding_reconfiguration_unsupported");
-        assert!(body["detail"]
-            .as_str()
-            .unwrap()
-            .contains("have not been changed"));
-    }
-
-    #[tokio::test]
-    async fn unsupported_skill_version_update_has_a_named_conflict_code() {
-        let response = error(BindingError::SkillVersionUpdateUnsupported {
-            id: "research".into(),
-            installed: "1.0".into(),
-            requested: "1.1".into(),
-        });
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let bytes = axum::body::to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(body["code"], "binding_skill_version_update_unsupported");
-        assert!(body["detail"]
-            .as_str()
-            .unwrap()
-            .contains("version \"1.0\""));
-    }
-
-    #[tokio::test]
-    async fn storage_outage_remains_service_unavailable_with_sanitized_detail() {
-        let response = error(BindingError::Unavailable("private storage details".into()));
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let bytes = axum::body::to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(body["code"], "binding_unavailable");
-        assert_eq!(body["detail"], "Binding service is unavailable.");
-    }
-}
+mod error_tests;

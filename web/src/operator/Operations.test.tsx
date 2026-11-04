@@ -92,13 +92,16 @@ describe('operator capabilities and record views', () => {
     await screen.findByText('Research Sandbox');
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'Sandboxes',
+      'Usage',
       'Activity',
     ]);
     expect(screen.queryByRole('tab', { name: 'Platform settings' })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole('tab', { name: 'Sandboxes' }), { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: 'Usage' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Usage' }), { key: 'ArrowRight' });
     expect(screen.getByRole('tab', { name: 'Activity' })).toHaveFocus();
     await screen.findByRole('cell', { name: 'Morgan Park' });
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Activity' }), { key: 'ArrowLeft' });
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Activity' }), { key: 'Home' });
     expect(screen.getByRole('tab', { name: 'Sandboxes' })).toHaveFocus();
     await screen.findByText('Research Sandbox');
     rerender(<Operations client={client} capabilities={['read_activity_log']} />);

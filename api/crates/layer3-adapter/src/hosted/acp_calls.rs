@@ -19,6 +19,17 @@ impl Bridge {
         params: serde_json::Value,
         deadline: Duration,
     ) -> crate::Result<serde_json::Value> {
+        let frame = self.call_frame_within(method, params, deadline).await?;
+        rpc_result(method, frame)
+    }
+
+    /// Keep structured errors available for provider-proved handshake outcomes.
+    pub(in crate::hosted) async fn call_frame_within(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        deadline: Duration,
+    ) -> crate::Result<serde_json::Value> {
         let progress = if matches!(method, "initialize" | "session/load") {
             self.output_progress().await
         } else {
@@ -48,17 +59,23 @@ impl Bridge {
         };
         // Progress is durable ACK progress, never merely producer activity. An
         // absolute bound still limits a peer that keeps emitting output forever.
-        let frame = tokio::time::timeout(SIGN_IN_DEADLINE, waiting)
+        tokio::time::timeout(SIGN_IN_DEADLINE, waiting)
             .await
             .map_err(|_| {
                 AdapterError::Unavailable(format!("{method} exceeded its recovery deadline"))
-            })??;
-        if let Some(error) = frame.get("error") {
-            return Err(AdapterError::Rejected(format!("{method}: {error}")));
-        }
-        Ok(frame
-            .get("result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null))
+            })?
     }
+}
+
+pub(in crate::hosted) fn rpc_result(
+    method: &str,
+    frame: serde_json::Value,
+) -> crate::Result<serde_json::Value> {
+    if let Some(error) = frame.get("error") {
+        return Err(AdapterError::Rejected(format!("{method}: {error}")));
+    }
+    Ok(frame
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
 }

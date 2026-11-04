@@ -10,10 +10,18 @@ use layer2_core::sandbox::*;
 use layer2_core::{AgentProfileId, RuntimeCapabilities, RuntimeCapability};
 use layer3_adapter::hosted::HostedAccessToolSource;
 
-async fn setup(
+pub(super) async fn setup(
     store: &MongoSandboxStore,
 ) -> (ProviderBinding, BindingConversation, AgentOpenRequest) {
+    setup_with_key(store, "a".repeat(64)).await
+}
+
+pub(super) async fn setup_with_key(
+    store: &MongoSandboxStore,
+    key_sha256: String,
+) -> (ProviderBinding, BindingConversation, AgentOpenRequest) {
     let mut binding = mongo_tests::binding();
+    binding.key_sha256 = key_sha256;
     binding.tool_endpoint = Some("https://gateway.example.test/mcp".into());
     store.save_binding(None, binding.clone()).await.unwrap();
     binding.work = BindingWork::ProvisionSandbox;

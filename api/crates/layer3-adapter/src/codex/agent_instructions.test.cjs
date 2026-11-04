@@ -10,6 +10,7 @@ const { bridgePath } = require("./persist_conversations.cjs");
 const { agentInstructions, method, recording } = require("./agent_instructions.cjs");
 const { method: steeringMethod, route: steeringRoute } = require("./turn_steering.cjs");
 const { processRpc } = require("./native_tools_fixture.cjs");
+const { withoutOpenCompletion } = require("./open_completion.cjs");
 async function modelFixture() {
   const calls = [];
   let mcpInitializations = 0;
@@ -93,7 +94,7 @@ function legacyInstructions(installed) {
 `, "");
     // Reconstruct the exact deployed legacy bytes, including removal of later
     // steering support. Retain the original hash as the recovery authority.
-    const source = installed.replace(steeringMethod, "").replace(steeringRoute, "")
+    const source = withoutOpenCompletion(installed).replace(steeringMethod, "").replace(steeringRoute, "")
       .replace(method, oldMethod).replaceAll(recording, oldRecording);
     assert.equal(createHash("sha256").update(source).digest("hex"),
       "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4",
@@ -111,7 +112,7 @@ for (const legacy of [false, true]) test(
     : "pinned native instructions change at idle without replacing the thread, process, files or history",
   { timeout: 120000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   let program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
   // Validate before opening the HTTP fixture so a source-pin assertion cannot
   // leave a listening server that holds the whole image build open.
@@ -190,6 +191,6 @@ for (const legacy of [false, true]) test(
     assert.equal((await apply("")).applied, true);
     assert.equal(readFileSync(join(home, "AGENTS.md"), "utf8"), "");
   } finally {
-    await bridge.close(); await fixture.close(); rmSync(directory, { recursive: true, force: true });
+    await bridge.close(); await fixture.close(); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

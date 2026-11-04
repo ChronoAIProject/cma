@@ -27,82 +27,114 @@ impl AgentWorker {
                 turn,
             )
         });
-        let (channel, updates) = self
-            .reconnect(
-                context,
-                connection_fence,
-                &request,
-                (&target.conversation_id, recovered_prompt),
-            )
-            .await?;
-        let mut context_replayed = false;
-        if let Some((sequence, input)) = agent.pending_managed_context() {
-            let result = channel.input.send(input).await;
-            let refresh_target = layer2_core::sandbox::AgentRuntimeTarget {
-                agent_id: agent.id.clone(),
-                conversation_id: target.conversation_id.clone(),
-                runtime_generation: target.runtime_generation,
-            };
-            let authority = layer2_core::sandbox::AgentWorkAuthority {
-                holder: self.config.holder.clone(),
-                fence: connection_fence,
-            };
-            let confirmation = match result {
-                Ok(()) => {
-                    context_replayed = true;
-                    self.dependencies
-                        .operations
-                        .confirm_managed_context_replayed(&refresh_target, &authority, sequence)
-                        .await
-                }
-                Err(layer3_adapter::AdapterError::OperationIdentityConflict(_)) => {
-                    self.dependencies
-                        .operations
-                        .retire_managed_context_replayed(&refresh_target, &authority, sequence)
-                        .await
-                }
-                Err(error) => return Err(adapter_failure(error)),
-            };
-            confirmation.map_err(|error| {
-                WorkerFailure::retryable(
-                    "managed_context_confirmation_unavailable",
-                    error.to_string(),
+        let (updates, mut receiver) = mpsc::channel(UPDATE_BUFFER);
+        let quiet = recovered_prompt.is_none()
+            && agent.status == layer2_core::sandbox::AgentStatus::Ready
+            && agent.work.step == AgentWorkStep::PublishConnection;
+        let restoring = async {
+            let channel = self
+                .reconnect(
+                    context,
+                    connection_fence,
+                    &request,
+                    (
+                        &target.conversation_id,
+                        recovered_prompt.clone(),
+                        agent
+                            .pending_managed_context()
+                            .map(|(sequence, _)| sequence),
+                    ),
+                    updates,
                 )
-            })?;
-        }
-        if let Some(settings) = agent
-            .conversation
-            .settings
-            .as_ref()
-            .filter(|_| !context_replayed)
-        {
-            channel
-                .input
-                .send(settings.runtime_input())
-                .await
-                .map_err(adapter_failure)?;
-            self.dependencies
-                .operations
-                .confirm_settings_replayed(
-                    &layer2_core::sandbox::AgentRuntimeTarget {
-                        agent_id: agent.id.clone(),
-                        conversation_id: target.conversation_id.clone(),
-                        runtime_generation: target.runtime_generation,
-                    },
-                    &layer2_core::sandbox::AgentWorkAuthority {
-                        holder: self.config.holder.clone(),
-                        fence: connection_fence,
-                    },
-                    settings,
-                )
-                .await
-                .map_err(|error| {
+                .await?;
+            let mut context_replayed = false;
+            if let Some((sequence, input)) = agent.pending_managed_context() {
+                let result = channel.input.send(input).await;
+                let refresh_target = layer2_core::sandbox::AgentRuntimeTarget {
+                    agent_id: agent.id.clone(),
+                    conversation_id: target.conversation_id.clone(),
+                    runtime_generation: target.runtime_generation,
+                };
+                let authority = layer2_core::sandbox::AgentWorkAuthority {
+                    holder: self.config.holder.clone(),
+                    fence: connection_fence,
+                };
+                let confirmation = match result {
+                    Ok(()) => {
+                        context_replayed = true;
+                        self.dependencies
+                            .operations
+                            .confirm_managed_context_replayed(&refresh_target, &authority, sequence)
+                            .await
+                    }
+                    Err(layer3_adapter::AdapterError::OperationIdentityConflict(_)) => {
+                        self.dependencies
+                            .operations
+                            .retire_managed_context_replayed(&refresh_target, &authority, sequence)
+                            .await
+                            .map_err(|error| {
+                                WorkerFailure::retryable(
+                                    "managed_context_confirmation_unavailable",
+                                    error.to_string(),
+                                )
+                            })?;
+                        // This attachment permits only the now-retired operation.
+                        // Discard it; the next claim performs an ordinary handshake.
+                        return Err(WorkerFailure::retryable(
+                            "managed_context_reconnect_required",
+                            "retired context recovery requires a new attachment",
+                        ));
+                    }
+                    Err(error) => return Err(adapter_failure(error)),
+                };
+                confirmation.map_err(|error| {
                     WorkerFailure::retryable(
-                        "agent_settings_confirmation_unavailable",
+                        "managed_context_confirmation_unavailable",
                         error.to_string(),
                     )
                 })?;
-        }
+            }
+            if let Some(settings) = agent
+                .conversation
+                .settings
+                .as_ref()
+                .filter(|_| !context_replayed)
+            {
+                channel
+                    .input
+                    .send(settings.runtime_input())
+                    .await
+                    .map_err(adapter_failure)?;
+                self.dependencies
+                    .operations
+                    .confirm_settings_replayed(
+                        &layer2_core::sandbox::AgentRuntimeTarget {
+                            agent_id: agent.id.clone(),
+                            conversation_id: target.conversation_id.clone(),
+                            runtime_generation: target.runtime_generation,
+                        },
+                        &layer2_core::sandbox::AgentWorkAuthority {
+                            holder: self.config.holder.clone(),
+                            fence: connection_fence,
+                        },
+                        settings,
+                    )
+                    .await
+                    .map_err(|error| {
+                        WorkerFailure::retryable(
+                            "agent_settings_confirmation_unavailable",
+                            error.to_string(),
+                        )
+                    })?;
+            }
+            Ok(channel)
+        };
+        let channel = if quiet {
+            self.drain_connection_output(agent, restoring, &mut receiver)
+                .await?
+        } else {
+            restoring.await?
+        };
         let conversation_id = valid_conversation_id(channel.conversation_id)?;
         if conversation_id != target.conversation_id {
             return Err(WorkerFailure::terminal(
@@ -115,7 +147,7 @@ impl AgentWorker {
             conversation_id,
             target.runtime_generation,
             channel.input,
-            updates,
+            receiver,
         )
     }
 
@@ -124,29 +156,48 @@ impl AgentWorker {
         context: &AgentContext,
         authority_fence: u64,
         request: &AgentOpenRequest,
-        (conversation_id, recovered_prompt): (&str, Option<layer3_adapter::PromptIdentity>),
-    ) -> Result<
-        (
-            ConversationChannel,
-            mpsc::Receiver<layer3_adapter::ConversationUpdate>,
+        (conversation_id, recovered_prompt, recovered_context): (
+            &str,
+            Option<layer3_adapter::PromptIdentity>,
+            Option<u64>,
         ),
-        WorkerFailure,
-    > {
-        let (updates, receiver) = mpsc::channel(UPDATE_BUFFER);
-        match tokio::time::timeout(
-            self.config.open_timeout,
-            self.dependencies.adapter.reconnect_agent_with_prompt(
-                &context.runtime,
-                authority_fence,
-                request,
-                conversation_id,
-                recovered_prompt,
-                updates,
-            ),
-        )
+        updates: mpsc::Sender<layer3_adapter::ConversationUpdate>,
+    ) -> Result<ConversationChannel, WorkerFailure> {
+        match tokio::time::timeout(self.config.open_timeout, async {
+            if let Some(sequence) = recovered_context {
+                if recovered_prompt.is_some() {
+                    return Err(layer3_adapter::AdapterError::OperationIdentityConflict(
+                        "active turn cannot replay idle context".into(),
+                    ));
+                }
+                self.dependencies
+                    .adapter
+                    .reconnect_agent_with_context(
+                        &context.runtime,
+                        authority_fence,
+                        request,
+                        conversation_id,
+                        sequence,
+                        updates,
+                    )
+                    .await
+            } else {
+                self.dependencies
+                    .adapter
+                    .reconnect_agent_with_prompt(
+                        &context.runtime,
+                        authority_fence,
+                        request,
+                        conversation_id,
+                        recovered_prompt,
+                        updates,
+                    )
+                    .await
+            }
+        })
         .await
         {
-            Ok(Ok(channel)) => Ok((channel, receiver)),
+            Ok(Ok(channel)) => Ok(channel),
             Ok(Err(error)) => Err(adapter_failure(error)),
             Err(_) => Err(WorkerFailure::retryable(
                 "agent_conversation_open_timeout",

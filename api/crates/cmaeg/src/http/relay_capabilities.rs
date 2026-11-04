@@ -5,6 +5,12 @@ use utoipa::ToSchema;
 
 #[derive(Serialize, ToSchema)]
 pub struct RelayAuthoringCapabilities {
+    /// New Custom channels may opt into durable execution for recovery-capable providers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_durable_execution_enabled: Option<bool>,
+    /// Registered provider slugs with response replay. Configuration, not connection health.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_recovery_providers: Option<Vec<String>>,
     /// Separate native custom app only; never replaces a NyxID webhook.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_lark_writes_enabled: Option<bool>,
@@ -21,6 +27,11 @@ pub struct RelayAuthoringCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_telegram_topic_lifecycle_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_telegram_topic_creation_enabled: Option<bool>,
+    /// General-topic execution additionally requires the original native forum envelope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_telegram_general_topic_lifecycle_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_lifecycle_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_conversation_history_enabled: Option<bool>,
@@ -28,6 +39,12 @@ pub struct RelayAuthoringCapabilities {
     pub native_lark_conversation_history_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_reactions_enabled: Option<bool>,
+    /// Descriptive sticker/embed/poll intake, not media download or poll actions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_rich_content_enabled: Option<bool>,
+    /// Bounded descriptions of received Discord forwards, without origin access.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_forwards_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_writes_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,6 +55,8 @@ pub struct RelayAuthoringCapabilities {
     pub native_whatsapp_writes_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_forms_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_message_events_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_flow_writes_enabled: Option<bool>,
     /// Owner opt-in to existing OBA groups; independent of group issuance.
@@ -100,6 +119,8 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
     })
     .collect();
     RelayAuthoringCapabilities {
+        custom_durable_execution_enabled: Some(state.custom_durable_execution_enabled),
+        response_recovery_providers: Some(state.providers.response_recovery_providers()),
         native_lark_writes_enabled: Some(
             state.native_lark_writes_enabled
                 && state.native_lark_admission_enabled
@@ -129,6 +150,17 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
                 && state.native_telegram_durable_admission_enabled
                 && state.multi_consumer_writes_enabled,
         ),
+        native_telegram_topic_creation_enabled: Some(
+            state.native_telegram_topic_creation_enabled
+                && state.native_telegram_durable_admission_enabled
+                && state.multi_consumer_writes_enabled,
+        ),
+        native_telegram_general_topic_lifecycle_enabled: Some(
+            state.native_telegram_general_topic_lifecycle_enabled
+                && state.native_telegram_topic_lifecycle_enabled
+                && state.native_telegram_durable_admission_enabled
+                && state.multi_consumer_writes_enabled,
+        ),
         native_discord_thread_history_enabled: Some(state.native_discord_thread_history_enabled),
         native_lark_conversation_history_enabled: Some(
             state.native_lark_conversation_history_enabled,
@@ -140,12 +172,17 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
             state.native_discord_thread_lifecycle_enabled,
         ),
         native_discord_reactions_enabled: Some(state.native_discord_reactions_enabled),
+        native_discord_rich_content_enabled: Some(state.native_discord_rich_content_enabled),
+        native_discord_forwards_enabled: Some(state.native_discord_forwards_enabled),
         native_discord_writes_enabled: Some(state.native_discord_writes_enabled),
         native_discord_auto_activation_enabled: Some(
             state.native_discord.discovery_enabled() && state.native_discord_admission_enabled,
         ),
         native_discord_capacity: Some(crate::discord::selection::MAX_RECORDS),
         native_whatsapp_writes_enabled: Some(state.native_whatsapp_writes_enabled),
+        native_whatsapp_message_events_enabled: Some(
+            state.native_whatsapp_message_events_enabled && state.native_whatsapp_admission_enabled,
+        ),
         native_whatsapp_forms_enabled: Some(
             state.native_whatsapp_forms_enabled && state.native_whatsapp_admission_enabled,
         ),

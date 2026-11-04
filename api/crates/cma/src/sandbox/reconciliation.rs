@@ -45,6 +45,8 @@ pub(crate) struct SandboxReconciler {
     deployment_id: String,
     profile_agents: Option<Arc<AgentService>>,
     runtime_version: Option<String>,
+    failed_runtime_recovery: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
+    recovery_schedule_cursor: std::sync::atomic::AtomicUsize,
 }
 
 impl SandboxReconciler {
@@ -61,6 +63,8 @@ impl SandboxReconciler {
             deployment_id,
             profile_agents: None,
             runtime_version: None,
+            failed_runtime_recovery: None,
+            recovery_schedule_cursor: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -71,6 +75,14 @@ impl SandboxReconciler {
 
     pub(crate) fn with_runtime_version(mut self, runtime_version: String) -> Self {
         self.runtime_version = Some(runtime_version);
+        self
+    }
+
+    pub(crate) fn with_failed_runtime_recovery(
+        mut self,
+        service: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
+    ) -> Self {
+        self.failed_runtime_recovery = Some(service);
         self
     }
 
@@ -350,6 +362,7 @@ impl SandboxReconciler {
 
     pub(super) async fn run_due(&self, now: SystemTime) -> Result<(), SandboxStoreError> {
         self.initialize(now).await?;
+        self.recover_failed_unpublished_runtime().await?;
         let policy = self
             .policy
             .current_sandbox_policy()

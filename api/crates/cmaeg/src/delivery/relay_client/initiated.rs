@@ -30,10 +30,18 @@ impl RelayClient {
         message
             .validate()
             .map_err(|_| invalid("outbound_message_invalid"))?;
-        if message.native_media_update.is_some() {
-            return Err(invalid("native_media_update_requires_updateMessage"));
+        if message.native_media_update.is_some() || message.clear_native_attachments {
+            return Err(invalid(if message.clear_native_attachments {
+                "native_attachment_clear_requires_updateMessage"
+            } else {
+                "native_media_update_requires_updateMessage"
+            }));
         }
-        if message.thread_reply || message.reply_to.is_some() {
+        if message.structured_content.is_some()
+            || message.reply_with_received_sticker
+            || message.thread_reply
+            || message.reply_to.is_some()
+        {
             return Err(invalid(
                 "initiated_send_has_no_inbound_reply_or_thread_authority",
             ));
@@ -46,10 +54,14 @@ impl RelayClient {
         if !message.native_attachments.is_empty() {
             if !self.native_media
                 || !super::media::supported(platform)
-                || message
-                    .native_attachments
-                    .iter()
-                    .any(|item| item.kind == NativeMediaKind::Sticker)
+                || message.native_attachments.iter().any(|item| {
+                    matches!(
+                        item.kind,
+                        NativeMediaKind::Sticker
+                            | NativeMediaKind::Voice
+                            | NativeMediaKind::Animation
+                    )
+                })
             {
                 return Err(invalid("native_media_unsupported"));
             }

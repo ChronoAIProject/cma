@@ -8,7 +8,18 @@ impl NativeWarmPools {
         provider: &dyn NativePoolControl,
         target: PoolTarget,
     ) -> Result<bool, WarmPoolError> {
-        retire_claimed(self.store.as_ref(), provider, &self.image.uri, target).await
+        let image = if target.machine {
+            // Removing the configured machine image does not grant an agent-only
+            // release authority to retire desktop capacity.
+            let Some((image, _)) = &self.machine else {
+                self.store.finish(&target, false).await?;
+                return Ok(true);
+            };
+            &image.uri
+        } else {
+            &self.image.uri
+        };
+        retire_claimed(self.store.as_ref(), provider, image, target).await
     }
 }
 

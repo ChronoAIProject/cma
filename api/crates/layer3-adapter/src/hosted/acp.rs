@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,6 +50,7 @@ use declaration::validate_ready;
 
 #[path = "acp_calls.rs"]
 mod calls;
+pub(super) use calls::rpc_result;
 
 #[path = "acp_recovery.rs"]
 mod recovery;
@@ -95,6 +96,7 @@ pub(super) struct Bridge {
     pub(super) instructions_support: AtomicU8,
     pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub(super) context_goal: Mutex<Option<(String, bool)>>,
+    pub(super) recovering_context: AtomicU64,
 }
 
 pub(super) struct OpenedBridge {
@@ -105,6 +107,7 @@ pub(super) struct OpenedBridge {
 }
 
 struct OpeningTasks {
+    bridge: Arc<Bridge>,
     reader: tokio::task::AbortHandle,
     relay: tokio::task::AbortHandle,
     armed: bool,
@@ -113,6 +116,10 @@ struct OpeningTasks {
 impl Drop for OpeningTasks {
     fn drop(&mut self) {
         if self.armed {
+            // Do not suspend error publication on socket/task cleanup: a startup
+            // recorder can otherwise see closed ACK ownership before the error.
+            // The unpublished input drops too, releasing its idle writer.
+            self.bridge.retired.store(true, Ordering::SeqCst);
             self.reader.abort();
             self.relay.abort();
         }
@@ -177,6 +184,13 @@ impl Bridge {
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<OpenedBridge> {
+        if settings.recovered_context_sequence.is_some()
+            && (resume_conversation.is_none() || recovered_prompt.is_some())
+        {
+            return Err(AdapterError::Rejected(
+                "context recovery requires one quiet retained conversation".into(),
+            ));
+        }
         if recovered_prompt.is_some() && resume_conversation.is_none() {
             return Err(AdapterError::Rejected(
                 "prompt recovery requires a held conversation".into(),
@@ -215,6 +229,7 @@ impl Bridge {
             instructions_support: AtomicU8::new(0),
             context_refresh: settings.context_refresh.clone(),
             context_goal: Mutex::new(None),
+            recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
         });
         let (updates, relay) = super::update_relay::spawn(updates_tx);
         if let Some(session) = &startup_session {
@@ -232,39 +247,23 @@ impl Bridge {
 
         let reader_task = reader::spawn(Arc::clone(&bridge), source, updates.clone(), acknowledged);
         let mut opening_tasks = OpeningTasks {
+            bridge: Arc::clone(&bridge),
             reader: reader_task.abort_handle(),
             relay: relay.abort_handle(),
             armed: true,
         };
 
-        if let Err(error) = bridge
+        bridge
             .handshake(resume_conversation, cwd, settings, &updates)
-            .await
-        {
-            bridge.retire().await;
-            reader_task.abort();
-            let _ = reader_task.await;
-            relay.abort();
-            let _ = relay.await;
-            return Err(error);
-        }
+            .await?;
         if reader_task.is_finished() {
-            bridge.retire().await;
-            let _ = reader_task.await;
-            relay.abort();
-            let _ = relay.await;
             return Err(AdapterError::Unavailable(
                 "conversation link ended while opening".into(),
             ));
         }
         let conversation_id = bridge.session().await?;
         bridge.release_recovered_prompt(&updates).await;
-        if let Err(error) = bridge.activate_output(&conversation_id, &updates).await {
-            bridge.retire().await;
-            reader_task.abort();
-            relay.abort();
-            return Err(error);
-        }
+        bridge.activate_output(&conversation_id, &updates).await?;
         opening_tasks.armed = false;
         Ok(OpenedBridge {
             channel: ConversationChannel {
@@ -380,9 +379,7 @@ impl Bridge {
         prompt_id: Option<PromptIdentity>,
     ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
         if self.retired.load(Ordering::SeqCst) {
-            return Err(AdapterError::Unavailable(
-                "conversation link has retired".into(),
-            ));
+            return Err(retired_before_write(prompt));
         }
         let id = prompt_id.map_or_else(
             || {
@@ -405,7 +402,7 @@ impl Bridge {
             .lock()
             .await
             .insert(id.clone(), PendingCall { answer, prompt });
-        if let Err(error) = self.send(&frame).await {
+        if let Err(error) = self.send_frame(&frame, prompt).await {
             self.pending.lock().await.remove(&id);
             return Err(error);
         }
@@ -413,10 +410,12 @@ impl Bridge {
     }
 
     pub(super) async fn send(&self, frame: &serde_json::Value) -> crate::Result<()> {
+        self.send_frame(frame, false).await
+    }
+
+    async fn send_frame(&self, frame: &serde_json::Value, prompt: bool) -> crate::Result<()> {
         if self.retired.load(Ordering::SeqCst) {
-            return Err(AdapterError::Unavailable(
-                "conversation link has retired".into(),
-            ));
+            return Err(retired_before_write(prompt));
         }
         let body = serde_json::to_vec(frame)
             .map_err(|_| AdapterError::Rejected("ACP frame could not be encoded".into()))?;
@@ -450,6 +449,14 @@ impl Bridge {
         self.retired.store(true, Ordering::SeqCst);
         self.pending.lock().await.clear();
         self.blocked.lock().await.clear();
+    }
+}
+
+fn retired_before_write(prompt: bool) -> AdapterError {
+    if prompt {
+        AdapterError::PromptNotWritten("conversation link has retired".into())
+    } else {
+        AdapterError::Unavailable("conversation link has retired".into())
     }
 }
 

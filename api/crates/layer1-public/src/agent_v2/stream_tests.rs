@@ -86,6 +86,50 @@ async fn buffered_shared_replay_does_not_renew_expired_membership() {
     assert!(body.next().await.is_none());
 }
 
+#[tokio::test(start_paused = true)]
+async fn empty_shared_tail_still_refuses_revocation_and_expired_membership() {
+    for expired in [false, true] {
+        let f = fixture(true, true).await;
+        let share = share(&f).await;
+        let auth = AuthenticatedResourceCaller {
+            context: context("reader"),
+            credential: Some(crate::DelegatedCredential::new("fixture-credential".into())),
+        };
+        let mut open = open(
+            f.state.clone(),
+            auth,
+            AgentId("agt_fixture".into()),
+            None,
+            HeaderMap::new(),
+        )
+        .await
+        .unwrap();
+        open.pending.clear();
+        open.initial_gap = false;
+        open.fill().await.unwrap();
+        assert!(open.pending.is_empty());
+        if expired {
+            tokio::time::advance(Duration::from_secs(60)).await;
+        } else {
+            f.access
+                .change_share(
+                    &context("owner-a"),
+                    None,
+                    ShareCommand {
+                        selector: share.selector,
+                        change: ShareChange::Revoke { share_id: share.id },
+                        expected_share_revision: Some(share.revision),
+                        idempotency_key: "revoke-empty-tail".into(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        assert!(open.fill().await.is_err());
+        assert!(open.pending.is_empty());
+    }
+}
+
 async fn following() -> (Following, Fixture) {
     let f = fixture(true, true).await;
     let auth = AuthenticatedResourceCaller {

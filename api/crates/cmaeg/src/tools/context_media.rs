@@ -1,13 +1,25 @@
+#[path = "context_presentations.rs"]
+mod presentations;
 use super::{
     native_whatsapp_templates, Activity, EventRefPayload, NativeStickerCapabilities,
     NativeVideoCapabilities, ResolvedChannel, ToolsState,
 };
 use cmaeg_core::activity::SourceKind;
+pub use presentations::NativePresentationProfile;
 use serde::Serialize;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct NativeMediaCapabilities {
+    /// Explicit native presentation profiles; absent while issuance is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_profiles: Option<Vec<NativePresentationProfile>>,
+    /// Eligible ordered attachments are sent as one album; absent when disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub albums: Option<NativeAlbumCapabilities>,
+    /// One upload and native controls in the same message; absent while issuance is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controls: Option<MediaControlsCapabilities>,
     pub kinds: Vec<String>,
     pub sources: Vec<String>,
     pub max_attachments: usize,
@@ -32,6 +44,50 @@ pub struct NativeMediaCapabilities {
     pub video: Option<NativeVideoCapabilities>,
 }
 
+/// Native album constraints. Albums do not issue individual or aggregate operation references.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct NativeAlbumCapabilities {
+    pub min_attachments: usize,
+    pub max_attachments: usize,
+    /// Each album must use kinds from one group; image/video may be mixed.
+    pub kind_groups: Vec<Vec<String>>,
+    pub controls: bool,
+    pub message_operations: bool,
+}
+
+/// Exact media/control combination supported for this event's verified destination.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct MediaControlsCapabilities {
+    /// Exact attachment kinds supported with controls; absent means the parent kinds apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kinds: Option<Vec<String>>,
+    pub max_attachments: usize,
+    pub buttons: bool,
+    pub choices: bool,
+    pub caption_max_chars: u32,
+    pub update: bool,
+    /// Replace the supported upload set on the same durable card through a confirmed PATCH.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace_media: Option<bool>,
+    /// Explicit clear_native_attachments removes every upload on a confirmed card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clear_media: Option<bool>,
+}
+impl MediaControlsCapabilities {
+    pub(super) fn single(caption_max_chars: u32) -> Self {
+        Self {
+            kinds: None,
+            max_attachments: 1,
+            buttons: true,
+            choices: true,
+            caption_max_chars,
+            update: false,
+            replace_media: None,
+            clear_media: None,
+        }
+    }
+}
+
 impl NativeMediaCapabilities {
     pub(super) fn for_event(
         state: &ToolsState,
@@ -50,16 +106,137 @@ impl NativeMediaCapabilities {
                     && native_whatsapp_templates(true, channel, event, activity, verified),
             )
         } else if matches!(activity.source, SourceKind::NativeLark(_)) {
-            Self::native_lark(state.native_lark_outbound_media_enabled)
+            Self::native_lark(state.native_lark_outbound_media_enabled).map(|mut capabilities| {
+                if verified
+                    && state.native_lark_media_controls_enabled
+                    && crate::interactions::native_lark::eligible(channel, event, activity)
+                {
+                    let mut controls = MediaControlsCapabilities::single(0);
+                    controls.kinds = Some(vec!["image".into()]);
+                    if state.native_lark_multi_image_controls_enabled {
+                        controls.max_attachments = cmaeg_core::message::MAX_NATIVE_ATTACHMENTS;
+                    }
+                    controls.update = true;
+                    controls.replace_media = state
+                        .native_lark_media_card_replacements_enabled
+                        .then_some(true);
+                    capabilities.controls = Some(controls);
+                }
+                capabilities
+            })
         } else if matches!(activity.source, SourceKind::Whatsapp { .. }) {
-            Self::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
+            Self::native_whatsapp(state.native_whatsapp_outbound_media_enabled).map(
+                |mut capabilities| {
+                    if verified
+                        && state.native_media_presentations_enabled
+                        && matches!(event.reply, cmaeg_core::seal::ReplyAddress::Whatsapp { .. })
+                    {
+                        capabilities.kinds.push("voice".into());
+                        capabilities.presentation_profiles =
+                            Some(vec![NativePresentationProfile::voice(false)]);
+                    }
+                    if verified
+                        && state.native_whatsapp_media_controls_enabled
+                        && state.native_whatsapp_interactions_enabled
+                        && (event.consumer.is_none() || state.consumer_interactions_enabled)
+                        && matches!(event.reply, cmaeg_core::seal::ReplyAddress::Whatsapp { .. })
+                        && crate::interactions::whatsapp::eligible(channel, event, activity)
+                    {
+                        let mut controls = MediaControlsCapabilities::single(0);
+                        controls.kinds = Some(["image", "file", "video"].map(String::from).into());
+                        controls.choices = false;
+                        capabilities.controls = Some(controls);
+                    }
+                    capabilities
+                },
+            )
         } else {
-            Self::for_source(&activity.source, state.native_media_enabled)
+            Self::for_source(&activity.source, state.native_media_enabled).map(
+                |mut capabilities| {
+                    if verified
+                        && state.native_discord_voice_enabled
+                        && discord_voice_destination(channel, event, activity)
+                    {
+                        capabilities.kinds.push("voice".into());
+                        let mut profiles = vec![NativePresentationProfile::discord_voice()];
+                        if state
+                            .media
+                            .as_ref()
+                            .and_then(|media| media.voice_decoder())
+                            .is_some()
+                        {
+                            profiles.push(NativePresentationProfile::discord_opus_voice());
+                        }
+                        capabilities.presentation_profiles = Some(profiles);
+                    }
+                    if verified
+                        && state.native_media_presentations_enabled
+                        && telegram_album_destination(channel, event, activity)
+                    {
+                        capabilities
+                            .kinds
+                            .extend(["voice", "animation", "sticker"].map(String::from));
+                        capabilities.presentation_profiles =
+                            Some(NativePresentationProfile::telegram());
+                    }
+                    if verified
+                        && state.native_telegram_albums_enabled
+                        && telegram_album_destination(channel, event, activity)
+                    {
+                        capabilities.albums = Some(NativeAlbumCapabilities {
+                            min_attachments: 2,
+                            max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
+                            kind_groups: vec![
+                                vec!["image".into(), "video".into()],
+                                vec!["file".into()],
+                                vec!["audio".into()],
+                            ],
+                            controls: false,
+                            message_operations: false,
+                        });
+                    }
+                    let discord_controls = state.native_discord_media_controls_enabled
+                        && state.discord_interactions_enabled
+                        && crate::interactions::discord::eligible(channel, event, activity);
+                    let telegram_controls = state.native_telegram_media_controls_enabled
+                        && crate::interactions::telegram_media::eligible(channel, event, activity);
+                    if verified
+                        && (event.consumer.is_none() || state.consumer_interactions_enabled)
+                        && (discord_controls || telegram_controls)
+                    {
+                        let mut controls = MediaControlsCapabilities::single(1024);
+                        if capabilities.presentation_profiles.is_some() {
+                            controls.kinds =
+                                Some(["image", "file", "audio", "video"].map(String::from).into());
+                        }
+                        if discord_controls && state.native_discord_media_card_sets_enabled {
+                            controls.max_attachments = cmaeg_core::message::MAX_NATIVE_ATTACHMENTS;
+                        }
+                        controls.update = (discord_controls
+                            && state.native_discord_media_card_edits_enabled)
+                            || (telegram_controls
+                                && state.native_telegram_media_control_edits_enabled);
+                        controls.replace_media = (discord_controls
+                            && state.native_discord_media_card_edits_enabled
+                            && state.native_discord_media_card_replacements_enabled)
+                            .then_some(true);
+                        controls.clear_media = (discord_controls
+                            && state.native_discord_media_card_sets_enabled
+                            && controls.replace_media == Some(true))
+                        .then_some(true);
+                        capabilities.controls = Some(controls);
+                    }
+                    capabilities
+                },
+            )
         }
     }
 
     pub(super) fn native_lark(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
+            presentation_profiles: None,
+            albums: None,
+            controls: None,
             kinds: ["image", "file", "audio", "video"].map(String::from).into(),
             sources: ["url", "base64"].map(String::from).into(),
             max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
@@ -79,6 +256,9 @@ impl NativeMediaCapabilities {
 
     pub(super) fn native_whatsapp(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
+            presentation_profiles: None,
+            albums: None,
+            controls: None,
             kinds: ["image", "file", "audio", "sticker", "video"]
                 .map(String::from)
                 .into(),
@@ -119,6 +299,9 @@ impl NativeMediaCapabilities {
             return None;
         }
         Some(Self {
+            presentation_profiles: None,
+            albums: None,
+            controls: None,
             kinds: ["image", "file", "audio", "video"].map(String::from).into(),
             sources: ["url", "base64"].map(String::from).into(),
             max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
@@ -131,4 +314,39 @@ impl NativeMediaCapabilities {
             video: None,
         })
     }
+}
+
+fn telegram_album_destination(
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+    activity: &Activity,
+) -> bool {
+    use cmaeg_core::{channel::Platform, seal::ReplyAddress};
+    matches!((&event.reply, &activity.source),
+        (ReplyAddress::Telegram { bot_id, chat_id, thread_id, .. },
+         SourceKind::Telegram { platform: Platform::Telegram, bot_id: source })
+        if bot_id == source && chat_id == &activity.conversation.id
+            && thread_id == &activity.conversation.thread_id
+            && channel.definition.source_of(&activity.source).is_some()
+            && channel.definition.secrets.telegram_bot_token.as_ref()
+                .is_some_and(|token| crate::telegram::media_token_matches(token, bot_id)))
+}
+
+fn discord_voice_destination(
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+    activity: &Activity,
+) -> bool {
+    use cmaeg_core::seal::ReplyAddress;
+    event.lineage.is_none()
+        && event.activity_sha256.is_some()
+        && event.channel_id == channel.id
+        && event.record_id == channel.pointer.record_id
+        && matches!((&event.reply, &activity.source),
+            (ReplyAddress::Discord { bot_id, channel_id, thread_id, .. }, SourceKind::Discord { bot_id: source })
+            if bot_id == source && channel_id == &activity.conversation.id
+                && thread_id == &activity.conversation.thread_id
+                && thread_id.as_ref().is_none_or(|thread| thread == channel_id)
+                && channel.definition.source_of(&activity.source).is_some()
+                && crate::discord::rest::token(channel, bot_id).is_some())
 }

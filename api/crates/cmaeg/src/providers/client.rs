@@ -29,6 +29,8 @@ pub struct ProviderClient {
     providers: BTreeMap<ProviderSlug, ProviderHandle>,
     pub(super) request_timeout: Duration,
     pub(super) management_auth: Option<super::management_auth::CmaManagementAuth>,
+    worker_credentials: Option<crate::worker_credentials::WorkerCredentials>,
+    tracking_required: bool,
 }
 
 impl ProviderClient {
@@ -81,6 +83,8 @@ impl ProviderClient {
             providers,
             request_timeout,
             management_auth: None,
+            worker_credentials: None,
+            tracking_required: false,
         })
     }
 
@@ -95,6 +99,11 @@ impl ProviderClient {
             &config.management.cma_base_url,
             config.management.cma_service_token.clone(),
         )?);
+        client.tracking_required = crate::worker_credentials::config::Settings::from_env()
+            .map_err(|_| {
+                ProviderError::InvalidRequest("invalid worker tracking configuration".into())
+            })?
+            .tracking;
         Ok(client.with_service_auth(
             crate::service_auth::ServiceAuth::from_config(config)
                 .map_err(|error| ProviderError::Unavailable(error.to_string()))?,
@@ -104,6 +113,35 @@ impl ProviderClient {
     pub fn provider_count(&self) -> usize {
         self.providers.len()
     }
+    pub(crate) fn with_worker_credentials(
+        mut self,
+        tracking: Option<crate::worker_credentials::WorkerCredentials>,
+    ) -> Self {
+        self.worker_credentials = tracking;
+        self
+    }
+    pub(super) async fn record_worker_key(&self, key: &Secret) -> Result<(), ProviderError> {
+        match &self.worker_credentials {
+            Some(tracking) => tracking.record_key(key.as_str()).await.map_err(|_| {
+                ProviderError::Unavailable(
+                    "durable worker registration failed; credential not forwarded".into(),
+                )
+            }),
+            None if self.tracking_required => Err(ProviderError::Unavailable(
+                "durable worker tracking unavailable; credential not forwarded".into(),
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// Configured replay support only; this does not probe provider or platform health.
+    pub fn response_recovery_providers(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .filter(|(_, handle)| handle.entry.paths.recovery.is_some())
+            .map(|(slug, _)| slug.as_str().to_owned())
+            .collect()
+    }
 
     pub async fn bind(
         &self,
@@ -111,6 +149,7 @@ impl ProviderClient {
         binding_id: &BindingId,
         request: &BindingRequest,
     ) -> Result<BindingResponse, ProviderError> {
+        self.record_worker_key(&request.agent_key).await?;
         let handle = self.handle(provider)?;
         let _permit = acquire(&handle.inflight).await?;
         let url = handle
@@ -156,6 +195,7 @@ impl ProviderClient {
         binding_id: &BindingId,
         agent_key: &Secret,
     ) -> Result<(), ProviderError> {
+        self.record_worker_key(agent_key).await?;
         let handle = self.handle(provider)?;
         let _permit = acquire(&handle.inflight).await?;
         let url = handle
@@ -184,8 +224,39 @@ impl ProviderClient {
         conversation_id: &ConversationId,
         agent_key: &Secret,
     ) -> Result<(), ProviderError> {
-        self.conversation_request(provider, binding_id, conversation_id, agent_key, false)
-            .await
+        self.conversation_request(
+            provider,
+            binding_id,
+            conversation_id,
+            agent_key,
+            false,
+            None,
+        )
+        .await
+    }
+
+    pub async fn ensure_conversation_at_generation(
+        &self,
+        provider: &ProviderSlug,
+        binding_id: &BindingId,
+        conversation_id: &ConversationId,
+        agent_key: &Secret,
+        generation: Option<u64>,
+    ) -> Result<(), ProviderError> {
+        if generation == Some(0) {
+            return Err(ProviderError::InvalidRequest(
+                "invalid binding generation".into(),
+            ));
+        }
+        self.conversation_request(
+            provider,
+            binding_id,
+            conversation_id,
+            agent_key,
+            false,
+            generation,
+        )
+        .await
     }
 
     pub async fn delete_conversation(
@@ -195,50 +266,8 @@ impl ProviderClient {
         conversation_id: &ConversationId,
         agent_key: &Secret,
     ) -> Result<(), ProviderError> {
-        self.conversation_request(provider, binding_id, conversation_id, agent_key, true)
+        self.conversation_request(provider, binding_id, conversation_id, agent_key, true, None)
             .await
-    }
-
-    async fn conversation_request(
-        &self,
-        provider: &ProviderSlug,
-        binding_id: &BindingId,
-        conversation_id: &ConversationId,
-        agent_key: &Secret,
-        delete: bool,
-    ) -> Result<(), ProviderError> {
-        let handle = self.handle(provider)?;
-        let _permit = acquire(&handle.inflight).await?;
-        let url = handle
-            .entry
-            .url(
-                "conversation",
-                &[
-                    ("binding_id", binding_id.as_str()),
-                    ("conversation_id", conversation_id.as_str()),
-                ],
-            )
-            .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
-        let bearer = self.management_bearer(provider, &url, agent_key).await?;
-        let request = if delete {
-            handle
-                .client
-                .delete(url)
-                .bearer_auth(bearer.as_str())
-                .send()
-        } else {
-            handle
-                .client
-                .put(url)
-                .bearer_auth(bearer.as_str())
-                .json(&json!({}))
-                .send()
-        };
-        let response = tokio::time::timeout(self.request_timeout, request)
-            .await
-            .map_err(|_| ProviderError::Unavailable("provider request timed out".into()))?
-            .map_err(transport_error)?;
-        self.success_or_error(response).await.map(|_| ())
     }
 
     pub async fn start_turn(
@@ -274,6 +303,7 @@ impl ProviderClient {
         handle: &ProviderHandle,
         permit: OwnedSemaphorePermit,
     ) -> Result<TurnStream, ProviderError> {
+        self.record_worker_key(&request.agent_key).await?;
         let url = handle
             .entry
             .url("responses", &[])
@@ -357,7 +387,7 @@ impl ProviderClient {
             .ok_or_else(|| ProviderError::UnknownProvider(provider.to_string()))
     }
 
-    async fn success_or_error(
+    pub(super) async fn success_or_error(
         &self,
         response: reqwest::Response,
     ) -> Result<reqwest::Response, ProviderError> {

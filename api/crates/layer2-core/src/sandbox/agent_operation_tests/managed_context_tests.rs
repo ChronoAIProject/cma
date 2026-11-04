@@ -121,7 +121,13 @@ async fn managed_context_defers_active_approval_queue_first_message_and_lifecycl
         let service = AgentOperationService::new(store, registry.clone());
         assert!(
             !service
-                .refresh_managed_context(&ready.id, 1, GUIDANCE, &[])
+                .refresh_managed_context_at_origin(
+                    &ready.id,
+                    2,
+                    GUIDANCE,
+                    &[],
+                    Some("https://new.example")
+                )
                 .await
                 .unwrap(),
             "case {case}"
@@ -153,7 +159,13 @@ async fn managed_context_lost_ack_stays_fenced_until_exact_worker_replay() {
     );
     assert!(matches!(
         service
-            .refresh_managed_context(&ready.id, 1, GUIDANCE, &["Old managed".into()])
+            .refresh_managed_context_at_origin(
+                &ready.id,
+                1,
+                GUIDANCE,
+                &["Old managed".into()],
+                Some("https://new.example")
+            )
             .await,
         Err(AgentOperationError::DeliveryAmbiguous { .. })
     ));
@@ -167,7 +179,9 @@ async fn managed_context_lost_ack_stays_fenced_until_exact_worker_replay() {
         Err(AgentOperationError::DispatchRecoveryRequired { .. })
     ));
     let (sequence, input) = saved.pending_managed_context().unwrap();
-    assert!(matches!(input,ConversationInput::RefreshContext{guidance,..} if guidance==GUIDANCE));
+    assert!(
+        matches!(input,ConversationInput::RefreshContext{guidance,service_origin:Some(origin),..} if guidance==GUIDANCE && origin=="https://new.example")
+    );
     saved = serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
     saved
         .work

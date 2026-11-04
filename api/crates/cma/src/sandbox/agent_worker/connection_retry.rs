@@ -35,6 +35,35 @@ impl AgentWorker {
         claimed: &Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        self.retry_connection_with_failure(
+            claimed,
+            WorkerFailure::retryable(
+                "agent_connection_publication_conflict",
+                "connection publication conflicted; retrying the unchanged connection claim",
+            ),
+            now,
+            Duration::from_secs(1),
+        )
+        .await
+    }
+
+    pub(super) async fn retry_connection_failure(
+        &self,
+        claimed: &Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.retry_connection_with_failure(claimed, failure, now, self.config.retry_delay)
+            .await
+    }
+
+    async fn retry_connection_with_failure(
+        &self,
+        claimed: &Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+        delay: Duration,
+    ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
         for attempt in 0..8 {
             let current = self
@@ -51,15 +80,7 @@ impl AgentWorker {
                 return Err(SandboxStoreError::Conflict);
             }
             match self
-                .retry_at(
-                    current,
-                    WorkerFailure::retryable(
-                        "agent_connection_publication_conflict",
-                        "connection publication conflicted; retrying the unchanged connection claim",
-                    ),
-                    at,
-                    at + Duration::from_secs(1),
-                )
+                .retry_at(current, failure.clone(), at, at + delay)
                 .await
             {
                 Err(SandboxStoreError::Conflict) if attempt < 7 => {

@@ -54,6 +54,8 @@ use super::trigger_openapi_shapes::*;
         super::bots::rotate,
         super::bots::delete,
         super::agent_attachments::upload,
+        super::desktop::describe,
+        super::desktop::websocket,
         super::agent_filesystem::list,
         super::agent_filesystem::environment::read,
         super::agent_filesystem::read,
@@ -164,6 +166,7 @@ use super::trigger_openapi_shapes::*;
         super::agent_channel_usage::history,
         super::agent_provenance_inventory::list,
         super::agents::delete_agent,
+        super::agent_worktree_recovery::recover_worktree,
         super::agent_operate::input,
         super::agent_operate::steer,
         super::agent_operate::interrupt,
@@ -186,6 +189,7 @@ use super::trigger_openapi_shapes::*;
         super::sandboxes::events,
         super::workspaces::create,
         super::workspaces::create_inline,
+        super::workspaces::recover_prepare,
         super::workspaces::list,
         super::workspaces::read,
         super::workspaces::remove,
@@ -212,6 +216,7 @@ use super::trigger_openapi_shapes::*;
         super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation,
     ),
     components(schemas(
+        super::desktop::DesktopDescriptor,
         super::agent_access_requests::AgentAccessRequestView,
         super::agent_access_requests::AgentAccessRequestList,
         super::agent_access_requests::AgentAccessStatusView,
@@ -487,9 +492,7 @@ use super::trigger_openapi_shapes::*;
     )
 )]
 struct ApiDoc;
-pub fn document() -> utoipa::openapi::OpenApi {
-    composition::compose(ApiDoc::openapi())
-}
 pub use agent_manager::document as agent_manager_document;
+pub use composition::document;
 #[cfg(test)]
 mod tests;

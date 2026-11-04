@@ -54,7 +54,7 @@ unavailable_port!(AgentReadQueryStore {
 });
 unavailable_port!(HierarchyReadStore {
     fn read_snapshot_archive(sandbox_id: &SandboxId, checkpoint: &SandboxCheckpointRef) -> SandboxSnapshotDownload;
-    fn list_owner_sandbox_inventory(owner: &SubjectId, status: Option<SandboxStatus>, page: &PageRequest) -> Page<SandboxInventoryRecord>;
+    fn list_owner_sandbox_inventory(owner: &SubjectId, status: Option<SandboxStatus>, exclude_retired: bool, page: &PageRequest) -> Page<SandboxInventoryRecord>;
     fn read_sandbox_hierarchy(id: &SandboxId) -> Option<SandboxHierarchyRecord>;
     fn read_workspace_hierarchy(id: &WorkspaceId) -> Option<WorkspaceHierarchyRecord>;
     fn read_hierarchy_worktree(id: &WorktreeId) -> Option<Worktree>;
@@ -68,6 +68,7 @@ unavailable_port!(SandboxAdmissionStore {
 });
 unavailable_port!(WorkspaceAdmissionStore {
     fn admit_workspace(admission: WorkspaceAdmission) -> WorkspaceAdmissionResult;
+    fn begin_workspace_prepare_recovery(id: &WorkspaceId, caller: &layer2_core::Caller, operation_id: &str, now: String) -> Workspace;
     fn begin_workspace_removal(id: &WorkspaceId, owner: &SubjectId, now: String) -> Workspace;
 });
 unavailable_port!(AgentAdmissionStore {
@@ -92,6 +93,19 @@ unavailable_port!(SandboxAdminStore {
 
 #[async_trait]
 impl AgentControlStore for UnavailableInstances {
+    async fn begin_agent_worktree_recovery(
+        &self,
+        _: &AgentId,
+        _: &layer2_core::Caller,
+        _: &str,
+        _: &WorktreeId,
+        _: String,
+    ) -> Result<Agent, AgentControlStoreError> {
+        Err(AgentControlStoreError::Unavailable(
+            "contract control storage unavailable".into(),
+        ))
+    }
+
     async fn schedule_agent_stop(
         &self,
         _: AgentStopRequest,

@@ -3,6 +3,65 @@ use axum::{extract::State, http::StatusCode};
 use serde_json::{json, Value};
 
 #[tokio::test]
+async fn custom_authoring_discovery_reports_gate_and_provider_recovery_independently() {
+    use crate::providers::{ProviderClient, ProviderRegistry};
+    use std::{sync::Arc, time::Duration};
+
+    let fixture = Fixture::new().await;
+    for enabled in [false, true] {
+        for recovery in [false, true] {
+            let mut service = fixture.service();
+            service.management.custom_durable_execution_enabled = enabled;
+            let mut provider = json!({
+                "slug":"cma_codex", "base_url":"https://provider.example", "kind":"responses_http",
+                "paths":{
+                    "agent_card":"/.well-known/agent-card.json",
+                    "binding":"/api/v1/cmaeg/bindings/{binding_id}",
+                    "conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+                    "responses":"/api/v2/responses"
+                },
+                "max_inflight":8
+            });
+            if recovery {
+                provider["paths"]["recovery"] = json!({
+                    "response":"/api/v2/responses/{response_id}",
+                    "events":"/api/v2/responses/{response_id}/events"
+                });
+            }
+            service.management.providers = Arc::new(
+                ProviderClient::new(
+                    ProviderRegistry::parse(&json!([provider]).to_string()).unwrap(),
+                    Duration::from_secs(1),
+                    Duration::from_secs(2),
+                    8,
+                )
+                .unwrap(),
+            );
+            let response =
+                crate::http::connections::capabilities(State(service), owner("alice", false)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .unwrap();
+            let value: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                value["relay_authoring"]["custom_durable_execution_enabled"],
+                enabled
+            );
+            assert_eq!(
+                value["relay_authoring"]["response_recovery_providers"],
+                if recovery {
+                    json!(["cma_codex"])
+                } else {
+                    json!([])
+                }
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn relay_authoring_reports_writer_gates_without_expanding_native_connections() {
     let fixture = Fixture::new().await;
     for enabled in [false, true] {
@@ -17,6 +76,8 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
             .native_discord_conversation_history_enabled = enabled;
         service.management.native_lark_conversation_history_enabled = !enabled;
         service.management.native_discord_reactions_enabled = enabled;
+        service.management.native_discord_rich_content_enabled = enabled;
+        service.management.native_discord_forwards_enabled = !enabled;
         service.management.multi_consumer_writes_enabled = !enabled;
         service.management.native_bot_mentions_writes_enabled = enabled;
         service.management.thread_contract_writes_enabled = !enabled;
@@ -51,6 +112,8 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
         );
         assert_eq!(relay["native_lark_conversation_history_enabled"], !enabled);
         assert_eq!(relay["native_discord_reactions_enabled"], enabled);
+        assert_eq!(relay["native_discord_rich_content_enabled"], enabled);
+        assert_eq!(relay["native_discord_forwards_enabled"], !enabled);
         assert_eq!(relay["multi_consumer_writes_enabled"], !enabled);
         assert_eq!(relay["native_bot_mentions_writes_enabled"], enabled);
         assert_eq!(relay["thread_contract_writes_enabled"], !enabled);
@@ -133,4 +196,39 @@ async fn capability_and_owned_connection_discovery_require_authentication() {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
     server.abort();
+}
+
+#[tokio::test]
+async fn telegram_general_capability_requires_its_gate_and_all_topic_prerequisites() {
+    let fixture = Fixture::new().await;
+    assert!(
+        !fixture
+            .service()
+            .management
+            .native_telegram_general_topic_lifecycle_enabled
+    );
+    for bits in 0..16 {
+        let mut service = fixture.service();
+        service
+            .management
+            .native_telegram_general_topic_lifecycle_enabled = bits & 1 != 0;
+        service.management.native_telegram_topic_lifecycle_enabled = bits & 2 != 0;
+        service.management.native_telegram_durable_admission_enabled = bits & 4 != 0;
+        service.management.multi_consumer_writes_enabled = bits & 8 != 0;
+        let response =
+            crate::http::connections::capabilities(State(service), owner("alice", false)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            value["relay_authoring"]["native_telegram_general_topic_lifecycle_enabled"],
+            bits == 15
+        );
+        assert_eq!(
+            value["relay_authoring"]["native_telegram_topic_lifecycle_enabled"],
+            bits & 14 == 14
+        );
+    }
 }

@@ -63,6 +63,7 @@ async fn commit_conversation(
     mutation: AgentConversationMutation,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
+    let _writer = store.agent_writes.lock(&mutation.agent.id).await;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         contention::backoff(attempt).await;

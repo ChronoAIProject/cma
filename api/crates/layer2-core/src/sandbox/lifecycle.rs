@@ -179,6 +179,8 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_provision: Option<SandboxRuntimeProvisionReservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_provision: Option<Box<super::SandboxFailedRuntimeProvision>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suspended_runtime: Option<Box<super::RuntimeBinding>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_capture: Option<SandboxCheckpointCapture>,
@@ -198,10 +200,19 @@ pub struct SandboxLifecycleState {
     pub rotation: SandboxRotationAccounting,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_update: Option<super::SandboxRuntimeUpdateState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unpublished_recovery: Option<Box<super::SandboxUnpublishedRecoveryState>>,
+    /// Remains set until this recovery incident succeeds or is explicitly retired.
+    #[serde(default, skip_serializing_if = "recovery_not_attempted")]
+    pub unpublished_recovery_attempted: bool,
 }
 
 fn checkpoint_epoch_is_unreserved(epoch: &u64) -> bool {
     *epoch == 0
+}
+
+fn recovery_not_attempted(attempted: &bool) -> bool {
+    !attempted
 }
 
 impl Default for SandboxLifecycleState {
@@ -213,6 +224,7 @@ impl Default for SandboxLifecycleState {
             home_recovery: None,
             runtime_generation_high_water: 0,
             runtime_provision: None,
+            failed_provision: None,
             suspended_runtime: None,
             checkpoint_capture: None,
             background_checkpoint: None,
@@ -223,6 +235,8 @@ impl Default for SandboxLifecycleState {
             paused_notice: None,
             rotation: SandboxRotationAccounting::default(),
             runtime_update: None,
+            unpublished_recovery: None,
+            unpublished_recovery_attempted: false,
         }
     }
 }
@@ -230,6 +244,20 @@ impl Default for SandboxLifecycleState {
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
         sandbox.validate_suspended_runtime()?;
+        if let Some(failed) = &self.failed_provision {
+            failed.validate_for(sandbox)?;
+        }
+        if let Some(recovery) = &self.unpublished_recovery {
+            recovery.validate_for(sandbox)?;
+        }
+        if self.unpublished_recovery_attempted
+            && !matches!(
+                self.operation,
+                Some(SandboxLifecycleOperation::ImageRotation { .. })
+            )
+        {
+            return Err(invalid_lifecycle());
+        }
         if let Some(update) = &self.runtime_update {
             update.validate()?;
         }
@@ -391,6 +419,9 @@ impl SandboxLifecycleState {
     }
 
     pub(crate) fn cancel_operation(&mut self) {
+        self.failed_provision = None;
+        self.unpublished_recovery = None;
+        self.unpublished_recovery_attempted = false;
         self.home_recovery = None;
         self.operation = None;
         self.runtime_provision = None;
@@ -409,6 +440,7 @@ impl SandboxLifecycleState {
         let generation = self.next_authority;
         self.next_authority = generation.checked_add(1).ok_or_else(invalid_lifecycle)?;
         self.runtime_provision = None;
+        self.failed_provision = None;
         let operation_id = format!("sandbox-lifecycle-v1:{}:{generation}", sandbox_id.as_str());
         let writer_resume_token =
             hold_writers.then(|| format!("{:x}", Sha256::digest(operation_id.as_bytes())));

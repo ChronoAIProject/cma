@@ -100,7 +100,25 @@ pub(super) fn store_error(error: SandboxStoreError) -> WorkspaceServiceError {
         }
         SandboxStoreError::WorkspaceHasLiveAgents => WorkspaceServiceError::HasLiveAgents,
         SandboxStoreError::WorkspaceOriginConflict => WorkspaceServiceError::OriginConflict,
+        SandboxStoreError::WorkspaceRecoveryConflict => WorkspaceServiceError::RecoveryConflict,
         SandboxStoreError::Corrupt(detail) => WorkspaceServiceError::Corrupt(detail),
         other => WorkspaceServiceError::Unavailable(other.to_string()),
+    }
+}
+
+impl WorkspaceService {
+    pub async fn recover_prepare(
+        &self,
+        caller: &Caller,
+        id: &WorkspaceId,
+        operation_id: &str,
+    ) -> Result<Workspace, WorkspaceServiceError> {
+        if !caller.authorization.allows(Capability::ControlAnySandbox) {
+            require(caller)?;
+        }
+        self.store
+            .begin_workspace_prepare_recovery(id, caller, operation_id, now_rfc3339())
+            .await
+            .map_err(store_error)
     }
 }

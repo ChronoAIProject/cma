@@ -14,6 +14,7 @@ mod command;
 mod config;
 mod control_auth;
 mod conversation;
+mod desktop_process;
 mod failure;
 mod fs_durability;
 mod git;
@@ -46,6 +47,7 @@ mod upstream_guard;
 mod upstream_target;
 mod wire_operation;
 mod workspace_journal;
+mod workspace_prepare_recovery;
 mod workspace_removal_intent;
 mod workspace_removal_paths;
 mod workspace_removal_writer;
@@ -53,6 +55,8 @@ mod workspace_runtime;
 mod workspace_setup;
 mod workspace_source;
 mod worktree;
+#[cfg(any(target_os = "linux", test))]
+mod writer_control_relay;
 mod writer_fence;
 mod writer_process;
 
@@ -123,6 +127,14 @@ async fn run() -> Result<(), String> {
             control_auth::authenticate,
         ));
     }
+    // Runtime WebSockets carry interactive desktop and conversation frames.
+    // Flush small frames immediately instead of waiting for TCP coalescing.
+    use axum::serve::ListenerExt as _;
+    let listener = listener.tap_io(|stream| {
+        if let Err(error) = stream.set_nodelay(true) {
+            tracing::warn!(%error, "could not disable runtime TCP coalescing");
+        }
+    });
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await

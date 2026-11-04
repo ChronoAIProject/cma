@@ -7,6 +7,64 @@ use super::store::{
 use super::*;
 
 #[test]
+fn runtime_update_deleted_history_is_idle_only_after_cleanup_and_dispatch_finish() {
+    let mut deleted = agent("deleted", "preserved-conversation", 9);
+    deleted.conversation.active_turn = Some(2);
+    deleted
+        .transition(
+            AgentStatus::Stopped,
+            NOW.into(),
+            Some(AgentStopReason::Owner),
+        )
+        .unwrap();
+    deleted
+        .transition(AgentStatus::Deleted, NOW.into(), None)
+        .unwrap();
+    assert!(runtime_update_agents_are_idle(std::slice::from_ref(
+        &deleted
+    )));
+    for variant in 0..9 {
+        let mut blocked = deleted.clone();
+        match variant {
+            0 => blocked.deleted_at = None,
+            1 => blocked.deleted_at = Some("invalid".into()),
+            2 => blocked.status = AgentStatus::Stopped,
+            3 => blocked.work.step = AgentWorkStep::RemoveHome,
+            4 => {
+                blocked.work.lease = Some(AgentWorkLease {
+                    holder: "cleanup".into(),
+                    fence: 1,
+                    expires_at: NOW.into(),
+                })
+            }
+            5 => blocked.work.cleanup_debt.push(AgentCleanupDebt {
+                step: AgentWorkStep::OpenConversation,
+                operation_id: "pending-cleanup".into(),
+                request_sha256: "a".repeat(64),
+            }),
+            6 => blocked
+                .conversation
+                .queued_messages
+                .push(QueuedAgentMessage::new(3, "pending".into(), NOW.into()).unwrap()),
+            7 => blocked.requested_stop_reason = Some(AgentStopReason::Owner),
+            _ => {
+                blocked.conversation.operation = Some(
+                    AgentOperationRecord::new(3, 4, 2, AgentOperationIntent::Interrupt, NOW.into())
+                        .unwrap(),
+                )
+            }
+        }
+        assert!(
+            !runtime_update_agents_are_idle(&[blocked]),
+            "variant {variant}"
+        );
+    }
+    // The original attribution and interrupted turn are retained as history.
+    assert_eq!(deleted.stop_reason, Some(AgentStopReason::Owner));
+    assert_eq!(deleted.conversation.active_turn, Some(2));
+}
+
+#[test]
 fn runtime_update_daily_boundary_is_0200_singapore_and_survives_restart() {
     let mut value = native();
     assert!(value

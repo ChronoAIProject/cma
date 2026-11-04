@@ -30,6 +30,21 @@ pub struct RoutedToolReplies {
     coordinator: DeliveryCoordinator,
 }
 impl RoutedToolReplies {
+    /// The sealed original reference is the sole capability. This read returns
+    /// no event content and does not acquire or mutate an execution lease.
+    pub async fn attest_event(
+        &self,
+        request: &super::EventAttestationRequest,
+    ) -> Result<bool, ExecutionError> {
+        super::event_attestation::attest(
+            &self.plans,
+            &self.journal,
+            self.authority.as_ref(),
+            request,
+        )
+        .await
+    }
+
     pub fn new(
         plans: PlanStore,
         journal: Journal,
@@ -65,6 +80,9 @@ impl RoutedToolReplies {
         delayed: bool,
         idempotency_key: Option<&str>,
     ) -> Result<Option<IntentReceipt>, ExecutionError> {
+        if message.structured_content.is_some() && (delayed || idempotency_key.is_none()) {
+            return Err(ExecutionError::Invalid);
+        }
         if idempotency_key.is_some_and(|key| {
             key.is_empty() || key.len() > 128 || !key.bytes().all(|byte| (33..=126).contains(&byte))
         }) {

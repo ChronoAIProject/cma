@@ -263,6 +263,8 @@ async fn http_errors_and_openapi_share_the_management_contract() {
             "deleteChannel",
             "getChannel",
             "getChannelActivity",
+            "getEventMediaResponses",
+            "inspectChannelPartition",
             "listChannels",
             "recoverChannel",
             "rekeyChannel",
@@ -273,6 +275,50 @@ async fn http_errors_and_openapi_share_the_management_contract() {
             "updateChannel",
             "updateChannelRouting"
         ]
+    );
+    stop.send(()).unwrap();
+    task.await.unwrap();
+    provider.close().await;
+    cma.close().await;
+    nyxid.close().await;
+}
+
+#[tokio::test]
+async fn retained_media_response_metadata_requires_the_channel_owner() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    let initial = created(&client, &base).await;
+    let channel_id = initial["channel_id"].as_str().unwrap();
+    let url = format!("{base}/v1/channels/{channel_id}/events/event_private/media-responses");
+    let calls = provider.requests().len();
+    expect_problem(client.get(&url).send().await.unwrap(), 401).await;
+    expect_problem(
+        client
+            .get(&url)
+            .bearer_auth("token-bob")
+            .send()
+            .await
+            .unwrap(),
+        404,
+    )
+    .await;
+    expect_problem(
+        client
+            .get(&url)
+            .bearer_auth("token-alice")
+            .send()
+            .await
+            .unwrap(),
+        404,
+    )
+    .await;
+    assert_eq!(
+        provider.requests().len(),
+        calls,
+        "metadata lookup must never execute provider work"
     );
     stop.send(()).unwrap();
     task.await.unwrap();

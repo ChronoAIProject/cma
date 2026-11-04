@@ -23,6 +23,12 @@ impl Sender {
         context: Option<crate::providers::EventContextSnapshot>,
     ) -> (IntentReceipt, SendEffects) {
         let effects = SendEffects::default();
+        if !message.native_attachments.is_empty() && !self.relay.discord_media_controls_enabled() {
+            return (unsupported(), effects);
+        }
+        if message.native_attachments.len() > 1 && !self.relay.discord_media_card_sets {
+            return (unsupported(), effects);
+        }
         let form = self.relay.discord_forms_enabled()
             && interactions::discord_form::schema(message).is_ok();
         if interactions::discord::multiselect_requested(message)
@@ -72,6 +78,7 @@ impl Sender {
             return (unsupported(), effects);
         }
         let rejected = |reason: &str| IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering: rendering.clone(),
             delivery: DeliveryOutcome::Rejected {
@@ -87,6 +94,13 @@ impl Sender {
         let target_receipt = match self.discord_reaction_receipt(ctx.channel, event).await {
             Ok(receipt) => receipt,
             Err(_) => return (rejected("reaction_target_custody_unavailable"), effects),
+        };
+        // Prepare the bounded upload before committing delivery or creating a card.
+        // It is sent in the same native request as the opaque controls.
+        let files = match crate::discord::outbound_media::prepare(&message.native_attachments).await
+        {
+            Ok(files) => files,
+            Err(_) => return (rejected("attachment_preparation_failed"), effects),
         };
         let route = interactions::discord::route(bot_id, channel_id);
         let _ticket = match ctx.gate.enter_route(&route).await {
@@ -105,7 +119,11 @@ impl Sender {
             Ok(thread) => thread,
             Err(error) => return (refused(rendering, super::discord::outcome(error)), effects),
         };
-        let prepared = if form {
+        let prepared = if !files.is_empty() {
+            store
+                .prepare_discord_media(ctx.channel, event, message, context, thread, &files)
+                .await
+        } else if form {
             store
                 .prepare_discord_form(ctx.channel, event, message, context, thread)
                 .await
@@ -127,20 +145,58 @@ impl Sender {
         let sent = self
             .relay
             .discord
-            .send_components(
+            .send_components_result(
                 token,
                 bot_id,
                 channel_id,
                 Some(message_id),
                 &parts[0].text,
-                &[],
+                &files,
                 Some(&card.markup),
             )
             .await;
         drop(permit);
         ctx.gate.progress();
         match sent {
-            Ok(id) => {
+            Ok(body) => {
+                let id = body["id"]
+                    .as_str()
+                    .expect("REST confirmed message ID")
+                    .to_owned();
+                if self.relay.discord_media_card_edits_enabled() {
+                    if let Some(identity) = card.card.discord.as_mut().filter(|identity| {
+                        identity.media_items().is_ok_and(|items| !items.is_empty())
+                    }) {
+                        let kinds: Vec<_> = identity
+                            .media_items()
+                            .unwrap()
+                            .iter()
+                            .map(|media| media.kind)
+                            .collect();
+                        let confirmed = crate::discord::rest::media_card_snapshots(
+                            &body,
+                            bot_id,
+                            channel_id,
+                            &id,
+                            &kinds,
+                            &parts[0].text,
+                            &card.markup,
+                        )
+                        .ok()
+                        .is_some_and(|snapshots| identity.confirm_media(&snapshots).is_ok());
+                        if !confirmed {
+                            return (
+                                refused(
+                                    rendering,
+                                    DeliveryOutcome::Unknown {
+                                        reason: "discord_media_card_receipt_unconfirmed".into(),
+                                    },
+                                ),
+                                effects,
+                            );
+                        }
+                    }
+                }
                 let target_confirmed = match &target_receipt {
                     Some(receipt) => receipt.confirm(&id).await.is_ok(),
                     None => true,
@@ -156,6 +212,7 @@ impl Sender {
                     .await;
                 (
                     IntentReceipt {
+                        message_parts: vec![],
                         message_ref: reference.as_ref().ok().cloned(),
                         rendering,
                         delivery: if reference.is_ok() && target_confirmed {

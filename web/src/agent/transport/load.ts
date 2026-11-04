@@ -17,8 +17,14 @@ export async function loadV2Agent(
   onProgress?: (ready: ReadyAgent) => void,
   lineage?: AgentLoadLineage,
   onInputReady?: (ready: ReadyAgent) => void,
+  onReadAuthorized?: () => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly [] }> {
   await v2.authorize(signal);
+  // The same fresh check can publish observed preparation and admit this batch.
+  // This synchronous callback cannot supply or retain authorization itself.
+  onReadAuthorized?.();
+  signal.throwIfAborted();
+  v2.journal.read();
   const readHierarchy = async () => {
     const detailRead = (async () => client.readAgent(agentId, { signal }))();
     const [detail, preparedWorkspace] = await Promise.all([
@@ -80,7 +86,11 @@ export async function loadV2Agent(
   };
   // Input authority and the latest transcript do not depend on rich event pages.
   // Observe every parallel failure even if another read or early callback fails.
-  const hierarchy = readHierarchy().then(async (value) => {
+  // Independent projections depend on the raw hierarchy, not on another
+  // projection's publication check. Each still starts its own fresh identity
+  // check only after all of the data it will expose has finished loading.
+  const hierarchy = readHierarchy();
+  const hierarchyPublished = hierarchy.then(async (value) => {
     if (onInputReady !== undefined) await v2.authorize(signal);
     onInputReady?.({
       ...value,
@@ -125,7 +135,9 @@ export async function loadV2Agent(
     readUsage(),
     readPage(),
     liveHead,
+    hierarchyPublished,
   ]);
+  // Preserve the final fresh check after every early publication callback.
   await v2.authorize(signal);
   const preview = latest === undefined ? undefined : { ...latest, usage };
   let conversation: ConversationState = {

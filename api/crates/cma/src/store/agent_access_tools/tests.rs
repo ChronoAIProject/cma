@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::*;
 use layer2_core::sandbox::*;
 use layer2_core::SubjectId;
 
-fn key(byte: u8) -> AuthEncryptionKey {
+pub(super) fn key(byte: u8) -> AuthEncryptionKey {
     AuthEncryptionKey::from_base64(&base64::engine::general_purpose::STANDARD.encode([byte; 32]))
         .unwrap()
 }
@@ -80,7 +80,7 @@ fn snapshot() -> AgentProvenanceSnapshot {
     }
 }
 
-fn request(snapshot: &AgentProvenanceSnapshot) -> AgentOpenRequest {
+pub(super) fn request(snapshot: &AgentProvenanceSnapshot) -> AgentOpenRequest {
     let agent = snapshot.resource.lineage.agent.as_ref().unwrap();
     AgentOpenRequest::new(
         format!("agent:{}:open:v1", agent.id),
@@ -611,4 +611,43 @@ async fn mongo_agent_access_tools_pending_discovery_has_no_conversation_authorit
         .unwrap();
     assert!(source.read(&document).ok().unwrap().conversation.is_none());
     client.database(&database).drop().await.unwrap();
+}
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_agent_access_confirmation_waits_for_owned_recorder_writer() {
+    let (client, database, store, state) = persisted().await;
+    let source =
+        MongoAgentAccessToolSource::new(store.clone(), "https://control.example.test", &key(9))
+            .unwrap();
+    let binding = source
+        .resolve(&RuntimeHandle("access-runtime".into()), &request(&state), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let id = AgentId(binding.scope().1 .0.clone());
+    let writer = store.agent_writes.lock(&id).await;
+    let mut transaction = client.start_session().await.unwrap();
+    start_transaction(&mut transaction).await.unwrap();
+    store
+        .agents
+        .update_one(
+            doc! {"_id":id.as_str()},
+            doc! {"$inc":{"resource_share_guard":1_i64}},
+        )
+        .session(&mut transaction)
+        .await
+        .unwrap();
+    let confirmation =
+        tokio::spawn(async move { source.confirm_open(&binding, "original-native").await });
+    tokio::time::sleep(std::time::Duration::from_millis(2400)).await;
+    let finished_while_owned = confirmation.is_finished();
+    transaction.abort_transaction().await.unwrap();
+    drop(writer);
+    let result = confirmation.await.unwrap();
+    client.database(&database).drop().await.unwrap();
+    assert!(
+        !finished_while_owned,
+        "confirmation must wait for the owned recorder transaction"
+    );
+    result.unwrap();
 }

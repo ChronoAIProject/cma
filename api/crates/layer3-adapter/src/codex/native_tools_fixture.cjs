@@ -22,6 +22,7 @@ function processRpc(program, args, options, observe = () => {}) {
     } else if (pending.has(frame.id)) pending.get(frame.id)(frame);
   });
   return {
+    pid: child.pid,
     async call(method, params) {
       const id = ++serial;
       let timer;
@@ -92,7 +93,9 @@ async function fixture() {
         const exec = declared.find((t) => t.name === "functions")?.tools?.find((t) => t.name === "exec");
         if (exec) {
           const metadata = JSON.parse(value.client_metadata["x-codex-turn-metadata"]);
-          assert(Object.hasOwn(metadata.code_mode_tool_names, expected), "exact nested tool name missing: " + expected);
+          // Actual ALL_TOOLS lookup and execution below remain mandatory when
+          // newer CLI versions omit the optional diagnostic metadata.
+          if (metadata.code_mode_tool_names) assert(Object.hasOwn(metadata.code_mode_tool_names, expected), "exact nested tool name missing: " + expected);
         } else {
           assert(declared.some((tool) => tool.name === expected), "exact tool name missing: " + expected);
         }

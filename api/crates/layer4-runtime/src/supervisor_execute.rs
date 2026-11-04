@@ -71,9 +71,14 @@ impl Supervisor {
             RequestFrame::Install(request) => self.install(request).await,
             RequestFrame::BootstrapRestore(request) => self.bootstrap_restore(request).await,
             RequestFrame::Credential(frame) => self.credential(frame).await,
-            RequestFrame::PrepareWorkspace(_)
+            RequestFrame::RecoverWorkspacePrepare(_)
+            | RequestFrame::PrepareWorkspace(_)
             | RequestFrame::WorkspaceSetup(_)
             | RequestFrame::RemoveWorkspace(_) => unreachable!("workspace requests detach first"),
+            RequestFrame::PrepareAgentResources(request) => {
+                self.prepare_agent_resources(request.authority_fence, request.request)
+                    .await
+            }
             RequestFrame::AddWorktree(request) => {
                 self.add_worktree(request.authority_fence, request.request)
                     .await

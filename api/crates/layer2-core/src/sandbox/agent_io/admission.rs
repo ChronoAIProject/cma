@@ -50,6 +50,8 @@ impl AgentAuthorizationRevision {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentCommandEnvelope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<super::ExternalEventContinuation>,
     pub schema_version: u16,
     pub command_id: AgentCommandId,
     pub agent_id: AgentId,
@@ -66,6 +68,13 @@ impl AgentCommandEnvelope {
     /// Integrity checking is not authorization. Only the authorization service
     /// may select these identity fields before the ledger writes this record.
     pub fn validate_integrity(&self) -> Result<(), AgentOperationError> {
+        if self.continuation.as_ref().is_some_and(|proof| proof.validate().is_err()
+            || self.authorization.grant_revision != Some(proof.binding_generation)
+            || !self.authorization.authority_id.starts_with("binding:")
+            || !matches!(&self.command, AgentCommand::Message { input, order: super::AgentInputOrder::Append, metadata }
+                if input.external_event().is_none() && metadata.is_empty())) {
+            return Err(AgentOperationError::Corrupt("input continuation provenance is invalid".into()));
+        }
         if self.schema_version != AGENT_IO_SCHEMA_VERSION
             || self.command_id.as_str().is_empty()
             || self.agent_id.as_str().is_empty()

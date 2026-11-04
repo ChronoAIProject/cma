@@ -174,6 +174,14 @@ export function operatorClient() {
   };
   return {
     admin,
+    usage: {
+      summary: vi.fn<OperatorClient['usage']['summary']>(),
+      sandboxes: vi.fn<OperatorClient['usage']['sandboxes']>(),
+      sandbox: vi.fn<OperatorClient['usage']['sandbox']>(),
+      events: vi.fn<OperatorClient['usage']['events']>(),
+      adminSummary: vi.fn<OperatorClient['usage']['adminSummary']>(),
+      adminSandboxes: vi.fn<OperatorClient['usage']['adminSandboxes']>(),
+    },
     listPublicProfiles: vi
       .fn<OperatorClient['listPublicProfiles']>()
       .mockImplementation(async (kind) => ({ items: [publicProfile(kind)] })),

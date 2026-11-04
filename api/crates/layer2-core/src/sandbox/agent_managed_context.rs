@@ -1,4 +1,5 @@
 //! One-time managed context refresh. User work always takes precedence.
+mod recovery;
 use super::agent_operation_dispatch::{
     new_operation, next_sequence, operation_log, runtime_target, PreWriteRollback,
     PreparedAgentOperation,
@@ -9,6 +10,7 @@ use super::{
     AgentWorkAuthority,
 };
 use crate::{now_rfc3339, AgentId, RuntimeCapability};
+use recovery::RefreshRecoveryOnDrop;
 
 impl AgentOperationService {
     pub(super) fn managed_context_input_guard(
@@ -30,6 +32,18 @@ impl AgentOperationService {
         revision: u64,
         guidance: &str,
         previous_guidance: &[String],
+    ) -> Result<bool, AgentOperationError> {
+        self.refresh_managed_context_at_origin(id, revision, guidance, previous_guidance, None)
+            .await
+    }
+
+    pub async fn refresh_managed_context_at_origin(
+        &self,
+        id: &AgentId,
+        revision: u64,
+        guidance: &str,
+        previous_guidance: &[String],
+        service_origin: Option<&str>,
     ) -> Result<bool, AgentOperationError> {
         if revision == 0
             || guidance.is_empty()
@@ -83,11 +97,16 @@ impl AgentOperationService {
                 .resolve(&target)
                 .await
                 .map_err(|error| AgentOperationError::RuntimeUnavailable(error.to_string()))?;
-            let Some(readiness_receipt) = connection.input.managed_context_receipt(sequence).await
-            else {
+            let receipt = if service_origin.is_some() {
+                connection.input.managed_transport_receipt(sequence).await
+            } else {
+                connection.input.managed_context_receipt(sequence).await
+            };
+            let Some(readiness_receipt) = receipt else {
                 return Ok(false);
             };
             let intent = AgentOperationIntent::RefreshContext {
+                service_origin: service_origin.map(str::to_owned),
                 revision,
                 readiness_receipt,
                 guidance: guidance.into(),
@@ -257,6 +276,7 @@ fn refresh_input(
     operation_sequence: u64,
 ) -> Option<layer3_adapter::ConversationInput> {
     let AgentOperationIntent::RefreshContext {
+        service_origin,
         guidance,
         previous_guidance,
         settings,
@@ -277,6 +297,7 @@ fn refresh_input(
         unreachable!("settings input");
     };
     Some(layer3_adapter::ConversationInput::RefreshContext {
+        service_origin: service_origin.clone(),
         operation_sequence,
         readiness_receipt: readiness_receipt.clone(),
         guidance: guidance.clone(),
@@ -286,23 +307,6 @@ fn refresh_input(
         permission,
         working_directory: working_directory.clone(),
     })
-}
-
-struct RefreshRecoveryOnDrop {
-    runtimes: std::sync::Arc<dyn super::AgentRuntimeRegistry>,
-    target: AgentRuntimeTarget,
-    armed: bool,
-}
-impl Drop for RefreshRecoveryOnDrop {
-    fn drop(&mut self) {
-        if self.armed {
-            let runtimes = self.runtimes.clone();
-            let target = self.target.clone();
-            tokio::spawn(async move {
-                let _ = runtimes.request_reconnect(&target).await;
-            });
-        }
-    }
 }
 
 pub(super) fn validate_mutation(

@@ -537,6 +537,7 @@ it('resumes a desktop repository task only on explicit connection action with it
   expect(checks).toBe(0);
   fireEvent.click(screen.getByRole('button', { name: 'Continue original task' }));
   await screen.findByRole('dialog', { name: 'Connect your accounts' });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus());
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   expect(desktop).toBeChecked();

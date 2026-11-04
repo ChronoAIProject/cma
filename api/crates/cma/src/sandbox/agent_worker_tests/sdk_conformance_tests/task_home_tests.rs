@@ -189,6 +189,7 @@ async fn router_with_support(
         } else {
             SandboxCapacity::default()
         },
+        None,
         Arc::new([] as [String; 0]),
         Arc::new(MongoAgentLifecycleStore::open(database).await.unwrap()),
         None,

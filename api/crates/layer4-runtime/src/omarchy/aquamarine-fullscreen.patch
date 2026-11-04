@@ -1,0 +1,13 @@
+--- a/src/backend/Wayland.cpp
++++ b/src/backend/Wayland.cpp
+@@ -566,6 +566,10 @@
+ 
+     waylandState.xdgToplevel->sendSetTitle(std::format("aquamarine - {}", name).c_str());
+     waylandState.xdgToplevel->sendSetAppId("aquamarine");
++    // CMA's nested output fills the stream; negotiate its size before rendering.
++    const auto FULLSCREEN = getenv("AQ_WL_FULLSCREEN");
++    if (FULLSCREEN && strcmp(FULLSCREEN, "1") == 0)
++        waylandState.xdgToplevel->sendSetFullscreen(nullptr);
+ 
+     auto inputRegion = makeShared<CCWlRegion>(backend->waylandState.compositor->sendCreateRegion());
+     inputRegion->sendAdd(0, 0, INT32_MAX, INT32_MAX);

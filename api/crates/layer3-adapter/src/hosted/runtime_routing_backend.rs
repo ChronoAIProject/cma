@@ -53,6 +53,58 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
+        self.for_handle(handle)?.open_desktop(handle).await
+    }
+
+    async fn inspect_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<super::super::NonexecutingRuntimeProof>> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .inspect_nonexecuting_runtime(handle, request, home)
+            .await
+    }
+
+    async fn verify_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        proof: &super::super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .verify_nonexecuting_runtime(handle, request, home, proof)
+            .await
+    }
+
+    async fn suspend_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        proof: &super::super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .suspend_nonexecuting_runtime(handle, request, home, proof)
+            .await
+    }
+
+    async fn run_recovery_command(
+        &self,
+        handle: &RuntimeHandle,
+        command: &super::super::RuntimeRecoveryCommand,
+    ) -> Result<Vec<u8>> {
+        self.for_handle(handle)?
+            .run_recovery_command(handle, command)
+            .await
+    }
+
     async fn reserve_home_request(
         &self,
         request: &ProviderSandboxRequest,

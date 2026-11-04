@@ -10,6 +10,8 @@ mod admission_tests;
 mod adoption_read_tests;
 #[path = "native_full_home_tests.rs"]
 mod full_home_tests;
+#[path = "native_image_selection_tests.rs"]
+mod image_selection_tests;
 #[path = "native_home_read_tests.rs"]
 mod read_tests;
 #[path = "native_home_ready_tests.rs"]

@@ -198,11 +198,13 @@ impl Fixture {
             .unwrap();
         let created = (now() - 5) * 1000 + 456;
         let message = native_lark::message::Message::Text {
+            quoted_message: None,
             message_id: "om_original".into(),
             chat_id: "oc_history".into(),
             sender: "ou_human".into(),
             text: "original".into(),
             resources: vec![],
+            received_sticker: None,
             group: threaded,
             thread_id: threaded.then(|| "omt_history".into()),
             mentioned: false,
@@ -277,6 +279,7 @@ impl Fixture {
                 native_lark::Client::history_reader()
                     .unwrap()
                     .with_transport(api.clone()),
+                false,
             )));
         Self {
             app,
@@ -295,6 +298,21 @@ impl Fixture {
         self.app
             .state
             .read_event_history(self.app.caller(), &self.reference(), cursor)
+            .await
+    }
+    pub async fn read_with_media(
+        &self,
+        cursor: Option<&HistoryCursor>,
+        include_media: bool,
+    ) -> Result<ConversationHistoryPage, Problem> {
+        self.app
+            .state
+            .read_event_history_with_media(
+                self.app.caller(),
+                &self.reference(),
+                cursor,
+                include_media,
+            )
             .await
     }
     pub fn rows(&self, count: usize, next: Option<&str>) {

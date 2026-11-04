@@ -75,10 +75,8 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
 });
 
-it('shows visible task states and applies parent lifecycle barriers with the existing tones', async () => {
+it('shows visible task states alongside characters and respects parent lifecycle barriers', async () => {
   const refresh = vi.fn();
-  const dot = () =>
-    screen.getByRole('tree', { name: 'Personal Agents' }).querySelector('.statedot');
   const draw = (sandbox: 'active' | 'paused', agent: AgentStatus) => (
     <ManagerNavigation
       {...props}
@@ -87,26 +85,38 @@ it('shows visible task states and applies parent lifecycle barriers with the exi
   );
   const view = render(draw('active', 'ready'));
   const cases = [
-    ['active', 'ready', 'neutral', 'Status unavailable'],
-    ['active', 'starting', 'ongoing', 'Preparing'],
-    ['active', 'working', 'ongoing', 'Working'],
-    ['active', 'waiting_approval', 'warning', 'Waiting for approval'],
-    ['active', 'failed', 'error', 'Failed'],
-    ['active', 'stopped', undefined, 'Stopped'],
-    // A held parent holds its Agents too, and a held state draws no dot.
-    ['paused', 'working', undefined, 'Paused'],
+    ['active', 'ready', 'idle', 'still', 'brand', 'Ready', 'Status unavailable', 'neutral'],
+    ['active', 'starting', 'preparing', 'live', 'brand', 'Starting', 'Preparing', 'ongoing'],
+    ['active', 'working', 'thinking', 'live', 'brand', 'Working', 'Working', 'ongoing'],
+    [
+      'active',
+      'waiting_approval',
+      'approval',
+      'live',
+      'warning',
+      'Needs approval',
+      'Waiting for approval',
+      'warning',
+    ],
+    ['active', 'failed', 'failed', 'still', 'error', 'Needs attention', 'Failed', 'error'],
+    ['active', 'stopped', 'paused', 'still', 'brand', 'Stopped', 'Stopped', undefined],
+    ['paused', 'working', 'paused', 'still', 'brand', 'Paused', 'Paused', undefined],
   ] as const;
-  for (const [sandbox, agent, state, word] of cases) {
+  for (const [sandbox, agent, pose, motion, tone, word, taskWord, state] of cases) {
     view.rerender(draw(sandbox, agent));
-    const name = new RegExp(`^Agent one,\\s*${word}`);
+    const name = new RegExp(`^Agent one,\\s*${taskWord}`);
     const row = screen.getByRole('treeitem', { name });
-    expect(row).toHaveTextContent(word);
+    expect(row).toHaveTextContent(taskWord);
     expect(screen.getByRole('link', { name })).toBe(row.querySelector('a'));
-    if (state === undefined) {
-      expect(dot()).toBeNull();
-    } else {
-      expect(dot()).toHaveAttribute('data-state', state);
-    }
+    const character = row.querySelector('.tree-row__signal .character-avatar');
+    expect(character).toHaveAttribute('aria-hidden', 'true');
+    expect(character).toHaveAttribute('data-pose', pose);
+    expect(character).toHaveAttribute('data-motion', motion);
+    expect(character).toHaveAttribute('data-tone', tone);
+    expect(row.querySelector('.tree-row__signal')).toHaveAttribute('title', word);
+    const dot = row.querySelector('.tree-row__state .statedot');
+    if (state === undefined) expect(dot).toBeNull();
+    else expect(dot).toHaveAttribute('data-state', state);
   }
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Filter' }));

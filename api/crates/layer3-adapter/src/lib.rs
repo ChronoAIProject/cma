@@ -39,11 +39,32 @@ mod prompt_identity;
 mod provider_finality;
 mod runtime;
 pub mod runtime_bootstrap;
+pub mod runtime_control_relay;
 mod runtime_output;
+mod runtime_recovery;
 mod runtime_status;
 mod tool_proxy;
 mod workspace;
+mod workspace_prepare_recovery;
 mod workspace_removal;
+
+/// Frames carried by the authenticated desktop WebSocket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DesktopFrame {
+    Binary(Vec<u8>),
+    Text(String),
+    Ping(Vec<u8>),
+    Pong(Vec<u8>),
+    Close,
+}
+
+#[async_trait::async_trait]
+pub trait DesktopConnection: Send {
+    async fn recv(&mut self) -> Result<Option<DesktopFrame>>;
+    async fn send(&mut self, frame: DesktopFrame) -> Result<()>;
+}
+
+pub type DesktopConnectionHandle = Box<dyn DesktopConnection>;
 
 pub mod agent_sandbox;
 pub mod codex;
@@ -116,12 +137,20 @@ pub use runtime::{
     DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
 pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
+pub use runtime_recovery::{
+    NonexecutingRecoveryVerification, RecoveryConversation, RecoveryConversationHistory,
+    RuntimeRecovery, RuntimeRecoveryInspection, RuntimeRecoveryInspectionRequest,
+    RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
+};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,
     WorktreeRemoveReceipt, WorktreeRequest,
+};
+pub use workspace_prepare_recovery::{
+    WorkspacePrepareRecoveryFrame, WorkspacePrepareRecoveryReceipt, WorkspacePrepareRecoveryRequest,
 };
 pub use workspace_removal::{
     same_runtime_writer, WorkspaceRemovalObservation, WorkspaceRemovalOutcome,

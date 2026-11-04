@@ -13,7 +13,7 @@ use crate::{
 };
 use cmaeg_core::{
     activity::SourceKind,
-    message::OutboundMessage,
+    message::{Block, NativeMediaKind, OutboundMessage},
     seal::{EventRefPayload, ReplyAddress},
 };
 
@@ -35,14 +35,41 @@ impl Sender {
         else {
             return (unsupported(), effects);
         };
+        let media = !message.native_attachments.is_empty();
         if message.reply_to.is_some()
             || !self.relay.native_whatsapp_interactions_enabled()
+            || (media
+                && (!self.relay.native_whatsapp_media_controls_enabled()
+                    || !self.relay.native_whatsapp_outbound_media_enabled()))
             || (event.consumer.is_some() && !self.relay.consumer_interactions_enabled())
         {
             return (unsupported(), effects);
         }
+        // Validate the complete request before removing upload bytes from the
+        // durable callback card. Lists never gain media-header support.
+        if message.validate().is_err()
+            || (media
+                && (message.native_attachments.len() != 1
+                    || !matches!(
+                        message.native_attachments[0].kind,
+                        NativeMediaKind::Image | NativeMediaKind::File | NativeMediaKind::Video
+                    )
+                    || message.native_attachments[0].caption.is_some()
+                    || !message
+                        .blocks
+                        .iter()
+                        .any(|block| matches!(block, Block::Buttons { .. }))
+                    || message
+                        .blocks
+                        .iter()
+                        .any(|block| matches!(block, Block::Choice { .. }))))
+        {
+            return (unsupported(), effects);
+        }
+        let mut retained = message.clone();
+        retained.native_attachments.clear();
         let Ok((_, rendering)) =
-            interactions::whatsapp::render(message, "00000000000000000000000000000000", 1)
+            interactions::whatsapp::render(&retained, "00000000000000000000000000000000", 1)
         else {
             return (unsupported(), effects);
         };
@@ -83,6 +110,24 @@ impl Sender {
                 )
             }
         };
+        let upload = if media {
+            let prepare = async {
+                let mut files = crate::media::outbound::prepare(&message.native_attachments)
+                    .await
+                    .map_err(|_| Error::Invalid)?;
+                crate::whatsapp::Client::prepare_media(
+                    &message.native_attachments[0],
+                    files.remove(0),
+                )
+                .await
+            };
+            match tokio::time::timeout(std::time::Duration::from_secs(60), prepare).await {
+                Ok(Ok(upload)) => Some(upload),
+                _ => return (rejected("native_whatsapp_media_invalid"), effects),
+            }
+        } else {
+            None
+        };
         let route = format!("whatsapp:{app_id}:{waba_id}:{phone_number_id}:{recipient_id}");
         let _ticket = match ctx.gate.enter_route(&route).await {
             Ok(ticket) => ticket,
@@ -94,7 +139,7 @@ impl Sender {
             return (refused(rendering, super::gate::expired()), effects);
         }
         let mut prepared = match cards
-            .prepare_with_context(ctx.channel, event, message, context)
+            .prepare_with_context(ctx.channel, event, &retained, context)
             .await
         {
             Ok(prepared) => prepared,
@@ -105,11 +150,50 @@ impl Sender {
                 )
             }
         };
+        let uploaded = if let Some(upload) = upload {
+            let Some(_pace) = self.pacing.acquire(&route).await else {
+                return (rejected("pacing_capacity"), effects);
+            };
+            let permit = match ctx.gate.attempt().await {
+                Ok(permit) => permit,
+                Err(error) => return (refused(rendering, error.outcome()), effects),
+            };
+            let uploaded = self
+                .relay
+                .whatsapp
+                .upload_media(credentials, phone_number_id, upload)
+                .await;
+            drop(permit);
+            ctx.gate.progress();
+            match uploaded {
+                Ok(uploaded) => Some(uploaded),
+                Err(Error::Unconfirmed) => {
+                    return (
+                        refused(
+                            rendering,
+                            DeliveryOutcome::Unknown {
+                                reason: "native_whatsapp_upload_unconfirmed".into(),
+                            },
+                        ),
+                        effects,
+                    )
+                }
+                Err(Error::RateLimited) => {
+                    return (
+                        refused(rendering, DeliveryOutcome::RateLimited { retry_after: 1 }),
+                        effects,
+                    )
+                }
+                Err(_) => return (rejected("native_whatsapp_upload_rejected"), effects),
+            }
+        } else {
+            None
+        };
         let Some(_pace) = self.pacing.acquire(&route).await else {
             return (rejected("pacing_capacity"), effects);
         };
         // The routed gate rechecks current source/credential/provider authority
-        // after preparation and before the only Graph attempt.
+        // before the recipient send, including the gap after a media upload.
         let permit = match ctx.gate.attempt().await {
             Ok(permit) => permit,
             Err(error) => return (refused(rendering, error.outcome()), effects),
@@ -123,6 +207,7 @@ impl Sender {
                 recipient_id,
                 message_id,
                 &prepared,
+                uploaded,
             )
             .await;
         drop(permit);
@@ -189,6 +274,7 @@ impl Sender {
         {
             Ok(reference) => (
                 IntentReceipt {
+                    message_parts: vec![],
                     rendering,
                     message_ref: Some(reference),
                     delivery: DeliveryOutcome::Confirmed {

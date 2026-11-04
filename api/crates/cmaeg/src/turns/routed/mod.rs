@@ -10,14 +10,41 @@ mod custom_delivery;
 mod custom_state;
 mod delivery;
 mod delivery_gate;
+mod delivery_receipts;
 mod delivery_state;
 mod destinations;
 mod dispatcher;
+mod dispatcher_authority;
+mod event_attestation;
 mod executor;
+mod expiry;
+mod generation_provenance;
 mod journal;
+mod media_delivery;
+mod media_delivery_gate;
+#[cfg(test)]
+mod media_delivery_tests;
+mod media_obligations;
+mod media_response_store;
+mod media_schedule;
+mod media_status;
+mod media_work;
+mod media_worker;
 mod model;
+mod preparation;
+pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
+#[cfg(test)]
+mod custom_preparation_fixture;
+#[cfg(test)]
+mod custom_preparation_tests;
+#[cfg(test)]
+mod preparation_dispatch_tests;
+#[cfg(test)]
+mod preparation_tests;
 mod projection_store;
 mod received_message;
+mod received_source;
+pub(crate) use received_source::retained_received_source;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
@@ -36,8 +63,16 @@ pub use destinations::{
     validate_routed_delivery, validate_routed_delivery_with_sync, DefaultDestination,
 };
 pub use dispatcher::{Authority, DispatchOutcome, Dispatcher, ExecutionPort, StartResult};
+pub use event_attestation::{EventAttestationRequest, EventAttestationResponse};
 pub use executor::RoutedTargetExecutor;
 pub use journal::Journal;
+pub(crate) use media_delivery::MediaDelivery;
+pub use media_obligations::{
+    MediaContinuationReceipt, MediaLease, MediaObligationStore, MediaUploadReceipt,
+};
+pub use media_status::{MediaResponsePage, RetainedMediaResponse};
+pub(crate) use media_work::MediaWorkIndex;
+pub(crate) use media_worker::MediaWorker;
 pub use model::{
     ExecutionError, FrozenDelivery, FrozenTurn, Lease, Phase, RecoverySupport, TargetState,
 };
@@ -78,7 +113,7 @@ mod recovery_tests;
 #[cfg(test)]
 mod scheduler_tests;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 
@@ -91,6 +126,8 @@ mod builder_tests;
 mod executor_activity_tests;
 #[cfg(test)]
 mod executor_tests;
+#[cfg(test)]
+mod expiry_tests;
 #[cfg(test)]
 mod projection_store_tests;
 #[cfg(test)]
@@ -116,3 +153,14 @@ mod whatsapp_template_tests;
 
 #[cfg(test)]
 mod native_lark_outbound_tests;
+#[cfg(test)]
+mod native_lark_thread_start_tests;
+
+#[cfg(test)]
+mod native_lark_sticker_tests;
+
+#[cfg(test)]
+mod telegram_structured_tests;
+
+#[cfg(test)]
+mod whatsapp_structured_tests;

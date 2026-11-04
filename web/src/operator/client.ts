@@ -8,6 +8,10 @@ import type {
 } from '@chronoai/cma-sdk';
 
 export interface OperatorClient {
+  readonly usage: Pick<
+    Cma['usage'],
+    'summary' | 'sandboxes' | 'sandbox' | 'events' | 'adminSummary' | 'adminSandboxes'
+  >;
   readonly admin: Pick<
     Administration,
     | 'listSandboxes'
@@ -31,6 +35,7 @@ export interface OperatorClient {
 
 export function createOperatorClient(client: Cma): OperatorClient {
   return {
+    usage: client.usage,
     admin: client.admin,
     listPublicProfiles: (kind, options) => client.marketplace[kind].list(options),
   };

@@ -94,6 +94,8 @@ export interface SandboxSummary {
   readonly owner?: string;
   readonly ownerName?: string;
   readonly name: string;
+  /** The colour every Agent in this Sandbox wears (§28), as `#rrggbb`; absent until assigned. */
+  readonly color?: string;
   readonly status: SandboxStatus;
   readonly lifecycle?: SandboxLifecycle;
   readonly runtimeUpdate?: SandboxRuntimeUpdate;
@@ -260,6 +262,7 @@ export interface AgentDetail {
     readonly status: SandboxStatus;
     readonly profile: ProfileReference;
   };
+  readonly desktop?: boolean;
   readonly conformsTo: readonly string[];
   readonly reach: readonly string[];
   readonly title?: string;

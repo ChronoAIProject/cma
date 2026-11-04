@@ -6,6 +6,8 @@ use mongodb::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const COLLECTIONS: &[&str] = &[
+    super::request_limits::COLLECTION,
+    "visitor_launch_days",
     crate::document_artifacts::COLLECTION,
     super::native_warm_pools::COLLECTION,
     super::native_prepared::COLLECTION,
@@ -33,6 +35,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "auth_login_attempts",
     "auth_subjects",
     "binding_conversations",
+    super::media_uploads::COLLECTION,
     "bot_setups",
     "bot_setup_contexts",
     "bots",
@@ -103,15 +106,20 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "owned_workspace_cleanup_tombstones_v1",
     "platform_settings",
     "provider_bindings",
+    "provider_binding_preparations",
     "provider_tool_opens",
+    "provider_tool_relays",
     "resource_policies",
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
+    super::sandbox_colors::COLLECTION,
     "sandbox_controls",
     "sandbox_credential_revocations",
     "sandbox_credentials",
     "sandbox_events",
+    super::sandbox_usage::STATES,
+    super::sandbox_usage::EVENTS,
     "sandbox_profile_revisions",
     "sandbox_profiles",
     "sandbox_retained_availability",
@@ -389,10 +397,11 @@ mod tests {
     }
 
     #[test]
-    fn warm_pool_target_grants_are_required_without_database_wide_access() {
+    fn durable_target_grants_are_required_without_database_wide_access() {
         for target in [
             super::super::native_warm_pools::COLLECTION,
             super::super::native_prepared::COLLECTION,
+            super::super::media_uploads::COLLECTION,
         ] {
             let mut grants = role("cma").get_array("privileges").unwrap().clone();
             let grant = grants
