@@ -1,11 +1,12 @@
 use super::*;
 
+use crate::now_rfc3339;
 use crate::sandbox::store::{
     apply_image_rotation, apply_inactivity_pause, validate_image_rotation_request,
     validate_inactivity_pause_request, SandboxImageRotationRequest, SandboxInactivityPauseRequest,
     SandboxMaintenanceApplication, SandboxMaintenanceOutcome, SandboxMaintenanceStore,
 };
-use crate::sandbox::{Agent, SandboxAgentActivity, SandboxStatus};
+use crate::sandbox::{Agent, Sandbox, SandboxAgentActivity, SandboxStatus};
 
 #[async_trait]
 impl SandboxMaintenanceStore for InMemorySandboxStore {
@@ -46,6 +47,17 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             .get(&request.sandbox_id)
             .cloned()
             .ok_or(SandboxStoreError::NotFound)?;
+        if current.profile.always_on == Some(true) {
+            return Ok(SandboxMaintenanceOutcome::NotEligible);
+        }
+        let activities = live_agent_activities(&state, &current.id)?;
+        if request.auto_pause_enabled {
+            return persist_application(
+                &mut state,
+                apply_inactivity_pause(&current, &activities, &request)?,
+                request.requested_at,
+            );
+        }
         if let crate::sandbox::SandboxCredentialSource::Binding { binding_id, .. } =
             &current.credential.source
         {
@@ -56,19 +68,19 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             if binding.sandbox_id != current.id || binding.owner != current.owner {
                 return Err(SandboxStoreError::Conflict);
             }
-            if binding
-                .profile
-                .environment
-                .as_ref()
-                .is_some_and(|environment| environment.always_keep_alive)
+            if !request.auto_pause_enabled
+                && binding
+                    .profile
+                    .environment
+                    .as_ref()
+                    .is_some_and(|environment| environment.always_keep_alive)
             {
                 return Ok(SandboxMaintenanceOutcome::NotEligible);
             }
         }
-        let activities = live_agent_activities(&state, &current.id)?;
         self.profiles
             .with_sandbox_availability(&current.profile.id, |availability| {
-                if availability.always_keep_alive {
+                if !request.auto_pause_enabled && availability.always_keep_alive {
                     return Ok(SandboxMaintenanceOutcome::NotEligible);
                 }
                 persist_application(
@@ -77,6 +89,38 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
                     request.requested_at,
                 )
             })
+    }
+
+    async fn set_sandbox_always_on(
+        &self,
+        sandbox_id: SandboxId,
+        expected_revision: u64,
+        always_on: bool,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        let mut state = self.lock();
+        let current = state
+            .sandboxes
+            .get(&sandbox_id)
+            .cloned()
+            .ok_or(SandboxStoreError::NotFound)?;
+        if matches!(
+            current.status,
+            SandboxStatus::Retiring | SandboxStatus::Retired
+        ) || current.revision != expected_revision
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let mut next = current.clone();
+        next.profile.always_on = Some(always_on);
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(SandboxStoreError::Conflict)?;
+        next.updated_at = now_rfc3339();
+        next.validate()
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        state.sandboxes.insert(sandbox_id, next.clone());
+        Ok(next)
     }
 
     async fn schedule_image_rotation(
