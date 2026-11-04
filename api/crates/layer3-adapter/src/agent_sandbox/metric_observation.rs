@@ -154,7 +154,7 @@ impl AgentSandboxClient {
         })
     }
 }
-fn quantity(value: &str) -> Option<f64> {
+pub(super) fn quantity(value: &str) -> Option<f64> {
     let (number, multiplier) = [
         ("Ki", 1024.),
         ("Mi", 1_048_576.),

@@ -1941,3 +1941,35 @@ URLs to `https://cma.nyxid.ai/event-gateway` and retain
 `https://bot.chrono-ai.fun/event-gateway` in both alias lists. Keep
 `https://bot-gateway.chrono-ai.fun` as the legacy public origin. On rollback retain
 readers and all three reachable bases for links and webhooks already issued.
+
+## Measured Sandbox reporting rollout
+
+See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for the new
+owner/admin report APIs, CPU/working-set/PVC semantics, coverage, retention,
+read-model migration, monitoring permissions and production verification.
+The existing allocated usage ledger and billing quantities keep their meanings.
+
+### Measured reporting configuration
+
+See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for source,
+identity, schema and rollout prerequisites. All replicas must use the same
+reporting budgets; use a coordinated rollout to lower cluster-wide budgets.
+
+| Key | Type, default and constraint |
+| --- | --- |
+| `CHRONO_USAGE_METRICS_ENABLED` | Boolean, `false`; enables independent read-only observation/collection jobs. |
+| `CHRONO_USAGE_METRICS_CLUSTER` | Validated label, `example-cluster-01`; exact observed VM cluster. |
+| `CHRONO_USAGE_METRICS_URL` | Optional internal URL ending `/select/0/prometheus/`; empty selects the fixed monitoring service proxy GET. |
+| `CHRONO_USAGE_METRICS_WORKERS` | Integer, `2`; 1–2 shared report worker slots. |
+| `CHRONO_USAGE_METRICS_QUEUE` | Integer, `8`; 1–8 queued reports across replicas. |
+| `CHRONO_USAGE_METRICS_SOURCE_CALLS` | Integer, `2`; 1–2 shared upstream leases. |
+| `CHRONO_USAGE_METRICS_SOURCE_SECONDS` | Integer, `5`; 1–5 seconds per upstream request. |
+| `CHRONO_USAGE_METRICS_REPORT_SECONDS` | Integer, `60`; 1–60 seconds per report. |
+| `CHRONO_USAGE_METRICS_REPORT_MIB` | Integer, `256`; 1–1024 MiB maximum per report, including charts. |
+| `CHRONO_USAGE_METRICS_TENANT_MIB` | Integer, `512`; 1–4096 MiB reserved report quota per principal. |
+| `CHRONO_USAGE_METRICS_GLOBAL_MIB` | Integer, `2048`; 1–16384 MiB reserved report quota across replicas. |
+
+Byte budgets must satisfy report ≤ tenant ≤ global. Reporting uses a separate
+four-connection Mongo pool, 2-second indexed-read budget, and a 30-second circuit
+on failed/slow (>250 ms) checkout or reads exceeding their budget. Reporting
+pressure returns Retry-After without changing conversation/lifecycle pools.

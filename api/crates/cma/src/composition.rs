@@ -37,22 +37,9 @@ use layer2_core::{
     },
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
-pub(crate) struct ControlPlaneComposition {
-    pub router: Router,
-    pub bindings: bindings::BindingComposition,
-    pub bots: Option<bots::BotComposition>,
-    pub actor_continuations: Option<Arc<crate::bot_setups::ActorContinuationWorker>>,
-    pub auth: Arc<AuthState>,
-    pub launch_scheduler: super::trigger::LaunchScheduler,
-    pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
-    pub usage: crate::usage_billing::UsageWorkers,
-    pub command_scheduler: super::commands::CommandScheduler,
-    pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
-    pub sandbox_lifecycle: SandboxLifecycleComposition,
-    pub native_warm_pools: Arc<crate::warm_pools::NativeWarmPools>,
-    pub native_prepared: crate::sandbox::native_prepared::NativePreparedWorker,
-    pub agent_access_worker: crate::agent_access_worker::AgentAccessWorker,
-}
+mod state;
+pub(crate) use state::ControlPlaneComposition;
+
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
         let mut stores = MongoStores::connect_with_authority(
@@ -466,6 +453,8 @@ impl ControlPlaneComposition {
         let provenance_backfill =
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
         let usage = crate::usage_billing::UsageWorkers::new(&stores, config)?;
+        let usage_metrics = crate::sandbox_metrics::MetricsWorkers::new(config).await?;
+        let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let router = routes::compose(
             resource_routes,
@@ -487,6 +476,7 @@ impl ControlPlaneComposition {
             actor_continuations,
             provenance_backfill,
             usage,
+            usage_metrics,
             launch_scheduler,
             command_scheduler,
             sandbox_control_scheduler,
