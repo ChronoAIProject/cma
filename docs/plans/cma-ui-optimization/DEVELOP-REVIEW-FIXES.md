@@ -162,3 +162,30 @@ established filesystem/upload advertisement remains identical to develop. Both
 original review axes and the follow-up compatibility finding are closed. PR #1311
 remains the authority for final-head CI and merge state. Human suggestion-quality
 acceptance and any deployment remain separate.
+
+## Concurrent skill installation contract coverage
+
+The next PR run passed 7,150 of 7,151 Backend tests. Its only failure was the
+coverage inventory: correcting the installed-version refusal had removed the old,
+incorrect example of `agent_operation_in_flight` from the skill-install operation.
+The corrected `agent_skill_version_upgrade_unsupported` case remains unchanged.
+
+Two additional shared cases cover a reachable admission race. A test-only runtime
+support adapter admits `research@1.0` through the real `AgentOperationService`
+between the REST preflight and the incoming `research@2.0` admission. The latter
+receives the exact HTTP 409 `agent_operation_in_flight` problem. A subsequent GET
+proves that the original `research@1.0` is still pending and was not replaced or
+settled by the losing request. All 51 existing cases in that fixture are unchanged.
+
+The inventory and new scenario each failed before the correction and passed after
+it. The complete strict runner passes 3,014 cases. The serial public-contract suite
+passes 37 tests with its two existing ignored tests; an earlier parallel run's six
+failures remain recorded separately. Formatting and scoped Clippy also pass.
+The correction changes only shared test fixtures and their test-only setup; the
+existing inventory requirements, production admission behavior and CI gates remain
+intact. Worker commit: `1172c941e`; independent integration merge: `eae5bcf3f`.
+
+The merged tree also passes all 3,060 TypeScript SDK public-contract tests and the
+Rust SDK shared-corpus test. Independent Standards and Spec reviews of the frozen
+worker commit both report zero findings. Final CI and merge status remain subject
+to PR #1311's checks on the pushed candidate.
