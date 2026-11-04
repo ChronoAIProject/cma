@@ -32,12 +32,21 @@ impl AgentSandboxBackend {
     }
 
     async fn bind(&self, handle: &RuntimeHandle, request: &ProviderSandboxRequest) -> Result<()> {
+        if let Some(until) = request.funded_until {
+            self.client
+                .set_runtime_deadline(handle, request, until)
+                .await?;
+        }
         let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
         let pod = self
             .client
             .wait_ready(handle, Duration::from_secs(180))
             .await?;
         timing.completed("wait_ready");
+        if let Some(until) = request.funded_until {
+            // Readiness can consume the remaining window; never bind expired work.
+            crate::agent_sandbox::funding::deadline(until)?;
+        }
         let result = self.assign_and_bind(handle, &pod, request).await;
         timing.completed("assign_and_bind");
         result
@@ -62,6 +71,22 @@ impl HostedBackend for AgentSandboxBackend {
         self.client
             .warm_pools()
             .select_runtime(request, image, home)
+            .await
+    }
+    async fn validate_funding(&self, request: &ProviderSandboxRequest) -> Result<()> {
+        if let Some(until) = request.funded_until {
+            crate::agent_sandbox::funding::deadline(until)?;
+        }
+        Ok(())
+    }
+    async fn set_runtime_deadline(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        until: u64,
+    ) -> Result<()> {
+        self.client
+            .set_runtime_deadline(handle, request, until)
             .await
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
@@ -119,6 +144,11 @@ impl HostedBackend for AgentSandboxBackend {
         next: &ProviderSandboxRequest,
     ) -> Result<()> {
         self.client.resume(handle, previous, next).await?;
+        if let Some(until) = next.funded_until {
+            self.client
+                .set_runtime_deadline(handle, next, until)
+                .await?;
+        }
         self.bind_resumed(handle, next).await
     }
     async fn resume_with_home(
@@ -131,6 +161,11 @@ impl HostedBackend for AgentSandboxBackend {
         self.client
             .resume_with_home(handle, previous, next, home)
             .await?;
+        if let Some(until) = next.funded_until {
+            self.client
+                .set_runtime_deadline(handle, next, until)
+                .await?;
+        }
         self.bind_resumed(handle, next).await
     }
     async fn upgrade_with_home(
@@ -143,6 +178,11 @@ impl HostedBackend for AgentSandboxBackend {
         self.client
             .upgrade_with_home(handle, previous, next, home)
             .await?;
+        if let Some(until) = next.funded_until {
+            self.client
+                .set_runtime_deadline(handle, next, until)
+                .await?;
+        }
         self.bind_resumed(handle, next).await
     }
     async fn provision_receipted(

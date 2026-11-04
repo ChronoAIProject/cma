@@ -107,6 +107,14 @@ impl SandboxAdapter for CodexAdapter {
     fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
         self.hosted.home_volumes()
     }
+    async fn set_runtime_deadline(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        until: u64,
+    ) -> crate::Result<()> {
+        self.hosted.set_runtime_deadline(request, until).await
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
         self.hosted.provision(spec).await
     }
