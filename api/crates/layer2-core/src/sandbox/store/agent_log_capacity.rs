@@ -55,6 +55,14 @@ pub fn plan_agent_log_capacity_failure(
         detail: "Durable Agent history cannot accept this lifecycle event. Retained history and runtime identity are preserved. This Agent cannot resume under the current limits; inspect capacity before explicitly replacing or recovering it.".into(),
     };
     let mut next = current.clone();
+    if let Some(first) = next.conversation.first_message.as_mut() {
+        // Reuse #1318's reader-compatible proof of never-dispatched input.
+        // Attempted or ambiguous input must retain every original delivery fact.
+        let mut settled = first.clone();
+        if settled.fail_startup(at.into()).is_ok() {
+            *first = settled;
+        }
+    }
     next.work
         .advance(holder, fence, AgentWorkStep::None, at.into())
         .map_err(|_| SandboxStoreError::Conflict)?;
@@ -114,6 +122,70 @@ pub fn plan_agent_log_capacity_failure(
     })
 }
 
+pub(super) fn validate_failure(
+    current: &Agent,
+    worktree: &Worktree,
+    mutation: &AgentWorkMutation,
+) -> Option<Result<(), SandboxStoreError>> {
+    if !current.status.is_live()
+        || mutation.agent.status != AgentStatus::Failed
+        || mutation
+            .agent
+            .failure
+            .as_ref()
+            .is_none_or(|failure| failure.class != AGENT_LOG_CAPACITY_FAILURE)
+    {
+        return None;
+    }
+    Some((|| {
+        if current.work.step == AgentWorkStep::InstallSkill {
+            if worktree.status != WorktreeStatus::Ready
+                || current
+                    .ready_at
+                    .as_deref()
+                    .and_then(seconds_from_rfc3339)
+                    .is_none()
+                || current
+                    .work
+                    .live_skills
+                    .last()
+                    .is_none_or(|skill| skill.status != AgentSkillInstallStatus::Pending)
+            {
+                return Err(SandboxStoreError::Conflict);
+            }
+        } else {
+            super::agent_work_transition_validation::validate_position(current, worktree)?;
+        }
+        super::agent_work_evidence_validation::validate_histories(
+            current,
+            &mutation.agent,
+            &mutation.appended_at,
+        )?;
+        let expected = plan_agent_log_capacity_failure(
+            current,
+            worktree,
+            &mutation.holder,
+            mutation.fence,
+            &mutation.appended_at,
+        )?;
+        if mutation.agent != expected.agent
+            || mutation.agent_logs != expected.agent_logs
+            || mutation.sandbox_event != expected.sandbox_event
+            || mutation
+                .worktree
+                .as_ref()
+                .map(|v| (v.expected_revision, &v.worktree))
+                != expected
+                    .worktree
+                    .as_ref()
+                    .map(|v| (v.expected_revision, &v.worktree))
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        Ok(())
+    })())
+}
+
 fn normal_work(agent: &Agent) -> bool {
     match agent.work.step {
         AgentWorkStep::WaitForWorkspace
@@ -121,7 +193,10 @@ fn normal_work(agent: &Agent) -> bool {
         | AgentWorkStep::MaterializeHome
         | AgentWorkStep::OpenConversation
         | AgentWorkStep::PublishReady => agent.status == AgentStatus::Starting,
-        AgentWorkStep::PublishConnection | AgentWorkStep::InstallSkill => matches!(
+        AgentWorkStep::InstallSkill => {
+            agent.status == AgentStatus::Ready && agent.conversation.active_turn.is_none()
+        }
+        AgentWorkStep::PublishConnection => matches!(
             agent.status,
             AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
         ),

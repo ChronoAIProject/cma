@@ -167,6 +167,11 @@ fn validate_mutation(
     retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
     validate_common(current, current_worktree, actual_last_seq, mutation)?;
+    if let Some(result) =
+        super::agent_log_capacity::validate_failure(current, current_worktree, mutation)
+    {
+        return result;
+    }
     if current.work.step == AgentWorkStep::InstallSkill {
         return crate::sandbox::agent_live_skills::validate_install_work(
             current,
