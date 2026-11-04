@@ -46,7 +46,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     agent.profile.content.isolated_agent = name == "desktop_isolated";
     agents::insert_agent(&fixture.store, agent, vec![]).await;
     let service = Arc::new(DesktopService::new(
-        fixture.state.reads,
+        fixture.state.reads.with_sessions(fixture.store.clone()),
         Arc::new(layer3_adapter::codex::CodexAdapter::with_backend(
             backend::DesktopBackend {
                 unavailable: name == "desktop_runtime_unavailable",
