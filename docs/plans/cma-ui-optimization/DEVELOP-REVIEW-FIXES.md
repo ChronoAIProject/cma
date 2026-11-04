@@ -105,3 +105,27 @@ Check logs are outside Git under
 timeout or ignored-test policy changed. The parent owns CI and its separate
 RuntimeStatus compatibility correction; its final commit must be merged before
 handoff and checked with these fixes.
+
+## Retained admission compatibility and parent integration
+
+Parent tip `240e4211f1fe81d733a4a6dc5cc760963162ccdc` was merged without conflicts
+in `bc50252a7`. Its RuntimeStatus negotiation files remain parent-owned.
+
+A final red/green check covers a pre-fix recovery admission whose preserved
+checkout already records A. The first pin fix rejected this retained record
+because its old `original.json` has no source field. Recovery now validates A in
+the preserved directory and binds it in separate append-only `source-commit.json`
+evidence. It never rewrites the old admission or journal. The regression moves
+the remote ref to B, retries the original operation, receives A, replays the same
+receipt and rejects later changes to that retained pin.
+
+After the parent merge and this compatibility correction, the complete runtime
+suite passes 335 tests with its same three existing ignored cases; the separate
+pool-assignment CLI integration also passes. All 12 workspace recovery checks,
+including the non-ignored interrupted-snapshot and legacy-admission regressions,
+run within that suite.
+
+Final workspace `cargo +1.96.1 clippy --all-targets --all-features --locked -- -D
+warnings` passes after the integration merge and legacy-pin correction. Formatting,
+source sizes and whitespace checks also pass. The only observed unresolved test
+failure remains the unchanged Core live-skill fixture described above.
