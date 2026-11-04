@@ -141,8 +141,12 @@ input retains its separate recovery rules and is never relabelled undispatched.
 
 Rollout must keep compatible readers after `agent_startup_failed` is persisted:
 older first-message validators do not accept this undispatched failure shape.
-Keep this reader when rolling back unrelated behavior. Never clear durable input
-or its evidence to make an old binary accept a record.
+The first rollout must prevent an older reader from serving these new records;
+drain incompatible readers before the new worker publishes failures, or stage a
+reader-compatible deployment first. Ordinary mixed-version rolling overlap is
+not sufficient for that guarantee. Keep this reader when rolling back unrelated
+behavior. Never clear durable input or its evidence to make an old binary accept
+a record.
 
 ## Failed startup after a reserved runtime generation
 
